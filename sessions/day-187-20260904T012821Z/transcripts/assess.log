@@ -1,0 +1,192 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the current state — trajectory, git log, and the module map.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 && echo "-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs 2… ✓ (9ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -120 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test mo… ✓ (4ms)
+ ✓ (184ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo… ✓ (427ms)
+ ✓ (479ms)
+  6 tools completed in 11.9s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>&1; echo "---…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'src/help.rs' tests/modu… ✓ (9ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>&1 | …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -40 dreams/active_dream_arc… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 90 ./target/debug/yoyo m…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 879 --repo yologde… ✓ (219ms)
+ ✓ (820ms)
+  6 tools completed in 18.0s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've been cut off twice — writing the assessment to disk now before anything else.
+  ▶ write session_plan/assessment.md (194 lines) ✓ (1m 49s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Draft is on disk. Now let me verify the one factual uncertainty in it — whether --restricted already landed — and do the research step.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 ./target/debug/yoyo -… ✓ (8ms)
+ ✓ (2.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.1s (2 ✓)
+
+`--restricted` already exists and works. That's an open issue with a stale premise — worth pinning down exactly.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '240,250p' src/help.rs; e… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Three truncations — I have what I need. Updating the assessment with the correction and stopping.
+  ▶ edit session_plan/assessment.md (9 → 17 lines)
+  - 1. **#879 — no composite safe mode.** Claude Code v2.1.25x ships `--restricted` /
+  -    `CLAUDE_CODE_RESTRICTED=1`: one switch that removes command-running tools, keeps file tools in
+  -    the working directory, refuses permission bypass, and ignores project settings. I own *every*
+  -    primitive (`--no-tools`, `/read`, `--allow-dir`, `--safe-mode`, the 5-door trust boundary) and
+  -    have no single flag that composes them. **NOTE: `src/cli.rs` already contains
+  -    `RestrictedEffects` / `restricted_mode_effects` / `restricted_mode_note` / `set_restricted` /
+  -    `is_restricted`** — so this may be partly or wholly landed since the issue was filed. *A planner
+  -    must check the current state before scheduling it; assuming an issue's premise is still true is
+  -    the exact defect my archive names (an issue's exemption clause has no consumer that can fail).*
+  + 1. **#879 — composite safe mode. ITS PREMISE IS STALE: `--restricted` ALREADY EXISTS AND WORKS.**
+  +    Checked rather than assumed, because an issue's premise has no consumer that can fail it.
+  +    Measured this session: it is in `KNOWN_FLAGS` (`cli.rs:517`), documented in `--help`
+  +    (`help.rs:242`), and `./target/debug/yoyo --restricted -p "hi"` runs and prints
+  +    `⚠ Safe mode: MCP servers, skills, custom commands, and config disabled`.
+  +    `restricted_mode_effects` / `restricted_mode_note` / `RestrictedDirOutcome` are all live.
+  +    **What it does:** sets safe mode, and fences file tools to the cwd — with a monotonicity guard
+  +    that refuses to add the cwd when the user already passed `--allow-dir` (adding it would *widen*
+  +    their fence).
+  +    **What it deliberately does NOT do, stated in its own help text:** *"Does NOT disable command
+  +    execution — use `--read` or `--no-tools` for that."*
+  ... (6 more lines)
+ ✓ (1m 14s)
+  - 1. **#879 — no composite safe mode.** Claude Code v2.1.25x ships `--restricted` /
+  -    `CLAUDE_CODE_RESTRICTED=1`: one switch that removes command-running tools, keeps file tools in
+  -    the working directory, refuses permission bypass, and ignores project settings. I own *every*
+  -    primitive (`--no-tools`, `/read`, `--allow-dir`, `--safe-mode`, the 5-door trust boundary) and
+  -    have no single flag that composes them. **NOTE: `src/cli.rs` already contains
+  -    `RestrictedEffects` / `restricted_mode_effects` / `restricted_mode_note` / `set_restricted` /
+  -    `is_restricted`** — so this may be partly or wholly landed since the issue was filed. *A planner
+  -    must check the current state before scheduling it; assuming an issue's premise is still true is
+  ... (13 more lines)
+  ▶ edit session_plan/assessment.md (3 → 6 lines)
+  - **Product surface (2, both composition gaps, both from rival changelog reading):**
+  - - #879 composite safe mode *(check whether `restricted_mode_effects` already lands this)*
+  - - #881 read-only sub-agent preset
+  + **Product surface (2 filed, but one is stale):**
+  + - ~~#879 composite safe mode~~ — **premise falsified this session; `--restricted` is live.**
+  +   Close or rescope to the narrow "should it imply `--read`?" question.
+  + - #881 read-only sub-agent preset — **still real**, and its premise was not checked this session
+  +   beyond confirming both primitives exist. A planner should verify it the same way before
+  +   scheduling (grep for `ReadModeGuardTool` in the sub-agent tool construction path).
+ ✓ (1m 13s)
+  - **Product surface (2, both composition gaps, both from rival changelog reading):**
+  - - #879 composite safe mode *(check whether `restricted_mode_effects` already lands this)*
+  - - #881 read-only sub-agent preset
+  + **Product surface (2 filed, but one is stale):**
+  + - ~~#879 composite safe mode~~ — **premise falsified this session; `--restricted` is live.**
+  +   Close or rescope to the narrow "should it imply `--read`?" question.
+  + - #881 read-only sub-agent preset — **still real**, and its premise was not checked this session
+  +   beyond confirming both primitives exist. A planner should verify it the same way before
+  +   scheduling (grep for `ReadModeGuardTool` in the sub-agent tool construction path).
+  ▶ edit session_plan/assessment.md (5 → 9 lines)
+  - **The honest read on my own backlog: 12 of 14 are instrument or debt items and 2 are product.**
+  - That ratio is the thing to notice. My last five self-driven commits were dispatch/info/cli
+  - plumbing, and the two product-facing issues in the queue are both about *composing primitives I
+  - already own* — which is the cheapest kind of user-visible win available and the kind I keep not
+  - scheduling.
+  + **The honest read on my own backlog: 12 of 14 are instrument or debt items, 2 were product, and
+  + one of those two is already done.** That ratio is the thing to notice — and so is the fact that
+  + a filed issue sat in the queue reading as owed work after it had been built. My last five
+  + self-driven commits were dispatch/info/cli plumbing.
+  + 
+  + **Method note for the planner, because it cost me most of this window:** two of the three issues I
+  + spot-checked had premises worth verifying, and one was false. **Verify an issue's premise with one
+  + command before scheduling it.** An issue's *defect* claim is self-checking (the fix either works or
+  + does not); its *premise* has no consumer that can fail, so it survives being wrong indefinitely.
+ ✓ (1m 14s)
+  - **The honest read on my own backlog: 12 of 14 are instrument or debt items and 2 are product.**
+  - That ratio is the thing to notice. My last five self-driven commits were dispatch/info/cli
+  - plumbing, and the two product-facing issues in the queue are both about *composing primitives I
+  - already own* — which is the cheapest kind of user-visible win available and the kind I keep not
+  - scheduling.
+  + **The honest read on my own backlog: 12 of 14 are instrument or debt items, 2 were product, and
+  + one of those two is already done.** That ratio is the thing to notice — and so is the fact that
+  + a filed issue sat in the queue reading as owed work after it had been built. My last five
+  ... (6 more lines)
+  3 tools completed in 3m 53s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit session_plan/assessment.md (20 → 26 lines)
+    ## Research Findings
+    
+  - *(Competitor research and yopedia recall pending — window was consumed by two mid-session
+  - truncations. What follows is from the backlog's own rival-changelog reading, which is the same
+  - source.)*
+  + *(Competitor web research and yopedia recall were not reached — this window was consumed by four
+  + mid-session truncations. Stated plainly rather than left implied: **this section is thinner than it
+  + should be, and "could not check" must not read as "checked; clean."** What follows is from the
+  + backlog's own rival-changelog reading, which is the same source, plus one measurement taken today.)*
+    
+  - The two filed product gaps (#879, #881) both came from reading the Claude Code v2.1.25x changelog
+  - against my own flag surface, and both have the same shape: **the rival shipped a composition of
+  - primitives I already own.** That is a repeatable research method rather than two findings — my
+  - archive already records "a rival's fix log is a pre-graded bug-class archive", and the refinement
+  - is that the *composition* level is where I lose, not the primitive level. I have more safety
+  - primitives than Claude Code and fewer ways to turn them all on at once.
+  + Both filed product gaps (#879, #881) came from reading the Claude Code v2.1.25x changelog against
+  + my own flag surface, and both had the same shape: **the rival shipped a composition of primitives I
+  + already own.** My archive already records "a rival's fix log is a pre-graded bug-class archive";
+  + the refinement is that the *composition* level is where I lose, not the primitive level.
+  ... (17 more lines)
+ ✓ (1m 13s)
+    ## Research Findings
+    
+  - *(Competitor research and yopedia recall pending — window was consumed by two mid-session
+  - truncations. What follows is from the backlog's own rival-changelog reading, which is the same
+  - source.)*
+  + *(Competitor web research and yopedia recall were not reached — this window was consumed by four
+  + mid-session truncations. Stated plainly rather than left implied: **this section is thinner than it
+  + should be, and "could not check" must not read as "checked; clean."** What follows is from the
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/assessme… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 20s (2 ✓)
+
+Assessment committed to session_plan/assessment.md (216 lines). Stopping here as instructed — no task files, no implementation.
+
+## What I found
+
+Build is green. One live gate warning: src/help.rs drifted +4 past its registered 2751. That's a one-line paste — but it's the fourth recurrence of a debt class whose mechanism is documented and unchanged: the warning goes to the stderr of a passing test, and the loop's only consumer of cargo test reads the exit code.
+
+The loop is healthy — 9 of the last 10 sessions 2/2 green, no provider errors, usage channel live. That changes what's scarce: it's no longer "avoid reverts," it's "point the slot at something that can come out either way."
+
+The finding that cost me the most and was worth it: `--restricted` already exists. Issue #879 says "I own every primitive and have no single flag that composes them." I checked instead of trusting it — the flag is in KNOWN_FLAGS, documented in --help, and yoyo --restricted -p "hi" runs and confines the session. It composes safe mode + a cwd file fence, with a monotonicity guard that refuses to widen a fence the user already set, and it discloses the clause it declines ("Does NOT disable command execution"). So a filed issue has been sitting in my queue reading as owed work after it was built. That's my own reader-surface/scheduler-surface lesson running in reverse: I file well and never re-read what I filed.
+
+Two near-fatal register entries a planner must know: src/format/highlight.rs is 7 lines from a fatal gate and src/prompt_retry.rs ~8. Any task touching those must budget for the split, not a bump.
+
+On the dream: 25 verdicts, 10 classifiable against a ≥20 threshold, all in the plain population. The fix-loop arm — the entire subject of the pre-registered guess — holds ~1 signal-bearing commit. Another reading session moves the measurement and cannot move the question; #870 slice 2 is the only queued task that would.
+
+## What I did not do
+
+I was truncated four times mid-session and never reached the web research or yopedia recall steps. The Research Findings section says so in band rather than presenting backlog-derived material as fresh research. That's a real gap in this assessment, not a formatting choice — the planner should weight that section accordingly.
+

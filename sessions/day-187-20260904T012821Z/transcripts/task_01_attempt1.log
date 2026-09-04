@@ -1,0 +1,309 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the script to confirm slice 1 is present as described.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "splice_test_module\|tes…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def parse_name_status\|… ✓ (7ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+Slice 1 is present as described. Let me read the key sections.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 855,935p scripts/counterf…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 982,1050p scripts/counter… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1422,1620p scripts/counte… ✓ (5ms)
+  3 tools completed in 2.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1620,1700p scripts/counte… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1870,1960p scripts/counte… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2091,2175p scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_counterfactual(\|le… ✓ (4ms)
+ ✓ (4ms)
+  4 tools completed in 7.0s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've spent enough on reading. Let me see the two call sites and then start making changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2296,2350p scripts/counte… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the full picture. Adding the pure function first (step 1):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (2 → 53 lines)
+  + def src_splice_candidates(rows) -> list[str]:
+  +     """Paths a `src/` splice may be attempted on, from `git diff --name-status` rows.
+  + 
+  +     #870 slice 2, Day 187. The selector half of the splicer: slice 1 built
+  +     `splice_test_module` and wired it to nothing; this decides WHICH files it is offered.
+  + 
+  +     IN SCOPE: a MODIFIED (`M`) path under `src/` ending `.rs`. Nothing else, and each
+  +     exclusion has its own reason rather than a shared shrug:
+  + 
+  +       * `A` (added)   -> no parent version exists; there is nothing older to lay back.
+  +       * `D` (deleted) -> the file is gone from the post-task tree; there is nothing to
+  +                          splice INTO.
+  +       * `R*` (rename) -> the parent path differs from the post-task path, so resolving
+  +                          which pre-task file to read is a separate decision. `R100 old new`
+  +                          yields BOTH paths from `parse_name_status`, and neither is `M`,
+  +                          so both are correctly out of scope.
+  +       * outside `src/`, or not `.rs` -> not this overlay's business. `tests/` is handled
+  +                          by `parent_test_pathspec`, and a non-Rust file has no
+  +                          `#[cfg(test)]` module to move.
+  +       * an unrecognised status letter -> OUT of scope, deliberately.
+  ... (33 more lines)
+ ✓ (1m 14s)
+  + def src_splice_candidates(rows) -> list[str]:
+  +     """Paths a `src/` splice may be attempted on, from `git diff --name-status` rows.
+  + 
+  +     #870 slice 2, Day 187. The selector half of the splicer: slice 1 built
+  +     `splice_test_module` and wired it to nothing; this decides WHICH files it is offered.
+  + 
+  +     IN SCOPE: a MODIFIED (`M`) path under `src/` ending `.rs`. Nothing else, and each
+  +     exclusion has its own reason rather than a shared shrug:
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the self-tests for it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SPLICE_OK, SPLICE_NO_PO… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/counterfactual_green.py (4 → 59 lines)
+        for _s in (SPLICE_OK, SPLICE_NO_POST_MARKER, SPLICE_NO_PRE_MARKER):
+            check(f"splicer: {_s} is not a run verdict", _s not in RUN_VERDICTS, _s)
+  + 
+  +     # ---- #870 slice 2: the SELECTOR half. ---------------------------------------------
+  +     # ANTI-VACUOUS, ASSERTED FIRST: a fixture holding a genuine `M src/*.rs` row must
+  +     # yield a non-empty list. A selector that finds nothing and reports a clean pass is
+  +     # this defect wearing the opposite sign, and it is quieter than the bug.
+  +     real_rows = parse_name_status("M\tsrc/foo.rs\nM\tsrc/format/mod.rs\n")
+  +     check("splice-select: a genuine M src/*.rs row IS selected",
+  +           src_splice_candidates(real_rows) == ["src/foo.rs", "src/format/mod.rs"],
+  +           src_splice_candidates(real_rows))
+  + 
+  +     # Every exclusion is its own row, and every one fails toward EARNED (leave it alone).
+  +     for _label, _text in [
+  +         ("A (added: no parent version to lay back)", "A\tsrc/new.rs\n"),
+  +         ("D (deleted: nothing to splice into)", "D\tsrc/gone.rs\n"),
+  +         ("R100 (rename: parent path differs)", "R100\tsrc/old.rs\tsrc/new.rs\n"),
+  +         ("tests/ (parent_test_pathspec's job)", "M\ttests/module_size.rs\n"),
+  +         ("non-.rs under src/", "M\tsrc/notes.md\n"),
+  +         ("outside src/", "M\tCargo.toml\n"),
+  ... (39 more lines)
+ ✓ (1m 14s)
+        for _s in (SPLICE_OK, SPLICE_NO_POST_MARKER, SPLICE_NO_PRE_MARKER):
+            check(f"splicer: {_s} is not a run verdict", _s not in RUN_VERDICTS, _s)
+  + 
+  +     # ---- #870 slice 2: the SELECTOR half. ---------------------------------------------
+  +     # ANTI-VACUOUS, ASSERTED FIRST: a fixture holding a genuine `M src/*.rs` row must
+  +     # yield a non-empty list. A selector that finds nothing and reports a clean pass is
+  +     # this defect wearing the opposite sign, and it is quieter than the bug.
+  +     real_rows = parse_name_status("M\tsrc/foo.rs\nM\tsrc/format/mod.rs\n")
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now ledger_line gains the splice field (step 3):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (7 → 20 lines)
+    def ledger_line(
+  -     sha, parent, day, subject, population, verdict, baseline, ts, depth, failing=None
+  +     sha, parent, day, subject, population, verdict, baseline, ts, depth,
+  +     failing=None, splice=None,
+    ):
+        """One JSON line for one completed counterfactual. Pure: no I/O and no clock.
+    
+        `ts` and `depth` are passed IN rather than read here, so the record is a pure
+        function of its inputs and can be pinned by a self-test byte-for-byte.
+  + 
+  +     #870 slice 2: `splice` is `None` when `--splice-src-tests` was OFF, which is the
+  +     DEFAULT and every one of the 25 rows already recorded — that row is byte-identical to
+  +     the pre-slice-2 shape, asserted with `==` on the whole string rather than a `contains`.
+  +     When it is on, the row carries `src_spliced` (files rewritten), `src_splice_refused`
+  +     (candidates left alone) and the marker `splice_depth: "src+tests"`.
+  + 
+  +     THE MARKER IS NOT BOOKKEEPING, IT IS THE THING THAT STOPS A DISHONEST RATE. The 10
+  +     classifiable verdicts already recorded were measured against a SHALLOWER
+  +     counterfactual (post-task `src/` tests riding at their post-task version); pooling
+  +     them with deeper ones would answer a question DREAM.md did not ask. A row with no
+  ... (1 more lines)
+ ✓ (1m 13s)
+    def ledger_line(
+  -     sha, parent, day, subject, population, verdict, baseline, ts, depth, failing=None
+  +     sha, parent, day, subject, population, verdict, baseline, ts, depth,
+  +     failing=None, splice=None,
+    ):
+        """One JSON line for one completed counterfactual. Pure: no I/O and no clock.
+    
+        `ts` and `depth` are passed IN rather than read here, so the record is a pure
+  ... (13 more lines)
+  ▶ edit scripts/counterfactual_green.py (5 → 12 lines)
+            status, names = failing
+            row["failing_tests"] = list(names)
+            row["failing_tests_status"] = status
+  +     if splice is not None:
+  +         # Emitted for EVERY verdict when the flag is on, including the ones that return
+  +         # before a splice is attempted (both counts are then 0). The marker answers "how
+  +         # deep was this reading?", which is a property of the RUN, not of the outcome.
+  +         row["src_spliced"] = int(splice.get("spliced", 0))
+  +         row["src_splice_refused"] = int(splice.get("refused", 0))
+  +         row["splice_depth"] = "src+tests"
+        return json.dumps(row, sort_keys=True)
+ ✓ (1m 14s)
+            status, names = failing
+            row["failing_tests"] = list(names)
+            row["failing_tests_status"] = status
+  +     if splice is not None:
+  +         # Emitted for EVERY verdict when the flag is on, including the ones that return
+  +         # before a splice is attempted (both counts are then 0). The marker answers "how
+  +         # deep was this reading?", which is a property of the RUN, not of the outcome.
+  +         row["src_spliced"] = int(splice.get("spliced", 0))
+  ... (3 more lines)
+  2 tools completed in 2m 32s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wiring into run_counterfactual (step 2):
+  ▶ edit scripts/counterfactual_green.py (28 → 36 lines)
+    def run_counterfactual(
+  -     root: str, sha: str, timeout: int, target: str | None = None
+  - ) -> tuple[str, str, tuple[str, list[str]] | None]:
+  -     """Public contract: `(verdict, detail, failing)` — a thin wrapper over `_run_counterfactual`.
+  +     root: str, sha: str, timeout: int, target: str | None = None,
+  +     splice_src: bool = False,
+  + ) -> tuple[str, str, tuple[str, list[str]] | None, dict | None]:
+  +     """Public contract: `(verdict, detail, failing, splice)` — a thin wrapper over `_run_counterfactual`.
+    
+        `failing` is the `(status, names)` pair from `classify_failing_tests` for the two
+        verdicts whose CAUSE is legible in a capture — BASELINE_RED and UNEARNED — and `None`
+        everywhere else, meaning **no claim was made**, which is not the same as "no failures".
+  + 
+  +     `splice` (#870 slice 2) is `None` when `splice_src` is False — the DEFAULT — so the
+  +     verdict, the detail string, the ledger row and the git/cargo calls made are all
+  +     byte-identical to every one of the 25 readings already taken. When True it is
+  +     `{"spliced": N, "refused": M}`, recorded so rows of different DEPTH can never be
+  +     pooled into one rate.
+    
+        THIS IS A WRAPPER RATHER THAN 14 EDITED RETURNS ON PURPOSE. `_run_counterfactual` has
+  ... (23 more lines)
+ ✓ (1m 14s)
+    def run_counterfactual(
+  -     root: str, sha: str, timeout: int, target: str | None = None
+  - ) -> tuple[str, str, tuple[str, list[str]] | None]:
+  -     """Public contract: `(verdict, detail, failing)` — a thin wrapper over `_run_counterfactual`.
+  +     root: str, sha: str, timeout: int, target: str | None = None,
+  +     splice_src: bool = False,
+  + ) -> tuple[str, str, tuple[str, list[str]] | None, dict | None]:
+  +     """Public contract: `(verdict, detail, failing, splice)` — a thin wrapper over `_run_counterfactual`.
+  ... (13 more lines)
+
+Now the splice block itself, after the pre-tests checkout and before the counterfactual cargo run:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (8 → 72 lines)
+            )
+            if rc != 0:
+                return COULD_NOT_CHECK, f"checkout of pre-tests failed: {out.strip()[:200]}"
+  + 
+  +         # ---- #870 slice 2: lay the pre-task `#[cfg(test)]` blocks back too. -----------
+  +         # DEFAULT OFF. With the flag off nothing below runs, no extra git call is made,
+  +         # and the tree handed to cargo is byte-identical to the 25 readings already taken.
+  +         #
+  +         # WHY IT EXISTS: ~157k lines of unit tests live inside 91 `src/` files behind
+  +         # `#[cfg(test)]` and ride the counterfactual tree at their POST-task version, so a
+  +         # commit that loosened one of them is invisible. Splicing makes the reading
+  +         # strictly DEEPER. It does NOT close #870 — the census and selector still classify
+  +         # by top-level `tests/*.rs`, so the fix-loop arm stays at 1 signal-bearing commit.
+  +         #
+  +         # EVERY REFUSAL FAILS TOWARD `EARNED`. Skipping a file leaves it at its post-task
+  +         # version, i.e. today's shallower reading; splicing a file we understood wrongly
+  +         # could break a test the commit never touched and manufacture a false `UNEARNED`.
+  +         if splice_src:
+  +             spliced = 0
+  +             refused = 0
+  ... (50 more lines)
+ ✓ (1m 13s)
+            )
+            if rc != 0:
+                return COULD_NOT_CHECK, f"checkout of pre-tests failed: {out.strip()[:200]}"
+  + 
+  +         # ---- #870 slice 2: lay the pre-task `#[cfg(test)]` blocks back too. -----------
+  +         # DEFAULT OFF. With the flag off nothing below runs, no extra git call is made,
+  +         # and the tree handed to cargo is byte-identical to the 25 readings already taken.
+  +         #
+  ... (13 more lines)
+
+Now the flag and the two call sites:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (1 → 11 lines)
+  +     parser.add_argument(
+  +         "--splice-src-tests",
+  +         action="store_true",
+  +         help=(
+  +             "#870: also lay pre-task #[cfg(test)] blocks back over post-task src/, "
+  +             "making the reading strictly DEEPER. DEFAULT OFF -- off is byte-identical "
+  +             "to every reading already recorded. Rows taken with it carry "
+  +             "splice_depth=src+tests and must never be pooled with rows without it."
+  +         ),
+  +     )
+        parser.add_argument("--test", action="store_true", help="run self-tests and exit")
+ ✓ (1m 14s)
+  +     parser.add_argument(
+  +         "--splice-src-tests",
+  +         action="store_true",
+  +         help=(
+  +             "#870: also lay pre-task #[cfg(test)] blocks back over post-task src/, "
+  +             "making the reading strictly DEEPER. DEFAULT OFF -- off is byte-identical "
+  +             "to every reading already recorded. Rows taken with it carry "
+  +             "splice_depth=src+tests and must never be pooled with rows without it."
+  ... (3 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "verdict, detail, failin… ✓ (3ms)
+  ▶ edit scripts/counterfactual_green.py (3 → 4 lines)
+  -                 verdict, detail, failing = run_counterfactual(
+  -                     root, row.sha, args.timeout, target=target
+  +                 verdict, detail, failing, splice = run_counterfactual(
+  +                     root, row.sha, args.timeout, target=target,
+  +                     splice_src=args.splice_src_tests,
+                    )
+ ✓ (1m 14s)
+  -                 verdict, detail, failing = run_counterfactual(
+  -                     root, row.sha, args.timeout, target=target
+  +                 verdict, detail, failing, splice = run_counterfactual(
+  +                     root, row.sha, args.timeout, target=target,
+  +                     splice_src=args.splice_src_tests,
+                    )
+  ▶ edit scripts/counterfactual_green.py (1 → 3 lines)
+  -         verdict, detail, failing = run_counterfactual(root, args.commit, args.timeout)
+  +         verdict, detail, failing, splice = run_counterfactual(
+  +             root, args.commit, args.timeout, splice_src=args.splice_src_tests
+  +         )
+ ✓ (1m 14s)
+  -         verdict, detail, failing = run_counterfactual(root, args.commit, args.timeout)
+  +         verdict, detail, failing, splice = run_counterfactual(
+  +             root, args.commit, args.timeout, splice_src=args.splice_src_tests
+  +         )
+  3 tools completed in 2m 33s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

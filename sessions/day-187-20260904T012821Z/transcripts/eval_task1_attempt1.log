@@ -1,0 +1,54 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- files changed in HEAD … ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/coun… ✓ (131ms)
+  3 tools completed in 20.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ledger_line(" scripts/c… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2484,2500p;2551,2568p' s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2470,2494p' scripts/coun… ✓ (4ms)
+  3 tools completed in 6.1s (3 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=2475 && NR<=2492' scrip… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed the blocking defect. Writing the verdict.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (7ms)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+## What I verified
+
+The good half is genuinely good. src_splice_candidates is pure, reuses parse_name_status rather than growing a second status parser, and every exclusion (A/D/R*/non-src//non-.rs/unknown letter) fails toward leaving the file alone — the stated safety property. The flag is action="store_true", default False; --test prints ALL PASSED, exit 0; --help shows the flag with the pooling warning. The splice block sits in the right place (after the pre-tests checkout, before the cargo run) and SPLICE_NO_PRE_MARKER correctly leaves the file alone with the reason in a comment.
+
+## The blocking defect
+
+ledger_line gained a splice=None parameter, and neither production caller passes it:
+
+• :2486 (batch --max-runs path) → `..., verdict, baseline, ts, depth, failing,`
+• :2553 (--commit path) → ..., verdict, baseline_from_verdict(verdict), ts, depth, failing,
+
+Both capture splice from the widened 4-tuple and then never use it. Python raises nothing for an unused local or an unused defaulted kwarg, and the self-tests call ledger_line directly with splice supplied — so the suite is green over a path production never takes. A real --splice-src-tests --record run would splice files, print the counts, and write a row with no splice_depth marker: indistinguishable from the 25 shallower rows, which is precisely the dishonest-rate pooling step 3 exists to prevent.
+
+This is the #618/#653/#658 shape the brief singles out. The file even already carries a guard at :3608 asserting every production ledger_line( hands over failing (#880) — no analogous guard was added for splice, which is exactly why it slipped.
+
+## Also missing
+
+• Step 4's reading was never taken — dreams/counterfactual_verdicts.jsonl is still 25 lines, last touched by 38dae598. "grade it once" is in the task title.
+• Docs untouched — git diff HEAD~1 --name-only returns only the script; CLAUDE.md's last commit is c1f36051 (#886), DREAM.md unmodified.
+
+Product surface is clean: this is a hand-run internal instrument, default-off, byte-identical with the flag absent.
+
+  watch: no files changed this turn — skipping
+

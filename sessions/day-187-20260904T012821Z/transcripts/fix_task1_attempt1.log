@@ -1,0 +1,130 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def ledger_line" -A 60 … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2440,2600p scripts/counte… ✓ (5ms)
+  3 tools completed in 5.4s (3 ✓)
+
+
+I'll pick up by checking the exact state of the two production call sites and the existing failing guard that the evaluator referenced.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ledger_line(" scripts/c… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3600,3650p scripts/counte… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3650,3670p scripts/counte… ✓ (3ms)
+  3 tools completed in 3.6s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2478,2496p scripts/counte… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=2482 && NR<=2492 {print… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.9s (2 ✓)
+
+Both call sites confirmed: they stop at failing. Fixing both in one edit each.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 4 lines)
+                            ledger_line(
+                                row.sha, parent, day, row.subject, row.population,
+  -                             verdict, baseline, ts, depth, failing,
+  +                             verdict, baseline, ts, depth, failing, splice,
+                            ),
+ ✓ (1m 14s)
+                            ledger_line(
+                                row.sha, parent, day, row.subject, row.population,
+  -                             verdict, baseline, ts, depth, failing,
+  +                             verdict, baseline, ts, depth, failing, splice,
+                            ),
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 5 lines)
+                    ledger_line(
+                        full_sha, parent, day, subject, subject_population(subject),
+                        verdict, baseline_from_verdict(verdict), ts, depth, failing,
+  +                     splice,
+                    ),
+ ✓ (1m 14s)
+                    ledger_line(
+                        full_sha, parent, day, subject, subject_population(subject),
+                        verdict, baseline_from_verdict(verdict), ts, depth, failing,
+  +                     splice,
+                    ),
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the guard that would have caught this — the file already has one for failing, and its absence for splice is exactly why this slipped.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 12 lines)
+        for _n, _site in enumerate(_sites, 1):
+            check(f"production ledger_line call site {_n} hands over `failing`",
+                  "failing" in _site, _site)
+  +         # #870 slice 2: the SAME guard for `splice`, and the reason it exists is that its
+  +         # absence is precisely how slice 2 shipped broken. `splice` is a DEFAULTED kwarg,
+  +         # so a call site that omits it raises nothing, `--test` stays green, and a real
+  +         # run with the flag on splices files, prints the counts, and writes a row with no
+  +         # `splice_depth` marker -- i.e. a DEEP reading recorded as a shallow one, which is
+  +         # the one thing step 3 exists to prevent. Python cannot fail on an unused local;
+  +         # this can.
+  +         check(f"production ledger_line call site {_n} hands over `splice`",
+  +               "splice" in _site, _site)
+ ✓ (1m 14s)
+        for _n, _site in enumerate(_sites, 1):
+            check(f"production ledger_line call site {_n} hands over `failing`",
+                  "failing" in _site, _site)
+  +         # #870 slice 2: the SAME guard for `splice`, and the reason it exists is that its
+  +         # absence is precisely how slice 2 shipped broken. `splice` is a DEFAULTED kwarg,
+  +         # so a call site that omits it raises nothing, `--test` stays green, and a real
+  +         # run with the flag on splices files, prints the counts, and writes a row with no
+  +         # `splice_depth` marker -- i.e. a DEEP reading recorded as a shallow one, which is
+  ... (4 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (64ms)
+  2 tools completed in 1m 17s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive control — one atomic mutate→run→restore, so the restore cannot be forgotten:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (6 lines) ✓ (136ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The guard fires precisely on the defect the evaluator found. Now the second control from the task — serially, never in parallel:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def src_splice_candidat… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (13 lines) ✓ (158ms)
+  2 tools completed in 5.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The second control fired (2 failures) but I need to see which — the direction that proves the byte-identity guard tests the pass-through:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (12 lines) ✓ (156ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls confirmed. Now Step 4 — the reading. First pick a sha already recorded EARNED:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+A vacuous reading (0 candidates) would teach nothing — let me pick one that actually exercises the splice:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for s in 3bb… (3 lines) ✓ (10ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

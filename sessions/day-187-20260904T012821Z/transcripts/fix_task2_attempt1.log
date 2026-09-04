@@ -1,0 +1,205 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the current state of the work — what landed, and what Step 2 needs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restricted" src/help.rs ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 230,260p src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RESTRICTED_REMOVED_TOOL… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1470,1700p src/cli.rs ✓ (5ms)
+  5 tools completed in 6.5s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the picture. Step 1 landed; Step 2 (the disclosure) is entirely missing, and a pre-existing test actively pins the now-false sentence. Let me read the exact test and doc comments before editing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 5136,5195p src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1500,1536p src/cli.rs && … ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.2s (2 ✓)
+
+The tool is collapsing comment lines. Let me read the doc comments directly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1455..1485  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1508..1522 ✓ (1ms)
+ ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1522..1538  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1614..1626 ✓ (1ms)
+ ✓ (2ms)
+  4 tools completed in 3.7s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have everything I need. Now let me land Step 2, starting with the false sentence in restricted_mode_note.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (13 → 20 lines)
+  -     // The anti-false-confinement sentence. Present in every branch, on purpose.
+  +     // Clause D, present in every branch on purpose. The tool names are read
+  +     // from RESTRICTED_REMOVED_TOOLS rather than spelled again here: two copies
+  +     // of a list agree the day they are written and diverge forever after, so a
+  +     // note that named its own inventory would go stale the moment the const
+  +     // grows. It also states what was NOT done — file tools remain, and `--read`
+  +     // is still the way to stop writes — because a mode switch that overstates
+  +     // its own confinement is the exact defect this clause was added to fix.
+  +     let removed = RESTRICTED_REMOVED_TOOLS.join(", ");
+        if plain {
+            msg.push_str(&format!(
+  -             "\n{bullet} command execution is NOT disabled: use --read or --no-tools for that"
+  +             "\n{bullet} command-running tools removed: {removed} (file tools remain; use --read to stop writes)"
+            ));
+        } else {
+            msg.push_str(&format!(
+  -             "\n{bullet} command execution is NOT disabled — use --read or --no-tools for that"
+  +             "\n{bullet} command-running tools removed — {removed} (file tools remain; use --read to stop writes)"
+            ));
+        }
+  ... (1 more lines)
+ ✓ (1m 57s)
+  -     // The anti-false-confinement sentence. Present in every branch, on purpose.
+  +     // Clause D, present in every branch on purpose. The tool names are read
+  +     // from RESTRICTED_REMOVED_TOOLS rather than spelled again here: two copies
+  +     // of a list agree the day they are written and diverge forever after, so a
+  +     // note that named its own inventory would go stale the moment the const
+  +     // grows. It also states what was NOT done — file tools remain, and `--read`
+  +     // is still the way to stop writes — because a mode switch that overstates
+  +     // its own confinement is the exact defect this clause was added to fix.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the pre-existing test pins the now-false sentence. Now the two stale doc comments:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (14 → 19 lines)
+    ///   into `should_prompt_for_trust`, `set_trust_project_to` and the ordering of
+    ///   the trust prompt against five gate call sites in `parse_args`; #869 is the
+    ///   standing warning about exactly that blast radius.
+  - /// - **Clause D, remove command-running tools.** `--no-tools` is all-or-nothing
+  - ///   and per-tool removal is new machinery. **So `--restricted` does NOT disable
+  - ///   bash**, which is why `restricted_mode_note` says so outright in every
+  - ///   branch — a mode switch that overstates its own confinement is worse than an
+  - ///   invisible one.
+  + ///
+  + /// **Superseded, recorded rather than erased:** this list used to carry a
+  + /// *"Clause D, remove command-running tools"* entry ending **"so `--restricted`
+  + /// does NOT disable bash"**, and `restricted_mode_note` said so in every branch.
+  + /// That is the true record of the first slice and is **false as of the second**:
+  + /// clause D landed as `RESTRICTED_REMOVED_TOOLS` plus `restricted_disallowed_tools`
+  + /// (see those two items), so the note now names the tools it removed instead.
+  + /// The clause worth keeping is the reasoning — a mode switch that overstates its
+  + /// own confinement is worse than an invisible one — which is why the *disclosure*
+  + /// moved in the same diff as the behaviour rather than a session later.
+    ///
+    /// The env-var form (`YOYO_RESTRICTED=1`) is also deferred: it is the two-source
+  ... (1 more lines)
+ ✓ (1m 56s)
+    ///   into `should_prompt_for_trust`, `set_trust_project_to` and the ordering of
+    ///   the trust prompt against five gate call sites in `parse_args`; #869 is the
+    ///   standing warning about exactly that blast radius.
+  - /// - **Clause D, remove command-running tools.** `--no-tools` is all-or-nothing
+  - ///   and per-tool removal is new machinery. **So `--restricted` does NOT disable
+  - ///   bash**, which is why `restricted_mode_note` says so outright in every
+  - ///   branch — a mode switch that overstates its own confinement is worse than an
+  - ///   invisible one.
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (8 → 11 lines)
+    /// The one statement of what `--restricted` says it did, so the startup note and
+    /// the `--help` text cannot drift into disagreeing about it.
+    ///
+  - /// Names each clause **and its actual outcome**, and names what was **not** done
+  - /// (command execution is still available) in every branch — an invisible mode
+  - /// switch is a bug even when it is the right switch, and one that overstates its
+  - /// own confinement is worse. Glyph-free under `plain`: markers **and** em
+  - /// dashes, since an assertion has caught the em-dash half before.
+  + /// Names each clause **and its actual outcome**, including the tools clause D
+  + /// removed — read from `RESTRICTED_REMOVED_TOOLS`, never spelled again here — and
+  + /// what was **not** done (file tools remain; `--read` is still the way to stop
+  + /// writes). An invisible mode switch is a bug even when it is the right switch,
+  + /// and one that misstates its own confinement is worse in either direction:
+  + /// claiming a fence you do not have, or — as this note did until clause D landed
+  + /// — denying one you now do. Glyph-free under `plain`: markers **and** em dashes,
+  + /// since an assertion has caught the em-dash half before.
+ ✓ (1m 56s)
+    /// The one statement of what `--restricted` says it did, so the startup note and
+    /// the `--help` text cannot drift into disagreeing about it.
+    ///
+  - /// Names each clause **and its actual outcome**, and names what was **not** done
+  - /// (command execution is still available) in every branch — an invisible mode
+  - /// switch is a bug even when it is the right switch, and one that overstates its
+  - /// own confinement is worse. Glyph-free under `plain`: markers **and** em
+  - /// dashes, since an assertion has caught the em-dash half before.
+  ... (8 more lines)
+  2 tools completed in 4m 0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the pre-existing test that pins the false sentence — inverted rather than deleted, so the defect becomes a green invariant:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (20 → 47 lines)
+  -         // The anti-false-confinement sentence is present in EVERY branch: the
+  -         // flag does not disable bash (clause D is deferred), so a user who
+  -         // believes otherwise is in exactly the state #879 is about.
+  +         // Clause D is present in EVERY branch: the flag removes the
+  +         // command-running tools, so a note that stayed silent about it — or, as
+  +         // this one did until clause D landed, actively denied it — leaves the
+  +         // user with a wrong belief about their own confinement, which is the
+  +         // state #879 is about in both directions.
+            for effects in [&fenced, &already, &unresolved] {
+                for plain in [false, true] {
+                    let note = restricted_mode_note(effects, plain);
+  + 
+  +                 // Every removed tool is named. Read from the const, never
+  +                 // hand-typed, so growing RESTRICTED_REMOVED_TOOLS without
+  +                 // updating the note fails here instead of shipping a stale
+  +                 // inventory of the run's own confinement.
+  +                 for tool in RESTRICTED_REMOVED_TOOLS {
+  +                     assert!(
+  +                         note.contains(tool),
+  +                         "clause D must name every removed tool ({tool} missing): {note}"
+  ... (31 more lines)
+ ✓ (2m 9s)
+  -         // The anti-false-confinement sentence is present in EVERY branch: the
+  -         // flag does not disable bash (clause D is deferred), so a user who
+  -         // believes otherwise is in exactly the state #879 is about.
+  +         // Clause D is present in EVERY branch: the flag removes the
+  +         // command-running tools, so a note that stayed silent about it — or, as
+  +         // this one did until clause D landed, actively denied it — leaves the
+  +         // user with a wrong belief about their own confinement, which is the
+  +         // state #879 is about in both directions.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo restricted… ✓ (202ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 17s (2 ✓)
+
+All 8 restricted tests pass, including the glyph-free/ASCII plain-mode guard. Now src/help.rs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (12 → 13 lines)
+        let _ = writeln!(
+            s,
+  -         "  --restricted      Confine this run: ignore project settings (as --safe-mode) and"
+  +         "  --restricted      Confine this run: ignore project settings (as --safe-mode), fence"
+        );
+        let _ = writeln!(
+            s,
+  -         "                    fence file tools to the working directory. Does NOT disable"
+  +         "                    file tools to the working directory, and remove the"
+        );
+        let _ = writeln!(
+            s,
+  -         "                    command execution — use --read or --no-tools for that"
+  +         "                    command-running tools (bash, sub_agent). File tools remain —"
+        );
+  +     let _ = writeln!(s, "                    use --read to stop writes");

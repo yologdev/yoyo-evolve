@@ -1,0 +1,103 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by confirming the current state — what landed, what didn't.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The evaluator is right: wiring landed, reading and docs did not. Let me verify the script state first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (127ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Wiring is intact. Now Step 4 — positive control first, as one atomic mutate→run→restore.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def src_splice_candida… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up at Step 4. Positive control first, as one atomic mutate→run→restore (with the sabotage marker per repo rule, so it can never land):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (11 lines) ✓ (157ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired correctly: exactly 2 tests red (both splice-select, including the anti-vacuous one) while the flag-off byte-identity guard stayed green — that direction proves the guard tests the pass-through. Restore gave a byte-empty diff.
+
+Now the reading. Picking an already-EARNED sha:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for s in b398ffcf 3bbdd23f 01387… ✓ (44ms)
+  2 tools completed in 8.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking b398ffcf — already EARNED, and 3 M src/*.rs candidates, so the splicer has the most to actually do.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (63ms)
+
+Taking the reading now (~3m: baseline + counterfactual):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 560 python3 scripts/coun… ✓ (5m 5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The reading came back `REGISTER_DRIFT` — not one of the three outcomes the task anticipated. Let me get the recorded row and understand the mechanism before writing it up.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l dreams… (7 lines) ✓ (27ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reading recorded: splice_depth: src+tests, src_spliced: 3, src_splice_refused: 0, verdict `EARNED` → `REGISTER_DRIFT`. Let me verify the mechanism rather than guess at it:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --n… (12 lines) ✓ (95ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Mechanism confirmed by measurement, not inference. One more number to make the claim precise:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "pre-task register entry:" … ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That contradicts my hypothesis — +332 growth should already be fatal at tests-only depth. Let me check the earlier row rather than assume:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (26ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both rows exist for the same commit, but my arithmetic says tests-only depth should also have been red. I won't invent a mechanism — one cheap check first:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Same parent, so the delta is attributable to the flag or to code drift between sessions. Running the flag-OFF control with today's code — decisive, and it's the before/after the task actually asks for (unrecorded, so it adds no redundant row):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 560 python3 scripts/coun…

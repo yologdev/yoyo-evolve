@@ -1,0 +1,61 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restricted" CLAUDE.md |… ✓ (7ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~2 --stat && echo "…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (14ms)
+ ✓ (204ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "restricted[^.]\{0,300\}…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (7ms)
+ ✓ (14ms)
+  6 tools completed in 16.1s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 ./target/debug/yoyo -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restricted_disallowed_t… ✓ (21ms)
+ ✓ (770ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/a…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2485,2512p' src/cli.rs ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '870,935p' src/agent_buil… ✓ (4ms)
+  5 tools completed in 11.2s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '876,884p' src/agent_buil… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_sub_agent_tool… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 19.4s (2 ✓)
+
+I have decisive evidence. Writing the verdict.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 26s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md. Evaluation complete.
+
+Verdict: FAIL
+
+The decisive finding, traced rather than inferred:
+
+1. parse_args:2505 sets `config.disallowed_tools = ["bash", "sub_agent"] under --restricted`. ✓
+2. AgentConfig::build_agent applies that list at src/agent_builder.rs:907-908 via tools.retain(...).
+3. It then pushes the sub-agent tool unconditionally at :951, after the filter — and that file's own comment at :880 says out loud that disallowed_tools "couldn't catch" sub_agent/shared_state because "they were added after filtering".
+4. build_sub_agent_tool hands the child a raw BashTool (`src/tools.rs:1388) with no reference to disallowed_tools`.
+
+So bash is genuinely removed from the top-level set, sub_agent survives, and the surviving sub_agent builds its own shell — command execution is still reachable in one call. That is verbatim the "fence with a gate in it" the new const's doc claims to close.
+
+The reason this is a FAIL rather than a partial-credit PASS is the direction the disclosure moved: the pre-change help text said "Does NOT disable command execution" — honest and limited. It now says *"remove the command-running tools (bash, sub_agent)"*, confirmed in the built binary. A user reading that has a wrong belief about their confinement on a security flag, which is worse than the gap being fixed, and it is the exact failure class the task description itself names.
+
+The task anticipated this and supplied the escape hatch — *"If the union cannot be expressed without editing a third source file, stop and write that down rather than widening — that is the sentence #884 needed and did not have."* The union genuinely cannot be expressed for `sub_agent` without touching `agent_builder.rs`, and that sentence was not written; the diff shipped the claim instead.
+
+Two non-blocking items noted as cleanup feedback rather than failure grounds: the register drifted again during the task (src/cli.rs 6520→6562, src/help.rs 2755→2756, both non-fatal warnings — step 0 was done, the end-of-task re-run was not), and CLAUDE.md's cli.rs bullet was not updated as the Docs section asked.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
