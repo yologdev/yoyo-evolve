@@ -110,6 +110,48 @@ unset, so `rm -rf "${BUILD_DIR:?}/build"` passes this check — the
 expansion can never silently widen the blast radius. Existing
 destructive-pattern rules still apply on top.
 
+## Restricting a session with `--restricted`
+
+`--restricted` is an **opt-in narrowing** for pointing yoyo at code you
+do not trust. It is off by default: without the flag your tool set is
+exactly what it was.
+
+```bash
+yoyo --restricted -p "what does this repo do?"
+```
+
+It does two things:
+
+1. **Turns on everything `--safe-mode` turns on** — no project-local
+   MCP servers, hooks, or `permissions.allow` from the repo's own
+   `.yoyo.toml`.
+2. **Removes the command-running tools.** Today that is `bash`. yoyo
+   prints what it removed at startup, e.g. `🔒 Disabled tools: bash`.
+
+It only ever **narrows**. If you already passed `--disallowed-tools` or
+`--allow-dir`, your own list is kept and the restriction is added to it —
+`--restricted` can never widen a fence you are already inside.
+
+### What it does *not* do
+
+**It is not a sandbox**, and it is worth being precise about the two
+gaps rather than trusting the name:
+
+- **File tools remain.** `write_file` and `edit_file` still work, so
+  `--restricted` does **not** stop writes. Use `--read` for that, and
+  `--allow-dir` / `--deny-dir` to fence which paths any file tool may
+  touch.
+- **Command execution is one hop away.** A dispatched `sub_agent` builds
+  its own tool set, so it can still get a shell. yoyo says this outright
+  in its own startup note rather than letting the flag's name imply more
+  than it delivers.
+
+For a hard read-only session, combine them:
+
+```bash
+yoyo --restricted --read -p "review this code"
+```
+
 ## What happens in practice
 
 A typical evolution session:
