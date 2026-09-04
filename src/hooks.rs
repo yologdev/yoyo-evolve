@@ -57,6 +57,70 @@ fn cap_hook_stderr(raw: &str, head: usize, tail: usize) -> String {
     )
 }
 
+/// Chars of tool output handed to a hook through `TOOL_OUTPUT` by
+/// [`hook_tool_output`].
+///
+/// A **judgment threshold, not a measurement**: nothing measured says 1000 is
+/// right. It is the historical value (`output.chars().take(1000)`) and is kept
+/// verbatim so no existing hook sees a different amount of text — this change
+/// is about how the cut and the channel are *reported*, never about how much is
+/// sent. The unit is **chars**, matching the value it replaces; it is
+/// deliberately *not* switched to bytes like [`HOOK_STDERR_HEAD_BYTES`], since
+/// changing the unit would silently move the budget for every hook that exists.
+const HOOK_TOOL_OUTPUT_MAX_CHARS: usize = 1000;
+
+/// Prepare tool output for the `TOOL_OUTPUT` environment variable of a shell hook.
+///
+/// Two things the raw output cannot do, both properties of the **channel** rather
+/// than of anything a hook author controls:
+///
+/// 1. **A NUL byte is unrepresentable.** `execve`'s `envp` is an array of
+///    NUL-terminated strings, so a value containing `\0` cannot be passed at all;
+///    Rust's `Command` converts env values to `CString` at spawn time and returns
+///    `InvalidInput` ("nul byte found in provided data"). Measured: a post-hook
+///    whose tool output carried a NUL (a `bash` call printing binary, a
+///    `read_file` on a non-text file) failed to spawn, and `post_execute` swallows
+///    a spawn error (`Err(_) => Ok(passthrough)`) — so the user's hook **silently
+///    never ran**, for a reason nothing anywhere reported. NUL is therefore
+///    **escaped as the four visible characters `\x00`, never deleted**: a silently
+///    dropped byte is the bug, because the fact that the output contained a NUL is
+///    itself information the hook may want. Only NUL is touched — newlines, tabs
+///    and ESC are legal in an env var, and stripping them would change what every
+///    existing hook receives.
+/// 2. **A silent truncation is a confident wrong answer.** The cut is marked in
+///    band, in the same vocabulary [`cap_hook_stderr`] uses, so a hook grepping
+///    `$TOOL_OUTPUT` can tell *truncated* from *absent*. This was the last unmarked
+///    elision in the repo; `/run`'s `CappedCapture`, `/bg`, `AST_MAX_OUTPUT_LINES`,
+///    `truncate_long_line` and `cap_hook_stderr` itself all mark theirs.
+///
+/// **Escape-then-cap is load-bearing, not stylistic.** Escaping *lengthens* the
+/// string, so capping first would let an escaped tail push past the budget and
+/// would make the reported dropped count wrong — a marker that lies is worse than
+/// no marker. Both numbers are measured over the escaped string, which is the
+/// string actually being cut.
+///
+/// At or under budget with no NUL the input is returned **byte-identical**, which
+/// is every hook anyone has today.
+fn hook_tool_output(output: &str, max_chars: usize) -> String {
+    // Escape first: this is the string that will actually be cut.
+    let escaped = if output.contains('\0') {
+        output.replace('\0', "\\x00")
+    } else {
+        output.to_string()
+    };
+
+    let total = escaped.chars().count();
+    if total <= max_chars {
+        return escaped;
+    }
+
+    let kept: String = escaped.chars().take(max_chars).collect();
+    let dropped = total - max_chars;
+    format!(
+        "{kept}\n… [yoyo: {dropped} chars elided — hook TOOL_OUTPUT is capped at {max_chars} chars]"
+    )
+}
+
 /// Result returned by a post-hook, carrying both the (possibly modified) output
 /// and optional feedback that will be injected into the agent's context.
 ///
@@ -375,8 +439,10 @@ impl Hook for ShellHook {
         }
 
         let params_str = params.to_string();
-        // Truncate output to 1000 chars for the env var
-        let truncated_output: String = output.chars().take(1000).collect();
+        // Cap and escape for the env-var channel: marks its own cut and makes a
+        // NUL representable, so a binary-carrying tool output can no longer make
+        // the spawn fail and silently skip the user's hook. See `hook_tool_output`.
+        let truncated_output = hook_tool_output(output, HOOK_TOOL_OUTPUT_MAX_CHARS);
         let env_vars = vec![
             ("TOOL_NAME", tool_name),
             ("TOOL_PARAMS", params_str.as_str()),
@@ -1333,6 +1399,119 @@ mod tests {
              PostHookResult::with_feedback, so an unbounded one can overflow the \
              conversation and wedge the session (#844). The cap belongs at capture \
              time so every consumer of the returned pair inherits it."
+        );
+    }
+    // --- Round 93 (#844's missing twin): the TOOL_OUTPUT channel ---------------
+    //
+    // Two defects with one mechanism — the value handed to a hook through the
+    // `TOOL_OUTPUT` env var was never prepared for the env-var *channel*:
+    //   * a NUL byte is unrepresentable in `execve` envp, so `Command::spawn`
+    //     returned `InvalidInput` and `post_execute`'s `Err(_) => Ok(passthrough)`
+    //     swallowed it — the user's hook silently never ran;
+    //   * the truncation was silent, so a hook grepping `$TOOL_OUTPUT` could not
+    //     tell *truncated* from *absent*.
+    // Pinned at the emission point below (`ShellHook::post_execute`'s env value)
+    // via the pure function that produces it; `run_command` spawns real processes
+    // and is not driven by any test.
+
+    /// NEAR-MISS GUARD, and the whole regression surface: ordinary output that is
+    /// within budget and carries no NUL must be returned **byte-identical**.
+    /// Asserted with a whole-string `assert_eq!` rather than a `contains`, because
+    /// a discriminator tested only on the side that fires is vacuous green — this
+    /// is what every hook anyone has today receives.
+    #[test]
+    fn hook_tool_output_ordinary_output_is_byte_identical() {
+        for raw in [
+            "",
+            "ok",
+            "line one\nline two\ttabbed\r\n",
+            "unicode: 🐙 näme ✓",
+            &"x".repeat(HOOK_TOOL_OUTPUT_MAX_CHARS),
+        ] {
+            assert_eq!(
+                hook_tool_output(raw, HOOK_TOOL_OUTPUT_MAX_CHARS),
+                raw,
+                "in-budget NUL-free output must pass through untouched"
+            );
+        }
+    }
+
+    /// The boundary is pinned on BOTH sides: exactly at the cap is untouched, one
+    /// char over is marked. Testing only the firing side would leave the
+    /// pass-through unguarded.
+    #[test]
+    fn hook_tool_output_boundary_is_pinned_on_both_sides() {
+        let at = "a".repeat(HOOK_TOOL_OUTPUT_MAX_CHARS);
+        assert_eq!(hook_tool_output(&at, HOOK_TOOL_OUTPUT_MAX_CHARS), at);
+
+        let over = "a".repeat(HOOK_TOOL_OUTPUT_MAX_CHARS + 1);
+        let got = hook_tool_output(&over, HOOK_TOOL_OUTPUT_MAX_CHARS);
+        assert_ne!(got, over, "one char over budget must be truncated");
+        assert!(
+            got.contains("1 chars elided"),
+            "the cut must be marked in band, got: {got}"
+        );
+    }
+
+    /// The marker must not lie: the reported dropped count has to agree with what
+    /// was actually dropped, and the kept prefix must be the real prefix.
+    #[test]
+    fn hook_tool_output_marker_reports_the_real_dropped_count() {
+        let raw = "b".repeat(HOOK_TOOL_OUTPUT_MAX_CHARS + 137);
+        let got = hook_tool_output(&raw, HOOK_TOOL_OUTPUT_MAX_CHARS);
+        assert!(
+            got.contains("137 chars elided"),
+            "dropped count must match reality, got: {got}"
+        );
+        assert!(
+            got.starts_with(&"b".repeat(HOOK_TOOL_OUTPUT_MAX_CHARS)),
+            "the kept half must be the real prefix"
+        );
+        assert!(
+            got.contains(&format!("capped at {HOOK_TOOL_OUTPUT_MAX_CHARS} chars")),
+            "the marker must name the budget it enforced"
+        );
+    }
+
+    /// A NUL is ESCAPED, never deleted — and the result carries no NUL, which is
+    /// the property that makes the spawn succeed at all. Verified against the real
+    /// channel before this landed: `Command::env` with a NUL-carrying value returns
+    /// `InvalidInput: nul byte found in provided data`, while the identical command
+    /// without the NUL spawns fine.
+    #[test]
+    fn hook_tool_output_escapes_nul_rather_than_dropping_it() {
+        let raw = "before\u{0}after";
+        assert!(raw.contains('\0'), "fixture must really carry a NUL");
+
+        let got = hook_tool_output(raw, HOOK_TOOL_OUTPUT_MAX_CHARS);
+        assert_eq!(got, "before\\x00after");
+        assert!(
+            !got.contains('\0'),
+            "no NUL may survive — that is what unblocks Command::spawn"
+        );
+        assert!(
+            got.contains("\\x00"),
+            "the NUL must stay visible: a silently dropped byte is the bug"
+        );
+    }
+
+    /// ESCAPE-THEN-CAP is load-bearing: escaping lengthens the string, so capping
+    /// first would let an escaped tail push past the budget AND would make the
+    /// reported dropped count wrong. Both numbers are measured over the escaped
+    /// string, which is the string actually being cut.
+    #[test]
+    fn hook_tool_output_escapes_before_capping_so_the_count_is_honest() {
+        // 999 filler chars + one NUL = 1000 chars raw, but 1003 chars escaped.
+        let raw = format!("{}\u{0}", "c".repeat(HOOK_TOOL_OUTPUT_MAX_CHARS - 1));
+        assert_eq!(raw.chars().count(), HOOK_TOOL_OUTPUT_MAX_CHARS);
+
+        let got = hook_tool_output(&raw, HOOK_TOOL_OUTPUT_MAX_CHARS);
+        assert!(!got.contains('\0'));
+        // Escaped length is 1003, so exactly 3 chars fall past the budget.
+        assert!(
+            got.contains("3 chars elided"),
+            "the count must be measured over the ESCAPED string, got tail: {}",
+            &got[got.len().saturating_sub(80)..]
         );
     }
 }
