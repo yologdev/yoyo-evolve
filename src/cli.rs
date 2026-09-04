@@ -1553,6 +1553,66 @@ pub(crate) fn restricted_mode_effects(
     }
 }
 
+/// Tools `--restricted` removes, and why each one is on the list.
+///
+/// - `bash` — the command-running tool the flag's name promises to remove. A
+///   flag called `--restricted`, pointed at a stranger's repository, handing
+///   back a live shell is not a missing feature: it is a *wrong belief about
+///   confinement*, and nobody complains because nothing visibly breaks.
+/// - `sub_agent` — a dispatched sub-agent is built with its own tool set,
+///   including `bash` (`src/tools.rs` builds it independently of this list), so
+///   leaving it would make the whole restriction bypassable in one call.
+///   Removing `bash` alone is a fence with a gate in it.
+///
+/// `web_search` is deliberately **not** here. It runs no local command, so
+/// network egress is a different question with a different answer, and folding
+/// it in would widen a security change past what its own argument supports.
+///
+/// This is a *tool* list, not a mode: `--restricted` is **not** `/read` mode.
+/// File tools (`write_file`, `edit_file`, `rename_symbol`) keep working — the
+/// flag fences *where* they may write (clause B) and removes *command
+/// execution*, and `--read` is still the way to stop writes.
+pub(crate) const RESTRICTED_REMOVED_TOOLS: &[&str] = &["bash", "sub_agent"];
+
+/// Fold `RESTRICTED_REMOVED_TOOLS` into whatever disallow list the user already
+/// has. Pure, so the rule is table-testable without building an agent.
+///
+/// Three rules, and the first is the safety property:
+///
+/// 1. **UNION, never replacement.** Every entry the user passed survives.
+///    Replacing them would let `--restricted` *widen* a fence the user is
+///    already living inside — the one direction a safety flag must never move.
+///    Same asymmetry `gate_project_permissions` already encodes for
+///    `permissions.deny`.
+/// 2. **Deduplicate**, so `--restricted --disallowed-tools bash` does not emit
+///    `bash` twice.
+/// 3. **`restricted == false` returns the input byte-identically**, which is
+///    every existing user and the entire regression surface.
+///
+/// Note on ordering at the call site: this runs *after* the
+/// `--allowed-tools`/`--disallowed-tools` conflict check, deliberately. That
+/// check exists to catch a **user** passing two contradictory flags; running
+/// this first would make `--restricted --allowed-tools read_file` — a perfectly
+/// coherent invocation — fail with a conflict error it did not earn.
+/// `AgentConfig::build_agent` applies the allow-retain and the disallow-remove
+/// in sequence, so both narrow correctly when both are populated.
+pub(crate) fn restricted_disallowed_tools(
+    user_disallowed: &[String],
+    restricted: bool,
+) -> Vec<String> {
+    if !restricted {
+        return user_disallowed.to_vec();
+    }
+    let mut tools = user_disallowed.to_vec();
+    for name in RESTRICTED_REMOVED_TOOLS {
+        let name = (*name).to_string();
+        if !tools.contains(&name) {
+            tools.push(name);
+        }
+    }
+    tools
+}
+
 /// The one statement of what `--restricted` says it did, so the startup note and
 /// the `--help` text cannot drift into disagreeing about it.
 ///
@@ -2413,6 +2473,21 @@ directory ({e}); this run is trusted, later runs will not be."
         if !config.allowed_tools.is_empty() && !config.disallowed_tools.is_empty() {
             eprintln!("{RED}error:{RESET} Cannot use both --allowed-tools and --disallowed-tools");
             return None;
+        }
+    }
+
+    // #879 slice 2: --restricted removes the command-running tools.
+    //
+    // Placed AFTER the conflict check on purpose. That check exists to catch a
+    // **user** passing two contradictory flags; folding restricted's tools in
+    // first would make `--restricted --allowed-tools read_file` — a perfectly
+    // coherent invocation — die with a conflict error it did not earn.
+    // `AgentConfig::build_agent` applies the allow-retain and the
+    // disallow-remove in sequence, so both narrow correctly when both are set.
+    if restricted {
+        if let Some(ref mut config) = result {
+            config.disallowed_tools =
+                restricted_disallowed_tools(&config.disallowed_tools, restricted);
         }
     }
 
@@ -4971,6 +5046,90 @@ command = "server-two"
             vec!["/a".to_string(), "/b".to_string()],
             "the incoming allow list must survive byte-identically"
         );
+    }
+
+    // ---- #879 slice 2: --restricted removes the command-running tools --------
+
+    #[test]
+    fn restricted_disallowed_tools_table() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+
+        // Rule 3, and it is the entire regression surface: no --restricted means
+        // the list a caller receives is byte-identical. Asserted as a whole
+        // value, never a `contains`, because a partial assertion is a green
+        // light over the fragment it does not inspect.
+        assert_eq!(
+            restricted_disallowed_tools(&[], false),
+            Vec::<String>::new(),
+            "no --restricted: an empty list must stay empty"
+        );
+        assert_eq!(
+            restricted_disallowed_tools(&s(&["web_search"]), false),
+            s(&["web_search"]),
+            "no --restricted: a user's list must pass through byte-identically"
+        );
+
+        // The fix itself: both command-running tools are removed.
+        assert_eq!(
+            restricted_disallowed_tools(&[], true),
+            s(&["bash", "sub_agent"]),
+            "--restricted must remove bash AND sub_agent — removing bash alone \
+             is a fence with a gate in it, since a sub-agent builds its own bash"
+        );
+
+        // Rule 1 — UNION, never replacement. This is the safety property: a
+        // replacement would let --restricted *widen* a fence the user is already
+        // living inside, the one direction a safety flag must never move.
+        assert_eq!(
+            restricted_disallowed_tools(&s(&["web_search", "todo"]), true),
+            s(&["web_search", "todo", "bash", "sub_agent"]),
+            "every entry the user passed must survive alongside the new ones"
+        );
+
+        // Rule 2 — deduplicate, in both orders and for both names.
+        assert_eq!(
+            restricted_disallowed_tools(&s(&["bash"]), true),
+            s(&["bash", "sub_agent"]),
+            "--restricted --disallowed-tools bash must not emit bash twice"
+        );
+        assert_eq!(
+            restricted_disallowed_tools(&s(&["sub_agent", "bash"]), true),
+            s(&["sub_agent", "bash"]),
+            "already-complete list: nothing added, nothing reordered"
+        );
+    }
+
+    #[test]
+    fn restricted_does_not_remove_the_file_tools_or_web_search() {
+        // THE near-miss guard, and the half that matters: a discriminator tested
+        // only on the side that fires is vacuous green. --restricted is NOT
+        // /read mode — it narrows *command execution* and nothing else, so the
+        // write-class tools must still be absent from the disallow list.
+        //
+        // web_search is checked in the same breath because it is the deliberate
+        // exclusion: it runs no local command, so network egress is a different
+        // question with a different answer.
+        let out = restricted_disallowed_tools(&[], true);
+        for still_allowed in [
+            "write_file",
+            "edit_file",
+            "read_file",
+            "rename_symbol",
+            "list_files",
+            "search",
+            "todo",
+            "web_search",
+        ] {
+            assert!(
+                !out.contains(&still_allowed.to_string()),
+                "--restricted must not remove `{still_allowed}` — it is not /read mode, \
+                 and web_search runs no local command"
+            );
+        }
+
+        // Anti-vacuous: the loop above passes trivially if the function returns
+        // nothing at all, so pin that it really did remove something.
+        assert_eq!(out.len(), RESTRICTED_REMOVED_TOOLS.len());
     }
 
     #[test]

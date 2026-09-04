@@ -155,7 +155,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // boundary — `gate_project_notify_command` + `project_notify_refusal_message`
     // and their table tests. A project-local `notify_command` is arbitrary shell
     // (`sh -c`), so it is executable code by the same test #820 applied to hooks.
-    ("src/cli.rs", 6361),
+    ("src/cli.rs", 6520),
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
@@ -290,7 +290,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 164: +45 lines — provenance corroboration gate for filter_test_output
     // (a `✓` glyph is a shape, a runner summary is provenance) + its regression tests.
     ("src/format/output.rs", 2885),
-    ("src/help.rs", 2751), // Day 179: +41 paid off (was 2698 at Day 174).
+    ("src/help.rs", 2755), // Day 187: +4 paid off (was 2751 at Day 179).
     // Day 161 (#662 half 1): +9 lines — run_prompt_auto_retry now breaks out of
     // the retry loop (with one dim stderr line) on deterministic tool refusals
     // instead of burning MAX_AUTO_RETRIES on an identical answer.
