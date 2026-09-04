@@ -1524,11 +1524,16 @@ pub(crate) enum RestrictedDirOutcome {
 ///   into `should_prompt_for_trust`, `set_trust_project_to` and the ordering of
 ///   the trust prompt against five gate call sites in `parse_args`; #869 is the
 ///   standing warning about exactly that blast radius.
-/// - **Clause D, remove command-running tools.** `--no-tools` is all-or-nothing
-///   and per-tool removal is new machinery. **So `--restricted` does NOT disable
-///   bash**, which is why `restricted_mode_note` says so outright in every
-///   branch — a mode switch that overstates its own confinement is worse than an
-///   invisible one.
+///
+/// **Superseded, recorded rather than erased:** this list used to carry a
+/// *"Clause D, remove command-running tools"* entry ending **"so `--restricted`
+/// does NOT disable bash"**, and `restricted_mode_note` said so in every branch.
+/// That is the true record of the first slice and is **false as of the second**:
+/// clause D landed as `RESTRICTED_REMOVED_TOOLS` plus `restricted_disallowed_tools`
+/// (see those two items), so the note now names the tools it removed instead.
+/// The clause worth keeping is the reasoning — a mode switch that overstates its
+/// own confinement is worse than an invisible one — which is why the *disclosure*
+/// moved in the same diff as the behaviour rather than a session later.
 ///
 /// The env-var form (`YOYO_RESTRICTED=1`) is also deferred: it is the two-source
 /// OR shape `continue_on_silence` and `wait_for_reset` already use and can be
@@ -1616,11 +1621,14 @@ pub(crate) fn restricted_disallowed_tools(
 /// The one statement of what `--restricted` says it did, so the startup note and
 /// the `--help` text cannot drift into disagreeing about it.
 ///
-/// Names each clause **and its actual outcome**, and names what was **not** done
-/// (command execution is still available) in every branch — an invisible mode
-/// switch is a bug even when it is the right switch, and one that overstates its
-/// own confinement is worse. Glyph-free under `plain`: markers **and** em
-/// dashes, since an assertion has caught the em-dash half before.
+/// Names each clause **and its actual outcome**, including the tools clause D
+/// removed — read from `RESTRICTED_REMOVED_TOOLS`, never spelled again here — and
+/// what was **not** done (file tools remain; `--read` is still the way to stop
+/// writes). An invisible mode switch is a bug even when it is the right switch,
+/// and one that misstates its own confinement is worse in either direction:
+/// claiming a fence you do not have, or — as this note did until clause D landed
+/// — denying one you now do. Glyph-free under `plain`: markers **and** em dashes,
+/// since an assertion has caught the em-dash half before.
 pub(crate) fn restricted_mode_note(effects: &RestrictedEffects, plain: bool) -> String {
     let bullet = if plain { "  -" } else { "  •" };
     let mut msg = if plain {
@@ -1678,14 +1686,21 @@ pub(crate) fn restricted_mode_note(effects: &RestrictedEffects, plain: bool) -> 
         }
     }
 
-    // The anti-false-confinement sentence. Present in every branch, on purpose.
+    // Clause D, present in every branch on purpose. The tool names are read
+    // from RESTRICTED_REMOVED_TOOLS rather than spelled again here: two copies
+    // of a list agree the day they are written and diverge forever after, so a
+    // note that named its own inventory would go stale the moment the const
+    // grows. It also states what was NOT done — file tools remain, and `--read`
+    // is still the way to stop writes — because a mode switch that overstates
+    // its own confinement is the exact defect this clause was added to fix.
+    let removed = RESTRICTED_REMOVED_TOOLS.join(", ");
     if plain {
         msg.push_str(&format!(
-            "\n{bullet} command execution is NOT disabled: use --read or --no-tools for that"
+            "\n{bullet} command-running tools removed: {removed} (file tools remain; use --read to stop writes)"
         ));
     } else {
         msg.push_str(&format!(
-            "\n{bullet} command execution is NOT disabled — use --read or --no-tools for that"
+            "\n{bullet} command-running tools removed — {removed} (file tools remain; use --read to stop writes)"
         ));
     }
 
@@ -5140,20 +5155,47 @@ command = "server-two"
         let already = restricted_mode_effects(&["/a".to_string()], Some(Path::new("/work/proj")));
         let unresolved = restricted_mode_effects(&[], None);
 
-        // The anti-false-confinement sentence is present in EVERY branch: the
-        // flag does not disable bash (clause D is deferred), so a user who
-        // believes otherwise is in exactly the state #879 is about.
+        // Clause D is present in EVERY branch: the flag removes the
+        // command-running tools, so a note that stayed silent about it — or, as
+        // this one did until clause D landed, actively denied it — leaves the
+        // user with a wrong belief about their own confinement, which is the
+        // state #879 is about in both directions.
         for effects in [&fenced, &already, &unresolved] {
             for plain in [false, true] {
                 let note = restricted_mode_note(effects, plain);
+
+                // Every removed tool is named. Read from the const, never
+                // hand-typed, so growing RESTRICTED_REMOVED_TOOLS without
+                // updating the note fails here instead of shipping a stale
+                // inventory of the run's own confinement.
+                for tool in RESTRICTED_REMOVED_TOOLS {
+                    assert!(
+                        note.contains(tool),
+                        "clause D must name every removed tool ({tool} missing): {note}"
+                    );
+                }
                 assert!(
-                    note.contains("command execution is NOT disabled"),
-                    "every branch must say bash is still live: {note}"
+                    note.contains("removed"),
+                    "and must say they were removed, not merely mention them: {note}"
                 );
+
+                // What was NOT done. This is the near-miss half: --restricted is
+                // not /read mode, so claiming file tools went with bash would be
+                // the same overstatement wearing the opposite sign.
                 assert!(
-                    note.contains("--read") && note.contains("--no-tools"),
-                    "and must point at the flags that DO disable it: {note}"
+                    note.contains("file tools remain") && note.contains("--read"),
+                    "must say file tools remain and name the flag that stops writes: {note}"
                 );
+
+                // Superseded claim, pinned as a regression guard rather than
+                // deleted: this exact sentence shipped in every branch for one
+                // slice and became false the moment clause D landed. A fixture
+                // that outlives its fix turns the defect into a green invariant.
+                assert!(
+                    !note.contains("command execution is NOT disabled"),
+                    "the pre-clause-D sentence is now false and must not return: {note}"
+                );
+
                 assert!(
                     note.contains("--safe-mode"),
                     "clause A names the mechanism it reuses: {note}"
