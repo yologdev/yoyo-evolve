@@ -1,0 +1,190 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the target file to understand the existing structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt_budget.rs && he…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "audit_log_usage\|is_aud… ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "audit_log_usage\|audit_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,300p' src/prompt_bud… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,25p' src/prompt_budget…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GLOBAL_SETTERS" -A 50 t… ✓ (4ms)
+ ✓ (5ms)
+  6 tools completed in 8.2s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, nothing started. Let me see the exact imports and the tail of the file.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,15p' src/prompt_budget…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use \|^static \|^#\[cf… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,360p' src/prompt_bud… ✓ (3ms)
+  3 tools completed in 4.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Enough reading — time to write the pure core.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (1 → 227 lines)
+  + // ── Cost budget ─────────────────────────────────────────────────────────────
+  + // A soft, opt-in *money* budget. Three things already bound a session —
+  + // `YOYO_SESSION_BUDGET_SECS` (wall-clock), `SessionCapTool` (200 web_search /
+  + // sub_agent calls) and yoagent's `ExecutionLimits` (turns/tokens) — and none of
+  + // them is dollars, which is the one dimension `ECONOMICS.md` prices a session
+  + // in. Since #848 every run writes `cost_usd` to `.yoyo/audit.jsonl`, and the
+  + // Day-181 follow-up added a reader that checks *whether* records exist and
+  + // never *how much*: producer shipped, presence-checker shipped, no consumer of
+  + // the value. This is that consumer.
+  + //
+  + // It WARNS and never stops: a hard stop mid-task is a data-loss risk and would
+  + // be a wrong default (#448). Opt-in via env var, so a user who sets nothing
+  + // gets byte-identical output.
+  + 
+  + /// Env var carrying this session's cost budget, in US dollars.
+  + ///
+  + /// Deliberately env-var-only for now: a flag would need `cli.rs` + `help.rs` +
+  + /// `config.rs` + `SETTABLE_KEYS` + `validate_config_value`, turning a verified
+  + /// narrow change into an unverified wide one. Named follow-up on #891.
+  + const COST_WARN_ENV: &str = "YOYO_COST_WARN_USD";
+  ... (207 more lines)
+ ✓ (15.8s)
+  + // ── Cost budget ─────────────────────────────────────────────────────────────
+  + // A soft, opt-in *money* budget. Three things already bound a session —
+  + // `YOYO_SESSION_BUDGET_SECS` (wall-clock), `SessionCapTool` (200 web_search /
+  + // sub_agent calls) and yoagent's `ExecutionLimits` (turns/tokens) — and none of
+  + // them is dollars, which is the one dimension `ECONOMICS.md` prices a session
+  + // in. Since #848 every run writes `cost_usd` to `.yoyo/audit.jsonl`, and the
+  + // Day-181 follow-up added a reader that checks *whether* records exist and
+  + // never *how much*: producer shipped, presence-checker shipped, no consumer of
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Dead-code gate — the consumer must land in the same compile. Wiring now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (3 → 2 lines)
+    #[cfg(test)]
+    mod cost_budget_tests {
+  -     use super::*;
+ ✓ (14.1s)
+    #[cfg(test)]
+    mod cost_budget_tests {
+  -     use super::*;
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Undo that slip — I need use super::* back.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (2 → 3 lines)
+    #[cfg(test)]
+    mod cost_budget_tests {
+  +     use super::*;
+ ✓ (15.1s)
+    #[cfg(test)]
+    mod cost_budget_tests {
+  +     use super::*;
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (3 → 3 lines) ✓ (16.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the impure wrapper, inserted before the test module.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (2 → 40 lines)
+  + /// Cached parse of [`COST_WARN_ENV`]. Read once and frozen for the lifetime of
+  + /// the process so the budget cannot shift mid-session. `None` means off.
+  + static COST_WARN_THRESHOLD: OnceLock<Option<f64>> = OnceLock::new();
+  + 
+  + /// This process's running spend.
+  + static COST_TALLY: Mutex<CostTally> = Mutex::new(CostTally {
+  +     spent_usd: 0.0,
+  +     unpriced_runs: 0,
+  +     warned: false,
+  + });
+  + 
+  + /// Fold one run's cost into the session tally and warn on a budget crossing.
+  + ///
+  + /// Returns immediately when no budget is configured — no lock taken, nothing
+  + /// accumulated, nothing printed. That is every user who sets nothing, and it is
+  + /// the entire regression surface.
+  + ///
+  + /// The warning is **not** gated on `is_quiet()`, deliberately: `--quiet`'s
+  + /// documented scope is *informational* stderr output, and a spend alarm is not
+  + /// informational (the trust prompt is the same call, for the same reason). It
+  ... (20 more lines)
+ ✓ (12.9s)
+  + /// Cached parse of [`COST_WARN_ENV`]. Read once and frozen for the lifetime of
+  + /// the process so the budget cannot shift mid-session. `None` means off.
+  + static COST_WARN_THRESHOLD: OnceLock<Option<f64>> = OnceLock::new();
+  + 
+  + /// This process's running spend.
+  + static COST_TALLY: Mutex<CostTally> = Mutex::new(CostTally {
+  +     spent_usd: 0.0,
+  +     unpriced_runs: 0,
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (1 → 1 lines) ✓ (12.9s)
+  2 tools completed in 28.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (27ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the call site — first statement of audit_log_usage, above the audit gate.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (2 → 11 lines)
+    ) {
+  +     // FIRST statement, and deliberately ABOVE the `is_audit_enabled()` gate.
+  +     // `emit_output` calls this on the first line of its body, ungated by output
+  +     // mode (#848), so the cost budget inherits that reach for free: print_mode,
+  +     // `--output-format json` and the default path all arrive here. Moving this
+  +     // inside `audit_log_usage_when` would count for `--audit` users only, which
+  +     // is #848's "works in json mode" defect wearing a different hat.
+  +     // `estimate_cost` is pure, so the second call is free.
+  +     record_run_cost(crate::format::estimate_cost(usage, model));
+  + 
+        audit_log_usage_when(
+ ✓ (2m 10s)
+    ) {
+  +     // FIRST statement, and deliberately ABOVE the `is_audit_enabled()` gate.
+  +     // `emit_output` calls this on the first line of its body, ungated by output
+  +     // mode (#848), so the cost budget inherits that reach for free: print_mode,
+  +     // `--output-format json` and the default path all arrive here. Moving this
+  +     // inside `audit_log_usage_when` would count for `--audit` users only, which
+  +     // is #848's "works in json mode" defect wearing a different hat.
+  +     // `estimate_cost` is pure, so the second call is free.
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/global_state_races.rs (3 → 3 lines) ✓ (1m 43s)
+  2 tools completed in 3m 59s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --s… (10 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (22ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.0s (2 ✓)
+
+Clean now. Full check run:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.8s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo cost_budge… ✓ (7ms)
+ ✓ (166ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "YOYO_COST_WARN_USD" --… ✓ (72ms)
+  5 tools completed in 17.3s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough evidence for a verdict. Key findings:
+
+Code (correct): all five core pieces present — COST_WARN_ENV, parse_cost_threshold (never fabricates 0.0 from nonsense), `CostTally, record_cost (unpriced counted separately, never folded into spent_usd), maybe_cost_warning (once-per-process, inclusive boundary, glyph-free under plain). The wrapper record_run_cost` early-returns when no threshold is set, uses sync_util::lock_or_recover, writes to stderr. Call site is the first statement of audit_log_usage, above the is_audit_enabled() gate, with the required explanatory comment. `GLOBAL_SETTERS gained record_run_cost`. 5 tests pass.
+
+Docs (missing): git diff HEAD~1 --name-only returns only src/prompt_budget.rs and tests/global_state_races.rs. grep -c "YOYO_COST_WARN_USD" CLAUDE.md → 0, and a repo-wide .md grep finds it only in session_plan/task_01.md (the task file itself). The task listed CLAUDE.md in Files: and had a dedicated ## Docs section enumerating seven specific things to record.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 29s)
+
+Verdict: FAIL — on doc_sync only.
+
+The implementation itself is genuinely good work and I want to be clear about that: every element the task specified is present and correct. The pure core carries the right three-state parse ("nan", "inf", "0", "-1", "" all map to off, never to a fabricated Some(0.0)), unpriced_runs is kept as its own counter and never folded into spent_usd, the once-per-process flag lives inside maybe_cost_warning so it cannot drift, and the boundary is pinned on both sides. The wiring is at the one correct site — first statement of audit_log_usage, above the audit gate — with the comment explaining why a later reader must not "simplify" it inside. Default-off is real: unset env var means an early return before the lock is even taken. record_run_cost was added to GLOBAL_SETTERS in the same diff.
+
+What sank it is that the diff is two files, and the task's Files: line was three. CLAUDE.md has zero occurrences of YOYO_COST_WARN_USD; the only .md in the repo that mentions it is the task file itself. The ## Docs section wasn't vague — it enumerated seven specific things to record, including the stated limit (warns on a cumulative total, never stops) and the fact that the flag/config door stays open on #891.
+
+That matters more here than a generic missing-docs nit would. This repo's own working premise is that CLAUDE.md is re-injected as authoritative context every session, and this very file is full of entries about capabilities that went undiscovered or were misdescribed because a doc claim went stale. Shipping a new user-facing env var whose only description lives in a session_plan/ file that gets discarded is the "capability is real only where something consumes it" problem one layer up — the code has a consumer, the knowledge of it has none.
+
+The fix is a single bullet edit with no code risk, so this should be cheap to redo.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

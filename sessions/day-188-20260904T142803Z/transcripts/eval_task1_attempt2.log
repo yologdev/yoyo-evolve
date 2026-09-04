@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '220,250p' src/prompt_bud…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "record_run_cost\|lock_o… ✓ (5ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn lock_or_recover"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (8ms)
+ ✓ (177ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 19.6s (4 ✓)
+
+All 5 new tests pass, the call site is wired at the first statement of audit_log_usage above the audit gate, and every new definition has a consumer in this diff.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 29s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The verdict file was already written. Let me confirm it landed correctly and stop there.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/eval_task_1.md … ✓ (6ms)
+
+Evaluation complete. session_plan/eval_task_1.md is written with all four Checked: lines parsed and no code modified (git status on src/ and tests/ is clean — the only working-tree change is the verdict file itself).
+
+Verdict: PASS
+
+What I verified:
+• Call site — record_run_cost(crate::format::estimate_cost(usage, model)) is the first statement of audit_log_usage's body at src/prompt_budget.rs:238, above the is_audit_enabled() gate, with the reasoning comment the task asked for.
+• Default off — env unset → parse_cost_threshold(None) → None → early return before the lock, the tally or any output.
+• **Touchpoints** — every new definition is consumed in this diff: record_run_cost by audit_log_usage; parse_cost_threshold / record_cost / maybe_cost_warning / CostTally by `record_run_cost and the tests; sync_util::lock_or_recover, format::estimate_cost and format::is_plain_output all resolve to existing symbols; "record_run_cost"` added to GLOBAL_SETTERS with the suite green.
+• Tests — cargo test --bin yoyo cost_budget_tests → 5 passed, including the both-sides boundary pin and the unpriced-runs near-miss row.
+• Docs — the prompt_budget.rs bullet in CLAUDE.md carries the env var, three-state parse, unpriced separation, placement argument, not-quiet-gated reasoning, once-per-process, and the stated limits with #891 named as follow-up.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

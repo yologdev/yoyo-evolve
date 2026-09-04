@@ -1,0 +1,190 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with step 0 — the register debt is a live landmine and must be paid before anything else.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (204ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate printed its own remedy. Pasting it verbatim:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'src/agent_builder.rs' t… ✓ (3ms)
+  ▶ edit tests/module_size.rs (1 → 1 lines)
+  -     ("src/agent_builder.rs", 3428),
+  +     ("src/agent_builder.rs", 3506),
+ ✓ (1m 46s)
+  -     ("src/agent_builder.rs", 3428),
+  +     ("src/agent_builder.rs", 3506),
+  2 tools completed in 1m 48s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (208ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 done — gate passes with zero warnings. Now step 1, the actual fix:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn diff_header_path' -A… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the fix. Let me look at the exact block and replace it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/git_commit_msg.rs (8 → 42 lines)
+        let rest = line.strip_prefix("diff --git a/")?;
+  -     let mut parts = rest.match_indices(" b/");
+  -     let (at, _) = parts.next()?;
+  -     if parts.next().is_some() {
+  -         // More than one candidate separator: ambiguous, refuse to guess.
+  -         return None;
+  -     }
+  +     // Candidate separators. Every offset is the start of an ASCII match, so every
+  +     // index derived from one lands on a char boundary (rule #250 — never a raw byte
+  +     // index into a `&str`).
+  +     let candidates: Vec<usize> = rest.match_indices(" b/").map(|(at, _)| at).collect();
+  +     let at = match candidates.len() {
+  +         0 => return None,
+  +         // Exactly one candidate: nothing to disambiguate, and this stays byte-identical
+  +         // to the pre-#830 behaviour. That is every ordinary header — *including a
+  +         // rename*, whose two paths legitimately differ, which is why the equal-paths
+  +         // rule below must never reach this arm.
+  +         1 => candidates[0],
+  +         _ => {
+  +             // #830: the path itself contains a literal " b/", so several offsets split
+  ... (28 more lines)
+ ✓ (2m 1s)
+        let rest = line.strip_prefix("diff --git a/")?;
+  -     let mut parts = rest.match_indices(" b/");
+  -     let (at, _) = parts.next()?;
+  -     if parts.next().is_some() {
+  -         // More than one candidate separator: ambiguous, refuse to guess.
+  -         return None;
+  -     }
+  +     // Candidate separators. Every offset is the start of an ASCII match, so every
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo git_commit… ✓ (171ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo git_commit… ✓ (150ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.2s (2 ✓)
+
+Exactly one failing row, and it is the fixture that pinned the refusal — resolving to Some("has b/dir/f"), the correct answer. Inverting it deliberately (not deleting it), and adding the residue rows:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/git_commit_msg.rs (5 → 17 lines)
+  -             // Ambiguous: a path containing the separator. Refuse rather than guess a
+  -             // path that is not in the diff — this degrades to the pre-round-81
+  -             // behaviour (file dropped), which is wrong but honest. **#830 is still
+  -             // open**: this row pins the refusal, not a fix.
+  -             ("diff --git a/has b/dir/f b/has b/dir/f", None),
+  +             // A path containing the separator (#830). This row used to assert `None` —
+  +             // it pinned the defect, not a decision, and is inverted deliberately rather
+  +             // than deleted quietly (a fixture asserting a known-wrong output that
+  +             // outlives its fix converts a defect into a green invariant). git emits the
+  +             // same path on both sides of a non-rename header, so exactly one of the
+  +             // three candidate splits has byte-equal halves and the header resolves.
+  +             ("diff --git a/has b/dir/f b/has b/dir/f", Some("has b/dir/f")),
+  +             // The worked example from #830, with the separator twice inside one path.
+  +             (
+  +                 "diff --git a/src/a b/c.rs b/src/a b/c.rs",
+  +                 Some("src/a b/c.rs"),
+  +             ),
+  +             // The residue, kept on purpose: an ambiguous *rename* has two genuinely
+  +             // different paths, so no candidate split has equal halves and the file is
+  +             // still dropped. Inventing a path that is not in the diff is worse than
+  ... (2 more lines)
+ ✓ (2m 16s)
+  -             // Ambiguous: a path containing the separator. Refuse rather than guess a
+  -             // path that is not in the diff — this degrades to the pre-round-81
+  -             // behaviour (file dropped), which is wrong but honest. **#830 is still
+  -             // open**: this row pins the refusal, not a fix.
+  -             ("diff --git a/has b/dir/f b/has b/dir/f", None),
+  +             // A path containing the separator (#830). This row used to assert `None` —
+  +             // it pinned the defect, not a decision, and is inverted deliberately rather
+  +             // than deleted quietly (a fixture asserting a known-wrong output that
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo diff_heade… ✓ (178ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Table green. Now the emission-point tests — the near-miss guards are the half that matters here:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1045,1075p' src/git_comm… ✓ (3ms)
+  ▶ edit src/git_commit_msg.rs (1 → 99 lines)
+  +     /// #830: a path containing a literal " b/" reaches the message instead of being
+  +     /// dropped. A mode-only change is the shape that exercises it — the `diff --git`
+  +     /// header is the file's ONLY mention (no `---`/`+++`), so the header's ambiguity
+  +     /// used to delete the file from `files_changed` entirely, taking the scope, the
+  +     /// category weights, the >3-file threshold and the summary focus with it.
+  +     ///
+  +     /// Asserted at the emission point (the `String` a caller receives), never on
+  +     /// `diff_header_path` one layer below.
+  +     #[test]
+  +     fn a_path_containing_the_separator_reaches_the_message() {
+  +         let diff = "\
+  + diff --git a/src/a b/c.rs b/src/a b/c.rs
+  + old mode 100644
+  + new mode 100755
+  + ";
+  +         // Anti-vacuous: the fixture must really be ambiguous, or this test could pass
+  +         // by agreeing with itself on a header that was never in question.
+  +         let header = diff.lines().next().unwrap();
+  +         assert!(
+  +             header.matches(" b/").count() > 1,
+  ... (79 more lines)
+ ✓ (2m 12s)
+  +     /// #830: a path containing a literal " b/" reaches the message instead of being
+  +     /// dropped. A mode-only change is the shape that exercises it — the `diff --git`
+  +     /// header is the file's ONLY mention (no `---`/`+++`), so the header's ambiguity
+  +     /// used to delete the file from `files_changed` entirely, taking the scope, the
+  +     /// category weights, the >3-file threshold and the summary focus with it.
+  +     ///
+  +     /// Asserted at the emission point (the `String` a caller receives), never on
+  +     /// `diff_header_path` one layer below.
+  ... (13 more lines)
+  2 tools completed in 2m 28s (2 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo git_commit… ✓ (326ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 42 green. Now the positive control — one atomic mutate→run→restore, serially:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/git_c… (18 lines) ✓ (25.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired exactly as designed: 2 red (the new ambiguity test + the table carrying the two resolvable rows), and all 4 near-miss guards green — the direction proving they test the pass-through, not the fix. Verifying the restore is clean:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'filter(|&_at| false)' s… ✓ (25.7s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restore clean, 42/42 green. Now the docs — the #830 sentence in CLAUDE.md:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o '\*\*#830 remains open a… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.4s)
+  3 tools completed in 39.1s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/git_commit_msg.rs
+
