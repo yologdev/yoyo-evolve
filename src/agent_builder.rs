@@ -63,6 +63,25 @@ pub(crate) fn detect_mcp_collisions(mcp_tools: &[String], builtins: &[&str]) -> 
         .collect()
 }
 
+/// Pure helper: is `name` on the caller's `--disallowed-tools` / `--lite` /
+/// `--restricted` list?
+///
+/// **Exact match on the whole tool name, never a prefix or a substring.** A
+/// disallowed `sub` must not take `sub_agent` with it, and a tool whose name
+/// merely *contains* a disallowed one must pass — over-filtering a security
+/// list silently removes capabilities the user never asked to lose, and the
+/// user has no way to tell that from the tool simply not existing.
+///
+/// This is the **one statement** of that rule (#887). It has three consumers:
+/// the `build_agent` retain over `build_tools`' output, the `sub_agent` /
+/// `shared_state` push that used to sit *after* that retain and so could never
+/// be filtered by it, and the child tool set in
+/// `tools::build_sub_agent_tool_at_depth`. A second copy would agree the day it
+/// was written and diverge forever after (the `significant_braces` precedent).
+pub(crate) fn tool_name_disallowed(name: &str, disallowed: &[String]) -> bool {
+    disallowed.iter().any(|d| d == name)
+}
+
 /// How many times the pre-flight tool listing is attempted before the collision
 /// guard gives up for a server (#841).
 ///
@@ -905,7 +924,7 @@ impl AgentConfig {
 
             // Filter out disallowed tools (--disallowed-tools flag or --lite)
             if !self.disallowed_tools.is_empty() {
-                tools.retain(|t| !self.disallowed_tools.contains(&t.name().to_string()));
+                tools.retain(|t| !tool_name_disallowed(t.name(), &self.disallowed_tools));
                 if self.lite {
                     eprintln!(
                         "{DIM}  🪶 Lite mode: {} tools ({}){RESET}",
@@ -3182,6 +3201,65 @@ session will fail on the first turn with 'Tool names must be unique'."
             4,
             "expected one honest-count note per invalidated counter"
         );
+    }
+
+    #[test]
+    fn tool_name_disallowed_matches_whole_names_only() {
+        // Both directions in one table: a discriminator tested only on the
+        // side that fires is vacuous green, and this file's history is
+        // discriminators pointed at the wrong input.
+        let cases: &[(&str, &[&str], bool, &str)] = &[
+            // --- must fire ---
+            ("sub_agent", &["sub_agent"], true, "exact match"),
+            (
+                "shared_state",
+                &["sub_agent", "shared_state"],
+                true,
+                "exact match, not first in list",
+            ),
+            ("bash", &["bash"], true, "the --lite / --restricted shape"),
+            // --- near-miss guards: must NOT fire ---
+            ("sub_agent", &[], false, "empty list disallows nothing"),
+            (
+                "sub_agent",
+                &["bash", "web_search"],
+                false,
+                "unrelated names do not disallow",
+            ),
+            (
+                "sub_agent",
+                &["sub"],
+                false,
+                "a PREFIX of the name must not match it",
+            ),
+            (
+                "sub",
+                &["sub_agent"],
+                false,
+                "the name being a prefix of a listed one must not match",
+            ),
+            (
+                "shared_state",
+                &["state"],
+                false,
+                "a SUBSTRING of the name must not match it",
+            ),
+            (
+                "SUB_AGENT",
+                &["sub_agent"],
+                false,
+                "matching is case-sensitive: tool names are exact ids",
+            ),
+        ];
+
+        for (name, disallowed, want, why) in cases {
+            let list: Vec<String> = disallowed.iter().map(|s| s.to_string()).collect();
+            assert_eq!(
+                tool_name_disallowed(name, &list),
+                *want,
+                "tool_name_disallowed({name:?}, {disallowed:?}) — {why}"
+            );
+        }
     }
 
     #[test]
