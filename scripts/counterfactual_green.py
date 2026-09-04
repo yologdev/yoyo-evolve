@@ -1097,6 +1097,102 @@ def src_splice_candidates(rows) -> list[str]:
     return out
 
 
+# Three states for "could a src+tests counterfactual read this commit at all?", and none
+# is folded into another. Day 188, #870. `UNKNOWN` exists because folding it into `NONE`
+# UNDERSTATES the reachable population, which is the flattering direction — it would make
+# widening the census look less worthwhile than it is, and the whole point of this
+# measurement is to decide whether widening is worth doing.
+SRC_TESTS_READABLE = "SRC_TESTS_READABLE"
+SRC_TESTS_NONE = "SRC_TESTS_NONE"
+SRC_TESTS_UNKNOWN = "SRC_TESTS_UNKNOWN"
+
+
+def classify_src_test_readability(rows, has_parent_test_module) -> str:
+    """Could a src+tests counterfactual read this commit? Pure; the resolver is injected.
+
+    Day 188, #870. `rows` are `(status, path)` pairs from
+    `git diff --name-status <parent> <sha> -- src/`; `has_parent_test_module(path)` answers
+    `True` / `False` / `None` for the file's version AT THE PARENT.
+
+    WHY THIS EXISTS, and it is a MEASUREMENT rather than a widening. DREAM.md's milestone
+    asks for the earned/unearned rate reported separately for the fix-loop arm — that
+    split IS the pre-registered guess, that fix-loop pressure is where unearned green
+    lives. That arm holds 2 signal-bearing commits and is structurally unmeasurable
+    (#870), because ~157k lines of unit tests sit inside `src/` behind `#[cfg(test)]`.
+
+    THE FINDING THIS RESTS ON, because Day 187 got one step from it and stopped: slice 2
+    wired `--splice-src-tests`, which changes the DEPTH at which a SELECTED commit is
+    read. It does not change WHICH commits are selected. Selection runs upstream —
+    `census_by_population` calls a commit behavioural only if it touches a top-level
+    `tests/*.rs` with a non-register-only diff, and `select_runnable` draws from
+    behavioural rows — so a fix-loop commit editing only `#[cfg(test)]` inside `src/` is
+    classified `NO_TEST_CHANGE` and is NEVER SELECTED. The splicer cannot see it. Depth
+    and selection are orthogonal and only selection gates the population, which is exactly
+    why the fix-loop arm did not move an inch when the splicer landed.
+
+    So the next move would be to widen what counts as behavioural — and #870 and Day 187
+    both name that as the risky half, "the half that can manufacture a false denominator".
+    Its value is UNKNOWN: at ~2 reachable it buys nothing and adds denominator risk, at
+    ~60 it is the whole milestone. This function is how that number gets measured before
+    the risk is taken. Characterising the population comes before sampling it again — the
+    Day-186 lesson (#875), which corrected a 29% denominator error, one arm over.
+
+    WHY THIS QUESTION AND NOT #870's `88`. That figure is a `-U0` grep for
+    `#[test]`/`cfg(test)`/`assert` in diff TEXT, and #870's own body forbids reading it as
+    this number: it cannot tell a test edit from an `assert!` in production code, cannot
+    tell a tightened assertion from a loosened one, and cannot tell either from a rename.
+    It is an upper bound on where to look. This asks a mechanically checkable question
+    instead — does a modified `src/*.rs` file ALREADY have a `#[cfg(test)]` module at the
+    parent? — which is exactly the precondition `splice_test_module` needs, and it reuses
+    `test_module_start` rather than writing a third scanner (#835 already refuses a third
+    copy of a brace scanner).
+
+    THREE STATES:
+
+      * `SRC_TESTS_READABLE` — at least one modified `src/*.rs` whose PARENT version
+        carries a module-level `#[cfg(test)]` module. A src+tests counterfactual could
+        lay something older back over this commit.
+      * `SRC_TESTS_NONE` — it modifies `src/*.rs` files but none has a parent test module
+        (every module is new here, or there are none), or it modifies no `src/*.rs` at
+        all. Vacuous at this depth for the same reason `NO_PRE_EXISTING_TEST_EDIT` is
+        vacuous: you cannot have weakened a pre-existing assertion in a module that did
+        not exist.
+      * `SRC_TESTS_UNKNOWN` — the resolver answered `None` for every candidate it was
+        asked about and none answered `True`. Counted and reported, never folded.
+
+    PRECEDENCE, and each direction has its own reason. `READABLE` beats `UNKNOWN`: one
+    file with a parent module makes the commit readable however many siblings could not be
+    resolved. `UNKNOWN` beats `NONE`: an unknown must never be promoted into the
+    comfortable bucket (Day 144), and here the comfortable bucket is the one that makes
+    the reachable population look smaller.
+
+    SCOPE IS `src_splice_candidates`, NOT A SECOND PREDICATE. That function already
+    encodes every exclusion with its own reason — `A` has no parent version, `D` has
+    nothing to splice into, `R*` needs a rename decision, non-`src/` and non-`.rs` are not
+    this overlay's business — so reusing it means the measurement and the splicer cannot
+    disagree about which files are candidates.
+
+    ANTI-VACUOUS: a row set genuinely containing a modified `src/*.rs` with a parent test
+    module must come back `READABLE`. A classifier that finds nothing and reports a clean
+    `NONE` is this defect wearing the opposite sign, and it is quieter than the bug.
+
+    THE STATED LIMIT: this measures whether a commit COULD be read at src+tests depth. It
+    is not a claim that reading it would produce a classifiable verdict, and it enters no
+    denominator anywhere.
+    """
+    candidates = src_splice_candidates(rows)
+    if not candidates:
+        return SRC_TESTS_NONE
+    saw_unknown = False
+    for path in candidates:
+        answer = has_parent_test_module(path)
+        if answer is None:
+            saw_unknown = True
+        elif answer:
+            return SRC_TESTS_READABLE
+    return SRC_TESTS_UNKNOWN if saw_unknown else SRC_TESTS_NONE
+
+
 def census_summary(rows: list[CensusRow]) -> dict:
     """Fold census rows. Anti-vacuous: zero task commits is a refusal, not a zero.
 
@@ -1415,6 +1511,135 @@ def commit_test_diff_shape(root: str, sha: str) -> str:
     if rc != 0:
         return SHAPE_UNKNOWN
     return classify_test_diff_shape(parse_name_status(out))
+
+
+def commit_src_test_readability(root: str, sha: str) -> str:
+    """The I/O half of the #870 measurement: is THIS commit readable at src+tests depth?
+
+    Day 188. Returns one of `SRC_TESTS_READABLE` / `SRC_TESTS_NONE` / `SRC_TESTS_UNKNOWN`.
+
+    EVERY PIECE HERE ALREADY EXISTED — this reuses and never re-derives. `run_cmd` issues
+    the diff, `parse_name_status` parses it, `src_splice_candidates` scopes it,
+    `test_module_start` answers the parent-module question, and
+    `classify_src_test_readability` decides. No third scanner (#835 already refuses a
+    third copy of a brace scanner), and no second `src/*.rs` predicate.
+
+    A `<sha>^` that does not resolve — a root commit, or a shallow-clone boundary — is
+    `SRC_TESTS_UNKNOWN`, not a crash and not a fallback into either real bucket.
+
+    THE RESOLVER IS THE EXPENSIVE HALF and it is lazy by construction: the classifier
+    short-circuits on the first `True`, so a commit whose first candidate already carries
+    a parent module costs one `git show`. The caller bounds the rest by scoping the scan
+    to the fix-loop arm.
+    """
+    rc, out = run_cmd(
+        ["git", "-C", root, "diff", "--name-status", f"{sha}^", sha, "--", "src/"],
+        timeout=60,
+    )
+    if rc != 0:
+        return SRC_TESTS_UNKNOWN
+
+    def _has_parent_test_module(path: str):
+        # The file's version AT THE PARENT — that is the precondition `splice_test_module`
+        # needs, and asking the post-task version instead would count a module the commit
+        # itself introduced, which is the vacuous case.
+        rc2, text = run_cmd(
+            ["git", "-C", root, "show", f"{sha}^:{path}"], timeout=60
+        )
+        if rc2 != 0:
+            # Could not read it: UNKNOWN, never False. "I could not check" must not read
+            # as "checked; there is no module."
+            return None
+        return test_module_start(text) is not None
+
+    return classify_src_test_readability(
+        parse_name_status(out), _has_parent_test_module
+    )
+
+
+def src_census_fix_loop(rows, readability_of) -> dict:
+    """Count the fix-loop arm's `NO_TEST_CHANGE` commits by src+tests readability.
+
+    Day 188, #870. Pure: `readability_of(sha)` is injected, the discipline `added_ts` and
+    `census_shape_split` already use, so the fold is table-testable with no git.
+
+    SCOPED TO THE FIX-LOOP ARM, deliberately, and the output says so. Three reasons:
+    that is the arm DREAM.md's pre-registered guess is about; it bounds the cost (one
+    `git show` per modified `src/` file per commit — over ~900 plain `NO_TEST_CHANGE`
+    commits that is thousands of git calls, over ~209 fix-loop ones it is tractable); and
+    a scan that times out produces no number at all.
+
+    SCOPED TO `NO_TEST_CHANGE` ROWS, i.e. `not r.addressable`. A commit that already
+    touches a top-level `tests/*.rs` is already in the census's reach; the question here
+    is exactly how much sits OUTSIDE it.
+
+    THE THREE COUNTS ARE NEVER SUMMED, and `unknown` is never folded into `none`: folding
+    it understates the reachable population, which is the flattering direction, because it
+    would make widening the census look less worthwhile than it is.
+
+    NOTHING HERE ENTERS ANY DENOMINATOR. This changes no verdict, no ledger row, no
+    `census_by_population` figure and no `select_runnable` behaviour. It is the number the
+    NEXT decision — whether to widen what counts as behavioural — gets made on.
+    """
+    scanned = [r for r in rows if r.population == POP_FIX_LOOP and not r.addressable]
+    counts = {
+        "scanned": len(scanned),
+        SRC_TESTS_READABLE: 0,
+        SRC_TESTS_NONE: 0,
+        SRC_TESTS_UNKNOWN: 0,
+    }
+    for row in scanned:
+        state = readability_of(row.sha)
+        if state not in (SRC_TESTS_READABLE, SRC_TESTS_NONE, SRC_TESTS_UNKNOWN):
+            # A resolver answering something nobody enumerated is UNKNOWN, never a real
+            # bucket. Same conservative direction the classifier itself takes.
+            state = SRC_TESTS_UNKNOWN
+        counts[state] += 1
+    return counts
+
+
+def render_src_census(counts: dict, window: str) -> str:
+    """Render the #870 measurement. Three counts, never summed, and no denominator.
+
+    The window depth is printed because a window in COMMITS is not a window in TIME, and
+    it moves inside a session because chunk commits advance HEAD — so it is read from the
+    tool rather than inherited from the last session's write-up.
+    """
+    readable = counts.get(SRC_TESTS_READABLE, 0)
+    none = counts.get(SRC_TESTS_NONE, 0)
+    unknown = counts.get(SRC_TESTS_UNKNOWN, 0)
+    scanned = counts.get("scanned", 0)
+    lines = [
+        "",
+        "SRC+TESTS READABILITY — FIX-LOOP ARM ONLY (#870, Day 188)",
+        f"  window ........................ {window}",
+        f"  fix-loop NO_TEST_CHANGE scanned {scanned}",
+        f"  -> READABLE (parent has a #[cfg(test)] module) .... {readable}",
+        f"  -> NONE     (no pre-existing module to lay back) .. {none}",
+        f"  -> UNKNOWN  (could not resolve; never folded) ..... {unknown}",
+        "",
+        "  The three counts are NEVER summed, and UNKNOWN is never folded into NONE:",
+        "  folding it UNDERSTATES the reachable population, which is the flattering",
+        "  direction, because it makes widening the census look less worthwhile.",
+        "",
+        "  NOTHING HERE ENTERS ANY DENOMINATOR. No verdict, no ledger row, no",
+        "  census_by_population figure and no select_runnable behaviour changes. This is",
+        "  the number the NEXT decision -- whether to widen what counts as behavioural --",
+        "  gets made on. Widening is the half that can manufacture a false denominator",
+        "  (#870, Day 187), and it stays out of this task.",
+        "",
+        "  SCOPED TO THE FIX-LOOP ARM on purpose: it is the arm DREAM.md's pre-registered",
+        "  guess is about, and it bounds the cost to a scan that can actually finish.",
+        "  READABLE does NOT mean 'would produce a classifiable verdict' -- it means a",
+        "  src+tests counterfactual could lay something older back over this commit.",
+    ]
+    if scanned == 0:
+        lines.append("")
+        lines.append(
+            "  COULD NOT CHECK: zero fix-loop NO_TEST_CHANGE commits in this window. "
+            "That is a REFUSAL, not '0 readable'."
+        )
+    return "\n".join(lines)
 
 
 def collect_census(root: str, limit: int | None):
@@ -2254,6 +2479,15 @@ def main(argv):
     )
     parser.add_argument(
         "--limit", type=int, metavar="N", help="census: only the last N task commits"
+    )
+    parser.add_argument(
+        "--src-census",
+        action="store_true",
+        help=(
+            "with --census: also measure how many fix-loop NO_TEST_CHANGE commits a "
+            "src+tests counterfactual could read (#870). Default off; a plain --census "
+            "run is byte-identical without it. Enters no denominator."
+        ),
     )
     parser.add_argument(
         "--deepen",
@@ -3912,6 +4146,89 @@ def run_self_tests():
     check("splice-select: mixed diff keeps M src/*.rs only, ordered and deduped",
           src_splice_candidates(mixed) == ["src/b.rs", "src/a.rs"],
           src_splice_candidates(mixed))
+
+    # ----------------------------------------------------------------------------------
+    # #870, Day 188: could a src+tests counterfactual READ this commit at all? Pure, with
+    # the parent-module resolver injected, so none of these rows touches git or the disk.
+    # ----------------------------------------------------------------------------------
+
+    def _yes(_p):
+        return True
+
+    def _no(_p):
+        return False
+
+    def _dunno(_p):
+        return None
+
+    # ANTI-VACUOUS, AND ASSERTED FIRST: a row set that genuinely contains a modified
+    # src/*.rs with a parent test module must come back READABLE. A classifier that finds
+    # nothing and reports a clean NONE is this defect wearing the opposite sign, and it is
+    # quieter than the bug it was built to measure.
+    _one_mod = parse_name_status("M\tsrc/cli.rs\n")
+    check("src-census: a modified src/*.rs WITH a parent test module -> READABLE",
+          classify_src_test_readability(_one_mod, _yes) == SRC_TESTS_READABLE,
+          classify_src_test_readability(_one_mod, _yes))
+
+    # NEAR-MISS GUARD: the same row, no parent module. Vacuous at this depth for the same
+    # reason NO_PRE_EXISTING_TEST_EDIT is vacuous — you cannot have weakened a
+    # pre-existing assertion in a module that did not exist.
+    check("src-census: a modified src/*.rs WITHOUT a parent test module -> NONE",
+          classify_src_test_readability(_one_mod, _no) == SRC_TESTS_NONE,
+          classify_src_test_readability(_one_mod, _no))
+
+    # NEAR-MISS GUARD: no src/ rows at all. This is the ordinary shape and must never
+    # become the new state.
+    check("src-census: no src/*.rs rows at all -> NONE",
+          classify_src_test_readability(
+              parse_name_status("M\ttests/x.rs\nM\tCargo.toml\n"), _yes)
+          == SRC_TESTS_NONE,
+          classify_src_test_readability(
+              parse_name_status("M\ttests/x.rs\nM\tCargo.toml\n"), _yes))
+    check("src-census: an empty row set -> NONE",
+          classify_src_test_readability([], _yes) == SRC_TESTS_NONE,
+          classify_src_test_readability([], _yes))
+
+    # A mix where exactly one candidate has a parent module. One readable file makes the
+    # COMMIT readable — the question is whether a deeper counterfactual could lay anything
+    # older back, not whether every file participates.
+    _mix = parse_name_status("M\tsrc/a.rs\nM\tsrc/b.rs\n")
+    check("src-census: a mix where ONE candidate has a parent module -> READABLE",
+          classify_src_test_readability(
+              _mix, lambda p: p == "src/b.rs") == SRC_TESTS_READABLE,
+          classify_src_test_readability(_mix, lambda p: p == "src/b.rs"))
+
+    # SCOPE IS src_splice_candidates, NOT A SECOND PREDICATE: A / D / R* src/ rows are not
+    # candidates, so a resolver that would say yes is never even asked. Each exclusion has
+    # its own reason over there (no parent version / nothing to splice into / a rename
+    # decision), and reusing it is what stops the measurement and the splicer disagreeing
+    # about which files count.
+    for _status, _label in (("A", "added"), ("D", "deleted"), ("R100", "renamed")):
+        _txt = (f"{_status}\tsrc/x.rs\tsrc/y.rs\n" if _status.startswith("R")
+                else f"{_status}\tsrc/x.rs\n")
+        check(f"src-census: an {_label} src/ row is not a candidate -> NONE",
+              classify_src_test_readability(parse_name_status(_txt), _yes)
+              == SRC_TESTS_NONE,
+              classify_src_test_readability(parse_name_status(_txt), _yes))
+
+    # UNKNOWN IS ITS OWN STATE. Folding it into NONE understates the reachable population,
+    # which is the FLATTERING direction here: it would make widening the census look less
+    # worthwhile than it is, and deciding that is this measurement's entire job.
+    check("src-census: an unresolvable candidate -> UNKNOWN, never NONE",
+          classify_src_test_readability(_one_mod, _dunno) == SRC_TESTS_UNKNOWN,
+          classify_src_test_readability(_one_mod, _dunno))
+
+    # PRECEDENCE, both directions, each with its own reason.
+    check("src-census: READABLE beats UNKNOWN (one resolved yes is enough)",
+          classify_src_test_readability(
+              _mix, lambda p: True if p == "src/b.rs" else None) == SRC_TESTS_READABLE,
+          classify_src_test_readability(
+              _mix, lambda p: True if p == "src/b.rs" else None))
+    check("src-census: UNKNOWN beats NONE (an unknown is never promoted)",
+          classify_src_test_readability(
+              _mix, lambda p: False if p == "src/a.rs" else None) == SRC_TESTS_UNKNOWN,
+          classify_src_test_readability(
+              _mix, lambda p: False if p == "src/a.rs" else None))
 
     # DEFAULT-OFF BYTE-IDENTITY: the whole regression surface is the 25 readings already
     # in the ledger plus every future one taken without the flag. A row built with no
