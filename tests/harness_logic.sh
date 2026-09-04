@@ -405,5 +405,53 @@ if require "work_state_fingerprint extracted" "$FP_FN"; then
     check "work_state_fingerprint: stable + content/commit/untracked sensitive" "$FP_R" "ok"
 fi
 
+# ── revert-receipt index + expiry ────────────────────────────────────────
+# receipt_index emits `number \t parents \t age \t title`. The age field and the
+# parentless-expiry branch that reads it were added with no coverage at all, so
+# the harness suite was green on a change it could not see. Extracts the REAL
+# function from evolve.sh and stubs `gh`, rather than restating its logic here.
+receipt_rows() { # $1 = fixture JSON path
+    ( set -uo pipefail
+      RFIX="$1"
+      # `gh` is called as `gh issue list ...`, so the stub must read the fixture
+      # from a variable — $1 inside it is "issue", not the path.
+      gh() { cat "$RFIX"; }
+      REPO=x; RECEIPT_INDEX_LIMIT=100
+      eval "$(awk '/^receipt_index\(\)/,/^}/' "$SCRIPT")"
+      receipt_index /dev/null ) 2>/dev/null
+}
+FIXTURE=$(mktemp)
+R_OLD=$(python3 -c "import datetime as d;print((d.datetime.now(d.timezone.utc)-d.timedelta(days=20)).isoformat().replace('+00:00','Z'))" 2>/dev/null)
+R_NEW=$(python3 -c "import datetime as d;print((d.datetime.now(d.timezone.utc)-d.timedelta(days=2)).isoformat().replace('+00:00','Z'))" 2>/dev/null)
+cat > "$FIXTURE" <<JSON
+[
+ {"number":1,"title":"Task reverted: old","body":"Issue: none","createdAt":"$R_OLD"},
+ {"number":2,"title":"Task reverted: fresh","body":"Issue: none","createdAt":"$R_NEW"},
+ {"number":3,"title":"Task reverted: parented","body":"**Parent issue:** #500","createdAt":"$R_OLD"},
+ {"number":4,"title":"Task reverted: undated","body":"Issue: none","createdAt":""},
+ {"number":5,"title":"Task reverted: junk","body":"Issue: none","createdAt":"not-a-date"}
+]
+JSON
+R_ROWS=$(receipt_rows "$FIXTURE")
+require "receipt_index: produced rows" "$R_ROWS"
+check "receipt: parentless marked '-'"        "$(printf '%s\n' "$R_ROWS" | awk -F'\t' '$1==1{print $2}')" "-"
+check "receipt: parent extracted"             "$(printf '%s\n' "$R_ROWS" | awk -F'\t' '$1==3{print $2}')" "500"
+check "receipt: age computed"                 "$(printf '%s\n' "$R_ROWS" | awk -F'\t' '$1==1{print $3}')" "20"
+# Absence gets its own value. An unreadable date must never look old (it would
+# retire a receipt on a guess) nor new (it would pin one open forever).
+check "receipt: empty date -> -1, not 0"      "$(printf '%s\n' "$R_ROWS" | awk -F'\t' '$1==4{print $3}')" "-1"
+check "receipt: junk date -> -1"              "$(printf '%s\n' "$R_ROWS" | awk -F'\t' '$1==5{print $3}')" "-1"
+check "receipt: title survives field 4"       "$(printf '%s\n' "$R_ROWS" | awk -F'\t' '$1==2{print $4}')" "fresh"
+
+# The expiry decision itself, including the shapes that must NOT retire. This is
+# the guard the sweep relies on: a non-numeric or unknown age must fail closed.
+expires() { [ "${1:--1}" -ge "${2}" ] 2>/dev/null && echo yes || echo no; }
+check "expiry: at threshold retires"          "$(expires 14 14)" "yes"
+check "expiry: one day under keeps"           "$(expires 13 14)" "no"
+check "expiry: unknown age (-1) keeps"        "$(expires -1 14)" "no"
+check "expiry: empty age keeps"               "$(expires '' 14)" "no"
+check "expiry: non-numeric age keeps"         "$(expires abc 14)" "no"
+rm -f "$FIXTURE"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -285,7 +285,15 @@ refresh_gh_token() {
 # receipt #788), and judging staleness on one of them retires evidence for the
 # other. A receipt naming no issue at all emits an empty parent field; some
 # carry no "Issue:" line whatsoever (#687 was hand-filed by the operator after
-# a token expiry), and those are simply not sweepable.
+# a token expiry).
+#
+# Superseded claim, recorded rather than erased (2026-09-04): this used to end
+# "and those are simply not sweepable". That was the deliberate design for
+# months and is now false — parentless receipts retire on AGE instead, which is
+# why this function emits a fourth field. The reasoning it rested on ("closing
+# on a guess loses real evidence") is answered rather than dismissed: expiry
+# closes the issue, it does not delete the evidence, and the close comment says
+# expired rather than resolved.
 #
 # Failure is a return code, never an empty listing: $1 receives gh's stderr,
 # rc=1 means the query failed and rc=2 means the parse failed. "Couldn't read"
@@ -356,6 +364,15 @@ RECEIPT_RETIRE_MAX=10
 # prompt, and the fetch below shows only the most recent few. Past this it warns
 # nobody and is pure backlog. A judgment threshold, not a measurement.
 RECEIPT_EXPIRY_DAYS=14
+# Cap on the oldest-first agent-self index. `gh issue list` is newest-first and
+# the sort runs after the fetch, so this truncates the OLDEST — the very items
+# the drain rule targets. Hitting it warns rather than passing quietly: the same
+# truncation already recurred once at 5 -> 12.
+SELF_BACKLOG_LIMIT=60
+# How many self-issues are shown with FULL bodies (newest-first). Stated once
+# because three places quote it — the fetch, the prompt's "newest N only" note,
+# and the drain trigger — and it has already moved once (5 -> 12).
+SELF_ISSUES_LIMIT=12
 
 # ── Step 1: Verify starting state ──
 echo "→ Checking build..."
@@ -675,7 +692,7 @@ if command -v gh &>/dev/null; then
     # oldest bot one — #683, open since 2026-08-06 and the item the creator has
     # actually been waiting on, stayed invisible either way.
     SELF_ISSUES=$(gh issue list --repo "$REPO" --state open \
-        --label "agent-self" --limit 12 \
+        --label "agent-self" --limit "$SELF_ISSUES_LIMIT" \
         --json number,title,body \
         --jq '.[] | "'"$BOUNDARY_BEGIN"'\n### Issue #\(.number)\n**Title:** \(.title)\n\(.body)\n'"$BOUNDARY_END"'\n"' 2>/dev/null \
         | python3 -c "import sys,re; print(re.sub(r'<!--.*?-->','',sys.stdin.read(),flags=re.DOTALL))" 2>/dev/null || true)
@@ -684,18 +701,35 @@ if command -v gh &>/dev/null; then
     else
         echo "  No self-issues."
     fi
-    # Compact index of the WHOLE backlog, oldest first. The block above fetches
-    # full bodies newest-first at --limit 12, so with more than 12 open the
-    # OLDEST are invisible — and "drain the oldest" is exactly the rule the plan
-    # is asked to follow, so without this it references data it cannot see. One
-    # line each: cheap enough to carry the tail, complete enough to pick from.
+    # Compact index of the backlog TAIL, oldest first. The block above fetches
+    # full bodies newest-first at SELF_ISSUES_LIMIT, so past that the OLDEST are
+    # invisible — and "drain the oldest" is exactly the rule the plan is asked to
+    # follow, so without this it references data it cannot see. One line each.
+    #
+    # `try/catch` on the date, per row: bare `fromdate` is whole-QUERY fatal, so
+    # a single null createdAt would empty the entire index and read as "no
+    # backlog" — the failure this index exists to prevent, one layer down.
+    SELF_BACKLOG_RC=0
     SELF_BACKLOG_INDEX=$(gh issue list --repo "$REPO" --state open \
-        --label "agent-self" --limit 60 --json number,title,createdAt \
-        --jq 'sort_by(.createdAt) | .[] | "- #\(.number) (\(((now - (.createdAt|fromdate))/86400)|floor)d) \(.title)"' \
-        2>/dev/null || true)
-    if [ -n "$SELF_BACKLOG_INDEX" ]; then
-        SELF_BACKLOG_COUNT=$(printf '%s\n' "$SELF_BACKLOG_INDEX" | grep -c '^- #')
-        echo "  Backlog index: $SELF_BACKLOG_COUNT open agent-self issue(s), oldest first."
+        --label "agent-self" --limit "$SELF_BACKLOG_LIMIT" --json number,title,createdAt \
+        --jq 'sort_by(.createdAt // "") | .[] | "- #\(.number) (\(try ((now - (.createdAt|fromdate))/86400|floor) catch "?")d) \(.title)"' \
+        2>/dev/null) || SELF_BACKLOG_RC=$?
+    if [ "$SELF_BACKLOG_RC" -ne 0 ]; then
+        # "Could not read" must not render as "the backlog is small": the drain
+        # rule keys on this list, so a failed query would silently disable it.
+        echo "  WARNING: backlog index query failed (rc=$SELF_BACKLOG_RC) — the drain rule cannot see the tail this session."
+        SELF_BACKLOG_INDEX=""
+    elif [ -n "$SELF_BACKLOG_INDEX" ]; then
+        # `|| true`: grep -c exits 1 on zero matches, and under `set -euo
+        # pipefail` a bare assignment from it ends the session — after the fetch
+        # cost is already paid.
+        SELF_BACKLOG_COUNT=$(printf '%s\n' "$SELF_BACKLOG_INDEX" | grep -c '^- #' || true)
+        echo "  Backlog index: ${SELF_BACKLOG_COUNT:-0} open agent-self issue(s), oldest first."
+        if [ "${SELF_BACKLOG_COUNT:-0}" -ge "$SELF_BACKLOG_LIMIT" ]; then
+            echo "  WARNING: hit the $SELF_BACKLOG_LIMIT-issue cap — gh lists newest-first, so the OLDEST were truncated away. That is the defect this index exists to prevent; raise SELF_BACKLOG_LIMIT."
+        fi
+    else
+        echo "  Backlog index: 0 open agent-self issue(s)."
     fi
 fi
 
@@ -714,11 +748,17 @@ fi
 # session's window is already clean. Parents come from receipt_index, which
 # emits EVERY issue a receipt names; retirement requires ALL of them closed,
 # because a task serving two issues can finish one and stay blocked on the
-# other. A receipt naming no issue (self-driven work, "Issue: none", or a
-# hand-filed receipt with no Issue: line at all) is left alone: nothing here
-# can tell whether it is still live, and closing on a guess loses real
-# evidence. Note this is a numeric match, not an understanding of the word
+# other. Note this is a numeric match, not an understanding of the word
 # "none" — "Issue: none (see #700)" reads as parent #700.
+#
+# Superseded claim, recorded rather than erased (2026-09-04): this used to say a
+# receipt naming no issue "is left alone: nothing here can tell whether it is
+# still live, and closing on a guess loses real evidence." Measured that day, 8
+# of 16 open receipts named no parent, so that rule made them permanent — and
+# self-driven work is now most of what a session does. They retire on age below.
+# The old reasoning still holds and is what shapes the fix: age cannot tell
+# whether the work is still worth doing, so expiry closes the receipt WITHOUT
+# claiming it was resolved, and the evidence stays readable.
 #
 # Known limitation, stated rather than hidden: a parent closed as "won't fix"
 # (Phase C is explicitly allowed to do that) still retires its receipt, even
@@ -737,7 +777,7 @@ if [ "$QUIET_MODE" = false ] && command -v gh &>/dev/null; then
         SWEEP_PARENTED=0     # receipts carrying at least one parent
         SWEEP_ROWS=0
         SWEEP_DEFERRED=0     # stale but past the per-session cap
-        SWEEP_EXPIRED=0      # parentless and past the read window
+        SWEEP_EXPIRED=0      # parentless and past RECEIPT_EXPIRY_DAYS
         # Parent states seen this sweep, memoized as plain strings (no
         # associative arrays — this script also runs on macOS bash 3.2).
         SWEEP_CLOSED_SEEN=" "
@@ -754,21 +794,32 @@ if [ "$QUIET_MODE" = false ] && command -v gh &>/dev/null; then
                 # a session does, so that leak grows with every reverted blind
                 # round and never drains.
                 #
-                # Age is the only signal available here, and it is the honest
-                # one: a revert receipt exists to stop the planner re-attempting
-                # failed work, and it can only do that while it is still being
-                # read. Past the read window it warns nobody. Retire on age, and
-                # say in the close comment that this is expiry, not resolution.
+                # Age is a PROXY and is labelled as one, because the close
+                # comment below is public. The real criterion is RANK: receipts
+                # reach a prompt via `--limit 3`, newest-first, so one stops
+                # warning anyone once three newer ones are open. Rank is not
+                # knowable here (it depends on what else is open at fetch time);
+                # age is, and an old receipt is almost always far past rank 3.
+                # There is NO N-day read window — do not describe one.
                 #
                 # -1 means the age could not be read. It must not retire: an
                 # unknown age is not an old one.
-                if [ "${RECEIPT_AGE:--1}" -ge "$RECEIPT_EXPIRY_DAYS" ] 2>/dev/null; then
+                # An unknown age is not a young one either. Count it, or the
+                # all-clear below reports a drain that never ran — and if gh's
+                # JSON shape ever changes, EVERY row becomes -1 and the sweep
+                # silently stops retiring anything while still printing OK.
+                case "${RECEIPT_AGE:--1}" in
+                    ''|*[!0-9-]*|-1)
+                        SWEEP_UNCHECKED=$((SWEEP_UNCHECKED + 1))
+                        continue ;;
+                esac
+                if [ "$RECEIPT_AGE" -ge "$RECEIPT_EXPIRY_DAYS" ] 2>/dev/null; then
                     if [ "$SWEEP_RETIRED" -ge "$RECEIPT_RETIRE_MAX" ]; then
                         SWEEP_DEFERRED=$((SWEEP_DEFERRED + 1))
                         continue
                     fi
                     if gh issue close "$RECEIPT_NUM" --repo "$REPO" --comment \
-"This receipt names no parent issue (self-driven work), so it cannot be retired by parent-closure, and at ${RECEIPT_AGE} days it is past the ${RECEIPT_EXPIRY_DAYS}-day window in which revert receipts are actually read into a session prompt. Closing as **expired, not resolved** — the work it describes may still be worth doing, and the receipt stays readable in its closed state. Nothing is deleted." >/dev/null 2>>"$SWEEP_ERR_F"; then
+"This receipt names no parent issue (self-driven work), so parent-closure can never retire it. At ${RECEIPT_AGE} days it is past the ${RECEIPT_EXPIRY_DAYS}-day expiry the harness applies to parentless receipts \u2014 a judgment threshold, not a measured window. What a receipt is FOR is stopping a re-attempt of failed work, and only the 3 most recent open receipts are read into a session prompt, so one this old is far past being read. Closing as **expired, not resolved**: the work it describes may still be worth doing, nothing is deleted, and the receipt stays readable in its closed state." >/dev/null 2>"$SWEEP_ERR_F" </dev/null; then
                         echo "  Retired #$RECEIPT_NUM (parentless, ${RECEIPT_AGE}d old — expired, not resolved)"
                         SWEEP_RETIRED=$((SWEEP_RETIRED + 1))
                         SWEEP_EXPIRED=$((SWEEP_EXPIRED + 1))
@@ -827,7 +878,7 @@ if [ "$QUIET_MODE" = false ] && command -v gh &>/dev/null; then
         if [ "$SWEEP_RETIRED" -eq 0 ] && [ "$SWEEP_FAILED" -eq 0 ] && [ "$SWEEP_UNCHECKED" -eq 0 ] && [ "$SWEEP_DEFERRED" -eq 0 ]; then
             echo "  No receipts to retire ($SWEEP_PARENTED of $SWEEP_ROWS carry a parent issue; parentless ones retire at $RECEIPT_EXPIRY_DAYS days)."
         elif [ "$SWEEP_UNCHECKED" -gt 0 ] || [ "$SWEEP_FAILED" -gt 0 ]; then
-            echo "  Retired $SWEEP_RETIRED; $SWEEP_UNCHECKED receipt(s) could NOT be checked and $SWEEP_FAILED could not be closed — the window may still hold obsolete receipts."
+            echo "  Retired $SWEEP_RETIRED ($SWEEP_EXPIRED by age, $((SWEEP_RETIRED - SWEEP_EXPIRED)) by parent-closure); $SWEEP_UNCHECKED receipt(s) could NOT be checked and $SWEEP_FAILED could not be closed — the window may still hold obsolete receipts."
         fi
     fi
     rm -f "$SWEEP_ERR_F"
@@ -1442,7 +1493,7 @@ $CI_STATUS_MSG
 ${SELF_ISSUES:+
 === YOUR OWN BACKLOG (agent-self issues) ===
 ${SELF_BACKLOG_INDEX:+
-FULL BACKLOG, OLDEST FIRST — the detailed bodies below are the newest 12 only,
+FULL BACKLOG, OLDEST FIRST — the detailed bodies below are the newest $SELF_ISSUES_LIMIT only,
 so anything past that appears here and nowhere else. If this list is long, the
 second task slot is for draining it: take the oldest still-valid item, or close
 it as not-planned with the reason. Both drain; only one of them is work.
@@ -1605,12 +1656,13 @@ and two tasks finished whole beat three finished halfway). Task allocation:
   higher-priority issue blocks. Decompose a big dream-milestone into a task you can finish today.
 - The other slot: highest-priority remaining item — community issues by net score,
   or a second self-driven item if nothing from the community queue is actionable.
-  BACKLOG DRAIN: if the agent-self backlog shown above holds more than 12 open
-  issues, spend this slot on the OLDEST one that is still valid instead. You file
+  BACKLOG DRAIN: the index above lists ${SELF_BACKLOG_COUNT:-?} open agent-self
+  issues. If that is more than $SELF_ISSUES_LIMIT, spend this slot on the OLDEST
+  one that is still valid instead. You file
   findings faster than you fix them — that is the "one defect per round, file the
-  rest" discipline working, and it is correct, but it has no counterweight, so the
-  backlog only grows. Measured 2026-09-04: 18 issues opened and 10 closed in three
-  days while every run was green. Draining the oldest is what turns that around;
+  rest" discipline working, and it is correct — it had no counterweight until
+  this rule, which is why the backlog had only grown. Measured 2026-09-04, before
+  this rule existed: 18 issues opened and 10 closed in three days, every run green. Draining the oldest is what turns that around;
   a stack that is only ever pushed is not a queue.
   If the oldest is no longer worth doing, CLOSE it as not-planned with the reason
   written down — that also drains, and an honest won't-do beats a stale open issue.
