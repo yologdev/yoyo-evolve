@@ -1,0 +1,65 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task. Let me start by verifying the key claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat && echo "…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_src_test_reada… ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.6s (2 ✓)
+
+Key concern spotted: CLAUDE.md not in the diff. Let me verify docs and run the actual feature.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== git log ===" && git lo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== SELF TESTS ===" && pyt… ✓ (9ms)
+ ✓ (312ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 22.3s (2 ✓)
+
+Verified. Code is complete and works; docs are the gap. Let me confirm the stale claim precisely.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== LIMITS #9 now-stale cl… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed — the LIMITS #9 phrase wraps across lines (hence no grep hit), and CLAUDE.md has zero mentions of the new flag. I have enough evidence.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/9. --src-census ENTERS … ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (57.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 16s (2 ✓)
+
+Verdict written to `session_plan/eval_task_1.md`.
+
+FAIL — on doc_sync only; the engineering itself is sound.
+
+What passed (verified by running, not by reading):
+• `python3 scripts/counterfactual_green.py --test → ALL PASSED`, exit 0.
+• --include-src-test-commits without --splice-src-tests → honest message naming the guaranteed-NO_TEST_CHANGE waste, exit 2.
+• Both new pure functions have their consumers in the same diff (main() at the selection site) — the #618/#653/#658 shape is not present.
+• Selection logic matches the three hard constraints: scoped to not r.addressable (no double-counting), only `SRC_TESTS_READABLE admitted (NONE/UNKNOWN/unenumerated all refused), spliced *after* the signal-bearing tier as a permutation with an empty list returning ordered` unchanged.
+
+What failed:
+
+The task's Docs section named two artifacts and neither was touched — git diff HEAD~1 --name-only lists only the script.
+
+1. **CLAUDE.md**: zero hits for include-src-test-commits, src_test_only_candidates, merge_src_test_only, src-test-only, SECOND consumer.
+2. The script's own `LIMITS` block, which is printed on every run, still says:
+
+│ `9. --src-census ENTERS NO DENOMINATOR … They change no verdict, no ledger row, no census figure and no --max-runs selection: those commits are still NOT selected, because selection runs UPSTREAM of depth.`
+
+That sentence is precisely what this task falsified. With the flag on, those commits are selected and do affect --max-runs. So the instrument now emits a false claim about its own reach on every invocation — which is the stale-claim shape this repo has paid for repeatedly, sitting inside the block whose whole purpose is that *"could not check" must never read as "checked; clean."*
+
+Two small notes for whoever picks this up: the phrase wraps across a line break (… those commits\n     are still NOT selected), so a single-line grep misses it; and the fix is additive — limit 9 needs a clause naming the flag as the one thing that does move selection, plus the CLAUDE.md paragraph with the default-off guarantee, the separate count, and the "this changes what is SELECTED, it does not make any commit more answerable, and it does not close #870" limit.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

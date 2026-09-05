@@ -1,0 +1,267 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the premises in Step 0 before touching anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_src_test_reada…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def census_by_populatio… ✓ (6ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1190,1300p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1300,1440p' scripts/coun… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1080,1200p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2493,2620p' scripts/coun… ✓ (3ms)
+ ✓ (4ms)
+  6 tools completed in 10.9s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I was mid-verification of Step 0. Let me finish it and move to the edit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "class CensusRow" -A 20 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1652,1740p' scripts/coun… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '684,720p' scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src-census\|src_census\… ✓ (3ms)
+ ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 8.9s (4 ✓)
+
+Step 0 verified — all three premises hold. Now the main flow:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2690,2800p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2800,2900p' scripts/coun… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 fully verified. Now writing the code — starting with the pure functions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2190,2215p' scripts/coun… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the two pure functions — inserted right after order_by_shape_tier:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (2 → 103 lines)
+  + def src_test_only_candidates(rows, population, recorded, readability_of):
+  +     """Commits selectable ONLY because their test edits live inside `src/`. Pure.
+  + 
+  +     Day 189, #870. `readability_of(sha)` is injected -- the discipline `added_ts` uses in
+  +     `never_forecast_files`, `census_shape_split` uses for shapes and `src_census_fix_loop`
+  +     already uses for this exact question -- so the selection is table-testable with no git.
+  + 
+  +     WHY THIS EXISTS, and it is the named blocker rather than more calibration. Day 189's
+  +     10:09 session pointed the counterfactual at the fix-loop arm for the first time and
+  +     got `NO_TEST_CHANGE`, decided from the diff, zero cargo runs. That refusal located the
+  +     wall at one address: `classify_test_diff_shape` looks only at top-level `tests/*.rs`,
+  +     and SELECTION RUNS UPSTREAM OF DEPTH -- `--splice-src-tests` changes how deeply a
+  +     SELECTED commit is read and can never make one selected. Five sessions called the
+  +     fix-loop arm "structurally unmeasurable" as an INFERENCE; it is now a measured fact
+  +     with one function behind it, and this is that function's second consumer.
+  + 
+  +     THE SECOND CONSUMER IS THE POINT. `classify_src_test_readability` has existed since
+  +     Day 188 with exactly ONE consumer -- `--src-census`, a print-only reporting surface.
+  +     That is my own "a capability is real only where something consumes it" rule sitting on
+  +     my newest classifier. No new classifier is written here: the question "does this commit
+  ... (83 more lines)
+ ✓ (57.3s)
+  + def src_test_only_candidates(rows, population, recorded, readability_of):
+  +     """Commits selectable ONLY because their test edits live inside `src/`. Pure.
+  + 
+  +     Day 189, #870. `readability_of(sha)` is injected -- the discipline `added_ts` uses in
+  +     `never_forecast_files`, `census_shape_split` uses for shapes and `src_census_fix_loop`
+  +     already uses for this exact question -- so the selection is table-testable with no git.
+  + 
+  +     WHY THIS EXISTS, and it is the named blocker rather than more calibration. Day 189's
+  ... (13 more lines)
+
+Now the flag with its refusal (Step 1):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 11 lines)
+  +     parser.add_argument(
+  +         "--include-src-test-commits",
+  +         action="store_true",
+  +         help=(
+  +             "#870: ALSO select commits whose only test edits live inside src/ behind "
+  +             "#[cfg(test)]. DEFAULT OFF -- off is byte-identical to every reading already "
+  +             "recorded. Requires --splice-src-tests. Counted on its own line and never "
+  +             "summed into behavioural or signal-bearing."
+  +         ),
+  +     )
+        parser.add_argument("--test", action="store_true", help="run self-tests and exit")
+ ✓ (57.7s)
+  +     parser.add_argument(
+  +         "--include-src-test-commits",
+  +         action="store_true",
+  +         help=(
+  +             "#870: ALSO select commits whose only test edits live inside src/ behind "
+  +             "#[cfg(test)]. DEFAULT OFF -- off is byte-identical to every reading already "
+  +             "recorded. Requires --splice-src-tests. Counted on its own line and never "
+  +             "summed into behavioural or signal-bearing."
+  ... (3 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the refusal (Step 1's honest exit-2):
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 3 lines) ✓ (57.8s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 17 lines)
+  +     # A commit selected by --include-src-test-commits has NO top-level tests/ diff, so
+  +     # reading it at tests-only depth is a GUARANTEED NO_TEST_CHANGE -- a wasted ~4m cargo
+  +     # pair producing a refusal the diff already answers for free. The two flags are not
+  +     # independent and pretending they are is how a reading session burns its whole budget
+  +     # on guaranteed refusals, so this refuses rather than silently no-opping. Same shape
+  +     # as the --src-census and --resume refusals above.
+  +     if args.include_src_test_commits and not args.splice_src_tests:
+  +         print(
+  +             "--include-src-test-commits needs --splice-src-tests: a commit selected "
+  +             "this way has no top-level tests/ diff, so reading it at tests-only depth "
+  +             "is a GUARANTEED NO_TEST_CHANGE — a ~4m cargo pair spent to re-derive what "
+  +             "the diff already answers for free.",
+  +             file=sys.stderr,
+  +         )
+  +         return 2
+  + 
+        if not args.census and not args.commit and args.max_runs is None:
+ ✓ (58.2s)
+  +     # A commit selected by --include-src-test-commits has NO top-level tests/ diff, so
+  +     # reading it at tests-only depth is a GUARANTEED NO_TEST_CHANGE -- a wasted ~4m cargo
+  +     # pair producing a refusal the diff already answers for free. The two flags are not
+  +     # independent and pretending they are is how a reading session burns its whole budget
+  +     # on guaranteed refusals, so this refuses rather than silently no-opping. Same shape
+  +     # as the --src-census and --resume refusals above.
+  +     if args.include_src_test_commits and not args.splice_src_tests:
+  +         print(
+  ... (9 more lines)
+  2 tools completed in 2m 3s (2 ✓)
+
+Now Step 2 — wiring the second consumer into the batch path:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 19 lines)
+            todo, tier_counts = order_by_shape_tier(
+                todo, lambda sha: commit_test_diff_shape(root, sha)
+            )
+  +         # #870, Day 189: the SECOND consumer of `classify_src_test_readability`. DEFAULT
+  +         # OFF, so with the flag absent `src_only` is empty and `merge_src_test_only`
+  +         # returns a list equal to `todo` -- byte-identical selection for every reading
+  +         # already recorded. The resolver is injected so both pure halves stay testable
+  +         # with no git; one `git diff --name-status` + one `git show` per modified src/
+  +         # file, and only for NO_TEST_CHANGE rows of this population.
+  +         src_only = []
+  +         if args.include_src_test_commits:
+  +             src_only = src_test_only_candidates(
+  +                 rows,
+  +                 args.population,
+  +                 recorded,
+  +                 lambda sha: commit_src_test_readability(root, sha),
+  +             )
+  +         todo = merge_src_test_only(todo, tier_counts, src_only)
+            if args.max_runs is not None:
+ ✓ (58.4s)
+            todo, tier_counts = order_by_shape_tier(
+                todo, lambda sha: commit_test_diff_shape(root, sha)
+            )
+  +         # #870, Day 189: the SECOND consumer of `classify_src_test_readability`. DEFAULT
+  +         # OFF, so with the flag absent `src_only` is empty and `merge_src_test_only`
+  +         # returns a list equal to `todo` -- byte-identical selection for every reading
+  +         # already recorded. The resolver is injected so both pure halves stay testable
+  +         # with no git; one `git diff --name-status` + one `git show` per modified src/
+  ... (11 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the separate count + anti-vacuous reporting:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (7 → 27 lines)
+                    "tiers: NO signal-bearing candidates remain for this population. Every "
+                    "reading below is answerable from the diff and CANNOT move the "
+                    "classifiable count — the reachable denominator is exhausted here."
+  +             )
+  +         if args.include_src_test_commits:
+  +             # COUNTED SEPARATELY AND NEVER SUMMED into behavioural or signal-bearing.
+  +             # The published plain-arm rate was measured over a population defined by
+  +             # top-level tests/*.rs; folding a differently-defined population into that
+  +             # denominator makes every prior number incomparable. Same reason
+  +             # `splice_depth` keeps the two depths apart.
+  +             print(
+  +                 f"src-test-only: {len(src_only)} commit(s) selectable ONLY because their "
+  +                 "test edits live inside src/ behind #[cfg(test)] — counted SEPARATELY, "
+  +                 "never summed into behavioural or signal-bearing, and run after the "
+  +                 "signal-bearing tier."
+                )
+  +             # ANTI-VACUOUS: a scan that finds nothing and reports a clean run is this
+  +             # defect wearing the opposite sign, and it is quieter than the bug.
+  +             if not src_only:
+  +                 print(
+  ... (5 more lines)
+ ✓ (57.6s)
+                    "tiers: NO signal-bearing candidates remain for this population. Every "
+                    "reading below is answerable from the diff and CANNOT move the "
+                    "classifiable count — the reachable denominator is exhausted here."
+  +             )
+  +         if args.include_src_test_commits:
+  +             # COUNTED SEPARATELY AND NEVER SUMMED into behavioural or signal-bearing.
+  +             # The published plain-arm rate was measured over a population defined by
+  +             # top-level tests/*.rs; folding a differently-defined population into that
+  ... (13 more lines)
+
+Now the guards (Step 3) — the deliverable. Let me find where the src-census self-tests end:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4610,4650p' scripts/coun… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4650,4700p' scripts/coun… ✓ (3ms)
+  2 tools completed in 1.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the guards — the actual deliverable:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 1 lines) ✓ (58.3s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 86 lines)
+  +     # ---- #870, Day 189: the SECOND consumer of classify_src_test_readability ----------
+  +     # ANTI-VACUOUS, AND ASSERTED FIRST: a row set genuinely containing a NO_TEST_CHANGE
+  +     # commit whose src/ carries a parent test module must come back selectable. A selector
+  +     # that finds nothing and reports a clean widening is this defect wearing the opposite
+  +     # sign, and it is quieter than the bug.
+  +     def _row(sha, tests=(), reg=(), pop=POP_PLAIN):
+  +         return CensusRow(sha, f"Day 189 (00:00): {sha} (Task 1)", list(tests), set(reg),
+  +                          pop)
+  + 
+  +     _nochange = _row("aaa")            # NO_TEST_CHANGE: no top-level tests/ diff at all
+  +     _behavioural = _row("bbb", ["tests/x.rs"])   # already select_runnable's business
+  +     _readable = lambda _sha: SRC_TESTS_READABLE
+  +     check("src-test-only: a NO_TEST_CHANGE commit with a readable src/ IS selectable",
+  +           [r.sha for r in src_test_only_candidates(
+  +               [_nochange], POP_PLAIN, set(), _readable)] == ["aaa"],
+  +           [r.sha for r in src_test_only_candidates(
+  +               [_nochange], POP_PLAIN, set(), _readable)])
+  + 
+  +     # THE DANGEROUS NEAR-MISS: widening to EVERY NO_TEST_CHANGE commit is the
+  +     # false-denominator failure #870 names explicitly. NONE is vacuous at this depth
+  ... (66 more lines)
+ ✓ (57.6s)
+  +     # ---- #870, Day 189: the SECOND consumer of classify_src_test_readability ----------
+  +     # ANTI-VACUOUS, AND ASSERTED FIRST: a row set genuinely containing a NO_TEST_CHANGE
+  +     # commit whose src/ carries a parent test module must come back selectable. A selector
+  +     # that finds nothing and reports a clean widening is this defect wearing the opposite
+  +     # sign, and it is quieter than the bug.
+  +     def _row(sha, tests=(), reg=(), pop=POP_PLAIN):
+  +         return CensusRow(sha, f"Day 189 (00:00): {sha} (Task 1)", list(tests), set(reg),
+  +                          pop)
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (98ms)
+  3 tools completed in 2m 22s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

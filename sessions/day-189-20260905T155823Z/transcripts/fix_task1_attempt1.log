@@ -1,0 +1,184 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the two documentation gaps the evaluator identified. Let me first look at the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "LIMITS" scripts/counter… ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2152,2215p' scripts/coun… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- scripts/count… ✓ (7ms)
+  4 tools completed in 4.7s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: the code half passed; the two doc deliverables remain. Let me read the exact code I landed so the docs are accurate rather than plausible.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2547,2650p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2831,2850p;2952,3015p' s… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.1s (2 ✓)
+
+Now I have the exact facts. Two doc deliverables. First, LIMITS item 9 — it prints a claim this task falsified:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (7 → 26 lines)
+      9. --src-census ENTERS NO DENOMINATOR (#870, Day 188). Its three counts measure how many
+         fix-loop NO_TEST_CHANGE commits a src+tests counterfactual COULD read. They change no
+  -      verdict, no ledger row, no census figure and no --max-runs selection: those commits
+  -      are still NOT selected, because selection runs UPSTREAM of depth. It is the number
+  -      the NEXT decision -- whether to widen what counts as behavioural -- gets made on, and
+  -      widening is the half that can manufacture a false denominator.
+  +      verdict, no ledger row and no census figure. It is the number the NEXT decision --
+  +      whether to widen what counts as behavioural -- gets made on, and widening is the half
+  +      that can manufacture a false denominator. SUPERSEDED HALF, recorded rather than
+  +      erased: this item used to end "and no --max-runs selection: those commits are still
+  +      NOT selected, because selection runs UPSTREAM of depth". That was true until Day 189,
+  +      when --include-src-test-commits gave classify_src_test_readability a SECOND consumer
+  +      (item 10). The COUNTS still enter no denominator; what changed is that a flag can now
+  +      act on them.
+  +  10. --include-src-test-commits IS DEFAULT OFF AND ENTERS NO DENOMINATOR EITHER (#870,
+  +      Day 189). With it OFF -- every reading recorded so far, and every one a later session
+  +      takes without it -- selection is BYTE-IDENTICAL, which is the whole regression
+  +      surface. With it ON, a NO_TEST_CHANGE commit that modifies a src/*.rs whose PARENT
+  +      carried a module-level #[cfg(test)] becomes selectable, is reported on its OWN line,
+  +      and is NEVER summed into behavioural or signal-bearing: the published tests-only rate
+  ... (10 more lines)
+ ✓ (58.0s)
+      9. --src-census ENTERS NO DENOMINATOR (#870, Day 188). Its three counts measure how many
+         fix-loop NO_TEST_CHANGE commits a src+tests counterfactual COULD read. They change no
+  -      verdict, no ledger row, no census figure and no --max-runs selection: those commits
+  -      are still NOT selected, because selection runs UPSTREAM of depth. It is the number
+  -      the NEXT decision -- whether to widen what counts as behavioural -- gets made on, and
+  -      widening is the half that can manufacture a false denominator.
+  +      verdict, no ledger row and no census figure. It is the number the NEXT decision --
+  +      whether to widen what counts as behavioural -- gets made on, and widening is the half
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+A printed claim with no consumer is what let item 9 go stale. Let me pin the new item in the self-tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "limits state" scripts/c… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4064,4074p' scripts/coun… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 19 lines)
+        check("limits state the intent boundary", "intent is not" in LIMITS.lower())
+        check("limits state the src/ scope", "165k" in LIMITS)
+        check("limits state the register caveat", "DEBT REGISTER" in LIMITS)
+  +     # #870, Day 189. LIMITS is printed on EVERY run, so a stale claim in it is asserted
+  +     # to an operator's face once per invocation -- which is exactly how item 9 came to
+  +     # print "those commits are still NOT selected" after this flag falsified it. These
+  +     # pin the flag's three load-bearing promises to the text that makes them.
+  +     check("limits name the src-test-only flag",
+  +           "--include-src-test-commits" in LIMITS)
+  +     check("limits state the flag is default off",
+  +           "DEFAULT OFF" in LIMITS and "BYTE-IDENTICAL" in LIMITS)
+  +     check("limits state the flag enters no denominator",
+  +           "NEVER summed into behavioural" in LIMITS)
+  +     check("limits state the flag does not close #870",
+  +           "does NOT close #870" in LIMITS)
+  +     # The superseded half is RECORDED rather than erased -- deleting a wrong claim
+  +     # teaches nothing about why it was wrong.
+  +     check("limits record the superseded selection claim",
+  +           "SUPERSEDED HALF" in LIMITS and "UPSTREAM of depth" in LIMITS)
+ ✓ (58.1s)
+        check("limits state the intent boundary", "intent is not" in LIMITS.lower())
+        check("limits state the src/ scope", "165k" in LIMITS)
+        check("limits state the register caveat", "DEBT REGISTER" in LIMITS)
+  +     # #870, Day 189. LIMITS is printed on EVERY run, so a stale claim in it is asserted
+  +     # to an operator's face once per invocation -- which is exactly how item 9 came to
+  +     # print "those commits are still NOT selected" after this flag falsified it. These
+  +     # pin the flag's three load-bearing promises to the text that makes them.
+  +     check("limits name the src-test-only flag",
+  ... (11 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (68ms)
+  3 tools completed in 1m 8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+LIMITS done and pinned. Last deliverable: the CLAUDE.md bullet.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "894" CLAUDE.md | head; … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the CLAUDE.md paragraph, appended after the #894 entry:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 3 lines)
+    it removes #870's stated prerequisite, and the fix-loop arm still holds **1** signal-bearing commit until widening lands.
+  + 
+  + **Day 189 (#870) — `classify_src_test_readability` gets a SECOND consumer, so a `src/`-only test edit can be SELECTED; default OFF, counted separately, and it does not close #870.** **Superseded clause, recorded rather than erased:** the sentence immediately above ends *"until widening lands"*, and the *selection* half of that widening is what this task shipped. The clause worth keeping is the count itself, which is **still literally true and unchanged**: the fix-loop arm still holds **1 signa… [yoyo: 6259 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (59.2s)
+    it removes #870's stated prerequisite, and the fix-loop arm still holds **1** signal-bearing commit until widening lands.
+  + 
+  + **Day 189 (#870) — `classify_src_test_readability` gets a SECOND consumer, so a `src/`-only test edit can be SELECTED; default OFF, counted separately, and it does not close #870.** **Superseded clause, recorded rather than erased:** the sentence immediately above ends *"until widening lands"*, and the *selection* half of that widening is what this task shipped. The clause worth keeping is the count itself, which is **still literally true and unchanged**: the fix-loop arm still holds **1 signa… [yoyo: 6259 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== evaluator's greps on C…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== --test ===" && python3… ✓ (13ms)
+ ✓ (108ms)
+  3 tools completed in 1m 6s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One gap: the literal output label src-test-only (what an operator actually sees on stdout) isn't greppable in CLAUDE.md. Adding it:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **The count is reported on its own line and NEVER summed into `behavioural` or `signal-bearing`**
+  + **The count is reported on its own line (`src-test-only: N commit(s) …`) and NEVER summed into `behavioural` or `signal-bearing`**
+ ✓ (57.5s)
+  - **The count is reported on its own line and NEVER summed into `behavioural` or `signal-bearing`**
+  + **The count is reported on its own line (`src-test-only: N commit(s) …`) and NEVER summed into `behavioural` or `signal-bearing`**
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== la… (9 lines) ✓ (56ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 8s (2 ✓)
+
+Both doc deliverables are in. Now a positive control on the 5 new LIMITS guards — I added assertions, so I must prove they can fail (one atomic mutate→run→restore):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (14 lines) ✓ (134ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control printed nothing for my grep — that's a false all-clear, not a pass. Let me look at the actual output format rather than assume:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def check" -A 12 script… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Failures accumulate in a list. Let me re-run the control capturing real output:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (10 lines) ✓ (74ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the control is real: exactly 5 failures — the 5 new guards — exit 1. My earlier grep pattern was simply wrong, which is precisely the "control that prints nothing is a false all-clear" trap. Verifying the restore and running the mandated suite:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== restored: script diff …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (63ms)
+ ✓ (1.3s)
+  2 tools completed in 1.3s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

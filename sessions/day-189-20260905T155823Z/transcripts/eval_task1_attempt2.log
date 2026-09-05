@@ -1,0 +1,43 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the diff against the task requirements.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (245ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (13 lines) ✓ (89ms)
+  3 tools completed in 14.0s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (8 lines) ✓ (139ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2940,2995p' scripts/coun… ✓ (3ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (57.4s)
+  3 tools completed in 1m 35s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The verdict is written. Evaluation complete.
+
+Verdict: PASS
+
+What I verified:
+
+1. **Ran the feature, didn't just read it — `--test` prints `ALL PASSED` at exit 0; `--include-src-test-commits --max-runs 1` exits 2** with the honest message naming the guaranteed `NO_TEST_CHANGE` at tests-only depth, exactly as the task required (refuse, don't silently no-op).
+
+2. **Positive control, run as one atomic mutate→run→restore** — neutering `classify_src_test_readability` to always return `SRC_TESTS_NONE` produced `SELF-TESTS FAILED (5)`, while the flag-off byte-identity guard printed no failure. That is the direction that proves the near-miss guard tests the pass-through rather than the fix. Restore left git diff --stat byte-empty.
+
+3. **Forgotten touchpoints** — the failure mode behind #618/#653/#658. Both new functions have consumers in this same diff (`src_test_only_candidates` and `merge_src_test_only called in main), and the new argparse arg is consumed at three sites. I read lines 2940–2995 specifically to confirm rows, recorded and root are in scope at the new call site, since the self-tests exercise the pure halves and never enter main — a NameError` there would have meant a feature that passes its tests and cannot run.
+
+4. **The counting constraints** — the count is printed on its own line, never summed into `behavioural`/`signal-bearing`, with the anti-vacuous zero-selectable refusal present; order_by_shape_tier, classify_test_diff_shape and RUN_VERDICTS are untouched (self-test still reports 6 run verdicts).
+
+5. **Docs** — CLAUDE.md bullet added; the script's own `LIMITS` block had its now-false item 9 corrected with the superseded half recorded rather than erased, plus a new item 10, and five self-tests pin that text so the printed claim has a reader.
+
+Product surface: the only new flag is on a hand-run evolve instrument, default OFF and byte-identical when absent — opt-in per #448.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

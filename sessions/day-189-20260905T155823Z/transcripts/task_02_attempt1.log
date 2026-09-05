@@ -1,0 +1,223 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the child tool set composition in src/tools.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_sub_agent_tool_at…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (6ms)
+ ✓ (163ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+Gate is clean (28 passed, no warnings). Now let me read the seam.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1340,1440p src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_name_disallowed" -… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "" src/tools.rs | sed -n… ✓ (5ms)
+  3 tools completed in 12.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check my working state and the types I need.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree. Now the extraction — a pure, list-taking seam:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (13 → 1 lines)
+  -     let restrictions = &config.dir_restrictions;
+  -     let mut child_tools: Vec<Arc<dyn AgentTool>> = vec![
+  -         with_read_guard_bash_arc(Arc::new(yoagent::tools::bash::BashTool::default())),
+  -         maybe_guard_arc(Arc::new(ReadFileTool::default()), restrictions),
+  -         with_read_guard_arc(maybe_guard_arc(
+  -             Arc::new(WriteFileTool::new()),
+  -             restrictions,
+  -         )),
+  -         with_read_guard_arc(maybe_guard_arc(Arc::new(EditFileTool::new()), restrictions)),
+  -         maybe_guard_arc(Arc::new(ListFilesTool::default()), restrictions),
+  -         maybe_guard_arc(Arc::new(SearchTool::default()), restrictions),
+  -         Arc::new(WebSearchTool),
+  -     ];
+  +     let mut child_tools = sub_agent_child_tools(&config.dir_restrictions, &[]);
+ ✓ (12.1s)
+  -     let restrictions = &config.dir_restrictions;
+  -     let mut child_tools: Vec<Arc<dyn AgentTool>> = vec![
+  -         with_read_guard_bash_arc(Arc::new(yoagent::tools::bash::BashTool::default())),
+  -         maybe_guard_arc(Arc::new(ReadFileTool::default()), restrictions),
+  -         with_read_guard_arc(maybe_guard_arc(
+  -             Arc::new(WriteFileTool::new()),
+  -             restrictions,
+  -         )),
+  ... (6 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — now add the seam itself:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (1 → 64 lines)
+  + /// Compose the tool set a dispatched sub-agent receives, filtered by the
+  + /// parent's `disallowed` list.
+  + ///
+  + /// **Extracted as a list-taking seam for #887**, whose subject is
+  + /// `--restricted`: that flag removes command-running tools from the *parent*
+  + /// via a single `retain` in `agent_builder.rs`, and a dispatched sub-agent
+  + /// built its own `bash` regardless — so confinement was one `sub_agent` hop
+  + /// away. Closing that hop needs the parent's list to reach this composition,
+  + /// and this is the seam it will arrive through.
+  + ///
+  + /// **The only call site passes `&[]`, so production is byte-identical**: same
+  + /// tools, in the same order, with the same wrapping. That is the entire
+  + /// regression surface of this extraction and it is what the near-miss guard
+  + /// asserts with a whole-vector `assert_eq!` rather than a `contains`.
+  + ///
+  + /// Filtering reuses `agent_builder::tool_name_disallowed` — the pure half
+  + /// #887 is waiting on — rather than a second predicate, because two copies of
+  + /// a rule agree the day they are written and diverge forever after (the
+  + /// `significant_braces` precedent).
+  + ///
+  ... (44 more lines)
+ ✓ (11.9s)
+  + /// Compose the tool set a dispatched sub-agent receives, filtered by the
+  + /// parent's `disallowed` list.
+  + ///
+  + /// **Extracted as a list-taking seam for #887**, whose subject is
+  + /// `--restricted`: that flag removes command-running tools from the *parent*
+  + /// via a single `retain` in `agent_builder.rs`, and a dispatched sub-agent
+  + /// built its own `bash` regardless — so confinement was one `sub_agent` hop
+  + /// away. Closing that hop needs the parent's list to reach this composition,
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One import, then clean the duplicated comment left in the caller:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (1 → 2 lines)
+    use crate::AgentConfig;
+  + use crate::DirectoryRestrictions;
+ ✓ (1m 34s)
+    use crate::AgentConfig;
+  + use crate::DirectoryRestrictions;
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^fn build_sub_agent_too… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (17 → 8 lines)
+  -     // Sub-agent gets standard yoagent tools — no permission guards needed
+  -     // since the parent already authorized the delegation.
+  -     //
+  -     // Two boundaries ARE inherited, because a child must not be a way around a
+  -     // promise the parent made to the user:
+  -     //   1. Directory restrictions (`maybe_guard_arc`) — path-based security.
+  -     //   2. `/read` and `/plan` mode (`with_read_guard_arc` /
+  -     //      `with_read_guard_bash_arc`) — the same `ReadModeGuardTool` the main
+  -     //      agent uses, checked at call time, transparent when no mode is on
+  -     //      and during `/plan apply`.
+  +     // The child's tool set, composed at the `sub_agent_child_tools` seam.
+        //
+  -     // Known remaining gap (#709): the child's bash is yoagent's raw `BashTool`,
+  -     // not yoyo's `StreamingBashTool`, so when NO mode is active a child's bash
+  -     // command does not pass through `safety.rs` (no destructive-pattern check,
+  -     // no `detect_write_command`, no `detect_git_redirection_escape`). Modes are
+  -     // enforced; the always-on bash safety layer is not.
+  +     // `&[]` is the parent's disallow list, and passing it empty is what makes
+  +     // this extraction byte-identical to the pre-#887 behaviour: nothing is
+  +     // filtered today. Threading the real list here is slice 2 — until then,
+  ... (3 more lines)
+ ✓ (1m 44s)
+  -     // Sub-agent gets standard yoagent tools — no permission guards needed
+  -     // since the parent already authorized the delegation.
+  -     //
+  -     // Two boundaries ARE inherited, because a child must not be a way around a
+  -     // promise the parent made to the user:
+  -     //   1. Directory restrictions (`maybe_guard_arc`) — path-based security.
+  -     //   2. `/read` and `/plan` mode (`with_read_guard_arc` /
+  -     //      `with_read_guard_bash_arc`) — the same `ReadModeGuardTool` the main
+  ... (13 more lines)
+  3 tools completed in 3m 30s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests. Let me find the test module:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1607,1614p' src/tools.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3773,3781p' src/tools.rs ✓ (3ms)
+  3 tools completed in 6.8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (5 → 90 lines)
+                desc.contains("deep"),
+                "Description should mention 'deep' option, got: {desc}"
+  +         );
+  +     }
+  + 
+  +     /// The names a child receives today, in order. Written out rather than
+  +     /// derived, so a reordering or a dropped tool fails loudly instead of
+  +     /// agreeing with whatever the code now produces.
+  +     const CHILD_TOOLS_TODAY: &[&str] = &[
+  +         "bash",
+  +         "read_file",
+  +         "write_file",
+  +         "edit_file",
+  +         "list_files",
+  +         "search",
+  +         "web_search",
+  +     ];
+  + 
+  +     fn child_tool_names(disallowed: &[String]) -> Vec<String> {
+  +         sub_agent_child_tools(&DirectoryRestrictions::default(), disallowed)
+  ... (70 more lines)
+ ✓ (1m 45s)
+                desc.contains("deep"),
+                "Description should mention 'deep' option, got: {desc}"
+  +         );
+  +     }
+  + 
+  +     /// The names a child receives today, in order. Written out rather than
+  +     /// derived, so a reordering or a dropped tool fails loudly instead of
+  +     /// agreeing with whatever the code now produces.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 10s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 59s (2 ✓)
+
+Unit tests green (5486 passed). The gate is owed a line — exactly what killed #884. Let me read what it printed:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (161ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate printed its own remedy. Pasting it verbatim, never hand-typed:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/tools.rs"' tests/m… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/tools.rs", 3845),
+  +     ("src/tools.rs", 3973),
+ ✓ (1m 9s)
+  -     ("src/tools.rs", 3845),
+  +     ("src/tools.rs", 3973),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (161ms)
+  3 tools completed in 1m 14s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
