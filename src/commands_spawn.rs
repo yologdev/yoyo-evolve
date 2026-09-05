@@ -2021,7 +2021,41 @@ fn build_spawn_pr_args(task: &str, handoff: &SpawnHandoff) -> Vec<String> {
     ]
 }
 
-/// Push the handoff branch and open a draft PR via `gh` (opt-in `--pr` flag).
+/// Push the spawn handoff branch to `origin`, through the `src/git.rs` chokepoint.
+///
+/// This is the dir-taking seam that gives `push_and_open_pr` an emission point:
+/// that function only `println!`s and returns `()`, so nothing about the push was
+/// assertable before. The `Result` here carries exactly the text the caller prints.
+///
+/// Routed through `run_git_output` (#864, third payment) rather than a direct git
+/// spawn, for the same two reasons the first two payments chose it:
+/// it returns the raw `Output`, so reading the first stderr line still works and
+/// nothing is blob-trimmed, and it is built by `git_command()`, so this site now
+/// inherits `-c core.quotepath=off` and every future global applied there.
+///
+/// `-C <dir>` is placed **before** the subcommand because it is a git *global*
+/// (`git push -C` is not a thing, and `git apply -C<n>` is an entirely different
+/// flag). It replaces the old `.current_dir(repo_dir)`.
+///
+/// The register entry that used to name this site claimed the chokepoint's
+/// `#[cfg(test)]` destructive guard "would panic" because `push` is in
+/// `DESTRUCTIVE_GIT_COMMANDS`. Measured, that is false: the guard is
+/// **path-conditional, not verb-conditional** — it resolves `-C` and fires only when
+/// the target is *exactly* `CARGO_MANIFEST_DIR`. The one caller passes
+/// `worktree.path` (`<root>/.yoyo/worktrees/spawn-N-TS`), which never equals it. The
+/// guard is therefore a strict improvement here: before this conversion a test
+/// driving the direct spawn from the project root would have pushed the real repo
+/// with nothing to stop it.
+fn push_handoff_branch(repo_dir: &Path, branch: &str) -> Result<(), String> {
+    let dir = repo_dir.to_string_lossy().to_string();
+    let out = crate::git::run_git_output(&["-C", &dir, "push", "-u", "origin", branch])?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    Err(stderr.lines().next().unwrap_or("unknown error").to_string())
+}
+
 ///
 /// Degrades gracefully and reports honestly (never pre-announces success):
 /// - `gh` not on PATH → keep the local-branch line, note "skipped PR".
@@ -2045,22 +2079,9 @@ fn push_and_open_pr(repo_dir: &Path, task: &str, handoff: &SpawnHandoff) {
         return;
     }
 
-    let push = std::process::Command::new("git")
-        .current_dir(repo_dir)
-        .args(["push", "-u", "origin", &handoff.branch])
-        .output();
-    match push {
-        Ok(out) if out.status.success() => {}
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let first = stderr.lines().next().unwrap_or("unknown error");
-            println!("{YELLOW}  push failed: {first}{RESET}");
-            return;
-        }
-        Err(e) => {
-            println!("{YELLOW}  push failed: {e}{RESET}");
-            return;
-        }
+    if let Err(e) = push_handoff_branch(repo_dir, &handoff.branch) {
+        println!("{YELLOW}  push failed: {e}{RESET}");
+        return;
     }
 
     let pr_args = build_spawn_pr_args(task, handoff);
@@ -3178,6 +3199,137 @@ mod tests {
             .output()
             .expect("git commit");
         tmp
+    }
+
+    /// A bare repo plus a work repo whose `origin` points at it, so a push is a
+    /// real push into a tempdir and never touches this repository (#780, and
+    /// `run_git`'s own destructive-command guard).
+    fn setup_repo_with_local_remote() -> (tempfile::TempDir, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let bare = tmp.path().join("remote.git");
+        std::process::Command::new("git")
+            .args(["init", "-q", "--bare"])
+            .arg(&bare)
+            .output()
+            .expect("git init --bare");
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&work).expect("mkdir work");
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "t@t.t"],
+            vec!["config", "user.name", "t"],
+        ] {
+            std::process::Command::new("git")
+                .args(&args)
+                .current_dir(&work)
+                .output()
+                .expect("git setup");
+        }
+        std::fs::write(work.join("f.txt"), "hi").expect("write");
+        for args in [vec!["add", "-A"], vec!["commit", "-qm", "init"]] {
+            std::process::Command::new("git")
+                .args(&args)
+                .current_dir(&work)
+                .output()
+                .expect("git commit");
+        }
+        std::process::Command::new("git")
+            .arg("remote")
+            .arg("add")
+            .arg("origin")
+            .arg(&bare)
+            .current_dir(&work)
+            .output()
+            .expect("git remote add");
+        (tmp, work)
+    }
+
+    /// The emission point: the `Result` a caller of `push_handoff_branch`
+    /// receives. #864's third payment routed this through the chokepoint, and a
+    /// successful push must still be `Ok(())`.
+    ///
+    /// The branch name deliberately carries a non-ASCII character. `git push`
+    /// prints no paths, so `-c core.quotepath=off` buys **nothing visible** at
+    /// this site — that is stated rather than dressed up as a product gain; what
+    /// the conversion buys is chokepoint membership for whatever global lands
+    /// there next. What this row *does* pin is that adding that global does not
+    /// mangle a non-ASCII argument on the way through.
+    #[test]
+    fn push_handoff_branch_pushes_a_non_ascii_branch_through_the_chokepoint() {
+        let (_tmp, work) = setup_repo_with_local_remote();
+        let branch = "spawn/näme";
+        // Anti-vacuous: a transcription slip must not let this pass by agreeing
+        // with itself on a name that is really ASCII.
+        assert!(
+            branch.bytes().any(|b| b >= 0x80),
+            "fixture branch name must actually contain a non-ASCII byte"
+        );
+        std::process::Command::new("git")
+            .args(["branch", branch])
+            .current_dir(&work)
+            .output()
+            .expect("git branch");
+
+        assert_eq!(push_handoff_branch(&work, branch), Ok(()));
+
+        // The remote really received it, under the exact name we asked for.
+        let out = std::process::Command::new("git")
+            .args(["branch", "--list", branch])
+            .current_dir(&work)
+            .output()
+            .expect("git branch --list");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("näme"),
+            "branch name was mangled somewhere in the round trip"
+        );
+    }
+
+    /// Near-miss guard, and the entire regression surface: an ordinary ASCII
+    /// push is byte-identical to before the conversion — `Ok(())`, nothing else.
+    /// A discriminator tested only on the side that fires is vacuous green.
+    #[test]
+    fn push_handoff_branch_ascii_success_is_byte_identical() {
+        let (_tmp, work) = setup_repo_with_local_remote();
+        std::process::Command::new("git")
+            .args(["branch", "spawn/plain"])
+            .current_dir(&work)
+            .output()
+            .expect("git branch");
+        assert_eq!(push_handoff_branch(&work, "spawn/plain"), Ok(()));
+    }
+
+    /// Graceful degradation, unchanged by the conversion: a failing push still
+    /// yields git's **first stderr line**, verbatim. Asserted as a whole string
+    /// rather than a `contains`, because a silently-different failure mode is a
+    /// regression dressed as a cleanup.
+    #[test]
+    fn push_handoff_branch_error_is_gits_first_stderr_line() {
+        let (_tmp, work) = setup_repo_with_local_remote();
+        let got = push_handoff_branch(&work, "no-such-branch-anywhere");
+
+        let raw = std::process::Command::new("git")
+            .args(["push", "-u", "origin", "no-such-branch-anywhere"])
+            .current_dir(&work)
+            .output()
+            .expect("git push");
+        let expected = String::from_utf8_lossy(&raw.stderr)
+            .lines()
+            .next()
+            .unwrap_or("unknown error")
+            .to_string();
+        assert!(
+            !expected.is_empty(),
+            "anti-vacuous: git must actually have written a stderr line here"
+        );
+        assert_eq!(got, Err(expected));
+    }
+
+    /// A directory that is not a repo at all still degrades to `Err` rather than
+    /// panicking or reporting success.
+    #[test]
+    fn push_handoff_branch_on_a_non_repo_dir_is_an_error() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        assert!(push_handoff_branch(tmp.path(), "main").is_err());
     }
 
     #[test]

@@ -221,7 +221,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
     // three regression tests covering no-worktree passthrough, the confined
     // common case, and widening a human-set allow list while preserving deny.
-    ("src/commands_spawn.rs", 4099),
+    ("src/commands_spawn.rs", 4252),
     // Day 162 (#692): +108 lines — extract_last_assistant_text now stops at the
     // newest turn's boundary (no stale-turn fallback) plus the regression tests
     // pinning that a text-less newest turn yields None, not an older turn's text.

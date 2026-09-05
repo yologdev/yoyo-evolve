@@ -122,13 +122,6 @@ const REGISTERED_GIT_BYPASSES: &[(&str, &str, &str)] = &[
         "two sites in one fn, same shapes as run_grep's: the nulled-stdio .status() probe and \
          an incremental `git grep` builder, here with -B/-A context flags computed at runtime.",
     ),
-    (
-        "src/commands_spawn.rs",
-        "push_and_open_pr",
-        "`push` is in DESTRUCTIVE_GIT_COMMANDS, so run_git_in_dir's #[cfg(test)] guard \
-         would panic; it also reads the first stderr line on failure while still needing \
-         .current_dir(repo_dir) for the spawn worktree.",
-    ),
 ];
 
 /// The one file that *is* the chokepoint, and is exempt by definition.
