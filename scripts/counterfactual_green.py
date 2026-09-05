@@ -1940,7 +1940,14 @@ def _run_counterfactual(
     # of `src/`, so a pre-task copy over post-task `src/` fails by construction and would
     # manufacture an UNEARNED out of bookkeeping. Registers stay at the shipped version.
     rollback = behavioural_test_files(out.splitlines(), register_only)
-    if not rollback:
+    if not rollback and not src_only_reading:
+        # `and not src_only_reading` (#870, Day 189): for a src-only reading `changed` is
+        # empty BY CONSTRUCTION, so `rollback` is empty too — and that is not the
+        # "register-only" fact this branch reports. Without the qualifier this returned
+        # NO_TEST_CHANGE with a literal empty file list, `only debt-register file(s)
+        # touched ()`, and the whole capability was dead one line after Site A admitted
+        # it. The tests-only path is UNCHANGED: with a non-empty `changed` this branch
+        # fires exactly as before, which is every reading ever recorded.
         return NO_TEST_CHANGE, (
             "only debt-register file(s) touched ("
             + ", ".join(changed)
@@ -2044,22 +2051,35 @@ def _run_counterfactual(
                 f"and were left at their shipped version ({', '.join(absent)}). "
             )
             print(f"    {absent_note.strip()}", flush=True)
-        if not kept:
+        if not kept and not src_only_reading:
             # THE DANGEROUS BRANCH, explicit and never a fall-through. Every touched test
             # file is new, so there is nothing older to lay back; proceeding would run
             # POST-task tests against POST-task src/ — just the baseline again — and would
             # manufacture a FALSE EARNED. Widening what counts as readable is exactly the
             # direction that can invent an earned green.
+            #
+            # `and not src_only_reading` (#870, Day 189): a src-only reading has an empty
+            # `rollback` by construction, so `parent_test_pathspec` returns ([], []) and
+            # this branch fired with an empty file list — `every touched test file is NEW
+            # at this commit ()` — which is not merely unhelpful, it is FALSE: no test
+            # file was touched at all. The refusal it exists to make is NOT dropped for
+            # that path, it MOVES to Site B below, where the question can actually be
+            # answered: there the splice has run, so "was anything laid back?" is a
+            # measured count rather than a guess. The tests-only path is UNCHANGED.
             return COULD_NOT_CHECK, (
                 "every touched test file is NEW at this commit ("
                 + ", ".join(absent)
                 + ") — nothing older to lay back, so there is no counterfactual to run"
             )
-        rc, out = run_cmd(
-            ["git", "-C", wt, "checkout", parent, "--"] + kept, timeout=120
-        )
-        if rc != 0:
-            return COULD_NOT_CHECK, f"checkout of pre-tests failed: {out.strip()[:200]}"
+        if kept:
+            # Guarded because a src-only reading has nothing to check out here, and
+            # `git checkout <parent> --` with an EMPTY pathspec is not a no-op — it is a
+            # different command. The overlay for that path is the splice below, not this.
+            rc, out = run_cmd(
+                ["git", "-C", wt, "checkout", parent, "--"] + kept, timeout=120
+            )
+            if rc != 0:
+                return COULD_NOT_CHECK, f"checkout of pre-tests failed: {out.strip()[:200]}"
 
         # ---- #870 slice 2: lay the pre-task `#[cfg(test)]` blocks back too. -----------
         # DEFAULT OFF. With the flag off nothing below runs, no extra git call is made,
@@ -2175,6 +2195,33 @@ def _run_counterfactual(
                 f"({register_refused} register-listed)",
                 flush=True,
             )
+            # ---- SITE B (#870, Day 189): NOTHING LAID BACK => NO COMPARISON. ----------
+            # `not kept` means the tests/ overlay contributed nothing, which for a
+            # src-only reading is true BY CONSTRUCTION. If the splice then also laid
+            # nothing back — every candidate refused by #894's register partition, a
+            # `git show` failure, a decode error, or SPLICE_NO_POST_MARKER — then the
+            # counterfactual tree IS the post-task tree, and running cargo against it
+            # would compare the shipped tree with itself and report a green. That green
+            # would be FALSE and it would enter the exact rate DREAM.md publishes.
+            #
+            # This is the refusal Site A's rule 3 promises: a commit is admitted on the
+            # PREDICTION that a splice is possible, and this is the one place that
+            # prediction is CHECKED against what actually happened. The condition is
+            # `not kept and spliced == 0` — "no overlay of ANY kind was applied" — rather
+            # than `src_only_reading`, because that is the true statement of the
+            # invariant: a commit with a real tests/ overlay is still readable at
+            # spliced == 0, and must not be refused here.
+            #
+            # COULD_NOT_CHECK, deliberately NOT a new verdict state: it already means
+            # exactly this ("the machinery could not produce a comparison") and it is
+            # already excluded from the rate. RUN_VERDICTS does not change.
+            if not kept and spliced == 0:
+                return COULD_NOT_CHECK, (
+                    "nothing was laid back: no pre-existing tests/ file to overlay and "
+                    f"0 src/ file(s) spliced ({refused} candidate(s) left alone, "
+                    f"{register_refused} register-listed) — the counterfactual tree "
+                    "equals the post-task tree, so there is no comparison to run"
+                )
 
         rc, out = run_cmd(["cargo", "test"], cwd=wt, timeout=timeout, env=env)
         verdict = classify_counterfactual(rc, out)
