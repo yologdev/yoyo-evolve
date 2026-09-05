@@ -4325,6 +4325,115 @@ def run_self_tests():
           src_splice_candidates(mixed))
 
     # ----------------------------------------------------------------------------------
+    # #894, Day 189: REGISTER-LISTED src/ files are excluded from the splice. Pure, with
+    # the register injected, so none of these rows reads tests/module_size.rs or any file.
+    # ----------------------------------------------------------------------------------
+
+    # ANTI-VACUOUS, AND ASSERTED FIRST: the register has been non-empty since the gate
+    # landed, so a parse yielding ZERO entries means the PARSE broke, not that no module
+    # is listed. `None` is a refusal and never an empty set — a scanner that finds nothing
+    # and reports a clean split is this defect wearing the opposite sign, and it is
+    # quieter than the bug.
+    _gate = (
+        "const MAX_MODULE_LINES: usize = 2000;\n"
+        "const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[\n"
+        '    ("src/cli.rs", 6_557),\n'
+        '    ("src/commands_risk.rs", 6479),\n'
+        "];\n"
+        "#[cfg(test)]\n"
+        "mod tests {\n"
+        "    // These fixture pairs must NEVER masquerade as register entries.\n"
+        '    const F: &[(&str, usize)] = &[("src/a.rs", 500), ("src/b.rs", 9000)];\n'
+        "}\n"
+    )
+    check("register-parse: only the register LITERAL is scanned, not the fixtures",
+          parse_grandfathered_register(_gate)
+          == frozenset({"src/cli.rs", "src/commands_risk.rs"}),
+          parse_grandfathered_register(_gate))
+
+    # Every could-not-read shape takes the SAME refusal path, and each is its own row.
+    for _label, _text in [
+        ("a missing/empty file", ""),
+        ("a `None` payload", None),
+        ("the const is absent", "fn main() {}\n"),
+        ("the register literal is unterminated",
+         "const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[\n"
+         '    ("src/cli.rs", 6557),\n'),
+        ("the register parses to ZERO entries",
+         "const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[\n];\n"),
+    ]:
+        check(f"register-parse: {_label} -> None (a REFUSAL, not an empty set)",
+              parse_grandfathered_register(_text) is None,
+              parse_grandfathered_register(_text))
+
+    # A refusal must be distinguishable from a clean empty read by the CALLER, not just by
+    # a comment: `None` and `frozenset()` are different objects and only one is falsy-safe.
+    check("register-parse: a refusal is not an empty frozenset",
+          parse_grandfathered_register("") != frozenset(),
+          parse_grandfathered_register(""))
+
+    _reg = frozenset({"src/cli.rs", "src/commands_risk.rs"})
+
+    # NEAR-MISS GUARD, and it is the half that matters: a commit whose candidates are ALL
+    # un-grandfathered must produce a BYTE-IDENTICAL kept list. Asserted with a full list
+    # `==` rather than a membership check, since a discriminator tested only on the side
+    # that fires is vacuous green. `59f41c1b` (src/gasp.rs) and `36534110`
+    # (src/git_commit_msg.rs) are exactly this shape and both read clean at depth.
+    _clean = ["src/gasp.rs", "src/git_commit_msg.rs"]
+    check("register-partition: an all-un-grandfathered list is kept byte-identically",
+          partition_register_listed(_clean, _reg) == (_clean, []),
+          partition_register_listed(_clean, _reg))
+
+    # The exclusion itself. `b398ffcf` spliced 3 files including register-listed ones and
+    # went EARNED -> REGISTER_DRIFT, a void.
+    check("register-partition: a register-listed file is refused",
+          partition_register_listed(["src/cli.rs"], _reg) == ([], ["src/cli.rs"]),
+          partition_register_listed(["src/cli.rs"], _reg))
+
+    # ORDER IS PRESERVED IN BOTH LISTS, so the caller's splice order is unchanged.
+    _mixed = ["src/gasp.rs", "src/cli.rs", "src/git_commit_msg.rs", "src/commands_risk.rs"]
+    check("register-partition: a mixed list splits in order, nothing lost",
+          partition_register_listed(_mixed, _reg)
+          == (["src/gasp.rs", "src/git_commit_msg.rs"],
+              ["src/cli.rs", "src/commands_risk.rs"]),
+          partition_register_listed(_mixed, _reg))
+
+    # PERMUTATION INVARIANT: kept + refused holds every candidate exactly once. This fails
+    # loudly the moment a later edit drops a file on the floor instead of classifying it.
+    _k, _r = partition_register_listed(_mixed, _reg)
+    check("register-partition: kept + refused is a permutation of the input",
+          sorted(_k + _r) == sorted(_mixed), (_k, _r))
+
+    # `register is None` REFUSES EVERY CANDIDATE. Splicing blind is the branch that can
+    # manufacture an accusation, and "could not check" must never read as "checked; clean".
+    check("register-partition: an unreadable register refuses EVERY candidate",
+          partition_register_listed(_mixed, None) == ([], _mixed),
+          partition_register_listed(_mixed, None))
+
+    # An EMPTY register would keep everything — which is precisely why the parser returns
+    # `None` rather than `frozenset()` for a broken read. Pinned so a later "simplify the
+    # `or None`" edit has to face this assertion.
+    check("register-partition: an EMPTY register keeps everything (hence the None rule)",
+          partition_register_listed(_mixed, frozenset()) == (_mixed, []),
+          partition_register_listed(_mixed, frozenset()))
+
+    check("register-partition: an empty candidate list yields ([], [])",
+          partition_register_listed([], _reg) == ([], []),
+          partition_register_listed([], _reg))
+    check("register-partition: None candidates yield ([], []) rather than raising",
+          partition_register_listed(None, _reg) == ([], []),
+          partition_register_listed(None, _reg))
+    check("register-partition: None candidates with an unreadable register do not raise",
+          partition_register_listed(None, None) == ([], []),
+          partition_register_listed(None, None))
+
+    # THIS ADDS NO VERDICT STATE. A later reader folding a refusal into RUN_VERDICTS would
+    # put a file-granularity status into the rate DREAM.md publishes.
+    check("register-partition: the live register parses to a non-empty set",
+          parse_grandfathered_register(_gate) is not None,
+          "anti-vacuous guard is itself vacuous")
+
+    # ----------------------------------------------------------------------------------
     # #870, Day 188: could a src+tests counterfactual READ this commit at all? Pure, with
     # the parent-module resolver injected, so none of these rows touches git or the disk.
     # ----------------------------------------------------------------------------------
