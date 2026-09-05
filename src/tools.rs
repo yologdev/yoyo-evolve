@@ -27,6 +27,7 @@ use crate::tool_wrappers::{
     DiagnosticSubAgentTool, FallbackSubAgentTool, ToolFailureTracker, SESSION_TOOL_CALL_CAP,
 };
 use crate::AgentConfig;
+use crate::DirectoryRestrictions;
 
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1350,6 +1351,69 @@ fn sub_agent_fallback_key(
     }
 }
 
+/// Compose the tool set a dispatched sub-agent receives, filtered by the
+/// parent's `disallowed` list.
+///
+/// **Extracted as a list-taking seam for #887**, whose subject is
+/// `--restricted`: that flag removes command-running tools from the *parent*
+/// via a single `retain` in `agent_builder.rs`, and a dispatched sub-agent
+/// built its own `bash` regardless — so confinement was one `sub_agent` hop
+/// away. Closing that hop needs the parent's list to reach this composition,
+/// and this is the seam it will arrive through.
+///
+/// **The only call site passes `&[]`, so production is byte-identical**: same
+/// tools, in the same order, with the same wrapping. That is the entire
+/// regression surface of this extraction and it is what the near-miss guard
+/// asserts with a whole-vector `assert_eq!` rather than a `contains`.
+///
+/// Filtering reuses `agent_builder::tool_name_disallowed` — the pure half
+/// #887 is waiting on — rather than a second predicate, because two copies of
+/// a rule agree the day they are written and diverge forever after (the
+/// `significant_braces` precedent).
+///
+/// **Stated limit, so a later reader does not "fix" it back:** the recursive
+/// `sub_agent` tool is pushed by the caller *after* this returns and is
+/// therefore not filtered here. That is deliberate and it *matches the
+/// parent*: `agent_builder.rs` also pushes `sub_agent` after its own
+/// `retain`, so a `sub_agent` entry in a disallow list filters nothing at
+/// either level. Making it bite is a separate decision at a separate seam,
+/// not a silent side effect of this move.
+fn sub_agent_child_tools(
+    restrictions: &DirectoryRestrictions,
+    disallowed: &[String],
+) -> Vec<Arc<dyn AgentTool>> {
+    // Sub-agent gets standard yoagent tools — no permission guards needed
+    // since the parent already authorized the delegation.
+    //
+    // Two boundaries ARE inherited, because a child must not be a way around a
+    // promise the parent made to the user:
+    //   1. Directory restrictions (`maybe_guard_arc`) — path-based security.
+    //   2. `/read` and `/plan` mode (`with_read_guard_arc` /
+    //      `with_read_guard_bash_arc`) — the same `ReadModeGuardTool` the main
+    //      agent uses, checked at call time, transparent when no mode is on
+    //      and during `/plan apply`.
+    //
+    // Known remaining gap (#709): the child's bash is yoagent's raw `BashTool`,
+    // not yoyo's `StreamingBashTool`, so when NO mode is active a child's bash
+    // command does not pass through `safety.rs` (no destructive-pattern check,
+    // no `detect_write_command`, no `detect_git_redirection_escape`). Modes are
+    // enforced; the always-on bash safety layer is not.
+    let mut tools: Vec<Arc<dyn AgentTool>> = vec![
+        with_read_guard_bash_arc(Arc::new(yoagent::tools::bash::BashTool::default())),
+        maybe_guard_arc(Arc::new(ReadFileTool::default()), restrictions),
+        with_read_guard_arc(maybe_guard_arc(
+            Arc::new(WriteFileTool::new()),
+            restrictions,
+        )),
+        with_read_guard_arc(maybe_guard_arc(Arc::new(EditFileTool::new()), restrictions)),
+        maybe_guard_arc(Arc::new(ListFilesTool::default()), restrictions),
+        maybe_guard_arc(Arc::new(SearchTool::default()), restrictions),
+        Arc::new(WebSearchTool),
+    ];
+    tools.retain(|t| !crate::agent_builder::tool_name_disallowed(t.name(), disallowed));
+    tools
+}
+
 pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (Box<dyn AgentTool>, SharedState) {
     let shared_state = SharedState::new();
     let tool = build_sub_agent_tool_at_depth(config, 0, &shared_state);
@@ -1367,35 +1431,14 @@ fn build_sub_agent_tool_at_depth(
     depth: usize,
     shared_state: &SharedState,
 ) -> Box<dyn AgentTool> {
-    // Sub-agent gets standard yoagent tools — no permission guards needed
-    // since the parent already authorized the delegation.
+    // The child's tool set, composed at the `sub_agent_child_tools` seam.
     //
-    // Two boundaries ARE inherited, because a child must not be a way around a
-    // promise the parent made to the user:
-    //   1. Directory restrictions (`maybe_guard_arc`) — path-based security.
-    //   2. `/read` and `/plan` mode (`with_read_guard_arc` /
-    //      `with_read_guard_bash_arc`) — the same `ReadModeGuardTool` the main
-    //      agent uses, checked at call time, transparent when no mode is on
-    //      and during `/plan apply`.
-    //
-    // Known remaining gap (#709): the child's bash is yoagent's raw `BashTool`,
-    // not yoyo's `StreamingBashTool`, so when NO mode is active a child's bash
-    // command does not pass through `safety.rs` (no destructive-pattern check,
-    // no `detect_write_command`, no `detect_git_redirection_escape`). Modes are
-    // enforced; the always-on bash safety layer is not.
-    let restrictions = &config.dir_restrictions;
-    let mut child_tools: Vec<Arc<dyn AgentTool>> = vec![
-        with_read_guard_bash_arc(Arc::new(yoagent::tools::bash::BashTool::default())),
-        maybe_guard_arc(Arc::new(ReadFileTool::default()), restrictions),
-        with_read_guard_arc(maybe_guard_arc(
-            Arc::new(WriteFileTool::new()),
-            restrictions,
-        )),
-        with_read_guard_arc(maybe_guard_arc(Arc::new(EditFileTool::new()), restrictions)),
-        maybe_guard_arc(Arc::new(ListFilesTool::default()), restrictions),
-        maybe_guard_arc(Arc::new(SearchTool::default()), restrictions),
-        Arc::new(WebSearchTool),
-    ];
+    // `&[]` is the parent's disallow list, and passing it empty is what makes
+    // this extraction byte-identical to the pre-#887 behaviour: nothing is
+    // filtered today. Threading the real list here is slice 2 — until then,
+    // `--restricted` still does not reach a dispatched sub-agent, and
+    // `restricted_mode_note` says so.
+    let mut child_tools = sub_agent_child_tools(&config.dir_restrictions, &[]);
 
     // Allow exactly one more level of nesting, bounded by MAX_SUB_AGENT_DEPTH.
     // The nested tool shares the SAME store (not a fresh one) so artifacts set
@@ -3729,6 +3772,91 @@ mod tests {
         assert!(
             desc.contains("deep"),
             "Description should mention 'deep' option, got: {desc}"
+        );
+    }
+
+    /// The names a child receives today, in order. Written out rather than
+    /// derived, so a reordering or a dropped tool fails loudly instead of
+    /// agreeing with whatever the code now produces.
+    const CHILD_TOOLS_TODAY: &[&str] = &[
+        "bash",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "list_files",
+        "search",
+        "web_search",
+    ];
+
+    fn child_tool_names(disallowed: &[String]) -> Vec<String> {
+        sub_agent_child_tools(&DirectoryRestrictions::default(), disallowed)
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect()
+    }
+
+    /// The NEAR-MISS GUARD, and the whole regression surface of the #887
+    /// slice-1 extraction: with an empty disallow list — which is what the one
+    /// production call site passes — the child gets the same tools in the same
+    /// order as before the seam existed.
+    ///
+    /// Asserted as a whole-vector equality rather than a `contains`, because a
+    /// `contains` would pass over a set that had silently gained, lost or
+    /// reordered a neighbour.
+    #[test]
+    fn empty_disallow_list_is_byte_identical_to_the_pre_seam_tool_set() {
+        let names = child_tool_names(&[]);
+
+        // ANTI-VACUOUS, asserted FIRST: a composition that returns nothing
+        // would satisfy every "tool X is absent" assertion below trivially —
+        // this defect wearing the opposite sign, and quieter than the bug.
+        assert!(
+            !names.is_empty(),
+            "sub_agent_child_tools returned no tools at all — a filter that \
+             empties the set passes every absence check vacuously"
+        );
+
+        assert_eq!(
+            names, CHILD_TOOLS_TODAY,
+            "the child tool set moved with an EMPTY disallow list — the \
+             extraction was supposed to be byte-identical to production"
+        );
+    }
+
+    /// The fix direction #887 exists for: a name on the parent's disallow list
+    /// does not reach the child. This is the assertion the two earlier
+    /// attempts had red; here it runs against a function that can be driven
+    /// directly, with no agent, no provider and no `SharedState`.
+    #[test]
+    fn a_disallowed_name_is_removed_and_every_other_tool_survives() {
+        let names = child_tool_names(&["bash".to_string()]);
+
+        assert!(
+            !names.iter().any(|n| n == "bash"),
+            "`bash` was on the disallow list and still reached the child: {names:?}"
+        );
+
+        // The other half, and it is the half that matters: the filter must
+        // remove exactly what it was asked to remove. A rule that drops the
+        // neighbours too would pass the assertion above.
+        let survivors: Vec<&str> = CHILD_TOOLS_TODAY
+            .iter()
+            .copied()
+            .filter(|n| *n != "bash")
+            .collect();
+        assert_eq!(
+            names, survivors,
+            "filtering `bash` changed something other than `bash`"
+        );
+    }
+
+    /// A name nothing matches removes nothing — the pass-through direction, so
+    /// the discriminator is not covered only on the side that fires.
+    #[test]
+    fn a_disallowed_name_that_matches_no_child_tool_removes_nothing() {
+        assert_eq!(
+            child_tool_names(&["no_such_tool".to_string()]),
+            CHILD_TOOLS_TODAY
         );
     }
 }
