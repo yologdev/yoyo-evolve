@@ -1,0 +1,42 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_spawn" CLAUDE.… ✓ (6ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "push_handoff_branch\|Ni… ✓ (5ms)
+ ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 42.5s (4 ✓)
+
+Two findings: the code conversion is correct and self-verifying, but CLAUDE.md — an explicit deliverable in the task's "Docs" section — was not touched, and now contradicts the diff itself.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "Command::new(\"git\")" … ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 17s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: FAIL — written to session_plan/eval_task_2.md.
+
+The single blocking issue is doc_sync. Everything else in the task landed cleanly:
+
+What's correct:
+• push_handoff_branch (src/commands_spawn.rs:2049) routes through crate::git::run_git_output with `-C <dir> before the subcommand, replacing the raw Command::new("git").current_dir()` spawn. Its consumer is in the same diff at :2082.
+• The REGISTERED_GIT_BYPASSES entry was deleted in the same commit, so a passing cargo test --test git_chokepoint is the evidence both halves landed.
+• Four emission-point tests against a bare-repo + work-repo tempdir (never this repo): anti-vacuous non-ASCII byte assertion, whole-value assert_eq! ASCII near-miss guard, first-stderr-line degradation asserted verbatim, non-repo dir → Err.
+• `grep -c 'Command::new("git")' leaves 13 hits in that file, all inside the #[cfg(test)]` module.
+• Register bumped 4099 → 4252 rather than absorbing drift.
+
+Why it fails:
+git show --name-only HEAD lists only the three source/test files. CLAUDE.md was never touched, so the git.rs #864 paragraph still reads "Nine bypasses remain", still lists commands_spawn.rs 1 in its distribution, and still justifies leaving the push sites alone because they "would trip `run_git`'s own `#[cfg(test)]` guard from the project root" — the precise claim this diff's own doc comment measures as false (path-conditional, not verb-conditional). That contradiction now sits in the file re-injected as authoritative context every session, and the task named the update as a required step ("Keep the '8 bypasses remain and #864 stays open' clause honest").
+
+Cleanup feedback, not grounds for failure: the new doc comment consumed `push_and_open_pr's original summary line, leaving that function's docs opening on a bare ///`; and the register says 4252 against an actual 4251 (a within-grace shrink warning, not fatal).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

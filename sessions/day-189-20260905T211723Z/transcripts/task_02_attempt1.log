@@ -1,0 +1,190 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the register entry and the actual site.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_spawn" tests/g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'Command::new("git")' sr… ✓ (5ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '95,175p' tests/git_choke…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2010,2090p' src/commands… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_git\|fn git_comm… ✓ (4ms)
+  5 tools completed in 11.5s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,220p' src/git.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn create_spawn_worktre… ✓ (4ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 49.6s (3 ✓)
+
+Now the probe — the register entry's claim, tested in a scratch repo rather than reasoned from the docs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf p864 && mkdir p864 && cd p864 && \ (10 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "push_and_open_pr" src/c… ✓ (3ms)
+ ✓ (39ms)
+  2 tools completed in 39ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Probe settled it. repo_dir is the worktree path (`push_and_open_pr(&worktree.path, …)), and destructive_guard blocks only when the resolved target **equals** CARGO_MANIFEST_DIR` — it is path-conditional, not verb-conditional. The register entry's stated blocker is falsified. Converting.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (17 → 4 lines)
+  -     let push = std::process::Command::new("git")
+  -         .current_dir(repo_dir)
+  -         .args(["push", "-u", "origin", &handoff.branch])
+  -         .output();
+  -     match push {
+  -         Ok(out) if out.status.success() => {}
+  -         Ok(out) => {
+  -             let stderr = String::from_utf8_lossy(&out.stderr);
+  -             let first = stderr.lines().next().unwrap_or("unknown error");
+  -             println!("{YELLOW}  push failed: {first}{RESET}");
+  -             return;
+  -         }
+  -         Err(e) => {
+  -             println!("{YELLOW}  push failed: {e}{RESET}");
+  -             return;
+  -         }
+  +     if let Err(e) = push_handoff_branch(repo_dir, &handoff.branch) {
+  +         println!("{YELLOW}  push failed: {e}{RESET}");
+  +         return;
+        }
+ ✓ (13.7s)
+  -     let push = std::process::Command::new("git")
+  -         .current_dir(repo_dir)
+  -         .args(["push", "-u", "origin", &handoff.branch])
+  -         .output();
+  -     match push {
+  -         Ok(out) if out.status.success() => {}
+  -         Ok(out) => {
+  -             let stderr = String::from_utf8_lossy(&out.stderr);
+  ... (12 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (1 → 35 lines)
+  - /// Push the handoff branch and open a draft PR via `gh` (opt-in `--pr` flag).
+  + /// Push the spawn handoff branch to `origin`, through the `src/git.rs` chokepoint.
+  + ///
+  + /// This is the dir-taking seam that gives `push_and_open_pr` an emission point:
+  + /// that function only `println!`s and returns `()`, so nothing about the push was
+  + /// assertable before. The `Result` here carries exactly the text the caller prints.
+  + ///
+  + /// Routed through `run_git_output` (#864, third payment) rather than a raw
+  + /// `Command::new("git")`, for the same two reasons the first two payments chose it:
+  + /// it returns the raw `Output`, so reading the first stderr line still works and
+  + /// nothing is blob-trimmed, and it is built by `git_command()`, so this site now
+  + /// inherits `-c core.quotepath=off` and every future global applied there.
+  + ///
+  + /// `-C <dir>` is placed **before** the subcommand because it is a git *global*
+  + /// (`git push -C` is not a thing, and `git apply -C<n>` is an entirely different
+  + /// flag). It replaces the old `.current_dir(repo_dir)`.
+  + ///
+  + /// The register entry that used to name this site claimed the chokepoint's
+  + /// `#[cfg(test)]` destructive guard "would panic" because `push` is in
+  + /// `DESTRUCTIVE_GIT_COMMANDS`. Measured, that is false: the guard is
+  ... (16 more lines)
+ ✓ (1m 51s)
+  - /// Push the handoff branch and open a draft PR via `gh` (opt-in `--pr` flag).
+  + /// Push the spawn handoff branch to `origin`, through the `src/git.rs` chokepoint.
+  + ///
+  + /// This is the dir-taking seam that gives `push_and_open_pr` an emission point:
+  + /// that function only `println!`s and returns `()`, so nothing about the push was
+  + /// assertable before. The `Result` here carries exactly the text the caller prints.
+  + ///
+  + /// Routed through `run_git_output` (#864, third payment) rather than a raw
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 23s (2 ✓)
+
+Now delete the register entry — same diff, so the gate's two directions verify each other.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/git_chokepoint.rs (8 → 1 lines)
+  -     (
+  -         "src/commands_spawn.rs",
+  -         "push_and_open_pr",
+  -         "`push` is in DESTRUCTIVE_GIT_COMMANDS, so run_git_in_dir's #[cfg(test)] guard \
+  -          would panic; it also reads the first stderr line on failure while still needing \
+  -          .current_dir(repo_dir) for the spawn worktree.",
+  -     ),
+    ];
+ ✓ (1m 8s)
+  -     (
+  -         "src/commands_spawn.rs",
+  -         "push_and_open_pr",
+  -         "`push` is in DESTRUCTIVE_GIT_COMMANDS, so run_git_in_dir's #[cfg(test)] guard \
+  -          would panic; it also reads the first stderr line on failure while still needing \
+  -          .current_dir(repo_dir) for the spawn worktree.",
+  -     ),
+    ];
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_chokepoint… ✓ (234ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate is a textual scan — my own doc comment tripped it by containing the literal needle. Rewording rather than registering.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3165,3205p' src/commands… ✓ (3ms)
+  2 tools completed in 3.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (146 lines) ✓ (25.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 4 pass. Now the gate (both directions) and the module-size register.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_chokepoint… ✓ (10.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate green — census re-derived from its own output: 8 bypasses, 5 entries (was 9/6). Now pay the drift with the line the gate printed.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|("src/commands_spawn.r… ✓ (462ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control — one atomic mutate→run→restore, serially, with the sabotage marker so tests/neutered_guards.rs enforces the restore.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (11 lines) ✓ (25.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (10.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 45.7s (2 ✓)
+
+Both controls fired, restored byte-identical, zero markers left. Full checks:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✗ (2m 0s)
+    │ Command timed out after 120s
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 19s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 26s (2 ✓)
+
+All green — 5495 passed. Now the docs: the census, the payment, and the falsified register reason.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "Nine bypasses remain an… ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
