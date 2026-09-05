@@ -1433,12 +1433,23 @@ fn build_sub_agent_tool_at_depth(
 ) -> Box<dyn AgentTool> {
     // The child's tool set, composed at the `sub_agent_child_tools` seam.
     //
-    // `&[]` is the parent's disallow list, and passing it empty is what makes
-    // this extraction byte-identical to the pre-#887 behaviour: nothing is
-    // filtered today. Threading the real list here is slice 2 — until then,
-    // `--restricted` still does not reach a dispatched sub-agent, and
-    // `restricted_mode_note` says so.
-    let mut child_tools = sub_agent_child_tools(&config.dir_restrictions, &[]);
+    // #887 slice 2: the parent's own disallow list is handed to the child, so a
+    // tool the parent may not run is not one `sub_agent` hop away. `--restricted`
+    // removes `bash` from the parent via a single `retain` in `agent_builder.rs`;
+    // before this line read `config.disallowed_tools`, a dispatched sub-agent
+    // built its own `bash` regardless and the confinement was decorative.
+    //
+    // An EMPTY list — every user who has passed neither `--restricted` nor
+    // `--disallowed-tools` — filters nothing, so the child tool set is
+    // byte-identical to before. That is the entire regression surface and it is
+    // what `empty_disallow_list_is_byte_identical_to_the_pre_seam_tool_set`
+    // asserts with a whole-vector equality.
+    //
+    // `--lite` populates the same field (`compute_lite_disallowed_tools`), so a
+    // lite sub-agent's child now loses whatever lite disallows. That is
+    // deliberate and it is the safe direction: it can only ever NARROW what a
+    // child may do, never widen it, and it matches what the parent itself got.
+    let mut child_tools = sub_agent_child_tools(&config.dir_restrictions, &config.disallowed_tools);
 
     // Allow exactly one more level of nesting, bounded by MAX_SUB_AGENT_DEPTH.
     // The nested tool shares the SAME store (not a fresh one) so artifacts set
@@ -3857,6 +3868,59 @@ mod tests {
         assert_eq!(
             child_tool_names(&["no_such_tool".to_string()]),
             CHILD_TOOLS_TODAY
+        );
+    }
+
+    /// #887 slice 2 — the WIRING guard: `build_sub_agent_tool_at_depth` hands
+    /// the seam the parent's real list, not the `&[]` slice 1 shipped.
+    ///
+    /// **This guard is deliberately WEAK and the limit is the reason it exists
+    /// in this shape rather than a better one.** yoagent 0.18.1's
+    /// `SubAgentTool` keeps its `tools` field private with no accessor
+    /// (`sub_agent.rs:55`; `with_tools` is a setter only), so the child tool set
+    /// of a *built* tool cannot be observed from outside. That is not a detail —
+    /// it is exactly how attempt #893 died: it asserted against a value that was
+    /// structurally incapable of showing the fix, and came back with `bash`
+    /// still listed. The three tests above drive `sub_agent_child_tools`
+    /// directly, which is where the behaviour actually lives and is fully
+    /// checkable; this one only proves the call site *passes the list*, never
+    /// that any particular run filtered anything.
+    ///
+    /// The needles are assembled at runtime because this guard reads the very
+    /// file it lives in — a literal would match its own source and pass forever.
+    #[test]
+    fn the_child_tool_seam_is_handed_the_parents_disallow_list() {
+        let src = include_str!("tools.rs");
+
+        // Bound the slice to this one function. A POSITIVE (`contains`)
+        // assertion fails safe when its slice is narrow and FALSE-PASSES when
+        // the slice is wide, so a missing terminator must be a loud failure and
+        // never a silent widening to the rest of the file.
+        let start = src
+            .find(&format!("fn build_sub_agent_{}_at_depth(", "tool"))
+            .expect("build_sub_agent_tool_at_depth not found — did it get renamed?");
+        let rest = &src[start..];
+        let end = rest
+            .find("\n}\n")
+            .expect("could not find the end of build_sub_agent_tool_at_depth's body");
+        let body = &rest[..end];
+
+        let wired = format!("&config.{}_tools", "disallowed");
+        assert!(
+            body.contains(&wired),
+            "build_sub_agent_tool_at_depth does not pass the parent's disallow \
+             list to sub_agent_child_tools — a child can still run a tool the \
+             parent was forbidden (#887)"
+        );
+
+        // The other direction: slice 1's placeholder must be gone. Without this
+        // the guard would pass on a call site that passed BOTH, which is how a
+        // half-applied edit reads as done.
+        let placeholder = format!("dir_restrictions, &{}]", "[");
+        assert!(
+            !body.contains(&placeholder),
+            "the empty-slice placeholder is still at the call site — slice 2 \
+             was not applied, or was applied beside it"
         );
     }
 }
