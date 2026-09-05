@@ -2544,6 +2544,107 @@ def order_by_shape_tier(rows, shape_of):
     return ordered, counts
 
 
+def src_test_only_candidates(rows, population, recorded, readability_of):
+    """Commits selectable ONLY because their test edits live inside `src/`. Pure.
+
+    Day 189, #870. `readability_of(sha)` is injected -- the discipline `added_ts` uses in
+    `never_forecast_files`, `census_shape_split` uses for shapes and `src_census_fix_loop`
+    already uses for this exact question -- so the selection is table-testable with no git.
+
+    WHY THIS EXISTS, and it is the named blocker rather than more calibration. Day 189's
+    10:09 session pointed the counterfactual at the fix-loop arm for the first time and
+    got `NO_TEST_CHANGE`, decided from the diff, zero cargo runs. That refusal located the
+    wall at one address: `classify_test_diff_shape` looks only at top-level `tests/*.rs`,
+    and SELECTION RUNS UPSTREAM OF DEPTH -- `--splice-src-tests` changes how deeply a
+    SELECTED commit is read and can never make one selected. Five sessions called the
+    fix-loop arm "structurally unmeasurable" as an INFERENCE; it is now a measured fact
+    with one function behind it, and this is that function's second consumer.
+
+    THE SECOND CONSUMER IS THE POINT. `classify_src_test_readability` has existed since
+    Day 188 with exactly ONE consumer -- `--src-census`, a print-only reporting surface.
+    That is my own "a capability is real only where something consumes it" rule sitting on
+    my newest classifier. No new classifier is written here: the question "does this commit
+    modify a `src/*.rs` whose PARENT carried a module-level `#[cfg(test)]`?" is already
+    asked, already table-tested, and is exactly the precondition `splice_test_module`
+    needs. A second copy would agree the day it was written and diverge forever after.
+
+    SCOPED TO `NO_TEST_CHANGE` ROWS (`not r.addressable`), and that scope is what stops
+    double-counting: a commit that already touches a top-level `tests/*.rs` is already
+    `select_runnable`'s business, so admitting it here would put one commit in two
+    populations. The question this answers is exactly what sits OUTSIDE the census's reach.
+
+    ONLY `SRC_TESTS_READABLE` IS SELECTABLE, and the other two states are refusals with
+    their own reasons:
+
+      * `SRC_TESTS_NONE` -- no pre-existing `#[cfg(test)]` module to lay back. Vacuous at
+        this depth for the same reason `NO_PRE_EXISTING_TEST_EDIT` is vacuous one
+        granularity up: you cannot have weakened a pre-existing assertion in a module that
+        did not exist. Reading it would spend ~4m of cargo to re-derive that.
+      * `SRC_TESTS_UNKNOWN` -- the lookup failed. An unknown must never be promoted into
+        the comfortable bucket (Day 144), and here the comfortable bucket is the one that
+        makes the reachable population look bigger, i.e. the flattering direction for a
+        milestone whose whole problem is a starved denominator.
+
+    A resolver answering something nobody enumerated is treated as UNKNOWN and refused --
+    the same conservative direction `src_census_fix_loop` takes with the same values.
+
+    NEWEST-FIRST ORDER IS PRESERVED, because `rows` arrive newest-first from `git log` and
+    a newer commit's parent is the one already warm in the shared CARGO_TARGET_DIR.
+
+    THE STATED LIMIT: this changes what is SELECTED. It does not make any commit more
+    answerable, it does not grow the reachable denominator that DREAM.md's published
+    tests-only rate was measured over, and it does not close #870 -- whether the widened
+    population yields classifiable verdicts is a READING question this cannot answer.
+    """
+    out = []
+    for row in rows or ():
+        if row.population != population:
+            continue
+        # Already in the census's reach -> `select_runnable`'s business, not ours.
+        if row.addressable:
+            continue
+        if row.sha in recorded:
+            continue
+        state = readability_of(row.sha)
+        if state != SRC_TESTS_READABLE:
+            continue
+        out.append(row)
+    return out
+
+
+def merge_src_test_only(ordered, tier_counts, src_only_rows):
+    """Splice src-test-only rows in AFTER the signal-bearing tier. Pure.
+
+    Day 189, #870. `ordered` and `tier_counts` come straight from `order_by_shape_tier`,
+    which is left BYTE-IDENTICAL -- widening that function's own tier vocabulary would put
+    a differently-defined population inside a counter three sessions of write-ups have
+    quoted, and `tier_counts['signal_bearing']` is exactly the boundary needed here, since
+    `ordered` is signal_bearing + add_only + shape_unknown in that order.
+
+    POSITION, and it follows the same rule `order_by_shape_tier` already encodes -- rows
+    that CAN produce a classification go before rows that cannot:
+
+      1. signal-bearing (top-level `tests/` diff touching a pre-existing file)
+      2. src-test-only  <- HERE: costs a full cargo pair, and CAN classify at src+tests
+                           depth, which add-only and shape-unknown structurally cannot
+      3. add-only       (answered from the diff at zero cargo cost)
+      4. shape-unknown
+
+    AN EMPTY `src_only_rows` RETURNS A LIST EQUAL TO `ordered`, which is the whole
+    regression surface: the flag is default OFF, so every reading already recorded and
+    every reading a later session takes without it must be untouched. Asserted with full
+    list equality, never membership.
+
+    PREFERENCE, NEVER EXCLUSION, and never a drop: the output is a permutation of
+    `ordered` + `src_only_rows`, so nothing existing is displaced out of the run and the
+    cheapest possible regression guard fails loudly the moment a tier is lost.
+    """
+    n = tier_counts.get("signal_bearing", 0) if tier_counts else 0
+    head = list(ordered[:n])
+    tail = list(ordered[n:])
+    return head + list(src_only_rows or ()) + tail
+
+
 def select_runnable(rows, population, recorded, max_runs):
     """Which commits to run, NEWEST FIRST. Pure.
 
@@ -2702,6 +2803,16 @@ def main(argv):
             "splice_depth=src+tests and must never be pooled with rows without it."
         ),
     )
+    parser.add_argument(
+        "--include-src-test-commits",
+        action="store_true",
+        help=(
+            "#870: ALSO select commits whose only test edits live inside src/ behind "
+            "#[cfg(test)]. DEFAULT OFF -- off is byte-identical to every reading already "
+            "recorded. Requires --splice-src-tests. Counted on its own line and never "
+            "summed into behavioural or signal-bearing."
+        ),
+    )
     parser.add_argument("--test", action="store_true", help="run self-tests and exit")
     args = parser.parse_args(argv)
 
@@ -2716,6 +2827,22 @@ def main(argv):
         print(
             "--src-census needs --census: it counts rows from the census walk, so "
             "there is nothing for it to scan on its own.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # A commit selected by --include-src-test-commits has NO top-level tests/ diff, so
+    # reading it at tests-only depth is a GUARANTEED NO_TEST_CHANGE -- a wasted ~4m cargo
+    # pair producing a refusal the diff already answers for free. The two flags are not
+    # independent and pretending they are is how a reading session burns its whole budget
+    # on guaranteed refusals, so this refuses rather than silently no-opping. Same shape
+    # as the --src-census and --resume refusals above.
+    if args.include_src_test_commits and not args.splice_src_tests:
+        print(
+            "--include-src-test-commits needs --splice-src-tests: a commit selected "
+            "this way has no top-level tests/ diff, so reading it at tests-only depth "
+            "is a GUARANTEED NO_TEST_CHANGE — a ~4m cargo pair spent to re-derive what "
+            "the diff already answers for free.",
             file=sys.stderr,
         )
         return 2
@@ -2825,6 +2952,21 @@ def main(argv):
         todo, tier_counts = order_by_shape_tier(
             todo, lambda sha: commit_test_diff_shape(root, sha)
         )
+        # #870, Day 189: the SECOND consumer of `classify_src_test_readability`. DEFAULT
+        # OFF, so with the flag absent `src_only` is empty and `merge_src_test_only`
+        # returns a list equal to `todo` -- byte-identical selection for every reading
+        # already recorded. The resolver is injected so both pure halves stay testable
+        # with no git; one `git diff --name-status` + one `git show` per modified src/
+        # file, and only for NO_TEST_CHANGE rows of this population.
+        src_only = []
+        if args.include_src_test_commits:
+            src_only = src_test_only_candidates(
+                rows,
+                args.population,
+                recorded,
+                lambda sha: commit_src_test_readability(root, sha),
+            )
+        todo = merge_src_test_only(todo, tier_counts, src_only)
         if args.max_runs is not None:
             todo = todo[: args.max_runs]
         eligible = [
@@ -2850,6 +2992,26 @@ def main(argv):
                 "reading below is answerable from the diff and CANNOT move the "
                 "classifiable count — the reachable denominator is exhausted here."
             )
+        if args.include_src_test_commits:
+            # COUNTED SEPARATELY AND NEVER SUMMED into behavioural or signal-bearing.
+            # The published plain-arm rate was measured over a population defined by
+            # top-level tests/*.rs; folding a differently-defined population into that
+            # denominator makes every prior number incomparable. Same reason
+            # `splice_depth` keeps the two depths apart.
+            print(
+                f"src-test-only: {len(src_only)} commit(s) selectable ONLY because their "
+                "test edits live inside src/ behind #[cfg(test)] — counted SEPARATELY, "
+                "never summed into behavioural or signal-bearing, and run after the "
+                "signal-bearing tier."
+            )
+            # ANTI-VACUOUS: a scan that finds nothing and reports a clean run is this
+            # defect wearing the opposite sign, and it is quieter than the bug.
+            if not src_only:
+                print(
+                    "src-test-only: ZERO selectable. That is a REFUSAL to report a clean "
+                    "widening, not evidence the arm is empty — either every candidate "
+                    "came back SRC_TESTS_NONE/UNKNOWN, or they are all already recorded."
+                )
         sys.stdout.flush()
 
         # ONE shared target dir for the whole batch: adjacent commits share dependencies,
@@ -4515,6 +4677,91 @@ def run_self_tests():
               _mix, lambda p: False if p == "src/a.rs" else None) == SRC_TESTS_UNKNOWN,
           classify_src_test_readability(
               _mix, lambda p: False if p == "src/a.rs" else None))
+
+    # ---- #870, Day 189: the SECOND consumer of classify_src_test_readability ----------
+    # ANTI-VACUOUS, AND ASSERTED FIRST: a row set genuinely containing a NO_TEST_CHANGE
+    # commit whose src/ carries a parent test module must come back selectable. A selector
+    # that finds nothing and reports a clean widening is this defect wearing the opposite
+    # sign, and it is quieter than the bug.
+    def _row(sha, tests=(), reg=(), pop=POP_PLAIN):
+        return CensusRow(sha, f"Day 189 (00:00): {sha} (Task 1)", list(tests), set(reg),
+                         pop)
+
+    _nochange = _row("aaa")            # NO_TEST_CHANGE: no top-level tests/ diff at all
+    _behavioural = _row("bbb", ["tests/x.rs"])   # already select_runnable's business
+    _readable = lambda _sha: SRC_TESTS_READABLE
+    check("src-test-only: a NO_TEST_CHANGE commit with a readable src/ IS selectable",
+          [r.sha for r in src_test_only_candidates(
+              [_nochange], POP_PLAIN, set(), _readable)] == ["aaa"],
+          [r.sha for r in src_test_only_candidates(
+              [_nochange], POP_PLAIN, set(), _readable)])
+
+    # THE DANGEROUS NEAR-MISS: widening to EVERY NO_TEST_CHANGE commit is the
+    # false-denominator failure #870 names explicitly. NONE is vacuous at this depth
+    # (no pre-existing module to lay back); UNKNOWN must never be promoted into the
+    # comfortable bucket, and here the comfortable bucket is the flattering one.
+    for _state, _why in ((SRC_TESTS_NONE, "NONE is vacuous at this depth"),
+                         (SRC_TESTS_UNKNOWN, "an unknown is never promoted"),
+                         ("SOMETHING_NOBODY_ENUMERATED", "an unenumerated answer refuses")):
+        check(f"src-test-only: {_state} is NOT selectable ({_why})",
+              src_test_only_candidates([_nochange], POP_PLAIN, set(),
+                                       lambda _s, _v=_state: _v) == [],
+              src_test_only_candidates([_nochange], POP_PLAIN, set(),
+                                       lambda _s, _v=_state: _v))
+
+    # NO DOUBLE-COUNTING: a commit already in the census's reach belongs to
+    # select_runnable. Admitting it here would put one commit in two populations.
+    check("src-test-only: an ADDRESSABLE commit is never selected here",
+          src_test_only_candidates([_behavioural], POP_PLAIN, set(), _readable) == [],
+          src_test_only_candidates([_behavioural], POP_PLAIN, set(), _readable))
+
+    # The two filters select_runnable already applies, applied here too.
+    check("src-test-only: the wrong population is skipped",
+          src_test_only_candidates([_nochange], POP_FIX_LOOP, set(), _readable) == [],
+          src_test_only_candidates([_nochange], POP_FIX_LOOP, set(), _readable))
+    check("src-test-only: an already-recorded sha is skipped",
+          src_test_only_candidates([_nochange], POP_PLAIN, {"aaa"}, _readable) == [],
+          src_test_only_candidates([_nochange], POP_PLAIN, {"aaa"}, _readable))
+
+    # NEWEST-FIRST ORDER IS PRESERVED: rows arrive newest-first from git log, and a newer
+    # commit's parent is the one already warm in the shared CARGO_TARGET_DIR.
+    _three = [_row("n1"), _row("n2"), _row("n3")]
+    check("src-test-only: order is preserved (newest-first, as git log gave them)",
+          [r.sha for r in src_test_only_candidates(
+              _three, POP_PLAIN, set(), _readable)] == ["n1", "n2", "n3"],
+          [r.sha for r in src_test_only_candidates(_three, POP_PLAIN, set(), _readable)])
+
+    # FLAG-OFF BYTE-IDENTITY, and it is the whole regression surface: every reading
+    # already in the ledger and every future one taken without the flag. Full list
+    # equality, never membership.
+    _ordered = [_row("s1", ["tests/a.rs"]), _row("s2", ["tests/b.rs"]),
+                _row("s3", ["tests/c.rs"])]
+    _counts = {"signal_bearing": 1, "add_only": 1, "shape_unknown": 1}
+    check("src-test-only: an EMPTY extra list returns the order unchanged (flag OFF)",
+          merge_src_test_only(_ordered, _counts, []) == _ordered,
+          [r.sha for r in merge_src_test_only(_ordered, _counts, [])])
+
+    # POSITION: after signal-bearing, BEFORE add-only — rows that can produce a
+    # classification go before rows that structurally cannot, the same rule
+    # order_by_shape_tier already encodes.
+    _merged = merge_src_test_only(_ordered, _counts, [_nochange])
+    check("src-test-only: spliced in AFTER signal-bearing and BEFORE add-only",
+          [r.sha for r in _merged] == ["s1", "aaa", "s2", "s3"],
+          [r.sha for r in _merged])
+
+    # PERMUTATION INVARIANT: nothing existing is dropped or displaced out of the run.
+    check("src-test-only: the merge is a permutation (nothing dropped)",
+          sorted(r.sha for r in _merged)
+          == sorted([r.sha for r in _ordered] + ["aaa"]),
+          sorted(r.sha for r in _merged))
+
+    # A zero signal-bearing tier puts them first, which is correct: there is nothing
+    # that can classify ahead of them.
+    check("src-test-only: with no signal-bearing tier they lead",
+          [r.sha for r in merge_src_test_only(
+              _ordered, {"signal_bearing": 0}, [_nochange])] == ["aaa", "s1", "s2", "s3"],
+          [r.sha for r in merge_src_test_only(
+              _ordered, {"signal_bearing": 0}, [_nochange])])
 
     # DEFAULT-OFF BYTE-IDENTITY: the whole regression surface is the 25 readings already
     # in the ledger plus every future one taken without the flag. A row built with no
