@@ -2201,10 +2201,29 @@ read as "checked; clean"):
      suggests. The window line above states the depth measured; read it, don't infer it.
   9. --src-census ENTERS NO DENOMINATOR (#870, Day 188). Its three counts measure how many
      fix-loop NO_TEST_CHANGE commits a src+tests counterfactual COULD read. They change no
-     verdict, no ledger row, no census figure and no --max-runs selection: those commits
-     are still NOT selected, because selection runs UPSTREAM of depth. It is the number
-     the NEXT decision -- whether to widen what counts as behavioural -- gets made on, and
-     widening is the half that can manufacture a false denominator.
+     verdict, no ledger row and no census figure. It is the number the NEXT decision --
+     whether to widen what counts as behavioural -- gets made on, and widening is the half
+     that can manufacture a false denominator. SUPERSEDED HALF, recorded rather than
+     erased: this item used to end "and no --max-runs selection: those commits are still
+     NOT selected, because selection runs UPSTREAM of depth". That was true until Day 189,
+     when --include-src-test-commits gave classify_src_test_readability a SECOND consumer
+     (item 10). The COUNTS still enter no denominator; what changed is that a flag can now
+     act on them.
+ 10. --include-src-test-commits IS DEFAULT OFF AND ENTERS NO DENOMINATOR EITHER (#870,
+     Day 189). With it OFF -- every reading recorded so far, and every one a later session
+     takes without it -- selection is BYTE-IDENTICAL, which is the whole regression
+     surface. With it ON, a NO_TEST_CHANGE commit that modifies a src/*.rs whose PARENT
+     carried a module-level #[cfg(test)] becomes selectable, is reported on its OWN line,
+     and is NEVER summed into behavioural or signal-bearing: the published tests-only rate
+     was measured over a population defined by top-level tests/*.rs, and folding a
+     differently-defined population into that denominator makes every prior number
+     incomparable (the same reason splice_depth exists). SRC_TESTS_NONE and
+     SRC_TESTS_UNKNOWN are NOT selectable. It requires --splice-src-tests and refuses with
+     exit 2 without it, because such a commit has no top-level tests/ diff and would be a
+     guaranteed NO_TEST_CHANGE at tests-only depth. IT CHANGES WHAT IS SELECTED, NOT WHAT
+     IS ANSWERABLE: no commit becomes more readable, and it does NOT close #870 -- whether
+     the widened population yields classifiable verdicts is a READING question, unanswered
+     here.
 """
 
 
@@ -4049,6 +4068,22 @@ def run_self_tests():
     check("limits state the intent boundary", "intent is not" in LIMITS.lower())
     check("limits state the src/ scope", "165k" in LIMITS)
     check("limits state the register caveat", "DEBT REGISTER" in LIMITS)
+    # #870, Day 189. LIMITS is printed on EVERY run, so a stale claim in it is asserted
+    # to an operator's face once per invocation -- which is exactly how item 9 came to
+    # print "those commits are still NOT selected" after this flag falsified it. These
+    # pin the flag's three load-bearing promises to the text that makes them.
+    check("limits name the src-test-only flag",
+          "--include-src-test-commits" in LIMITS)
+    check("limits state the flag is default off",
+          "DEFAULT OFF" in LIMITS and "BYTE-IDENTICAL" in LIMITS)
+    check("limits state the flag enters no denominator",
+          "NEVER summed into behavioural" in LIMITS)
+    check("limits state the flag does not close #870",
+          "does NOT close #870" in LIMITS)
+    # The superseded half is RECORDED rather than erased -- deleting a wrong claim
+    # teaches nothing about why it was wrong.
+    check("limits record the superseded selection claim",
+          "SUPERSEDED HALF" in LIMITS and "UPSTREAM of depth" in LIMITS)
 
     # -- THE LEDGER: the reading must accumulate across sessions ------------------------
     # baseline_from_verdict: derived from run_counterfactual's short-circuit, so every
