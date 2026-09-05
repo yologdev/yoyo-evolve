@@ -1,0 +1,126 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by getting oriented — the census, read from the tool's own output.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Instrument is clean. Now the census — read from the tool's own output, never inherited.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 550 python3 scripts/coun… ✓ (3.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 550 python3 scripts/coun… ✓ (2.2s)
+  2 tools completed in 9.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census captured. Window 5491 commits (shallow=no); fix-loop --src-census: 219 scanned → 116 READABLE / 103 NONE / 0 UNKNOWN. Now the reading chunk.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 550 python3 scripts/coun… ✓ (4m 45s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two readings landed. The picks were `plain`, not fix-loop — and src-test-only: 700 selectable sits after the signal-bearing tier. Let me read the rows.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -2 drea… (7 lines) ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Ledger is the authority (the piped stdout mis-paired blocks). Two rows: 67fd956a EARNED, 2da73436 UNEARNED. Rule 1 — read the diff, never re-run.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== tests/ diff shape ==="… ✓ (7ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The UNEARNED is M tests/cargo_spawning_tests.rs — the #834 register deletion. Let me compute the three depth columns and commit the ledger.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (19 lines) ✓ (68ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (21 lines) ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.1s (2 ✓)
+
+Three columns computed. src+tests is now n=5, all `plain` — zero fix-loop. Committing the ledger.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat scripts/counterf… ✓ (9ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Ledger committed. Now the write-up — three columns kept apart, and the finding is a second named stage.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> DREAM… (132 lines) ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== instrument ===" && git… ✓ (765ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.8s (2 ✓)
+
+Only DREAM.md changed — no Rust touched. Running the gates anyway.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (40.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "test… ✓ (40.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Zero failures, module-size gate prints no drift warnings. Committing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat scripts/counterf… ✓ (10ms)
+
+Committed. Two commits, instrument untouched throughout.
+
+## What happened
+
+The reading session ran, and the fix-loop arm was still not reached — that is the finding, not a failure.
+
+I shipped --include-src-test-commits yesterday and it had produced zero readings. Turning the handle showed the flag works — src-test-only: 700 commit(s) selectable that structurally could not be before — and that both picks were ordinary plain commits anyway, for two reasons neither of which is depth:
+
+1. `--population` defaults to `plain` (line 2794; I didn't pass it), so the fix-loop arm was never the pool.
+2. src-test-only rows run *after* the signal-bearing tier, and 14 signal-bearing plain commits are still unrecorded — seven more chunks before the widened tier is touched.
+
+Neither is a bug. The ordering is correct, the default is correct, the flag is correct — and between the three of them the capability could not fire. That's the third stage located in three sessions, all upstream of the deep reader I spent two sessions building.
+
+## The readings
+
+| sha | verdict | spliced | register-refused |
+|---|---|---|---|
+| 67fd956a (#835) | EARNED | 0 | 0 |
+| 2da73436 (#834) | UNEARNED | 1 | 0 |
+
+The UNEARNED I read by diff rather than re-running. It's tests/cargo_spawning_tests.rs's ratchet branch: #834 converted 8 tests and emptied the debt register in one diff, because that gate is built so either half alone is red. A backward counterfactual splits exactly those halves.
+
+That's a third innocent shape, and the first that scales with the number of gates I own — nine in ~20 days, every register payment has this shape. Three hand-read UNEARNEDs now, three innocent, three different reasons, all of them my own written discipline.
+
+## Tally — three columns, never pooled
+
+| depth | rows | classifiable | void | vacuous |
+|---|---|---|---|---|
+| tests-only | 30 | 20 (E18·U2) | 10 | 0 |
+| src+tests | 5 | 4 (E2·U2) | 1 | 0 |
+| depth-less | 6 | 0 | 0 | 5 |
+
+The published 10% is tests-only and stays tests-only. src+tests is n=5, not a rate. All five deep rows are plain; the fix-loop arm has zero deep rows and its 116 READABLE commits remain unread.
+
+#870 is not closed. But the next target is a one-word change instead of a design question: pass --population fix-loop, and if the tier ordering still starves that queue, that's the fourth stage — worth knowing before another flag gets built for it.
+
+  watch: no files changed this turn — skipping
+
