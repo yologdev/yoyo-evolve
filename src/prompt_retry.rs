@@ -332,6 +332,42 @@ const NON_RETRIABLE_STATUS_CODES: [&str; 5] = ["400", "401", "402", "403", "404"
 /// a longer digit run is a false match in this direction too.
 const RETRIABLE_STATUS_CODES: [&str; 5] = ["429", "500", "502", "503", "504"];
 
+/// Non-numeric wording that means "transient, worth retrying".
+///
+/// Lifted out of the `let` inside [`is_retriable_error`] on Day 189 (#855) so
+/// the list has **one** statement and a test can ask *which* entry matched a
+/// given message — the question the word-by-word measurement needed and could
+/// not answer while the array was a local. Membership and order are
+/// byte-identical to the inline array it replaces; nothing about matching
+/// moved.
+///
+/// Note the deliberate overlaps: `"gateway timeout"` and `"timeout"` both
+/// match `gateway timeout`, and `"reset by peer"` and `"connection"` both match
+/// `connection reset by peer`. That redundancy is what the #855 measurement is
+/// about — a word is only load-bearing where it is the *sole* matching entry.
+pub(crate) const TRANSIENT_ERROR_SHAPES: [&str; 20] = [
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "overloaded",
+    "connection",
+    "timeout",
+    "timed out",
+    "network",
+    "temporarily",
+    "capacity",
+    "server error",
+    "stream closed",
+    "unexpected eof",
+    "broken pipe",
+    "reset by peer",
+    "incomplete",
+];
+
 /// Classify whether an API error message looks transient (worth retrying).
 /// Retries: rate limits (429), server errors (5xx), network/connection issues, overloaded.
 /// Does NOT retry: auth errors (401/403), invalid requests (400), permission denied,
@@ -396,29 +432,7 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
     }
 
     // Retry on transient errors
-    let retriable = [
-        "rate limit",
-        "rate_limit",
-        "too many requests",
-        "internal server error",
-        "bad gateway",
-        "service unavailable",
-        "gateway timeout",
-        "overloaded",
-        "connection",
-        "timeout",
-        "timed out",
-        "network",
-        "temporarily",
-        "capacity",
-        "server error",
-        "stream closed",
-        "unexpected eof",
-        "broken pipe",
-        "reset by peer",
-        "incomplete",
-    ];
-    for keyword in &retriable {
+    for keyword in &TRANSIENT_ERROR_SHAPES {
         if lower.contains(keyword) {
             return true;
         }
@@ -2236,5 +2250,154 @@ mod retry_directive_tests {
         // Multi-byte input must not panic and must not split a char: the
         // offset is a real char boundary just past `é` (2 bytes).
         assert_eq!(preceding_word("café retryable", 6), "café");
+    }
+}
+
+#[cfg(test)]
+mod broad_word_tests {
+    use super::*;
+
+    /// The three words #855 named, measured on Day 189 and **left in place**.
+    ///
+    /// Each is the SOLE matching entry for at least one genuine transient
+    /// shape, so removing it kills a real retry. Narrowing fails in the
+    /// expensive direction here — a transient error read as terminal ends a
+    /// run for good, where the bug #855 feared only wastes attempts.
+    const LOAD_BEARING: [(&str, &str); 6] = [
+        ("connection", "connection refused"),
+        ("connection", "connection closed unexpectedly"),
+        ("timeout", "request timeout after 30s"),
+        ("timeout", "read timeout"),
+        ("capacity", "server at capacity"),
+        ("capacity", "over capacity, try again"),
+    ];
+
+    /// Every row of [`LOAD_BEARING`] is retriable **and** the named word is the
+    /// only entry that matches it — so the test proves *why*, not merely
+    /// *that*. This is the near-miss half: it fails if a later "narrowing" of
+    /// `connection` / `timeout` / `capacity` drops a genuine transient shape.
+    #[test]
+    fn the_three_broad_words_are_each_the_sole_match_for_a_real_transient_shape() {
+        for (word, msg) in LOAD_BEARING {
+            // Anti-vacuous: the fixture really does carry the word, so a
+            // transcription slip cannot make this pass by agreeing with itself.
+            assert!(
+                msg.contains(word),
+                "fixture {msg:?} does not contain {word:?}"
+            );
+            assert!(
+                TRANSIENT_ERROR_SHAPES.contains(&word),
+                "{word:?} is no longer a transient entry — if it was removed on \
+                 purpose, this shape lost its only match: {msg:?}"
+            );
+            let lower = msg.to_lowercase();
+            let hits: Vec<&str> = TRANSIENT_ERROR_SHAPES
+                .iter()
+                .filter(|k| lower.contains(*k))
+                .copied()
+                .collect();
+            assert_eq!(
+                hits,
+                vec![word],
+                "{msg:?} was measured on Day 189 as matching ONLY {word:?}"
+            );
+            assert!(
+                is_retriable_error(msg),
+                "{msg:?} must stay retriable — {word:?} is load-bearing for it"
+            );
+        }
+    }
+
+    /// The other half of the measurement, and the row that corrected the first
+    /// probe: these shapes match the word **and** a sibling, so the word is
+    /// redundant *here*. Pinned so a later reader does not delete the sibling
+    /// believing the broad word makes it dead weight — both directions of that
+    /// mistake are live.
+    #[test]
+    fn redundant_rows_are_carried_by_a_sibling_entry_as_well() {
+        let rows: [(&str, &str, &str); 4] = [
+            ("connection", "connection reset by peer", "reset by peer"),
+            ("connection", "connection timed out", "timed out"),
+            // Measured correction: the word-deletion probe called this
+            // load-bearing; `"gateway timeout"` is a longer entry containing
+            // the word, so deleting the word destroyed both matches at once.
+            ("timeout", "gateway timeout", "gateway timeout"),
+            ("capacity", "Overloaded: at capacity", "overloaded"),
+        ];
+        for (word, msg, sibling) in rows {
+            let lower = msg.to_lowercase();
+            assert!(lower.contains(word), "fixture {msg:?} lost {word:?}");
+            assert!(lower.contains(sibling), "fixture {msg:?} lost {sibling:?}");
+            assert!(
+                TRANSIENT_ERROR_SHAPES.contains(&sibling),
+                "{sibling:?} left the transient list — {msg:?} now leans on \
+                 {word:?} alone"
+            );
+            assert!(is_retriable_error(msg), "{msg:?} must stay retriable");
+        }
+    }
+
+    /// A terminal status code beats all three words. This is the realistic
+    /// shape of a validation error carrying one of them, and it is why the
+    /// invented prose rows in the #855 measurement do not license a narrowing:
+    /// the non-retriable family is scanned FIRST with an early return.
+    #[test]
+    fn a_terminal_status_code_beats_every_one_of_the_three_broad_words() {
+        let rows: [(&str, &str); 3] = [
+            ("connection", "401 Unauthorized: connection profile expired"),
+            ("timeout", "400 Bad Request: timeout must be positive"),
+            (
+                "capacity",
+                "403 Forbidden: capacity reserved for enterprise",
+            ),
+        ];
+        for (word, msg) in rows {
+            assert!(msg.contains(word), "fixture {msg:?} lost {word:?}");
+            // Anti-vacuous: without the code this really would be retriable,
+            // so the `false` below is precedence firing, not an inert fixture.
+            let without_code = msg.split_once(american_colon()).unwrap().1;
+            assert!(
+                is_retriable_error(without_code),
+                "{without_code:?} should be retriable on {word:?} alone"
+            );
+            assert!(
+                !is_retriable_error(msg),
+                "{msg:?} carries a terminal status code and must not be retriable"
+            );
+        }
+    }
+
+    fn american_colon() -> &'static str {
+        ": "
+    }
+
+    /// The two error strings this repo has actually observed, quoted from
+    /// CLAUDE.md — neither involves the three words, which is the honest bound
+    /// on the #855 measurement: the misclassifying rows were all invented.
+    #[test]
+    fn the_real_observed_strings_classify_without_any_of_the_three_words() {
+        let rate_limit = "error: Rate limited, retry after Some(14454000)ms";
+        assert!(is_retriable_error(rate_limit));
+        let lower = rate_limit.to_lowercase();
+        let hits: Vec<&str> = TRANSIENT_ERROR_SHAPES
+            .iter()
+            .filter(|k| lower.contains(*k))
+            .copied()
+            .collect();
+        assert_eq!(
+            hits,
+            vec!["rate limit"],
+            "carried by `rate limit`, not by a broad word"
+        );
+
+        // Context overflow is not a transient error and matches nothing here.
+        let overflow = "prompt is too long: 402134 tokens > 200000 maximum";
+        assert!(!is_retriable_error(overflow));
+        assert!(
+            !TRANSIENT_ERROR_SHAPES
+                .iter()
+                .any(|k| overflow.to_lowercase().contains(k)),
+            "overflow must match no transient shape"
+        );
     }
 }
