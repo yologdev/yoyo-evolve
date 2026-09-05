@@ -1,0 +1,215 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Step 0 — check the module-size gate before touching anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (172ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (146ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.1s (2 ✓)
+
+Register is already clean (("src/prompt_retry.rs", 2240) matches actual 2240, zero warnings). Now Step 1 — read the predicate before measuring.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn is_retriable_error" … ✓ (3ms)
+
+
+I'll continue from where I left off — I'd just read the predicate structure. Let me see the rest of the transient list.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 396,470p src/prompt_retry… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the full picture. The three words under test, plus their potential siblings (`"timed out", "reset by peer", "gateway timeout", "overloaded"`). Let me build the measurement probe — driving the **real** function at the emission point.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2123,2145p src/prompt_ret… ✓ (4ms)
+  2 tools completed in 2.0s (2 ✓)
+
+
+I'll pick up at Step 1 — writing the measurement probe. Let me add a temporary probe test that drives the real function.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/p… (48 lines) ✓ (23.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The probe ran. Let me capture the full table.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo word_probe… ✓ (127ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo word_probe… ✓ (125ms)
+  2 tools completed in 3.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The bash tool is collapsing similar lines. Let me read the file directly.
+  ▶ read /tmp/t.md ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the first table. Two things stand out: gateway timeout row 9 is ambiguous — deleting the word also destroys the longer "gateway timeout" entry, so it can't tell "this word carries it" from "a phrase containing it carries it". The precise question is which entries match. Let me lift the list into a named const (the shape #852 already used for the status codes) so the measurement is exact.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RETRIABLE_STATUS_CODES\… ✓ (3ms)
+
+Now the const extraction — one statement of the list, so the measurement can name which entry matched.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (1 → 37 lines)
+    const RETRIABLE_STATUS_CODES: [&str; 5] = ["429", "500", "502", "503", "504"];
+  + 
+  + /// Non-numeric wording that means "transient, worth retrying".
+  + ///
+  + /// Lifted out of the `let` inside [`is_retriable_error`] on Day 189 (#855) so
+  + /// the list has **one** statement and a test can ask *which* entry matched a
+  + /// given message — the question the word-by-word measurement needed and could
+  + /// not answer while the array was a local. Membership and order are
+  + /// byte-identical to the inline array it replaces; nothing about matching
+  + /// moved.
+  + ///
+  + /// Note the deliberate overlaps: `"gateway timeout"` and `"timeout"` both
+  + /// match `gateway timeout`, and `"reset by peer"` and `"connection"` both match
+  + /// `connection reset by peer`. That redundancy is what the #855 measurement is
+  + /// about — a word is only load-bearing where it is the *sole* matching entry.
+  + pub(crate) const TRANSIENT_ERROR_SHAPES: [&str; 21] = [
+  +     "rate limit",
+  +     "rate_limit",
+  +     "too many requests",
+  +     "internal server error",
+  ... (17 more lines)
+ ✓ (13.2s)
+    const RETRIABLE_STATUS_CODES: [&str; 5] = ["429", "500", "502", "503", "504"];
+  + 
+  + /// Non-numeric wording that means "transient, worth retrying".
+  + ///
+  + /// Lifted out of the `let` inside [`is_retriable_error`] on Day 189 (#855) so
+  + /// the list has **one** statement and a test can ask *which* entry matched a
+  + /// given message — the question the word-by-word measurement needed and could
+  + /// not answer while the array was a local. Membership and order are
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Miscounted — 20 entries, not 21.
+  ▶ edit src/prompt_retry.rs (1 → 1 lines)
+  - pub(crate) const TRANSIENT_ERROR_SHAPES: [&str; 21] = [
+  + pub(crate) const TRANSIENT_ERROR_SHAPES: [&str; 20] = [
+ ✓ (15.1s)
+  - pub(crate) const TRANSIENT_ERROR_SHAPES: [&str; 21] = [
+  + pub(crate) const TRANSIENT_ERROR_SHAPES: [&str; 20] = [
+
+The definition needs its consumer in the same edit — that's my own rule firing correctly. Wiring it now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (28 → 6 lines)
+        // Retry on transient errors
+  -     let retriable = [
+  -         "rate limit",
+  -         "rate_limit",
+  -         "too many requests",
+  -         "internal server error",
+  -         "bad gateway",
+  -         "service unavailable",
+  -         "gateway timeout",
+  -         "overloaded",
+  -         "connection",
+  -         "timeout",
+  -         "timed out",
+  -         "network",
+  -         "temporarily",
+  -         "capacity",
+  -         "server error",
+  -         "stream closed",
+  -         "unexpected eof",
+  -         "broken pipe",
+  ... (8 more lines)
+ ✓ (15.0s)
+        // Retry on transient errors
+  -     let retriable = [
+  -         "rate limit",
+  -         "rate_limit",
+  -         "too many requests",
+  -         "internal server error",
+  -         "bad gateway",
+  -         "service unavailable",
+  ... (13 more lines)
+
+The extraction is clean — only my temp probe's name is left. Now the precise probe: which entries match each message.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (68 lines) ✓ (23.2s)
+
+  ▶ read /tmp/p.txt ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the exact answer, and it corrects my first table. Row 9: gateway timeout matches both "gateway timeout" and "timeout" — the word-deletion probe called it load-bearing and it is not. Only the entry-set measurement could settle that.
+
+The verdict is the third outcome: all three words are load-bearing, and every misclassification row is a string I invented. Let me replace the probe with permanent guards.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (6 lines) ✓ (22ms)
+
+Probe removed. Now the permanent guards, pinning the measurement.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/p… (145 lines) ✓ (24.9s)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5484 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The module-size gate fired — exactly the landmine Step 0 warned about. My test additions crossed the band. Let me paste the line the gate itself prints.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (168ms)
+  ▶ edit tests/module_size.rs (1 → 1 lines)
+  -     ("src/prompt_retry.rs", 2240),
+  +     ("src/prompt_retry.rs", 2403),
+ ✓ (1m 9s)
+  -     ("src/prompt_retry.rs", 2240),
+  +     ("src/prompt_retry.rs", 2403),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (312ms)
+  3 tools completed in 1m 14s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     Predicted correctly: src/prompt_retry.rs
+
