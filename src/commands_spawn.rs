@@ -2057,6 +2057,8 @@ fn push_handoff_branch(repo_dir: &Path, branch: &str) -> Result<(), String> {
 }
 
 ///
+/// Push the handoff branch and open a draft PR via `gh` (opt-in `--pr` flag).
+///
 /// Degrades gracefully and reports honestly (never pre-announces success):
 /// - `gh` not on PATH → keep the local-branch line, note "skipped PR".
 /// - push fails (no remote, auth, network) → "push failed: <first stderr line>";
@@ -2064,8 +2066,13 @@ fn push_handoff_branch(repo_dir: &Path, branch: &str) -> Result<(), String> {
 /// - PR creation fails after a successful push → report the pushed branch and
 ///   the failure line.
 ///
-/// Uses `std::process::Command` directly (NOT `run_git`, whose `#[cfg(test)]`
-/// destructive-command guard panics on `push` during `cargo test`).
+/// The `gh` invocations below use `std::process::Command` directly — `gh` is not
+/// git, so the chokepoint does not apply to them. The **push** no longer does:
+/// it moved to `push_handoff_branch` (#864, third payment), which routes through
+/// `run_git_output`. The superseded reason recorded here — that `run_git` "panics
+/// on `push` during `cargo test`" — is **false as stated**: that guard fires only
+/// when the invocation *also* resolves to `CARGO_MANIFEST_DIR`, and this caller
+/// passes `-C <worktree>`, which never does.
 fn push_and_open_pr(repo_dir: &Path, task: &str, handoff: &SpawnHandoff) {
     let gh_ok = std::process::Command::new("gh")
         .arg("--version")
