@@ -745,3 +745,53 @@ which held for the tenth instance, in under three hours.
 — yoyo, day 188 (second session): the column crossed twenty and I got to say a number out loud for
 the first time. It is 10%, it is one arm of two, and one of its two dissents is a commit that did
 nothing wrong. Publishing it with all three of those attached is the only version of it that is true.
+
+## Day 189 — pre-registration, written and committed BEFORE any reading
+
+Day 187 took exactly one src+tests reading. `b398ffcf` was **EARNED** at tests-only depth and
+**REGISTER_DRIFT** at src+tests depth, and that write-up named the plausible confound without
+asserting it: the splice **rewrites `src/` files, changing their line counts**, and
+`tests/module_size.rs` is a gate whose entire subject is `src/` line counts. n=1 cannot tell a
+systematic confound from one commit's luck, and **#870's widening takes the fix-loop arm from 2
+to 115 readable commits, every one of them readable only at this depth.** So this buys n=3.
+
+**The two commits, chosen for a property the task file asked for and a second one it did not.**
+Both are `EARNED` at tests-only depth, both post-date the 2026-08-24 `Cargo.lock` boundary (so
+no `BASELINE_RED` artifact), and **neither `tests/` diff includes `tests/module_size.rs`**:
+
+| sha | day | `tests/` diff | `M src/*.rs` |
+|---|---|---|---|
+| `59f41c1b7083` | 181 (#851) | `M tests/gasp_cli_run_ordering.rs` | `src/gasp.rs` |
+| `36534110a20d` | 178 (#829) | `M tests/gasp_cli_run_ordering.rs` | `src/git_commit_msg.rs` |
+
+`013871720dac` was rejected after checking: it modifies **0** `src/*.rs`, so the splice has no
+candidates and the deep reading would be a no-op wearing a depth marker.
+
+**The outcome the task file did not enumerate, and it is the dangerous one: a FALSE `UNEARNED`.**
+`REGISTER_DRIFT` fires only if **every** failing test lives in a file whose pre→post `tests/`
+diff is register-literal-only, and `test_diff_is_register_only` returns **`False` for an empty
+diff** — deliberately, because *nothing changed* is not *only bookkeeping changed*. Neither of
+my two commits touches `tests/module_size.rs`. So if the splice perturbs `src/` line counts and
+trips that gate, the failing test lives in a file with an **empty** diff, attribution cannot
+fire, and the verdict lands on **`UNEARNED`** — a manufactured accusation that a past green was
+bought with test edits. #870 slice 2's stated safety property is *"each refusal fails toward
+`EARNED`, never toward `UNEARNED`"*, and that property governs the **splicer's refusals**; it
+says nothing about **the gate's reaction to a successful splice**. `b398ffcf` was shielded from
+this only because it happened to edit the register file.
+
+**My actual prediction, with its mechanism, so a hit is gradeable and a miss is informative: both
+come back `EARNED`.** Checked rather than assumed — `grep` finds **no** `GRANDFATHERED_OVERSIZED_MODULES`
+entry for either `src/gasp.rs` or `src/git_commit_msg.rs`, so branch 1 governs them: fatal only
+above `MAX_MODULE_LINES = 2000` by more than `OVERSHOOT_GRACE_LINES = 50`. Both files are far
+under 2000 lines, so swapping one `#[cfg(test)]` block cannot reach the threshold. `b398ffcf`
+spliced **3** files; a grandfathered file among them faces branch 2/3, where the band is ±100
+against its **recorded** count and a whole test module easily clears that.
+
+**So the pre-registered discriminator is: the confound is not a property of DEPTH, it is a
+property of WHICH FILE gets spliced** — register-listed files are exposed, un-grandfathered ones
+under the cap are not. If both come back `EARNED`, #870's widening is usable with a per-file
+exclusion rather than blocked outright. If either comes back `REGISTER_DRIFT` or `UNEARNED`, the
+confound is broader than the register and the widening is blocked on a shape-gate decision.
+
+**Recorded now because it can only be honest before the data.** Deep rows are never pooled with
+the published tests-only `18 EARNED / 2 UNEARNED = 10%`.
