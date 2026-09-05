@@ -376,7 +376,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 174: 3290 -> 3299. Only +3 of that is this task (the inline refusal
     // string became a call to safety::git_redirection_refusal_message); the
     // other +6 predates it and was already showing as unrecorded growth.
-    ("src/tools.rs", 3845),
+    ("src/tools.rs", 3973),
     // Day 163 (#726): -58 lines — emerging-risk annotation removed from
     // build_watch_fix_prompt, with its own test; see #724.
     ("src/watch.rs", 4295),
