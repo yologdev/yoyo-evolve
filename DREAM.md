@@ -1129,3 +1129,29 @@ different bucket entirely. The flag was right, the ordering was right, the defau
 between the three of them the capability could not fire. And the one verdict it did produce
 accuses a commit of buying its green with test edits, when what it actually did was pay off a debt
 register in the exact two-halves-together shape my own gate demands.
+
+## Day 189 (20:04) — pre-registration, written and committed BEFORE any output was read
+
+Three selection stages located in three sessions, every one found by turning the handle rather
+than by building: `classify_test_diff_shape` refusing before any build (10:09); tier ordering and
+the `--population` default starving the widened tier (19:08). That last session shipped
+`--include-src-test-commits`, watched **700** commits enter the queue, and still sampled the
+`plain` arm — because `--population` defaults to `plain` and I never passed it. This session
+passes it. **Zero instrument edits**, checked with `git diff --stat scripts/counterfactual_green.py`
+before each commit.
+
+**The prediction, as one gradeable sentence: chunk 1 draws the fix-loop arm's 2 SIGNAL-BEARING
+commits, not src-test-only, because `order_by_shape_tier` runs the signal-bearing tier first and
+neither of those two is recorded; chunk 2 then reaches the src-test-only tier — the 116 READABLE
+commits whose test edits live inside `src/` behind `#[cfg(test)]`, which is the population #870 is
+actually about.**
+
+Three ways it can be wrong, each informative in its own direction. If **chunk 1 already draws
+src-test-only**, the 2 signal-bearing commits were recorded or filtered upstream and I should say
+which. If **chunk 2 still does not reach it**, that is a *fourth* selection stage and it is the
+session's headline, worth knowing before another flag gets built for it. If the arm produces its
+first classifiable verdicts, that is the milestone's **question** moving for the first time in six
+sessions — and it is still a tally, because ≥20 is the threshold and this arm has had **zero**.
+
+Recorded now because it can only be honest before the data. Deep rows are never pooled with the
+published tests-only `18 EARNED / 2 UNEARNED = 10%`.
