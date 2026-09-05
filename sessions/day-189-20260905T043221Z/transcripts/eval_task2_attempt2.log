@@ -1,0 +1,34 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls tests/common/ && git diff --s… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== races usage ===" && gr… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 180 cargo test --test gl… ✓ (6.6s)
+  3 tools completed in 21.8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census confirmed: both gates pass and the cargo-spawning census (94 files, 7706 fns, 5497 #[test]s, 2 spawners DERIVED, 0 registered) matches CLAUDE.md's recorded Day-188 reading byte-for-byte, so the scanner did not move.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 14s)
+
+Verdict: PASS
+
+The diff is a clean pure move of the duplicated brace scanner into tests/common/mod.rs, with both gates consuming it and every pre-existing assertion untouched.
+
+What I verified:
+• The extraction is genuinely shared, not a copy left in one file: both tests/global_state_races.rs:66-67 and tests/cargo_spawning_tests.rs:93-94 carry mod common; + use common::{calls_directly, match_body};, and both call sites resolve to the shared items.
+• No dead code per crate — the landmine the task flagged: only the two helpers both files call by name are imported; `raw_string_hashes / skip_raw_string / char_literal_len are live in each crate transitively through match_body`, so no `#[allow(dead_code)]` was needed (the task's stated preference (a) over (b)).
+• Censuses unchanged — I ran both gate targets: 17 passed / 12 passed, and the cargo-spawning census printed `94 file(s), 7706 fn(s), 5497 #[test](s) scanned; 2 spawner(s) DERIVED (count_tests_via_cargo, probe_audit_tool); 0 test(s) reach one, 0 registered as debt` — byte-identical to the Day-188 reading recorded in CLAUDE.md. A number that moved would mean the scanner moved; none did.
+• Registers untouched, no test body edited (the entire diff to each gate is two added lines plus deletions).
+• Docs corrected in the same commit — the now-false "deliberate second copy … filed as #835" clause is superseded rather than erased, and both git_chokepoint bullets' "already filed as #835" clauses were updated to say it was paid, with that gate's decision not to consume the shared scanner stated explicitly so it doesn't read as an oversight.
+
+One thing worth keeping visible rather than treating as a nit: the write-up records that neutering char_literal_len reddens only global_state_races.rs and leaves cargo_spawning_tests.rs fully green — so the two gates do not pin the shared scanner equally. That's honestly reported and correctly deferred (one defect per task), and it's a stronger position than before, since there is now one function to point at.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

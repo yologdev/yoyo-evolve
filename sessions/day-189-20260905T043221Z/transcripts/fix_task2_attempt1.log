@@ -1,0 +1,144 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git show…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short ✓ (5ms)
+ ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "deliberate second copy"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "835" CLAUDE.md | cut -c… ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '110p' CLAUDE.md | grep -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '122p' CLAUDE.md | grep -… ✓ (3.2s)
+ ✓ (4.5s)
+  6 tools completed in 12.8s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Working tree is clean and the code half is committed. The missing piece is CLAUDE.md. Before writing it, let me verify the claims I'm about to make rather than assert them.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- tests/global_st…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- tests/cargo_spa… ✓ (7ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+Only additions are mod common; + the use — so every pre-existing test is unedited. Now let me independently re-derive the step-0 finding (were the two copies identical?):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in global_state_races carg… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My awk range ran to EOF and swept in unrelated code. Let me extract just the five shared functions precisely:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/e… (31 lines) ✓ (39ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The extractor missed common/mod.rs (items are pub). Let me relax the regex and diff all three:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/x… (34 lines) ✓ (41ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+match_body differs in code, not just comments — the evaluator's "comments only" reading may be wrong. This is the step-0 finding, so let me look at it exactly:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/x… (32 lines) ✓ (46ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My extractor is naively counting braces inside string literals — ironic, given what the code under test does. Let me delimit by the next column-0 fn instead:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/x… (25 lines) ✓ (42ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the true step-0 finding. Let me confirm the extracted copy in common/mod.rs differs from the originals only by visibility:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/^T… (7 lines) ✓ (45ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Precise result: 4 of 5 functions are code-identical to both originals; match_body is identical to the spawning copy and differs from the races copy only in one arm's block-vs-expression shape. Now the doc:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 5 lines)
+  - The brace scanner is a deliberate second copy** of `tests/global_state_races.rs`'s (`match_body` / `raw_string_hashes` / `skip_raw_string` / `char_literal_len` / `calls_directly`): `tests/*.rs` are separate crates, so sharing needs a `tests/common/mod.rs` plus a refactor of the sibling — larger than this task, said out loud in the module doc rather than pretended away, and **filed as #835** (a reader surface is not a scheduler surface).
+  + The brace scanner WAS a deliberate second copy** of `tests/global_state_races.rs`'s (`match_body` / `raw_string_hashes` / `skip_raw_string` / `char_literal_len` / `calls_directly`) — **superseded on Day 189, recorded rather than erased: there is now exactly ONE statement of it, in `tests/common/mod.rs`, and both gates read it.** The Day-179 reasoning was right about the cost and is precisely why the duplication was **filed as #835** rather than pretended away (a reader surface is not a schedul… [yoyo: 1082 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **What step 0 measured, recorded because a measured "still identical" is a real result and stops the next session re-deriving it — and because the alternative outcome was a different task:** the instruction was to diff the two copies **before** writing anything, since an already-diverged pair must not be silently unified (that is how a gate loses coverage under a refactor labelled "no behaviour change"). Function-for-function, comment-stripped: `raw_string_hashes` and `skip_raw_string` were **… [yoyo: 1125 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The near-miss guard was the deliverable, since this is a pure move.** Every pre-existing test in both files passes **unedited** — the entire diff to each gate is two added lines (`mod common;` and the `use`), so no assertion was adjusted to fit the extraction; both registers are untouched (`REGISTERED_GLOBAL_RACES` and `REGISTERED_CARGO_SPAWNING_TESTS`, the latter empty since Day 188, have zero hits in the diff); and both gates' **censuses** are unchanged, which is strictly stronger than "te… [yoyo: 927 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 15s)
+  - The brace scanner is a deliberate second copy** of `tests/global_state_races.rs`'s (`match_body` / `raw_string_hashes` / `skip_raw_string` / `char_literal_len` / `calls_directly`): `tests/*.rs` are separate crates, so sharing needs a `tests/common/mod.rs` plus a refactor of the sibling — larger than this task, said out loud in the module doc rather than pretended away, and **filed as #835** (a reader surface is not a scheduler surface).
+  + The brace scanner WAS a deliberate second copy** of `tests/global_state_races.rs`'s (`match_body` / `raw_string_hashes` / `skip_raw_string` / `char_literal_len` / `calls_directly`) — **superseded on Day 189, recorded rather than erased: there is now exactly ONE statement of it, in `tests/common/mod.rs`, and both gates read it.** The Day-179 reasoning was right about the cost and is precisely why the duplication was **filed as #835** rather than pretended away (a reader surface is not a schedul… [yoyo: 1082 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **What step 0 measured, recorded because a measured "still identical" is a real result and stops the next session re-deriving it — and because the alternative outcome was a different task:** the instruction was to diff the two copies **before** writing anything, since an already-diverged pair must not be silently unified (that is how a gate loses coverage under a refactor labelled "no behaviour change"). Function-for-function, comment-stripped: `raw_string_hashes` and `skip_raw_string` were **… [yoyo: 1125 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The near-miss guard was the deliverable, since this is a pure move.** Every pre-existing test in both files passes **unedited** — the entire diff to each gate is two added lines (`mod common;` and the `use`), so no assertion was adjusted to fit the extraction; both registers are untouched (`REGISTERED_GLOBAL_RACES` and `REGISTERED_CARGO_SPAWNING_TESTS`, the latter empty since Day 188, have zero hits in the diff); and both gates' **censuses** are unchanged, which is strictly stronger than "te… [yoyo: 927 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That file's entries are paragraphs, but let me verify the split reads correctly in context:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '106,118p' CLAUDE.md | cu… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '110p' CLAUDE.md | tail -… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both paragraphs close cleanly. Now the second stale claim — it appears twice (duplicated paragraph in the git-chokepoint bullet), so both must move:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "835" CLAUDE.md | while … ✓ (41ms)
+  2 tools completed in 5.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both stale clauses are corrected (line 527's "#835 already refuses a third copy" remains true as a rationale and is not a status claim). Now the positive control I just documented — one atomic mutate→run→restore, so the restore cannot be forgotten:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (7.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control falsified my documented claim — neutering char_literal_len reddens only the races gate; the spawning gate stayed green. Good thing I ran it. Let me test the shared entry point instead:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+match_body reddens both gates (4 and 5 failures) — that is the control the task asked for. The char_literal_len result is a real finding, so I'll record both rather than replace the falsified one:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Positive control run rather than assumed, as one atomic mutate→run→restore** (so the restore could not be forgotten, and serially, because two file-mutating controls in one parallel block raced once and one falsely *passed*): neutering `char_literal_len` in `tests/common/mod.rs` reddens **both** gates, which is the direction that proves the extraction is genuinely shared rather than a copy left behind in one file; restoring returns a byte-empty `git diff`.
+  + **Positive control run rather than assumed, as one atomic mutate→run→restore** (so the restore could not be forgotten, and serially, because two file-mutating controls in one parallel block raced once and one falsely *passed*): neutering **`match_body`** in `tests/common/mod.rs` to return `None` reddens **both** gates — 4 failures in `global_state_races.rs`, 5 in `cargo_spawning_tests.rs` — which is the direction that proves the extraction is genuinely shared rather than a copy left behi… [yoyo: 1300 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 16s)
+  - **Positive control run rather than assumed, as one atomic mutate→run→restore** (so the restore could not be forgotten, and serially, because two file-mutating controls in one parallel block raced once and one falsely *passed*): neutering `char_literal_len` in `tests/common/mod.rs` reddens **both** gates, which is the direction that proves the extraction is genuinely shared rather than a copy left behind in one file; restoring returns a byte-empty `git diff`.
+  + **Positive control run rather than assumed, as one atomic mutate→run→restore** (so the restore could not be forgotten, and serially, because two file-mutating controls in one parallel block raced once and one falsely *passed*): neutering **`match_body`** in `tests/common/mod.rs` to return `None` reddens **both** gates — 4 failures in `global_state_races.rs`, 5 in `cargo_spawning_tests.rs` — which is the direction that proves the extraction is genuinely shared rather than a copy left behi… [yoyo: 1300 more bytes elided — diff lines are capped at 500 bytes]
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
