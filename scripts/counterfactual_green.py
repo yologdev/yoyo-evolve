@@ -1097,6 +1097,98 @@ def src_splice_candidates(rows) -> list[str]:
     return out
 
 
+# The module-size gate is the AUTHORITY for which `src/` files are register-listed, and
+# this file reads it DIRECTLY rather than importing `scripts/extract_trajectory.py`'s
+# `parse_module_gate`. Two independent readers of one authority is fine; two hand-copied
+# registers is the defect. Same reasoning as this module's deliberate second copy of
+# `TASK_COMMIT_RE`, stated in the module doc: sharing would mean importing across two
+# hand-run scripts with different lifecycles for one regex.
+MODULE_SIZE_GATE_REL_PATH = "tests/module_size.rs"
+_REGISTER_HEAD = "GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &["
+_REGISTER_ENTRY_RE = re.compile(r'\(\s*"(src/[^"]+\.rs)"\s*,\s*[0-9_]+\s*\)')
+
+
+def parse_grandfathered_register(text):
+    """Paths listed in the module-size register, or `None` when it could not be read.
+
+    #894, Day 189. Only the register LITERAL is scanned — from the const's opening
+    bracket to the `\\n];` that closes it — so the `("src/a.rs", 500)` pairs inside that
+    gate's own unit-test fixtures can never masquerade as entries. That is the same
+    discipline `scripts/extract_trajectory.py::parse_module_gate` states, arrived at
+    independently over the same authority rather than imported.
+
+    `None` IS A REFUSAL AND NEVER AN EMPTY SET, and the distinction is the whole
+    anti-vacuous property: the register has been non-empty since the gate landed, so a
+    parse yielding ZERO entries means the parse broke, not that no module is listed. A
+    scanner that finds nothing and reports a clean split is this very defect wearing the
+    opposite sign, and it is quieter than the bug. Missing file, unreadable file, absent
+    const and empty register all take this one path.
+
+    Only the PATHS are returned. The recorded line counts are what the gate compares
+    against; the splice decision needs only membership, and returning a number nothing
+    reads would be a second copy of a fact with no consumer.
+    """
+    if not text:
+        return None
+    start = text.find(_REGISTER_HEAD)
+    if start < 0:
+        return None
+    end = text.find("\n];", start)
+    if end < 0:
+        return None
+    paths = frozenset(m.group(1) for m in _REGISTER_ENTRY_RE.finditer(text[start:end]))
+    return paths or None
+
+
+def partition_register_listed(candidates, register):
+    """Split splice candidates into (kept, refused). Pure; the register is injected.
+
+    #894, Day 189. `--splice-src-tests` REWRITES `src/` files, which changes their line
+    counts, and `tests/module_size.rs` is a gate whose entire subject is `src/` line
+    counts — so the instrument disturbs its own subject. Measured at n=3 on Day 189: the
+    confound is a property of WHICH FILE gets spliced, not of depth.
+
+      * un-grandfathered file -> branch 1 is fatal only above `MAX_MODULE_LINES = 2000`
+        by more than `OVERSHOOT_GRACE_LINES = 50`, unreachable by swapping one
+        `#[cfg(test)]` block. `59f41c1b` (`src/gasp.rs`) and `36534110`
+        (`src/git_commit_msg.rs`) both read clean at depth.
+      * register-listed file -> branch 2/3 fires at +/-100 against its RECORDED count,
+        which a whole test module clears easily. `b398ffcf` spliced 3 files including
+        register-listed ones and went EARNED -> REGISTER_DRIFT, a void.
+
+    THE SECOND HALF IS UNGUARDED WITHOUT THIS AND IT DID NOT FIRE ONLY BY ACCIDENT, so
+    the reason is here rather than in a commit message nobody re-reads: `REGISTER_DRIFT`
+    fires only if EVERY failing test lives in a file whose pre->post `tests/` diff is
+    register-literal-only, and `test_diff_is_register_only` returns False for an EMPTY
+    diff, deliberately. A commit that splices a register-listed `src/` file but does NOT
+    touch `tests/module_size.rs` therefore trips the gate, fails attribution against an
+    empty diff, and lands on **UNEARNED** — a manufactured accusation that a past green
+    was bought with test edits. `b398ffcf` was shielded only because it happened to edit
+    that file. Do not "simplify" this exclusion away.
+
+    EXCLUSION RATHER THAN VOIDING, and the direction is the safety property: a skipped
+    file stays at its post-task version, i.e. a reading no deeper than the ones already
+    recorded. That is #870 slice 2's own rule — every refusal fails toward EARNED, never
+    toward UNEARNED — and it is why exclusion is the right half of #894's two remedies.
+    The rejected half (splice anyway, void the verdict) spends a full ~4m run to produce
+    a refusal.
+
+    `register is None` (the gate could not be read) REFUSES EVERY CANDIDATE. Splicing
+    blind is the branch that can manufacture an accusation, and "could not check" must
+    never read as "checked; clean".
+
+    Order is preserved in both lists, so the caller's splice order is unchanged.
+    """
+    kept: list = []
+    refused: list = []
+    for p in candidates or ():
+        if register is None or p in register:
+            refused.append(p)
+        else:
+            kept.append(p)
+    return kept, refused
+
+
 # Three states for "could a src+tests counterfactual read this commit at all?", and none
 # is folded into another. Day 188, #870. `UNKNOWN` exists because folding it into `NONE`
 # UNDERSTATES the reachable population, which is the flattering direction — it would make
@@ -1916,6 +2008,20 @@ def _run_counterfactual(
         if splice_src:
             spliced = 0
             refused = 0
+            register_refused = 0
+            # #894: the AUTHORITY for "is this file register-listed?" is the
+            # `tests/module_size.rs` that will actually RUN in this worktree — post-task
+            # if the commit did not touch it, pre-task if it did, since the checkout
+            # above already laid that back. Reading it here costs one file read and no
+            # git call, and it can never disagree with the gate it is predicting.
+            register = None
+            try:
+                with open(
+                    os.path.join(wt, MODULE_SIZE_GATE_REL_PATH), "r", encoding="utf-8"
+                ) as fh:
+                    register = parse_grandfathered_register(fh.read())
+            except (OSError, UnicodeDecodeError):
+                register = None
             rc_ss, ss_out = run_cmd(
                 ["git", "-C", root, "diff", "--name-status", parent, sha, "--", "src/"],
                 timeout=60,
@@ -1924,7 +2030,32 @@ def _run_counterfactual(
                 # Could not read the shape -> splice nothing. Shallower, never wronger.
                 print("    SPLICE: could not read src/ diff — no file spliced", flush=True)
             else:
-                for rel in src_splice_candidates(parse_name_status(ss_out)):
+                candidates = src_splice_candidates(parse_name_status(ss_out))
+                # #894, and the comment is load-bearing: a register-listed file must not
+                # be spliced, because rewriting it moves the very line count
+                # `tests/module_size.rs` grades it on — so the instrument would be
+                # disturbing its own subject, producing a REGISTER_DRIFT void or, when
+                # the commit does not also edit that gate file, a FALSE `UNEARNED`.
+                # `register is None` refuses everything: could-not-check must never read
+                # as checked-clean, and splicing blind is the branch that can accuse.
+                kept_candidates, blocked = partition_register_listed(candidates, register)
+                register_refused = len(blocked)
+                refused += register_refused
+                if register is None:
+                    print(
+                        "    SPLICE: could not read "
+                        f"{MODULE_SIZE_GATE_REL_PATH} — REFUSING to splice "
+                        f"{register_refused} candidate(s); this is a refusal, not "
+                        '"no register-listed files"',
+                        flush=True,
+                    )
+                elif blocked:
+                    print(
+                        f"    SPLICE: {register_refused} candidate(s) left alone as "
+                        f"REGISTER-LISTED (#894): {', '.join(blocked)}",
+                        flush=True,
+                    )
+                for rel in kept_candidates:
                     rc_pre, pre_text = run_cmd(
                         ["git", "-C", root, "show", f"{parent}:{rel}"], timeout=60
                     )
@@ -1957,10 +2088,22 @@ def _run_counterfactual(
                         continue
                     spliced += 1
             if sink is not None:
-                sink["splice"] = {"spliced": spliced, "refused": refused}
+                sink["splice"] = {
+                    "spliced": spliced,
+                    "refused": refused,
+                    # #894: register refusals get their OWN count and their own
+                    # read/could-not-read flag rather than folding into `refused`.
+                    # "no register-listed candidate" and "the register could not be
+                    # read" are different facts with different remedies, and a row that
+                    # cannot tell them apart is this instrument's own could-not-check
+                    # rule failing one layer down.
+                    "register_refused": register_refused,
+                    "register_read": register is not None,
+                }
             print(
                 f"    SPLICE (src+tests depth): {spliced} file(s) spliced, "
-                f"{refused} candidate(s) left alone",
+                f"{refused} candidate(s) left alone "
+                f"({register_refused} register-listed)",
                 flush=True,
             )
 
@@ -2279,6 +2422,13 @@ def ledger_line(
         # deep was this reading?", which is a property of the RUN, not of the outcome.
         row["src_spliced"] = int(splice.get("spliced", 0))
         row["src_splice_refused"] = int(splice.get("refused", 0))
+        # #894: how many of those refusals were REGISTER-LISTED files, and whether the
+        # register was readable at all. Kept apart from the total because "no
+        # register-listed candidate" and "could not read the gate" are different facts,
+        # and a row that folds them cannot be audited afterwards. Observation only — no
+        # verdict reads either field, and `RUN_VERDICTS` is untouched.
+        row["src_splice_register_refused"] = int(splice.get("register_refused", 0))
+        row["src_splice_register_read"] = bool(splice.get("register_read", False))
         row["splice_depth"] = "src+tests"
     return json.dumps(row, sort_keys=True)
 
