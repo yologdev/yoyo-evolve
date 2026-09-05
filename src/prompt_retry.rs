@@ -2120,7 +2120,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod retry_directive_tests {
     use super::*;
@@ -2139,7 +2138,10 @@ mod retry_directive_tests {
             ("this error is retryable", true),
             // Negating prose — the #855 defect, measured live on Day 189.
             ("this is not a transient error, retrying won't help", false),
-            ("this is not a transient error - retrying will not help", false),
+            (
+                "this is not a transient error - retrying will not help",
+                false,
+            ),
             ("the model refused; do not retry this prompt", false),
             ("401 unauthorized - do not retry", false),
             // A directive with a negator immediately before it is inverted.
