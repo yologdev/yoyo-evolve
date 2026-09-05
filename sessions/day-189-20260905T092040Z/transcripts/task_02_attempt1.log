@@ -1,0 +1,215 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the issue and the actual source, then measure before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 855 2>&1 | head -6…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn is_retriable_error" … ✓ (3ms)
+ ✓ (854ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 396,440p src/prompt_retry…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "NON_RETRIABLE_STATUS_CO… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn contains_status_code… ✓ (3ms)
+  5 tools completed in 10.2s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cfg(test)" src/prompt_r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt_retry" tests/mod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 717,740p src/prompt_retry… ✓ (3ms)
+ ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 6.0s (3 ✓)
+
+Now the measurement. Temporary probe test, printed at the emission point:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/p… (34 lines) ✓ (24.6s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo probe_855 … ✓ (142ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '{printf "[%02d] %s\n", NR, … ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 45.3s (2 ✓)
+
+The gap reproduces, and the redundancy question is answered decisively. Full table:
+
+| # | verdict | input |
+|---|---|---|
+| 01 | true | error: Rate limited, retry after Some(14454000)ms |
+| 02 | `true` | same string with `retry` removed ← "rate limit" carries it, not "retry" |
+| 06 | `true` | This is not a transient error, retrying won't help ← the defect |
+| 07 | false | same prose + credit balance ← saved by an unrelated terminal entry, i.e. luck |
+| 08 | `true` | the model refused; do not retry this prompt ← second instance |
+
+Now the fix — test first:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (25ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Probe removed. Now the predicate, placed beside contains_status_code:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (1 → 71 lines)
+  + /// Phrasings in which "retry" is a **directive** — the provider telling the
+  + /// caller to try again — rather than any occurrence of the word.
+  + ///
+  + /// #855: `is_retriable_error`'s transient list carried the bare word `"retry"`,
+  + /// matched with a plain `contains`. Measured Day 189 at the emission point, that
+  + /// classified `"This is not a transient error, retrying won't help"` — prose
+  + /// asserting the exact opposite — as **retriable**, and likewise
+  + /// `"the model refused; do not retry this prompt"`. The cost is the expensive
+  + /// direction: a terminal error read as transient spends up to `MAX_RETRIES`
+  + /// attempts, and with `--wait-for-reset` opted in `retry_wait_decision` can
+  + /// sleep up to `MAX_RESET_WAIT` (6h) on a door that never opens.
+  + ///
+  + /// Narrowing was cheap here because the same measurement showed the entry was
+  + /// **redundant** for the string it was suspected of carrying:
+  + /// `error: Rate limited, retry after Some(14454000)ms` stays retriable with the
+  + /// word `retry` deleted from it, because `"rate limit"` matches. So `"retry"`
+  + /// was doing no work there — it was luck, not design (#855's own reading).
+  + const RETRY_DIRECTIVES: [&str; 6] = [
+  +     "retry after",
+  +     "retry-after",
+  ... (51 more lines)
+ ✓ (15.1s)
+  + /// Phrasings in which "retry" is a **directive** — the provider telling the
+  + /// caller to try again — rather than any occurrence of the word.
+  + ///
+  + /// #855: `is_retriable_error`'s transient list carried the bare word `"retry"`,
+  + /// matched with a plain `contains`. Measured Day 189 at the emission point, that
+  + /// classified `"This is not a transient error, retrying won't help"` — prose
+  + /// asserting the exact opposite — as **retriable**, and likewise
+  + /// `"the model refused; do not retry this prompt"`. The cost is the expensive
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Dead-code fires as designed. Per the Day-184 lesson, the test is the first consumer — it confirms rather than merely references:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/p… (57 lines) ✓ (24.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The table passes; my hand-typed byte offset was wrong. Compute it rather than guess:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (3 lines) ✓ (18ms)
+
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (1 → 1 lines)
+  -         assert_eq!(preceding_word("this is not retryable", 16), "not");
+  +         assert_eq!(preceding_word("this is not retryable", 12), "not");
+ ✓ (15.1s)
+  -         assert_eq!(preceding_word("this is not retryable", 16), "not");
+  +         assert_eq!(preceding_word("this is not retryable", 12), "not");
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo retry_dire… ✓ (24.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 44.0s (2 ✓)
+
+The core is green in isolation. Now the single production call site:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (3 → 2 lines)
+            "temporarily",
+  -         "retry",
+            "capacity",
+ ✓ (15.3s)
+            "temporarily",
+  -         "retry",
+            "capacity",
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (8 → 18 lines)
+            if lower.contains(keyword) {
+                return true;
+            }
+  +     }
+  + 
+  +     // #855: this stood in the list above as the bare word `"retry"`, matched
+  +     // with a plain `contains`, so prose asserting the *opposite* —
+  +     // `"This is not a transient error, retrying won't help"` — classified as
+  +     // retriable (measured at this emission point, Day 189). A directive is now
+  +     // required. Only this one entry was narrowed: `"connection"`, `"timeout"`
+  +     // and `"capacity"` above are still broad words and #855 stays open on them.
+  +     if mentions_retry_directive(&lower) {
+  +         return true;
+        }
+    
+        false
+ ✓ (1m 55s)
+            if lower.contains(keyword) {
+                return true;
+            }
+  +     }
+  + 
+  +     // #855: this stood in the list above as the bare word `"retry"`, matched
+  +     // with a plain `contains`, so prose asserting the *opposite* —
+  +     // `"This is not a transient error, retrying won't help"` — classified as
+  ... (8 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 14s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B3 -A12 … ✓ (1m 15s)
+  3 tools completed in 4m 28s (3 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5476 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate is working as designed — acknowledged growth, and it printed its own pasteable remedy. Paste it verbatim rather than hand-typing:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/prompt_retry.rs", 2042),
+  +     ("src/prompt_retry.rs", 2176),
+ ✓ (1m 15s)
+  -     ("src/prompt_retry.rs", 2042),
+  +     ("src/prompt_retry.rs", 2176),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (187ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 21s (2 ✓)
+
+Now the emission-point guards — the near-miss half is what matters, since narrowing fails in the expensive direction:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (73 lines) ✓ (24.6s)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

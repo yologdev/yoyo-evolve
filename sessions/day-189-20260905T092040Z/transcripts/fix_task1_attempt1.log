@@ -1,0 +1,120 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the diff and the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "partition_register_list… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+Work is already committed. Let me read the implementation to write the missing self-tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1095,1200p' scripts/coun… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def run_self_tests" scr… ✓ (5ms)
+  2 tools completed in 3.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4280,4400p' scripts/coun… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4320,4336p' scripts/coun… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.7s (2 ✓)
+
+Now let me insert the self-tests after the splice-select block (line 4325).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (6 → 115 lines)
+        check("splice-select: mixed diff keeps M src/*.rs only, ordered and deduped",
+              src_splice_candidates(mixed) == ["src/b.rs", "src/a.rs"],
+              src_splice_candidates(mixed))
+  + 
+  +     # ----------------------------------------------------------------------------------
+  +     # #894, Day 189: REGISTER-LISTED src/ files are excluded from the splice. Pure, with
+  +     # the register injected, so none of these rows reads tests/module_size.rs or any file.
+  +     # ----------------------------------------------------------------------------------
+  + 
+  +     # ANTI-VACUOUS, AND ASSERTED FIRST: the register has been non-empty since the gate
+  +     # landed, so a parse yielding ZERO entries means the PARSE broke, not that no module
+  +     # is listed. `None` is a refusal and never an empty set — a scanner that finds nothing
+  +     # and reports a clean split is this defect wearing the opposite sign, and it is
+  +     # quieter than the bug.
+  +     _gate = (
+  +         "const MAX_MODULE_LINES: usize = 2000;\n"
+  +         "const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[\n"
+  +         '    ("src/cli.rs", 6_557),\n'
+  +         '    ("src/commands_risk.rs", 6479),\n'
+  +         "];\n"
+  ... (95 more lines)
+ ✓ (1m 15s)
+        check("splice-select: mixed diff keeps M src/*.rs only, ordered and deduped",
+              src_splice_candidates(mixed) == ["src/b.rs", "src/a.rs"],
+              src_splice_candidates(mixed))
+  + 
+  +     # ----------------------------------------------------------------------------------
+  +     # #894, Day 189: REGISTER-LISTED src/ files are excluded from the splice. Pure, with
+  +     # the register injected, so none of these rows reads tests/module_size.rs or any file.
+  +     # ----------------------------------------------------------------------------------
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (64ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive control — one atomic mutate→run→restore:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (21 lines) ✓ (157ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The neutered run exits 1. Let me capture which tests fired, to prove the near-miss guard stayed green:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def check" -A 12 script… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (19 lines) ✓ (148ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired exactly right: 3 red, and the near-miss guard stayed green. Now the CLAUDE.md paragraph — let me find the insertion point:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "slice 2) — the splicer … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '525,528p' CLAUDE.md | cu… ✓ (3ms)
+  2 tools completed in 2.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=528 && NR<=536 {printf … ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Line 533 is the last paragraph of the counterfactual section. Inserting the #894 paragraph after it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (65 lines) ✓ (31ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "register-listed\|#894\|… ✓ (44ms)
+  2 tools completed in 6.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Placement is correct. Now the full verification chain:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (134ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (1m 15s)
+  3 tools completed in 1m 21s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

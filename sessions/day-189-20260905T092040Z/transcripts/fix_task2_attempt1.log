@@ -1,0 +1,143 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the doc_sync failure: CLAUDE.md was named as a deliverable and not updated, and its existing text now makes false claims about behavior this diff changed. Let me first read the actual shipped code so the doc records what is true.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RETRY_DIRECTIVES\|fn me… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+The commit is clean on code; only CLAUDE.md is missing. Let me read the shipped implementation exactly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '640,790p' src/prompt_ret… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me quote both lists verbatim from source — the task requires the write-up not rest on CLAUDE.md's summary of them.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/pub\(crate\) fn is_retriab… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The awk pattern missed (different signature). Let me locate is_retriable_error and quote both lists verbatim.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn is_retriable_error" … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '310,400p' src/prompt_ret… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '400,440p' src/prompt_ret… ✓ (3ms)
+  3 tools completed in 4.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have both lists verbatim. Now let me produce the measured table by actually running the emission point rather than transcribing assertions — as one atomic add→run→restore so the probe cannot be left behind.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2120,2250p' src/prompt_r… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me run a real measurement probe — one atomic add→run→restore, with a NEUTERED-free temporary test so nothing can be left behind.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (40 lines) ✓ (24.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The middle rows were elided in display. Let me re-run capturing to a file so I can read every row.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (35 lines) ✓ (24.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Probe restored cleanly (empty git diff --stat). Let me read the measured table in halves.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -6 /tmp/table.txt ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -6 /tmp/table.txt ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.9s (2 ✓)
+
+Complete table measured. The key result: with retry deleted from the rate-limit string it is still retriable (bare=false, dir=false, now=true) — "rate limit" carries it, not "retry". Now let me find the stale CLAUDE.md text the evaluator flagged.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unswept" CLAUDE.md | he… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Found it — line 329, ending with the three now-false clauses. Following the repo's "superseded claim, recorded rather than erased" convention, I'll append the Day-189 correction rather than deleting the stale sentence.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 18 lines)
+  - auditing or narrowing them is a separate behaviour change with its own enumeration burden and was not started.
+  + auditing or narrowing them is a separate behaviour change with its own enumeration burden and was not started. **Superseded claim, recorded rather than erased (Day 189, #855) — and THREE clauses of the sentence above went stale at once, in the one file re-injected as authoritative context every session.** "the non-numeric entries are unswept" is now false of **one** of the four; "`\"retry\"` matches the very rate-limit string above, which is now harmless but is **luck, not design**" was a gues… [yoyo: 607 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  +   | message | `bare` | now | carried by |
+  +   |---|---|---|---|
+  +   | `error: Rate limited, retry after Some(14454000)ms` | true | **true** | `"rate limit"` |
+  +   | `error: Rate limited, after Some(14454000)ms` (**`retry` deleted**) | false | **true** | `"rate limit"` |
+  +   | `429 Too Many Requests` | false | true | `429` + `"too many requests"` |
+  +   | `Retry-After: 30` | true | true | directive |
+  +   | `please retry in a moment` | true | true | directive |
+  +   | `this error is retryable` | true | true | directive |
+  +   | `This is not a transient error, retrying won't help` | true | **false** ← moved | — |
+  +   | `the model refused; do not retry this prompt` | true | **false** ← moved | — |
+  +   | `this error is not retryable` | true | **false** ← moved | — |
+  +   | `401 Unauthorized - do not retry` | true | false (**unmoved**) | `401`, scanned first |
+  +   | `connection reset by peer` | false | true | `"connection"` |
+  +   | `504 Gateway Timeout` | false | true | `504` |
+  + 
+  +   **Row 2 is the whole safety argument and it is why the narrowing was licensable at all:** deleting the word `retry` from the rate-limit string leaves it **retriable**, so `"rate limit"` was carrying it and the entry being narrowed was doing **no work there** — measured, not reasoned. Had that row come back `false`, narrowing would have been dangerous and the task's own step 1 says the answer changes. **Exactly three rows moved, all of them prose asserting the opposite of what the matcher con… [yoyo: 3665 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (2m 8s)
+  - auditing or narrowing them is a separate behaviour change with its own enumeration burden and was not started.
+  + auditing or narrowing them is a separate behaviour change with its own enumeration burden and was not started. **Superseded claim, recorded rather than erased (Day 189, #855) — and THREE clauses of the sentence above went stale at once, in the one file re-injected as authoritative context every session.** "the non-numeric entries are unswept" is now false of **one** of the four; "`\"retry\"` matches the very rate-limit string above, which is now harmless but is **luck, not design**" was a gues… [yoyo: 607 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  +   | message | `bare` | now | carried by |
+  +   |---|---|---|---|
+  +   | `error: Rate limited, retry after Some(14454000)ms` | true | **true** | `"rate limit"` |
+  +   | `error: Rate limited, after Some(14454000)ms` (**`retry` deleted**) | false | **true** | `"rate limit"` |
+  +   | `429 Too Many Requests` | false | true | `429` + `"too many requests"` |
+  ... (11 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me verify the doc claims hold against the code, and run the full verification.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 28s)
+  2 tools completed in 3m 31s (1 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tests green (5479 passed, 0 failed). Now clippy explicitly plus the module-size gate check.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (167ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (188ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.0s (2 ✓)
+
+A register drift warning appeared — src/prompt_retry.rs is 2240 lines against a recorded 2176. Let me find out what changed, since this eval-fix was meant to touch only CLAUDE.md.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---D… ✓ (16ms)
+

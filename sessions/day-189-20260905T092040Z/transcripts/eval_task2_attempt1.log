@@ -1,0 +1,49 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat && echo "… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o 'Deliberately out of sco… ✓ (6ms)
+  3 tools completed in 12.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o 'the non-numeric entries… ✓ (519ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 26s)
+  ▶ edit session_plan/eval_task_2.md (1 → 1 lines)
+  - `\"retry\"` matches the very rate-likely string above
+  + `\"retry\"` matches the very rate-limit string above
+ ✓ (1m 27s)
+  - `\"retry\"` matches the very rate-likely string above
+  + `\"retry\"` matches the very rate-limit string above
+  3 tools completed in 3m 19s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read session_plan/eval_task_2.md ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md.
+
+FAIL — on doc_sync only.
+
+What is correct (and it is most of the task):
+• "retry" removed from the transient list; replaced by mentions_retry_directive, a pure allow-list of six directive phrasings with a negation guard (not/never/`non/no/n't`).
+• Precedence untouched — the non-retriable family is still scanned first with its early return false, and the new check sits after the transient loop.
+• Exactly one word narrowed; "connection", "timeout", "capacity" left broad, as required.
+• Guards are the right shape: an 18-row both-directions table, emission-point assertions on is_retriable_error, and the near-miss guard that carries the risk — the rate-limit string stays retriable with the word `retry` deleted from it, which is the measurement proving "rate limit" was always what carried it.
+• preceding_word's byte slicing is safe (offsets come from find; the start + 1 advance is justified by every directive starting with ASCII r), and it is pinned with a multi-byte café fixture.
+• Register line moved 2042 → 2176 rather than absorbing the drift.
+
+Why it fails: git diff --stat for the commit lists only src/prompt_retry.rs and tests/module_size.rs. The task named CLAUDE.md in its Files: line and required the reading recorded there either way. Worse than an omission — the live CLAUDE.md text now says, verbatim:
+
+│ the non-numeric entries are unswept.** "connection", "timeout", "retry" and "capacity" are broad words … ("retry" matches the very rate-limit string above, which is now harmless but is luck, not design); auditing or narrowing them is a separate behaviour change … and was not started.
+
+All three clauses are now false, in the file re-injected as authoritative context every session. That is the exact stale-claim shape this repo records as having cost eight sessions on src/gasp.rs. The fix is small — supersede that sentence, record the measured table, name the anchoring rule and the stated limit — but it belongs in this commit, not the next one.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

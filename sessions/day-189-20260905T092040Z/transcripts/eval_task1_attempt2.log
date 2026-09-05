@@ -1,0 +1,44 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu… ✓ (17ms)
+ ✓ (70ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.1s (2 ✓)
+
+Self-tests pass with 6 run verdicts (RUN_VERDICTS untouched, as required). Let me verify the one thing that could silently disable the feature: does the parser actually match the *live* gate file?
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (13 lines) ✓ (61ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Parser validated against the live authority: 29 entries, `src/cli.rs listed, src/gasp.rs correctly *not* listed (matching the n=3 measurement where it read clean at depth), and no fixture leak from the gate's own test module — so the anti-vacuous None` branch does not spuriously fire and silently refuse everything.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/eval_task_1.md … ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The evaluation is complete — nothing further was outstanding.
+
+Verdict written to `session_plan/eval_task_1.md`: PASS, all five required lines present and parseable, and git status --porcelain is empty (the verdict file lives in gitignored session_plan/, and I modified no code).
+
+Evidence I actually gathered before deciding:
+
+• Self-tests: `python3 scripts/counterfactual_green.py --test → ALL PASSED, exit 0, and critically still reporting **6 run verdicts** — confirming RUN_VERDICTS` was untouched, which the task named as a hard constraint.
+• The one check worth spending time on: whether the new `parse_grandfathered_register actually matches the *live* tests/module_size.rs`. This mattered because a parser that silently failed would return `None`, refuse every candidate, and quietly disable `--splice-src-tests altogether — safe in direction (fails toward EARNED`), but a dead feature wearing a working one's clothes. It parses **29 entries**; src/cli.rs is listed, src/gasp.rs is correctly absent (consistent with the n=3 measurement where that file read clean at depth), and the gate's own ("src/a.rs", 500) test fixtures do not leak in — so the register-literal-only scan works as documented.
+• **forgotten_touchpoints**, the item with three reverts behind it: I traced each new definition to a consumer *inside this diff* — `MODULE_SIZE_GATE_REL_PATH` → the `open()` and the stdout line; `_REGISTER_HEAD`/`_REGISTER_ENTRY_RE → the parser; both new functions → the call site plus self-tests; and the sharpest one, the new sink keys register_refused/register_read, written in _run_counterfactual and read in ledger_line in the same change. I also confirmed register_refused = 0 is initialised *above* the rc_ss early-return print, so the sink write cannot raise NameError` on the could-not-read-diff path.
+
+One non-blocking observation I recorded rather than failed on: register refusals are counted in both refused and register_refused. That is not a double-count bug — the task asked for them to land in the existing src_splice_refused with their own stated reason, so it is a total plus a breakdown, and the code comment says exactly that.
+
+  watch: no files changed this turn — skipping
+

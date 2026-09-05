@@ -1,0 +1,175 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the issue and the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 894 2>&1 | head -1…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src_splice_candidates\|… ✓ (4ms)
+ ✓ (668ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1040,1120p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1900,1980p' scripts/coun… ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1895,1965p' scripts/coun… ✓ (4ms)
+  5 tools completed in 8.1s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def parse_module_gate" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GRANDFATHERED_OVERSIZED… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '126,140p' tests/module_s… ✓ (6ms)
+  4 tools completed in 11.3s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1096,1112p' scripts/coun… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2225,2295p' scripts/coun… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 33.3s (2 ✓)
+
+Now implementing. First the two pure functions:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (5 → 97 lines)
+            out.append(p)
+        return out
+  + 
+  + 
+  + # The module-size gate is the AUTHORITY for which `src/` files are register-listed, and
+  + # this file reads it DIRECTLY rather than importing `scripts/extract_trajectory.py`'s
+  + # `parse_module_gate`. Two independent readers of one authority is fine; two hand-copied
+  + # registers is the defect. Same reasoning as this module's deliberate second copy of
+  + # `TASK_COMMIT_RE`, stated in the module doc: sharing would mean importing across two
+  + # hand-run scripts with different lifecycles for one regex.
+  + MODULE_SIZE_GATE_REL_PATH = "tests/module_size.rs"
+  + _REGISTER_HEAD = "GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &["
+  + _REGISTER_ENTRY_RE = re.compile(r'\(\s*"(src/[^"]+\.rs)"\s*,\s*[0-9_]+\s*\)')
+  + 
+  + 
+  + def parse_grandfathered_register(text):
+  +     """Paths listed in the module-size register, or `None` when it could not be read.
+  + 
+  +     #894, Day 189. Only the register LITERAL is scanned — from the const's opening
+  +     bracket to the `\\n];` that closes it — so the `("src/a.rs", 500)` pairs inside that
+  ... (77 more lines)
+ ✓ (1m 16s)
+            out.append(p)
+        return out
+  + 
+  + 
+  + # The module-size gate is the AUTHORITY for which `src/` files are register-listed, and
+  + # this file reads it DIRECTLY rather than importing `scripts/extract_trajectory.py`'s
+  + # `parse_module_gate`. Two independent readers of one authority is fine; two hand-copied
+  + # registers is the defect. Same reasoning as this module's deliberate second copy of
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src_splice_candidates(p… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2005,2060p' scripts/coun… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (12 → 51 lines)
+            if splice_src:
+                spliced = 0
+                refused = 0
+  +             register_refused = 0
+  +             # #894: the AUTHORITY for "is this file register-listed?" is the
+  +             # `tests/module_size.rs` that will actually RUN in this worktree — post-task
+  +             # if the commit did not touch it, pre-task if it did, since the checkout
+  +             # above already laid that back. Reading it here costs one file read and no
+  +             # git call, and it can never disagree with the gate it is predicting.
+  +             register = None
+  +             try:
+  +                 with open(
+  +                     os.path.join(wt, MODULE_SIZE_GATE_REL_PATH), "r", encoding="utf-8"
+  +                 ) as fh:
+  +                     register = parse_grandfathered_register(fh.read())
+  +             except (OSError, UnicodeDecodeError):
+  +                 register = None
+                rc_ss, ss_out = run_cmd(
+                    ["git", "-C", root, "diff", "--name-status", parent, sha, "--", "src/"],
+                    timeout=60,
+  ... (31 more lines)
+ ✓ (1m 16s)
+            if splice_src:
+                spliced = 0
+                refused = 0
+  +             register_refused = 0
+  +             # #894: the AUTHORITY for "is this file register-listed?" is the
+  +             # `tests/module_size.rs` that will actually RUN in this worktree — post-task
+  +             # if the commit did not touch it, pre-task if it did, since the checkout
+  +             # above already laid that back. Reading it here costs one file read and no
+  ... (13 more lines)
+  3 tools completed in 1m 33s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2080,2105p' scripts/coun… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (7 → 19 lines)
+                if sink is not None:
+  -                 sink["splice"] = {"spliced": spliced, "refused": refused}
+  +                 sink["splice"] = {
+  +                     "spliced": spliced,
+  +                     "refused": refused,
+  +                     # #894: register refusals get their OWN count and their own
+  +                     # read/could-not-read flag rather than folding into `refused`.
+  +                     # "no register-listed candidate" and "the register could not be
+  +                     # read" are different facts with different remedies, and a row that
+  +                     # cannot tell them apart is this instrument's own could-not-check
+  +                     # rule failing one layer down.
+  +                     "register_refused": register_refused,
+  +                     "register_read": register is not None,
+  +                 }
+                print(
+                    f"    SPLICE (src+tests depth): {spliced} file(s) spliced, "
+  -                 f"{refused} candidate(s) left alone",
+  +                 f"{refused} candidate(s) left alone "
+  +                 f"({register_refused} register-listed)",
+                    flush=True,
+  ... (1 more lines)
+ ✓ (1m 15s)
+                if sink is not None:
+  -                 sink["splice"] = {"spliced": spliced, "refused": refused}
+  +                 sink["splice"] = {
+  +                     "spliced": spliced,
+  +                     "refused": refused,
+  +                     # #894: register refusals get their OWN count and their own
+  +                     # read/could-not-read flag rather than folding into `refused`.
+  +                     # "no register-listed candidate" and "the register could not be
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 22s (2 ✓)
+
+Now the ledger row:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 10 lines)
+            row["src_spliced"] = int(splice.get("spliced", 0))
+            row["src_splice_refused"] = int(splice.get("refused", 0))
+  +         # #894: how many of those refusals were REGISTER-LISTED files, and whether the
+  +         # register was readable at all. Kept apart from the total because "no
+  +         # register-listed candidate" and "could not read the gate" are different facts,
+  +         # and a row that folds them cannot be audited afterwards. Observation only — no
+  +         # verdict reads either field, and `RUN_VERDICTS` is untouched.
+  +         row["src_splice_register_refused"] = int(splice.get("register_refused", 0))
+  +         row["src_splice_register_read"] = bool(splice.get("register_read", False))
+            row["splice_depth"] = "src+tests"
+ ✓ (1m 15s)
+            row["src_spliced"] = int(splice.get("spliced", 0))
+            row["src_splice_refused"] = int(splice.get("refused", 0))
+  +         # #894: how many of those refusals were REGISTER-LISTED files, and whether the
+  +         # register was readable at all. Kept apart from the total because "no
+  +         # register-listed candidate" and "could not read the gate" are different facts,
+  +         # and a row that folds them cannot be audited afterwards. Observation only — no
+  +         # verdict reads either field, and `RUN_VERDICTS` is untouched.
+  +         row["src_splice_register_refused"] = int(splice.get("register_refused", 0))
+  +         row["src_splice_register_read"] = bool(splice.get("register_read", False))
+            row["splice_depth"] = "src+tests"
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src_spliced\|_on = \|_o… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4405,4432p' scripts/coun… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "repo_root()\|__file__\|… ✓ (4ms)
+  3 tools completed in 14.4s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
