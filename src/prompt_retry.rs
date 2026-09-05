@@ -410,7 +410,6 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
         "timed out",
         "network",
         "temporarily",
-        "retry",
         "capacity",
         "server error",
         "stream closed",
@@ -423,6 +422,16 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
         if lower.contains(keyword) {
             return true;
         }
+    }
+
+    // #855: this stood in the list above as the bare word `"retry"`, matched
+    // with a plain `contains`, so prose asserting the *opposite* —
+    // `"This is not a transient error, retrying won't help"` — classified as
+    // retriable (measured at this emission point, Day 189). A directive is now
+    // required. Only this one entry was narrowed: `"connection"`, `"timeout"`
+    // and `"capacity"` above are still broad words and #855 stays open on them.
+    if mentions_retry_directive(&lower) {
+        return true;
     }
 
     false
@@ -684,6 +693,76 @@ pub(crate) fn contains_status_code(haystack: &str, code: &str) -> bool {
             return true;
         }
         from = start + 1;
+    }
+    false
+}
+
+/// Phrasings in which "retry" is a **directive** — the provider telling the
+/// caller to try again — rather than any occurrence of the word.
+///
+/// #855: `is_retriable_error`'s transient list carried the bare word `"retry"`,
+/// matched with a plain `contains`. Measured Day 189 at the emission point, that
+/// classified `"This is not a transient error, retrying won't help"` — prose
+/// asserting the exact opposite — as **retriable**, and likewise
+/// `"the model refused; do not retry this prompt"`. The cost is the expensive
+/// direction: a terminal error read as transient spends up to `MAX_RETRIES`
+/// attempts, and with `--wait-for-reset` opted in `retry_wait_decision` can
+/// sleep up to `MAX_RESET_WAIT` (6h) on a door that never opens.
+///
+/// Narrowing was cheap here because the same measurement showed the entry was
+/// **redundant** for the string it was suspected of carrying:
+/// `error: Rate limited, retry after Some(14454000)ms` stays retriable with the
+/// word `retry` deleted from it, because `"rate limit"` matches. So `"retry"`
+/// was doing no work there — it was luck, not design (#855's own reading).
+const RETRY_DIRECTIVES: [&str; 6] = [
+    "retry after",
+    "retry-after",
+    "retry later",
+    "retry in ",
+    "please retry",
+    "retryable",
+];
+
+/// The word immediately before byte offset `start`, or `""` when there is none.
+///
+/// Splits on anything that is not alphanumeric or an apostrophe, so `"non-"`
+/// yields `non` and `"isn't "` yields `isn't`. `haystack[..start]` is safe:
+/// every caller passes a `start` produced by `str::find`, which is a char
+/// boundary by construction.
+fn preceding_word(haystack: &str, start: usize) -> &str {
+    haystack[..start]
+        .rsplit(|c: char| !(c.is_alphanumeric() || c == '\''))
+        .find(|w| !w.is_empty())
+        .unwrap_or("")
+}
+
+/// True when `word` inverts a directive that follows it (`not retryable`,
+/// `non-retryable`, `isn't retryable`, `never retry after`).
+fn inverts_retry_directive(word: &str) -> bool {
+    matches!(word, "not" | "never" | "non" | "no") || word.ends_with("n't")
+}
+
+/// True when `lower` (already lowercased) carries a retry **directive** that is
+/// not negated.
+///
+/// Deliberately an allow-list of phrasings plus a negation guard, never a bare
+/// substring: `retrying` in `"retrying won't help"` satisfies no directive, and
+/// `retryable` preceded by a negator is rejected rather than matched by prefix
+/// luck. This narrows one broad word and is **not** a claim that the rest of the
+/// phrase list is sound — `"connection"`, `"timeout"` and `"capacity"` are still
+/// plain `contains` and still broad (#855 stays open on them).
+pub(crate) fn mentions_retry_directive(lower: &str) -> bool {
+    for directive in RETRY_DIRECTIVES {
+        let mut from = 0;
+        while let Some(rel) = lower[from..].find(directive) {
+            let start = from + rel;
+            if !inverts_retry_directive(preceding_word(lower, start)) {
+                return true;
+            }
+            // Every directive starts with the ASCII byte `r`, so `start + 1` is
+            // a char boundary and the next slice is safe.
+            from = start + 1;
+        }
     }
     false
 }
@@ -2038,5 +2117,122 @@ mod tests {
         );
         assert!(diagnose_api_error("bad request body", "gpt-4o").is_none());
         assert!(diagnose_api_error("", "claude-sonnet-4-20250514").is_none());
+    }
+}
+
+
+#[cfg(test)]
+mod retry_directive_tests {
+    use super::*;
+
+    /// #855, the decision half. Both directions in one table, because a
+    /// discriminator tested only on the side that fires is vacuous green.
+    #[test]
+    fn mentions_retry_directive_table() {
+        let cases: [(&str, bool); 18] = [
+            // Directives — a provider telling the caller to try again.
+            ("error: rate limited, retry after some(14454000)ms", true),
+            ("retry-after: 30", true),
+            ("please retry in a moment", true),
+            ("retry later", true),
+            ("retry in 30 seconds", true),
+            ("this error is retryable", true),
+            // Negating prose — the #855 defect, measured live on Day 189.
+            ("this is not a transient error, retrying won't help", false),
+            ("this is not a transient error - retrying will not help", false),
+            ("the model refused; do not retry this prompt", false),
+            ("401 unauthorized - do not retry", false),
+            // A directive with a negator immediately before it is inverted.
+            ("this error is not retryable", false),
+            ("this error is non-retryable", false),
+            ("that isn't retryable", false),
+            ("never retry after a 400", false),
+            // The bare word alone is not a directive.
+            ("retrying", false),
+            ("we are retrying the request", false),
+            // Nothing to match at all.
+            ("connection reset by peer", false),
+            ("", false),
+        ];
+        for (input, want) in cases {
+            assert_eq!(
+                mentions_retry_directive(input),
+                want,
+                "mentions_retry_directive({input:?})"
+            );
+        }
+    }
+
+    /// #855, the fix, at the **emission point** — the `bool` a caller of
+    /// `is_retriable_error` receives, never the predicate one layer below.
+    /// Measured Day 189: both of these were `true` before the narrowing.
+    #[test]
+    fn negating_prose_is_no_longer_retriable() {
+        assert!(!is_retriable_error(
+            "This is not a transient error, retrying won't help"
+        ));
+        assert!(!is_retriable_error(
+            "the model refused; do not retry this prompt"
+        ));
+    }
+
+    /// The near-miss guard that carries the whole risk of this change: the rate
+    /// limit string #852 was about must STILL be retriable — and the second
+    /// assertion is why. With the word `retry` deleted from it the verdict does
+    /// not move, so `"rate limit"` is what classifies it. The entry being
+    /// narrowed was never doing that work (measured Day 189).
+    #[test]
+    fn the_rate_limit_string_is_still_retriable_and_rate_limit_is_what_carries_it() {
+        assert!(is_retriable_error(
+            "error: Rate limited, retry after Some(14454000)ms"
+        ));
+        assert!(is_retriable_error(
+            "error: Rate limited, after Some(14454000)ms"
+        ));
+    }
+
+    /// Near-miss guard: narrowing fails in the expensive direction — a
+    /// transient error read as terminal kills a run for good — so every shape
+    /// that was retriable before must still be.
+    #[test]
+    fn genuine_transient_shapes_are_still_retriable() {
+        for msg in [
+            "connection reset by peer",
+            "504 Gateway Timeout",
+            "overloaded_error: server is overloaded",
+            "Retry-After: 30",
+            "please retry in a moment",
+            "retry later",
+            "this error is retryable",
+            "service unavailable",
+        ] {
+            assert!(is_retriable_error(msg), "should still be retriable: {msg}");
+        }
+    }
+
+    /// Near-miss guard in the other direction: the terminal family is unmoved.
+    /// `401 Unauthorized - do not retry` was already correct before this change
+    /// (the status code is scanned first), and must stay so.
+    #[test]
+    fn terminal_shapes_are_still_not_retriable() {
+        for msg in [
+            "401 Unauthorized - do not retry",
+            "invalid request: bad model name",
+            "insufficient_quota",
+            "This is not a transient error - retrying will not help. Check your credit balance.",
+        ] {
+            assert!(!is_retriable_error(msg), "should stay terminal: {msg}");
+        }
+    }
+
+    #[test]
+    fn preceding_word_reads_the_last_token_across_punctuation() {
+        assert_eq!(preceding_word("this is not retryable", 12), "not");
+        assert_eq!(preceding_word("non-retryable", 4), "non");
+        assert_eq!(preceding_word("isn't retryable", 6), "isn't");
+        assert_eq!(preceding_word("retryable", 0), "");
+        // Multi-byte input must not panic and must not split a char: the
+        // offset is a real char boundary just past `é` (2 bytes).
+        assert_eq!(preceding_word("café retryable", 6), "café");
     }
 }
