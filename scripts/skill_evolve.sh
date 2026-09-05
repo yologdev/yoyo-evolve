@@ -308,6 +308,25 @@ revert_agent_work() {
     git clean -fd skills/skill-evolve-* 2>/dev/null || true
 }
 
+# Helper: emit a skill file's YAML frontmatter — the block between the `---` on
+# LINE 1 and the next `---` line. Emits NOTHING (so every caller refuses) when
+# the file has no frontmatter, when line 1 is not `---`, when the block is
+# unterminated, or when the file is unreadable: CLAUDE.md's provenance rule is
+# "(missing) — unknown provenance. Off-limits (default-safe)", so this fails
+# CLOSED. Scoping matters because a permission list's false positives cluster on
+# the highest-stakes files: the ones most likely to CONTAIN the string
+# `origin: yoyo` at line start are the meta-skills that DOCUMENT the Create
+# template, and those are exactly the files that must never be edited (#858,
+# evt-0014). Measured before the fix: a whole-file grep admitted 8 skills, two of
+# them `origin: creator` (skill-creator, skill-evolve); frontmatter-scoped admits
+# the 6 genuine ones.
+skill_frontmatter() {
+    awk 'NR == 1 && $0 != "---" { exit }
+         NR == 1 { next }
+         /^---$/ { for (i = 1; i <= n; i++) print buf[i]; exit }
+         { buf[++n] = $0 }' "$1" 2>/dev/null
+}
+
 if [ "$HEAD_BEFORE" != "$HEAD_AFTER" ]; then
     echo "skill-evolve: agent committed (${HEAD_BEFORE:0:7} → ${HEAD_AFTER:0:7})"
 
@@ -332,12 +351,20 @@ if [ "$HEAD_BEFORE" != "$HEAD_AFTER" ]; then
                     continue
                 fi
                 # Use the post-agent file content for the origin check (the agent may have just created it).
+                # `core: true` stays a WHOLE-FILE match on purpose: scoping it to the
+                # frontmatter would let a file that only mentions the string in prose
+                # become admitted, i.e. it would WIDEN the permission list. The two
+                # checks answer different questions and are deliberately not folded
+                # into one match — sharing it would break whichever caller lost.
                 if grep -q "^core: true" "$f" 2>/dev/null; then
                     VIOLATIONS="${VIOLATIONS}  - HARD RULE #1 violation: $f carries core: true\n"
                     continue
                 fi
-                if ! grep -q "^origin: yoyo$" "$f" 2>/dev/null; then
-                    VIOLATIONS="${VIOLATIONS}  - HARD RULE #1 violation: $f lacks 'origin: yoyo' (not eligible)\n"
+                # Provenance is FRONTMATTER-SCOPED and line-anchored: a mid-sentence
+                # mention, an indented list item or a fenced example can never declare
+                # a skill eligible (#858, evt-0014). No frontmatter -> refused.
+                if ! skill_frontmatter "$f" | grep -q "^origin: yoyo$"; then
+                    VIOLATIONS="${VIOLATIONS}  - HARD RULE #1 violation: $f lacks 'origin: yoyo' in its frontmatter (not eligible)\n"
                     continue
                 fi
                 ;;
