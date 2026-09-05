@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_git_output" src/git…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "get_recent_git_files" … ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 180,215p src/git.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "get_recent_git_files" s… ✓ (2ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1265,1290p src/commands_p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test gi… ✓ (2ms)
+ ✓ (169ms)
+  6 tools completed in 9.4s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate passes with a census matching CLAUDE.md's claims exactly. Writing the verdict.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (56.4s)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+Evidence I actually checked:
+
+1. **The conversion is real and behaviour-preserving.** `get_recent_git_files_in` routes through `crate::git::run_git_output` (confirmed at `src/git.rs:189 that it builds via git_command()`, so it inherits `-c core.quotepath=off`). `-C <root>` precedes the subcommand as a git global. Both match arms are preserved verbatim, so the lines()/filter/collect handling and the graceful-degradation _ => empty-set branch are unchanged.
+
+2. The gate accepted both halves. cargo test --test git_chokepoint → 13/13, census printed: `71 total sites, 10 non-test (1 chokepoint + 9 bypasses named by 6 entries), 61 test region` — which matches the CLAUDE.md note exactly, not a hand-typed number. Since converting-without-deleting fires the ratchet and deleting-without-converting fires branch 1, that passing run is the proof both landed.
+
+3. No orphaned definitions (the #618/#653/#658 shape): get_recent_git_files_in is consumed by three new tests, and the Path::new(".") wrapper keeps both pre-existing callers (production auto_context_for_prompt at :1324, test at :3577) working unchanged.
+
+4. Register drift paid, not absorbed: tests/module_size.rs moved 3524 → 3640 in the same diff — +116, past the 100-line grace band, so omitting it would have been fatal.
+
+Minor cleanup note (not grounds for failure): the diff sweeps in one appended line to .yoyo/risk_validations.jsonl, which is harness-written session bookkeeping rather than task work.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

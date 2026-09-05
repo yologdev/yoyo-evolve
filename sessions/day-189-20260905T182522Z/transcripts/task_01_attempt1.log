@@ -1,0 +1,205 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the module-size gate and reading the current state of the seam.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1380,1500p' src/tools.rs ✓ (2ms)
+ ✓ (198ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+Gate is clean (28 passed, zero warnings). Let me read the exact seam and its comments.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent_child_tools\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1355 && NR<=1400' src/t… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+There are already tests at :3792. Let me read the full seam and those tests.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:1355..1450  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:3775..3865 ✓ (1ms)
+ ✓ (1ms)
+  2 tools completed in 1ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Slice 1 already landed the seam and all three step-1 tests. So step 1 is satisfied — let me verify they're green, then find the wiring site.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo child_tool…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/a… ✓ (4ms)
+ ✓ (3.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.0s (2 ✓)
+
+All three step-1 tests are green. And disallowed_tools is already a field on AgentConfig (line 860) — which build_sub_agent_tool_at_depth already receives. Let me confirm the caller.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:915..965  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_sub_agent_tool" s… ✓ (1ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.4s (2 ✓)
+
+The wiring is one token — config.disallowed_tools is already in scope, so src/agent_builder.rs needs no edit at all. That is smaller than the task file predicted, which structurally rules out #884's failure mode. Making the change:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (8 → 19 lines)
+        // The child's tool set, composed at the `sub_agent_child_tools` seam.
+        //
+  -     // `&[]` is the parent's disallow list, and passing it empty is what makes
+  -     // this extraction byte-identical to the pre-#887 behaviour: nothing is
+  -     // filtered today. Threading the real list here is slice 2 — until then,
+  -     // `--restricted` still does not reach a dispatched sub-agent, and
+  -     // `restricted_mode_note` says so.
+  -     let mut child_tools = sub_agent_child_tools(&config.dir_restrictions, &[]);
+  +     // #887 slice 2: the parent's own disallow list is handed to the child, so a
+  +     // tool the parent may not run is not one `sub_agent` hop away. `--restricted`
+  +     // removes `bash` from the parent via a single `retain` in `agent_builder.rs`;
+  +     // before this line read `config.disallowed_tools`, a dispatched sub-agent
+  +     // built its own `bash` regardless and the confinement was decorative.
+  +     //
+  +     // An EMPTY list — every user who has passed neither `--restricted` nor
+  +     // `--disallowed-tools` — filters nothing, so the child tool set is
+  +     // byte-identical to before. That is the entire regression surface and it is
+  +     // what `empty_disallow_list_is_byte_identical_to_the_pre_seam_tool_set`
+  +     // asserts with a whole-vector equality.
+  +     //
+  ... (5 more lines)
+ ✓ (1m 19s)
+        // The child's tool set, composed at the `sub_agent_child_tools` seam.
+        //
+  -     // `&[]` is the parent's disallow list, and passing it empty is what makes
+  -     // this extraction byte-identical to the pre-#887 behaviour: nothing is
+  -     // filtered today. Threading the real list here is slice 2 — until then,
+  -     // `--restricted` still does not reach a dispatched sub-agent, and
+  -     // `restricted_mode_note` says so.
+  -     let mut child_tools = sub_agent_child_tools(&config.dir_restrictions, &[]);
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One-token wiring done. Let me verify it builds and the existing tests hold.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1429,1460p' src/tools.rs ✓ (2ms)
+ ✓ (124ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.5s (2 ✓)
+
+Builds clean. The child tools of a built SubAgentTool aren't introspectable from outside — that's exactly what killed #893. Let me confirm before choosing the test shape.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && find ~/.cargo/registry/src -name…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn tools\|pub fn .*too… ✓ (73ms)
+ ✓ (74ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A2 'name = "yoagent"' Carg…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && V=$(grep -A2 'name = "yoagent"' … ✓ (3ms)
+ ✓ (4ms)
+  4 tools completed in 4.5s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: tools is a private field on yoagent 0.18.1's SubAgentTool with no accessor — so the child set genuinely cannot be observed from a built tool. That is precisely why #893's assertion was pointed at something structurally blind to the fix. The honest wiring test is a deliberately-weak source-level guard, in the discipline this repo already uses.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (10 → 63 lines)
+            assert_eq!(
+                child_tool_names(&["no_such_tool".to_string()]),
+                CHILD_TOOLS_TODAY
+  +         );
+  +     }
+  + 
+  +     /// #887 slice 2 — the WIRING guard: `build_sub_agent_tool_at_depth` hands
+  +     /// the seam the parent's real list, not the `&[]` slice 1 shipped.
+  +     ///
+  +     /// **This guard is deliberately WEAK and the limit is the reason it exists
+  +     /// in this shape rather than a better one.** yoagent 0.18.1's
+  +     /// `SubAgentTool` keeps its `tools` field private with no accessor
+  +     /// (`sub_agent.rs:55`; `with_tools` is a setter only), so the child tool set
+  +     /// of a *built* tool cannot be observed from outside. That is not a detail —
+  +     /// it is exactly how attempt #893 died: it asserted against a value that was
+  +     /// structurally incapable of showing the fix, and came back with `bash`
+  +     /// still listed. The three tests above drive `sub_agent_child_tools`
+  +     /// directly, which is where the behaviour actually lives and is fully
+  +     /// checkable; this one only proves the call site *passes the list*, never
+  +     /// that any particular run filtered anything.
+  ... (39 more lines)
+ ✓ (1m 19s)
+            assert_eq!(
+                child_tool_names(&["no_such_tool".to_string()]),
+                CHILD_TOOLS_TODAY
+  +         );
+  +     }
+  + 
+  +     /// #887 slice 2 — the WIRING guard: `build_sub_agent_tool_at_depth` hands
+  +     /// the seam the parent's real list, not the `&[]` slice 1 shipped.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo child_tool… ✓ (130ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 30s (2 ✓)
+
+The guard passes. Now the positive controls — one atomic mutate→run→restore each, serially (a parallel pair raced once and one falsely passed).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tools… (14 lines) ✓ (22.5s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly 1 failed — the right shape, but I must confirm which. Re-running the control to capture the name explicitly:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tools… (10 lines) ✓ (21.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 confirmed: exactly one test red — the firing test — while the empty-list near-miss guard stayed green. Now control 2, on the wiring itself:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tools… (10 lines) ✓ (12.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 2 came back empty — no FAILED line. A control that returns silent is not a pass, it is an unrun control. Investigating rather than accepting it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tools… (10 lines) ✓ (12.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My control had a syntax bug — the `// NEUTERED comment landed before the trailing ;`, so the crate never compiled and the control never ran. That is exactly why a silent control is not a pass. Redoing it correctly:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tools… (10 lines) ✓ (21.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls confirmed, serially. Now the full gate suite plus a check that no sabotage marker survived:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== marker check (must be … ✓ (1.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (8.0s)
+ ✓ (20.5s)
+  3 tools completed in 25.3s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

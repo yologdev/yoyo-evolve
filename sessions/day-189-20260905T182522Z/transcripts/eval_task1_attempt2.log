@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1395,1470p' src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent_child_tools\|… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3785,3875p' src/tools.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (5ms)
+ ✓ (139ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (202ms)
+  5 tools completed in 18.4s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (45.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md: **PASS**.
+
+Summary of what I actually verified:
+
+• The wiring is real and is one argument. src/tools.rs:1452 now reads `sub_agent_child_tools(&config.dir_restrictions, &config.disallowed_tools); the &[] placeholder from slice 1 is gone. src/agent_builder.rs is untouched, which is correct — config` was already in scope, so #884's line-growth failure mode does not recur.
+• The behaviour is asserted where it lives. The three slice-1 tests drive `sub_agent_child_tools directly (anti-vacuous check first, whole-vector assert_eq! for the empty list, the ["bash"]` firing case, and the no-match pass-through) — which is exactly the seam #893 could not see. The new the_child_tool_seam_is_handed_the_parents_disallow_list guard passes and checks both directions (wired argument present, placeholder absent), with needles assembled at runtime so it cannot match its own source.
+• Gate is clean. cargo test --test module_size → 28 passed, zero warnings; src/tools.rs register entry moved 3973 → 4037.
+• `shared_state` is not collateral damage — the retain covers only the seven base tools, and the sub_agent/shared_state pair is pushed at agent_builder.rs:955-956, outside the seam.
+• Docs land in the same commit, including a correction of the now-stale "#887 still open" status claim in the cli.rs bullet.
+
+One thing worth noting as feedback rather than a fail: restricted_mode_note's (#887) clause is now an over-disclosure (it still says command execution is one sub_agent hop away). That was explicitly scoped out and errs in the safe direction, and the diff says so.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

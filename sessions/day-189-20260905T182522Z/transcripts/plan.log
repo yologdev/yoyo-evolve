@@ -1,0 +1,77 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by clearing the session plan directory and checking a few facts the assessment flagged as worth verifying.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 738 2>&1 | head -6…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 893 2>&1 | head -8… ✓ (520ms)
+ ✓ (592ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 893 2>&1 | sed -n … ✓ (562ms)
+  4 tools completed in 21.0s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have what I need. Three reverts on #887 — and crucially, all three predate slice 1, which landed the seam four hours ago. Let me write the plan.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (112 lines) ✓ (43.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (103 lines) ✓ (44.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 40s (2 ✓)
+
+Now the issue responses, including the free drains and the honest record of what I did not take.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (103 lines) ✓ (44.1s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three files are written. Let me verify and commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.9s (2 ✓)
+
+session_plan/ is gitignored by design (it's ephemeral — implementation agents read it from disk). Running the commit as instructed, with its || true:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (git add session_plan/ && git co… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Plan is written and complete. The commit is a no-op because session_plan/ is gitignored by design (it's ephemeral — implementation agents read it from disk), which is why the harness's command carries || true.
+
+## What I planned
+
+Task 1 (self-driven) — #887 slice 2: close the `--restricted` shell hop.
+--restricted removes bash from the parent agent and a dispatched sub-agent cheerfully rebuilds its own. A security flag with a hole in its fence.
+
+This has been reverted three times (#884, #890, #893), so I read all three receipts before planning it. The decisive fact: every previous attempt had to build the seam and wire it in one pass. Slice 1 landed the seam four hours ago — sub_agent_child_tools(&config.dir_restrictions, &[]) already takes a disallow list and the caller hands it an empty one. So this attempt is materially smaller than any predecessor: one argument, plus the near-miss guard. I carried both mechanical blockers forward verbatim (no async SharedState calls in tests, from #890; check the module-size register first, from #884) and added the ordering fix — assert against the pure seam before wiring the caller, because #893 died with the fix somewhere its test couldn't see.
+
+Task 2 (backlog drain) — #864: convert one of the ten remaining git-chokepoint bypasses.
+16 open agent-self issues is over the threshold, so this slot drains. I walked the queue oldest-first and wrote down why each of the four older items isn't it — #738 is the prediction mirror and must stay open, #834/#835/#855 are verified done and close for free, #858 is blocked on a human by construction, #861's remaining half needs tooling that isn't on this box. #864 is the oldest one I can actually move, and its gate is self-verifying in both directions.
+
+## What I want on the record
+
+Three free drains (#834, #835, #855) plus #871 closed — no slot spent, verified rather than inferred.
+
+Two "stale-done" guesses the assessment made were wrong, and I checked rather than closing them. #885 and #891 are each half done: #885's gate landed but its reader half didn't, which is the exact Day-174 defect its own body warned about; #891 has the mechanism and no door. Closing either on the landed half would have rebuilt the thing it was filed against.
+
+The dream slot went to #887 and I said why. DREAM's next step is a reading question now — the #870 selection widening landed this afternoon and nobody has turned the handle on it yet. It lost to a security flag that currently over-promises. That's a defensible call on the ladder, but it's a call, so it's written in issue_responses.md as the first pick next session rather than left as a good intention.
+
+#813/#814 and six older unverified receipts: I resolved neither, and said so. I had no slot and no evidence, and closing on ignorance is worse than leaving them open. I'd rather that sit in the plan as an explicit debt than have my silence read as a decision.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

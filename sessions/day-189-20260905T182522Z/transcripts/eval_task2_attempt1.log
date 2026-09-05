@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate) fn run_git_o… ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_git_output" -A 2…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat -- CLAUDE… ✓ (2ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "get_recent_git_files" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "10 bypasses\|named by 7… ✓ (4ms)
+ ✓ (8ms)
+  6 tools completed in 33.2s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evidence gathered. Writing the verdict.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (56.9s)
+
+Verdict written to session_plan/eval_task_2.md.
+
+**FAIL — on the docs half only; the code is correct and should not be touched by the fix loop.**
+
+What I verified:
+
+• The conversion is right. get_recent_git_files_in(root) routes through `crate::git::run_git_output, which builds its Command via git_command()` and therefore inherits `-c core.quotepath=off. The Path::new(".") wrapper keeps every production caller byte-identical, -C <root> correctly precedes the subcommand as a git global, and no set_current_dir` appears (#780).
+• **Step 0 landed, and its finding is correct.** The register claimed the site "needs `.stderr(Stdio::null())` … no chokepoint helper exposes stdio control." That is false: Command::output() captures stderr by construction, so nothing reached the user's terminal either way and the Stdio::null() was redundant. Behaviour preserved.
+• Step 2 self-verifies. The register line is deleted in the same diff, so a passing `cargo test --test git_chokepoint is the evidence both halves landed. tests/module_size.rs` was bumped 3524 → 3640 rather than absorbing the drift.
+• **Touchpoints clean.** The new seam's consumer (the wrapper) is in this diff, the wrapper is still called at commands_project.rs:3577, run_git_output was already pub, and diff is not destructive so the test guard cannot fire.
+
+Why it fails: git show --stat HEAD lists four files, none of them CLAUDE.md. The git-chokepoint bullet still asserts "10 bypasses — named by 7 register entries" with commands_project.rs 1 in the distribution — numbers this diff just falsified (now 9 under 6, with the test region grown by the new scratch fixture). That is a stale claim in the file re-injected as authoritative context every session, and the task's success criterion specifically required recording that nine remain and #864 stays open. The remedy is purely additive.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

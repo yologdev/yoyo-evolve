@@ -1,0 +1,44 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1380,1470p src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CHILD_TOOLS_TODAY\|fn e… ✓ (3ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "#887's status[^.]*\.\{0… ✓ (12ms)
+  5 tools completed in 26.3s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "still open" CLAUDE.md &… ✓ (6ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (45.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 9s (2 ✓)
+
+Verdict written to session_plan/eval_task_1.md.
+
+FAIL — on doc_sync only.
+
+The code half is genuinely good and I want to be clear about that:
+
+• `src/tools.rs:1452 now reads sub_agent_child_tools(&config.dir_restrictions, &config.disallowed_tools)` — the exact one-argument wiring the task scoped. No helper extracted, no new predicate.
+• It's smaller than the task budgeted: config was already in scope, so src/agent_builder.rs needed no edit at all, which sidesteps the line-growth that killed #884.
+• Slice 1's three pure tests (anti-vacuous, fires, byte-identical near-miss) are present and unedited; the new source-level wiring guard asserts both directions (wired needle present, &[] placeholder gone) with runtime-assembled needles and a bounded body slice, and its doc comment states its own weakness honestly — including why #893 died.
+• shared_state is not filtered as a side effect: the retain covers only the seven base tools.
+
+What fails is the missing docs half, and it is not a style nit:
+
+git show --stat HEAD → src/tools.rs | 76 +++---, one file. CLAUDE.md still says:
+
+│ **#887's status, verified against the tree rather than inherited from a receipt (Day 188): the sub-agent hop is still open. … `build_sub_agent_tool` does not consult it, so a dispatched sub-agent still builds its own `bash`, and the `(#887)` clause in `restricted_mode_note` is correct, not stale**.
+
+Every clause of that is now false, in a security-relevant bullet, in the file re-injected as authoritative context every session — the exact stale-status-claim shape this repo has already recorded recurring twice in one day. The task listed the CLAUDE.md bullet as an explicit deliverable, and docs were noted as not counting toward the file limit.
+
+Cheap remedy for the fix loop: one edit to that cli.rs bullet marking the status superseded, plus the src/tools.rs bullet the task specified (parent's list honoured, empty-list near-miss guard, --lite narrowing, and the stated limit that this closes the command-execution hop without making --restricted a sandbox).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

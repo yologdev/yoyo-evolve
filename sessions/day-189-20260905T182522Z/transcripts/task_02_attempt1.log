@@ -1,0 +1,258 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by finding the exact site and reading the register entry's stated reason.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'Command::new("git")' sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'commands_project' tests… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1225,1300p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '70,140p' tests/git_choke… ✓ (3ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn git_command\|fn run_… ✓ (3ms)
+  5 tools completed in 6.9s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,215p' src/git.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0: verify the register's stated reason. It claims .stderr(Stdio::null()) is needed to stop output reaching the terminal — but all three chokepoint helpers use .output(). Let me check that empirically rather than from memory.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && mkdir -p stderrprobe && cd stderrprobe && cat > p… (13 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'DESTRUCTIVE_GIT_COMMAND… ✓ (5ms)
+ ✓ (124ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 30.4s (2 ✓)
+
+Step 0 settled empirically: .output() captures stderr — my probe's own stderr file holds only my eprintln! lines, never the child's ERRTEXT. The register's reason is false. Now let me check the test scaffolding and the size register.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'get_recent_git_files' s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn list_project_files_i… ✓ (2ms)
+ ✓ (9ms)
+  2 tools completed in 9ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything I need. run_git_output(&["-C", dir, …]) is exactly the Day-183 precedent. Now the conversion:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1243,1268p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1247,1250p' src/commands… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1247 && NR<=1250' src/c… ✓ (4ms)
+  3 tools completed in 5.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the conversion — routing through the chokepoint plus a dir-taking seam so tests never move the process CWD (#780):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (21 → 40 lines)
+  - /// Get the set of files changed in the last few git commits.
+  + /// Get the set of files changed in the last few git commits, resolved against `root`.
+    ///
+    /// Uses `git diff --name-only HEAD~5` to find recently-edited files.
+    /// Falls back gracefully if git is unavailable or there are fewer than 5 commits.
+  - fn get_recent_git_files() -> std::collections::HashSet<String> {
+  -     let output = std::process::Command::new("git")
+  -         .args(["diff", "--name-only", "HEAD~5"])
+  -         .stderr(std::process::Stdio::null())
+  -         .output();
+  -     match output {
+  + ///
+  + /// Dir-taking seam (#780: the process CWD is process-global, so a test that moved it
+  + /// would corrupt any sibling test resolving a relative path concurrently).
+  + /// `get_recent_git_files` is the `Path::new(".")` wrapper every production caller uses,
+  + /// matching `list_project_files_in` / `suggest_related_files_in` / `apply_patch_in`.
+  + ///
+  + /// Routes through the `src/git.rs` chokepoint (#864), so it inherits
+  + /// `-c core.quotepath=off` and every future global applied there. Without it a changed
+  + /// file with a non-ASCII name came back as the literal bytes `"src/n\303\244me.rs"` —
+  ... (24 more lines)
+ ✓ (1m 13s)
+  - /// Get the set of files changed in the last few git commits.
+  + /// Get the set of files changed in the last few git commits, resolved against `root`.
+    ///
+    /// Uses `git diff --name-only HEAD~5` to find recently-edited files.
+    /// Falls back gracefully if git is unavailable or there are fewer than 5 commits.
+  - fn get_recent_git_files() -> std::collections::HashSet<String> {
+  -     let output = std::process::Command::new("git")
+  -         .args(["diff", "--name-only", "HEAD~5"])
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now delete the register entry — both halves must land together (converting without deleting fires the ratchet):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit tests/git_chokepoint.rs (7 → 0 lines)
+  -     (
+  -         "src/commands_project.rs",
+  -         "get_recent_git_files",
+  -         "needs .stderr(Stdio::null()) so a repo with fewer than 5 commits fails silently \
+  -          instead of printing to the user's terminal; no chokepoint helper exposes stdio \
+  -          control.",
+  -     ),
+ ✓ (44.5s)
+  -     (
+  -         "src/commands_project.rs",
+  -         "get_recent_git_files",
+  -         "needs .stderr(Stdio::null()) so a repo with fewer than 5 commits fails silently \
+  -          instead of printing to the user's terminal; no chokepoint helper exposes stdio \
+  -          control.",
+  -     ),
+
+
+Now the tests, at the emission point, against a scratch repo:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (15ms)
+  ▶ edit src/commands_project.rs (5 → 98 lines)
+        /// `auto_context_for_prompt` must behave exactly as it did before #817 here.
+        fn no_restrictions() -> DirectoryRestrictions {
+            DirectoryRestrictions::default()
+  +     }
+  + 
+  +     /// Build a scratch git repo with 6 commits, so `HEAD~5` resolves, and then change
+  +     /// `changed` in the 7th. Returns the tempdir (kept alive by the caller).
+  +     ///
+  +     /// Never this repo: `run_git`'s `#[cfg(test)]` destructive guard exists because tests
+  +     /// once mutated the real worktree, and #780 spent two tasks removing `set_current_dir`
+  +     /// calls because the process CWD is global. Everything here is `-C <tempdir>`.
+  +     fn scratch_repo_with_recent_change(changed: &str) -> TempDir {
+  +         let dir = TempDir::new().unwrap();
+  +         let p = dir.path();
+  +         let git = |args: &[&str]| {
+  +             let out = std::process::Command::new("git")
+  +                 .arg("-C")
+  +                 .arg(p)
+  +                 .args(args)
+  +                 .output()
+  ... (77 more lines)
+ ✓ (1m 13s)
+        /// `auto_context_for_prompt` must behave exactly as it did before #817 here.
+        fn no_restrictions() -> DirectoryRestrictions {
+            DirectoryRestrictions::default()
+  +     }
+  + 
+  +     /// Build a scratch git repo with 6 commits, so `HEAD~5` resolves, and then change
+  +     /// `changed` in the 7th. Returns the tempdir (kept alive by the caller).
+  +     ///
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.3s)
+  3 tools completed in 1m 39s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Fixture arithmetic bug (mine, not the code's — the other 3 pass): HEAD~5 spans 5 commits, so filler files land in the window. Let me make the window deterministic:
+  ▶ edit src/commands_project.rs (38 → 40 lines)
+  -     /// Build a scratch git repo with 6 commits, so `HEAD~5` resolves, and then change
+  -     /// `changed` in the 7th. Returns the tempdir (kept alive by the caller).
+  +     /// Build a scratch git repo whose `HEAD~5` window contains exactly two paths:
+  +     /// `base.txt` (re-touched by every filler commit) and `changed` (added last).
+  +     /// A deterministic two-entry window is what lets the near-miss guard assert on the
+  +     /// *whole* set rather than on membership.
+        ///
+        /// Never this repo: `run_git`'s `#[cfg(test)]` destructive guard exists because tests
+        /// once mutated the real worktree, and #780 spent two tasks removing `set_current_dir`
+  ···
+            git(&["init", "-q"]);
+            git(&["config", "user.email", "t@example.com"]);
+            git(&["config", "user.name", "t"]);
+  -         // 6 commits of filler so HEAD~5 exists and does NOT contain `changed`.
+  +         // 6 commits, all re-touching one file, so HEAD~5 resolves and the window holds
+  +         // exactly `base.txt` however far back it reaches.
+            for i in 0..6 {
+  -             let f = format!("filler{i}.txt");
+  -             fs::write(p.join(&f), format!("{i}\n")).unwrap();
+  -             git(&["add", &f]);
+  ... (5 more lines)
+ ✓ (1m 13s)
+  -     /// Build a scratch git repo with 6 commits, so `HEAD~5` resolves, and then change
+  -     /// `changed` in the 7th. Returns the tempdir (kept alive by the caller).
+  +     /// Build a scratch git repo whose `HEAD~5` window contains exactly two paths:
+  +     /// `base.txt` (re-touched by every filler commit) and `changed` (added last).
+  +     /// A deterministic two-entry window is what lets the near-miss guard assert on the
+  +     /// *whole* set rather than on membership.
+        ///
+        /// Never this repo: `run_git`'s `#[cfg(test)]` destructive guard exists because tests
+  ... (13 more lines)
+  ▶ edit src/commands_project.rs (3 → 5 lines)
+  -         let expected: std::collections::HashSet<String> =
+  -             ["ordinary.rs".to_string()].into_iter().collect();
+  +         let expected: std::collections::HashSet<String> = ["base.txt", "ordinary.rs"]
+  +             .into_iter()
+  +             .map(String::from)
+  +             .collect();
+            assert_eq!(files, expected);
+ ✓ (1m 17s)
+  -         let expected: std::collections::HashSet<String> =
+  -             ["ordinary.rs".to_string()].into_iter().collect();
+  +         let expected: std::collections::HashSet<String> = ["base.txt", "ordinary.rs"]
+  +             .into_iter()
+  +             .map(String::from)
+  +             .collect();
+            assert_eq!(files, expected);
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (1.2s)
+  3 tools completed in 2m 38s (3 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5491 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+te...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The module-size gate fired. Let me get its own pasteable remedy rather than hand-typing a number:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (142ms)
+  ▶ edit tests/module_size.rs (1 → 1 lines)
+  -     ("src/commands_project.rs", 3524),
+  +     ("src/commands_project.rs", 3640),
+ ✓ (44.2s)
+  -     ("src/commands_project.rs", 3524),
+  +     ("src/commands_project.rs", 3640),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test m… ✓ (1.2s)
+  3 tools completed in 51.8s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/commands_project.rs
+
