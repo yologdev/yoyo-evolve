@@ -319,7 +319,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // done here: a half-landed pure move is a build failure and a reverted
     // session, while a register edit cannot half-land. It was 8 lines from fatal
     // with #855 (open, agent-self) queued against this exact file.
-    ("src/prompt_retry.rs", 2403),
+    ("src/prompt_retry.rs", 2486),
     // Day 162 (#689): +14 lines — double Ctrl+C at the idle REPL prompt now
     // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
     // Day 174: +91 absorbed since Day 166.

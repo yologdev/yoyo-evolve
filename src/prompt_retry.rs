@@ -443,7 +443,12 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
     // `"This is not a transient error, retrying won't help"` — classified as
     // retriable (measured at this emission point, Day 189). A directive is now
     // required. Only this one entry was narrowed: `"connection"`, `"timeout"`
-    // and `"capacity"` above are still broad words and #855 stays open on them.
+    // and `"capacity"` above are still broad words, and Day 189 (19:08)
+    // searched the real corpus for them rather than narrowing from
+    // imagination: 5315 `audit-log` transcripts yielded **zero** real provider
+    // errors carrying those words — every error-shaped hit is self-authored
+    // prose about this detector. They stay because the corpus is absent, not
+    // because they were shown load-bearing; see `broad_word_tests`.
     if mentions_retry_directive(&lower) {
         return true;
     }
@@ -2263,6 +2268,33 @@ mod broad_word_tests {
     /// shape, so removing it kills a real retry. Narrowing fails in the
     /// expensive direction here — a transient error read as terminal ends a
     /// run for good, where the bug #855 feared only wastes attempts.
+    ///
+    /// **Provenance, corrected Day 189 (19:08) — these rows are HAND-WRITTEN
+    /// canonical shapes, not strings captured from a corpus.** The doc above
+    /// said "measured" and named no source, which is the sentence-with-no-
+    /// consumer-that-can-fail defect; #855 step 1 asks for real observed
+    /// provider errors and says outright *do not narrow from imagination*.
+    ///
+    /// The corpus search was then run rather than assumed, over the
+    /// `audit-log` branch (**5315 transcript files**, 2026-09-05):
+    /// crude case-insensitive line counts were `connection` **152**,
+    /// `timeout` **1415**, `capacity` **85** — and on inspection
+    /// **zero** of the error-shaped hits is a real provider error carrying
+    /// these words. Every one is *my own prose about this very detector*:
+    /// CLAUDE.md excerpts, task files, assessment text, and a **proposed**
+    /// Ollama diagnostic (`connection refused → is Ollama running?`) that is a
+    /// feature suggestion, not an observed error. That is the documented
+    /// contamination shape — a meter over a stream I also write — so the
+    /// corpus cannot answer this question at any anchoring precision.
+    ///
+    /// **So the verdict is LEAVE ALL THREE, and the reason is corpus ABSENCE,
+    /// not demonstrated load-bearing.** "No observed instance" is a real
+    /// result: you cannot narrow against a corpus you do not have, and the
+    /// error direction makes silence decisive — narrowing a transient phrase
+    /// turns a retriable error terminal, abandoning work that would have
+    /// succeeded. `#852`'s numeric fix was safe for the opposite reason (a
+    /// digit boundary can only make matching *stricter* on strings already
+    /// misread); that argument does not transfer to a phrase.
     const LOAD_BEARING: [(&str, &str); 6] = [
         ("connection", "connection refused"),
         ("connection", "connection closed unexpectedly"),
@@ -2271,6 +2303,57 @@ mod broad_word_tests {
         ("capacity", "server at capacity"),
         ("capacity", "over capacity, try again"),
     ];
+
+    /// The **measured cost** of leaving the three broad, recorded so it is a
+    /// failing test rather than a sentence. Prose merely *mentioning* one of
+    /// these words is classified transient, because they are matched with a
+    /// plain `contains`. That is not a bug to fix here — it is the price of
+    /// the deliberate LEAVE verdict above, and it is exactly why the
+    /// `audit-log` corpus could not answer #855: my own writing about the
+    /// detector is indistinguishable, to this function, from a provider error.
+    ///
+    /// This is a **near-miss guard in the anchoring direction**: if a later
+    /// session narrows any of the three to an allow-list (the `"retry"` /
+    /// `RETRY_DIRECTIVES` treatment), these rows flip and this test says so by
+    /// name, instead of the change landing silently.
+    #[test]
+    fn prose_mentioning_a_broad_word_is_read_as_transient_the_cost_of_leaving_them() {
+        // Each fixture carries exactly ONE transient entry, so a `true` here
+        // proves that specific word fired rather than some sibling phrase.
+        let rows: [(&str, &str); 3] = [
+            (
+                "connection",
+                "the connection guard is documented in CLAUDE.md",
+            ),
+            ("timeout", "the timeout constant is a judgment threshold"),
+            (
+                "capacity",
+                "kept the plan under capacity rather than padding it",
+            ),
+        ];
+        for (word, prose) in rows {
+            let lower = prose.to_lowercase();
+            // Anti-vacuous: the fixture really carries the word, so this
+            // cannot pass by agreeing with itself on a string that lost it.
+            assert!(lower.contains(word), "fixture {prose:?} lost {word:?}");
+            let hits: Vec<&str> = TRANSIENT_ERROR_SHAPES
+                .iter()
+                .filter(|k| lower.contains(*k))
+                .copied()
+                .collect();
+            assert_eq!(
+                hits,
+                vec![word],
+                "{prose:?} must isolate {word:?} for this row to prove anything"
+            );
+            assert!(
+                is_retriable_error(prose),
+                "{word:?} is still a broad `contains` entry, so {prose:?} is \
+                 read as transient. If this now fails, {word:?} was narrowed — \
+                 re-read the corpus verdict on LOAD_BEARING before accepting it."
+            );
+        }
+    }
 
     /// Every row of [`LOAD_BEARING`] is retriable **and** the named word is the
     /// only entry that matches it — so the test proves *why*, not merely
