@@ -1244,16 +1244,30 @@ fn build_signature_block(repo_map: &[FileSymbols], matched_paths: &[String]) -> 
     }
 }
 
-/// Get the set of files changed in the last few git commits.
+/// Get the set of files changed in the last few git commits, resolved against `root`.
 ///
 /// Uses `git diff --name-only HEAD~5` to find recently-edited files.
 /// Falls back gracefully if git is unavailable or there are fewer than 5 commits.
-fn get_recent_git_files() -> std::collections::HashSet<String> {
-    let output = std::process::Command::new("git")
-        .args(["diff", "--name-only", "HEAD~5"])
-        .stderr(std::process::Stdio::null())
-        .output();
-    match output {
+///
+/// Dir-taking seam (#780: the process CWD is process-global, so a test that moved it
+/// would corrupt any sibling test resolving a relative path concurrently).
+/// `get_recent_git_files` is the `Path::new(".")` wrapper every production caller uses,
+/// matching `list_project_files_in` / `suggest_related_files_in` / `apply_patch_in`.
+///
+/// Routes through the `src/git.rs` chokepoint (#864), so it inherits
+/// `-c core.quotepath=off` and every future global applied there. Without it a changed
+/// file with a non-ASCII name came back as the literal bytes `"src/n\303\244me.rs"` —
+/// surrounding quotes and octal escapes included — which no consumer can match against
+/// a path, so such a file silently never earned its recency boost in `score_files`.
+///
+/// `run_git_output` rather than `run_git_in_dir`, for Day 183's measured reason: the
+/// latter ends `.trim()` on the *whole* stdout blob, so a first filename beginning with
+/// a space would lose it. The raw `Output` preserves this function's existing per-line
+/// handling byte-for-byte while still being built by `git_command()`.
+fn get_recent_git_files_in(root: &std::path::Path) -> std::collections::HashSet<String> {
+    let root = root.to_string_lossy();
+    // `-C` is a git *global* and must precede the subcommand.
+    match crate::git::run_git_output(&["-C", &root, "diff", "--name-only", "HEAD~5"]) {
         Ok(o) if o.status.success() => {
             let stdout = String::from_utf8_lossy(&o.stdout);
             stdout
@@ -1264,6 +1278,11 @@ fn get_recent_git_files() -> std::collections::HashSet<String> {
         }
         _ => std::collections::HashSet::new(),
     }
+}
+
+/// Get the set of files changed in the last few git commits (process CWD).
+fn get_recent_git_files() -> std::collections::HashSet<String> {
+    get_recent_git_files_in(std::path::Path::new("."))
 }
 
 /// Automatically identify project files relevant to a user prompt.
@@ -1440,6 +1459,103 @@ mod tests {
     /// `auto_context_for_prompt` must behave exactly as it did before #817 here.
     fn no_restrictions() -> DirectoryRestrictions {
         DirectoryRestrictions::default()
+    }
+
+    /// Build a scratch git repo whose `HEAD~5` window contains exactly two paths:
+    /// `base.txt` (re-touched by every filler commit) and `changed` (added last).
+    /// A deterministic two-entry window is what lets the near-miss guard assert on the
+    /// *whole* set rather than on membership.
+    ///
+    /// Never this repo: `run_git`'s `#[cfg(test)]` destructive guard exists because tests
+    /// once mutated the real worktree, and #780 spent two tasks removing `set_current_dir`
+    /// calls because the process CWD is global. Everything here is `-C <tempdir>`.
+    fn scratch_repo_with_recent_change(changed: &str) -> TempDir {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(p)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "scratch git {args:?} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["config", "user.name", "t"]);
+        // 6 commits, all re-touching one file, so HEAD~5 resolves and the window holds
+        // exactly `base.txt` however far back it reaches.
+        for i in 0..6 {
+            fs::write(p.join("base.txt"), format!("{i}\n")).unwrap();
+            git(&["add", "base.txt"]);
+            git(&["commit", "-q", "-m", &format!("filler {i}")]);
+        }
+        // The 7th commit touches the file under test.
+        fs::write(p.join(changed), "content\n").unwrap();
+        git(&["add", changed]);
+        git(&["commit", "-q", "-m", "the change under test"]);
+        dir
+    }
+
+    /// #864: this site now routes through the `src/git.rs` chokepoint, so it inherits
+    /// `-c core.quotepath=off`. Before the conversion a non-ASCII filename came back as
+    /// the literal bytes `"n\303\244me.rs"` — surrounding quotes and octal escapes
+    /// included — so the file silently never earned its recency boost in `score_files`.
+    ///
+    /// Asserted at the emission point: the `HashSet<String>` a caller receives, never the
+    /// argv one layer below.
+    #[test]
+    fn get_recent_git_files_returns_non_ascii_paths_raw_not_quotepath_escaped() {
+        let name = "näme.rs";
+        // Anti-vacuous: a transcription slip that made this pure ASCII would let the test
+        // pass by agreeing with itself, proving nothing about quotepath.
+        assert!(
+            name.bytes().any(|b| b >= 0x80),
+            "fixture must actually carry a non-ASCII byte"
+        );
+
+        let dir = scratch_repo_with_recent_change(name);
+        let files = get_recent_git_files_in(dir.path());
+
+        assert!(
+            files.contains(name),
+            "expected the raw path {name:?} in {files:?} — a quoted/octal-escaped entry \
+             means the quotepath global did not reach this site"
+        );
+    }
+
+    /// The near-miss guard, and the entire regression surface: an ordinary ASCII path is
+    /// byte-identical to the pre-conversion behaviour. Asserted with a whole-set
+    /// `assert_eq!` rather than a `contains`, because a discriminator tested only on the
+    /// side that fires is vacuous green — git does not quote an ASCII name, so this is the
+    /// case that proves the change is a pure narrowing.
+    #[test]
+    fn get_recent_git_files_leaves_an_ascii_path_byte_identical() {
+        let dir = scratch_repo_with_recent_change("ordinary.rs");
+        let files = get_recent_git_files_in(dir.path());
+
+        let expected: std::collections::HashSet<String> = ["base.txt", "ordinary.rs"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(files, expected);
+    }
+
+    /// A path that is not a git repo at all must degrade to an empty set, exactly as the
+    /// pre-conversion `Err`/non-success arms did — this is the branch the register's
+    /// (false) stated reason was written about.
+    #[test]
+    fn get_recent_git_files_outside_a_repo_is_empty_and_does_not_panic() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(
+            get_recent_git_files_in(dir.path()),
+            std::collections::HashSet::new()
+        );
     }
 
     // ── detect_project_type ──────────────────────────────────────────

@@ -101,13 +101,6 @@ const REGISTERED_GIT_BYPASSES: &[(&str, &str, &str)] = &[
          `commit` trips the chokepoint's destructive-command test guard.",
     ),
     (
-        "src/commands_project.rs",
-        "get_recent_git_files",
-        "needs .stderr(Stdio::null()) so a repo with fewer than 5 commits fails silently \
-         instead of printing to the user's terminal; no chokepoint helper exposes stdio \
-         control.",
-    ),
-    (
         "src/commands_search.rs",
         "run_grep",
         "two sites in one fn: a .status() probe with both stdout and stderr nulled (no \

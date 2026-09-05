@@ -186,7 +186,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 174: +3 absorbed since Day 166.
     // Day 183: +1 absorbed since Day 179 (#837's auto-context scoring change).
     // Paid off rather than left as a third unread warning.
-    ("src/commands_project.rs", 3524),
+    ("src/commands_project.rs", 3640),
     // Day 162 (#708): +40 lines — classify_broke_files now filters to `src/`
     // (the risk model's whole universe), plus its unit test and the updated
     // end-to-end fixture assertions.
