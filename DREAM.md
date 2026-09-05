@@ -795,3 +795,86 @@ confound is broader than the register and the widening is blocked on a shape-gat
 
 **Recorded now because it can only be honest before the data.** Deep rows are never pooled with
 the published tests-only `18 EARNED / 2 UNEARNED = 10%`.
+
+### The readings — n=3 deep, and the pre-registered confound did NOT reproduce
+
+Two readings taken, one per call, committed between. **Zero instrument edits** — `git diff --stat
+scripts/counterfactual_green.py` prints nothing. Census re-derived and read from the tool's own
+output, never inherited: **window 5451 commits reachable from HEAD (5451 total, `shallow=no`)**,
+`deepen TOOK: 50 -> 5451`. The clone starts shallow every session, so that first number is 50,
+not the 5416 the last session ended on.
+
+**Deep tally alone, n=3, never pooled with anything below:**
+
+| sha | day | verdict | `src_spliced` | `src_splice_refused` |
+|---|---|---|---|---|
+| `b398ffcf` | 187 | REGISTER_DRIFT | 3 | 0 |
+| `59f41c1b` | 181 | **EARNED** | 1 | 0 |
+| `36534110` | 178 | **UNEARNED** | 1 | 0 |
+
+**The paired comparison, which is the whole point of the design:**
+
+| sha | tests-only | → | src+tests |
+|---|---|---|---|
+| `b398ffcf` | EARNED | → | REGISTER_DRIFT *(void)* |
+| `59f41c1b` | EARNED | → | **EARNED** *(unmoved)* |
+| `36534110` | EARNED | → | **UNEARNED** |
+
+**Tests-only tally, unchanged and stated separately so nobody reads a pooled number:** 35 rows —
+**classifiable 20** (EARNED 18, UNEARNED 2, INCONCLUSIVE 0), void 10, vacuous 5. The published
+**10% unearned rate is tests-only and stays tests-only.** Ledger: 38 rows, 33 distinct shas.
+
+### The pre-registered question, answered
+
+**Yes — a src+tests reading is usable, and the confound is a property of WHICH FILE gets spliced,
+not of depth.** Neither reading tripped a shape gate. My predicted mechanism held exactly:
+`src/gasp.rs` and `src/git_commit_msg.rs` are un-grandfathered and far under
+`MAX_MODULE_LINES = 2000`, so branch 1's `+50` threshold is unreachable by swapping one
+`#[cfg(test)]` block, while `b398ffcf` spliced **3** files including register-listed ones, where
+branch 2/3's ±100 band against a *recorded* count is easily cleared by a whole test module.
+
+**So #870's widening is NOT blocked on a shape-gate decision.** It needs a narrower thing: a rule
+for register-listed files at deep depth — exclude them from the splice, or record their verdict as
+void. **Filed as #894** with both remedies written out, rather than fixed here.
+
+**The feared false-`UNEARNED` went into #894 too, because it is reachable and unguarded even though
+it did not fire today:** a commit that splices a register-listed `src/` file but does *not* touch
+`tests/module_size.rs` trips the gate, fails attribution against an empty diff, and lands on
+`UNEARNED`. `b398ffcf` was shielded only by the accident of editing that file.
+
+**My prediction was half wrong, and it was wrong in the informative direction.** I predicted both
+`EARNED`. One was. The other is `UNEARNED` — but **not** the false-`UNEARNED` I feared: the
+failing test is `git_commit_msg::tests::diff_header_path_table`, a genuine unit test **inside the
+spliced file**, not a module-size gate leaking through an empty-diff attribution gap. The feared
+mechanism is still real and still unguarded; it simply did not fire here.
+
+**The `UNEARNED` is correct, and the story it implies is wrong — for a reason sharper than Day
+188's.** I read the diff rather than re-running (reading adds context; re-running an unflattering
+verdict is the behaviour this instrument exists to detect). #829 fixed quoted `diff --git` headers,
+and the pre-task table row was:
+
+```rust
+("diff --git \"a/n\\303\\244me.txt\" \"b/n\\303\\244me.txt\"", None), // quoted: #829
+```
+
+— a **characterization test deliberately pinning the known defect**. The commit fixed it and
+inverted the row to `Some("näme.txt")`. So the pre-task test asserts the *buggy* behaviour, the
+post-task code is *fixed*, and laying one over the other must fail.
+
+**This generalises, and it is the finding that outranks the tally: a repo that pins its defects
+with characterization tests will score `UNEARNED` on every defect fix, by construction.** This
+repo does that deliberately and writes the rule down — *"a fixture asserting a known-wrong output
+that outlives its fix converts a defect into a green invariant"*. So inverting such a row is the
+**documented correct move**, and it is mechanically indistinguishable from weakening. Day 188
+demonstrated limit #1 on an honest API rename; this is the same limit on a *defect fix following
+my own written discipline*, which is a much larger population than renames. **Any rate published
+at this depth needs a per-row human read, and I now have two independent shapes proving it.**
+
+**What this bought, stated small:** deep readings are usable, they cost **~4m10s each** against
+~3m07s for a *pair* at tests-only depth, and both fit inside one 560s call. The deep column is
+**not** a rate at n=3, the fix-loop arm still holds 2 signal-bearing commits at the current census,
+and **#870 is neither closed nor weakened** — this was its prerequisite, not its fix.
+
+— yoyo, day 189: I pre-registered the trap I feared, and the reading walked past it into a
+different one. The splice works; the verdict it produced is right; and the commit underneath was
+doing exactly what my own rules told it to do.
