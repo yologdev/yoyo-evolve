@@ -1285,6 +1285,63 @@ def classify_src_test_readability(rows, has_parent_test_module) -> str:
     return SRC_TESTS_UNKNOWN if saw_unknown else SRC_TESTS_NONE
 
 
+def readable_at_depth(shape, splice_readability, splice_enabled) -> bool:
+    """Is there anything to lay back for this commit, AT THE DEPTH BEING RUN? (#870, Day 189)
+
+    THE SHAPE QUESTION IS DEPTH-DEPENDENT AND `classify_test_diff_shape` IS DEPTH-BLIND.
+    It looks only at top-level `tests/*.rs`, so a commit whose test edits are
+    `#[cfg(test)]` blocks inside `src/` yields `TEST_DIFF_NONE` and `run_counterfactual`
+    refuses before the worktree is even created. At TESTS-ONLY depth that refusal is
+    correct — with nothing to lay back the counterfactual tree IS the post-task tree, and
+    there is genuinely nothing to compare. At SRC+TESTS depth it is wrong, because
+    `splice_test_module` will lay pre-task `#[cfg(test)]` blocks back over post-task
+    `src/`. Measured Day 189 (20:04): two commits from the widened selector tier came back
+    `NO_TEST_CHANGE`, `baseline: not-run`, ZERO cargo runs, in under a second each — the
+    selector admitted them and this classifier refused them anyway.
+
+    `splice_readability` is `classify_src_test_readability`'s value and IS NEVER
+    RE-DERIVED HERE. That function already answers exactly the splice precondition (does a
+    modified `src/*.rs` carry a module-level `#[cfg(test)]` AT THE PARENT?), is
+    table-tested, and a second copy would be #835's defect — two copies of a rule agree
+    the day they are written and diverge forever after.
+
+    THE SAFETY PROPERTY THAT DECIDES EVERY ROW BELOW, and it is why five of the seven
+    rules are refusals: A REFUSAL COSTS A READING NO DEEPER THAN THE 39 ALREADY RECORDED;
+    A WRONGLY-ADMITTED COMMIT MANUFACTURES A FALSE `EARNED` — a green produced by
+    comparing the post-task tree against itself, entering the exact rate DREAM.md
+    publishes. When in doubt, refuse. This is #870 slice 2's stated property (`each
+    refusal fails toward EARNED, never toward UNEARNED`) pointed one stage upstream.
+
+    The rules, each its own table row:
+
+      1. `TEST_DIFF_TOUCHES_PRE_EXISTING` -> True, regardless of the other two arguments.
+         Every one of the 30 tests-only rows and 7 src+tests rows already in the ledger,
+         unchanged.
+      2. `TEST_DIFF_ADD_ONLY` -> False. That is `NO_PRE_EXISTING_TEST_EDIT`'s territory,
+         answered from the diff at zero cargo cost; this function must not reroute it.
+      3. `TEST_DIFF_NONE` + `splice_enabled` + `SRC_TESTS_READABLE` -> True. THE NEW
+         CAPABILITY, and the only new True in the table.
+      4. `TEST_DIFF_NONE` + NOT `splice_enabled` -> False, whatever `splice_readability`
+         says. THIS IS THE ENTIRE REGRESSION SURFACE: every reading ever taken without the
+         flag, including all 20 classifiable rows the published 10% rests on.
+      5. `TEST_DIFF_NONE` + `splice_enabled` + `SRC_TESTS_NONE`/`SRC_TESTS_UNKNOWN` ->
+         False. `NONE` means there is no pre-existing module to lay back, so the
+         counterfactual tree would equal the post-task tree. `UNKNOWN` fails toward
+         refusal because an unknown must never be promoted into the comfortable bucket
+         (Day 144) — and HERE THE COMFORTABLE BUCKET IS THE ONE THAT MANUFACTURES A GREEN.
+      6. `SHAPE_UNKNOWN` -> False. Fail toward refusal.
+      7. An unenumerated `shape` value -> False.
+    """
+    if shape == TEST_DIFF_TOUCHES_PRE_EXISTING:
+        return True
+    if shape != TEST_DIFF_NONE:
+        # ADD_ONLY, SHAPE_UNKNOWN, and anything nobody enumerated. Refuse.
+        return False
+    if not splice_enabled:
+        return False
+    return splice_readability == SRC_TESTS_READABLE
+
+
 def census_summary(rows: list[CensusRow]) -> dict:
     """Fold census rows. Anti-vacuous: zero task commits is a refusal, not a zero.
 
@@ -1862,7 +1919,19 @@ def _run_counterfactual(
         rc_s, src = run_cmd(["git", "-C", root, "show", f"{parent}:{path}"], timeout=60)
         if rc_s == 0:
             pre_sources[path] = src
-    if not changed:
+    # #870, Day 189 (22:42): THE SHAPE QUESTION IS DEPTH-DEPENDENT. An empty `changed` is
+    # `TEST_DIFF_NONE`, which is a correct refusal at tests-only depth — with nothing to
+    # lay back the counterfactual tree IS the post-task tree — and WRONG at src+tests
+    # depth, where `splice_test_module` lays pre-task `#[cfg(test)]` blocks back over
+    # post-task `src/`. COST GUARD: `commit_src_test_readability` issues a `git show` per
+    # candidate, so it is reached ONLY when the flag is on AND there is no tests/ diff; a
+    # default run makes ZERO extra git calls and its behaviour is byte-identical.
+    src_only_reading = False
+    if not changed and splice_src:
+        src_only_reading = readable_at_depth(
+            TEST_DIFF_NONE, commit_src_test_readability(root, sha), True
+        )
+    if not changed and not src_only_reading:
         # Nothing to counterfactual: the counterfactual tree IS the shipped tree. No
         # baseline is needed and none is run — there is no comparison to license.
         return NO_TEST_CHANGE, "no top-level tests/*.rs touched"
@@ -4712,6 +4781,43 @@ def run_self_tests():
               _mix, lambda p: False if p == "src/a.rs" else None) == SRC_TESTS_UNKNOWN,
           classify_src_test_readability(
               _mix, lambda p: False if p == "src/a.rs" else None))
+
+    # ---- #870, Day 189 (22:42): readable_at_depth — the depth-aware shape gate ---------
+    # THE ONLY NEW `True` IS ROW 3. Rows 4 and 5 are the guards against a manufactured
+    # green: a wrongly-admitted commit is compared against ITSELF and comes back EARNED,
+    # entering the exact rate DREAM.md publishes. A refusal only costs a shallower reading.
+    check("readable_at_depth: TOUCHES_PRE_EXISTING is readable at every depth (row 1)",
+          all(readable_at_depth(TEST_DIFF_TOUCHES_PRE_EXISTING, _r, _e)
+              for _r in (SRC_TESTS_READABLE, SRC_TESTS_NONE, SRC_TESTS_UNKNOWN)
+              for _e in (True, False)),
+          "a pre-existing tests/ edit must be readable regardless of flag/readability")
+    check("readable_at_depth: ADD_ONLY is NOT rerouted here (row 2)",
+          not any(readable_at_depth(TEST_DIFF_ADD_ONLY, _r, _e)
+                  for _r in (SRC_TESTS_READABLE, SRC_TESTS_NONE, SRC_TESTS_UNKNOWN)
+                  for _e in (True, False)),
+          "ADD_ONLY belongs to NO_PRE_EXISTING_TEST_EDIT, answered from the diff")
+    check("readable_at_depth: NONE + splice + READABLE is the NEW capability (row 3)",
+          readable_at_depth(TEST_DIFF_NONE, SRC_TESTS_READABLE, True) is True,
+          readable_at_depth(TEST_DIFF_NONE, SRC_TESTS_READABLE, True))
+    # ROW 4 IS THE ENTIRE REGRESSION SURFACE: every reading taken without the flag,
+    # including all 20 classifiable rows the published tests-only 10% rests on.
+    check("readable_at_depth: NONE without the flag is refused, whatever the "
+          "readability says (row 4 — the regression surface)",
+          not any(readable_at_depth(TEST_DIFF_NONE, _r, False)
+                  for _r in (SRC_TESTS_READABLE, SRC_TESTS_NONE, SRC_TESTS_UNKNOWN)),
+          "a default run must be byte-identical to every reading already recorded")
+    check("readable_at_depth: NONE + splice + NONE/UNKNOWN is refused (row 5)",
+          not readable_at_depth(TEST_DIFF_NONE, SRC_TESTS_NONE, True)
+          and not readable_at_depth(TEST_DIFF_NONE, SRC_TESTS_UNKNOWN, True),
+          "NONE has no module to lay back; UNKNOWN must not be promoted (Day 144)")
+    check("readable_at_depth: SHAPE_UNKNOWN is refused (row 6)",
+          not any(readable_at_depth(SHAPE_UNKNOWN, _r, _e)
+                  for _r in (SRC_TESTS_READABLE, SRC_TESTS_NONE, SRC_TESTS_UNKNOWN)
+                  for _e in (True, False)),
+          "could-not-read the shape must fail toward refusal")
+    check("readable_at_depth: an unenumerated shape is refused (row 7)",
+          not readable_at_depth("TEST_DIFF_SOMETHING_NEW", SRC_TESTS_READABLE, True),
+          "a shape nobody enumerated must not admit a commit")
 
     # ---- #870, Day 189: the SECOND consumer of classify_src_test_readability ----------
     # ANTI-VACUOUS, AND ASSERTED FIRST: a row set genuinely containing a NO_TEST_CHANGE
