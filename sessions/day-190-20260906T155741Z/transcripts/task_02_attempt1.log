@@ -1,0 +1,187 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by taking the capture — that's the deliverable, and everything else is conditional on it.
+  ▶ $ cd /tmp && python3 -m venv /tmp/py861 2>&1 | tail -3 && /tmp/py861/bin/pip insta… ✓ (4.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+pytest 9.1.1 is in. Now let me read the parser before building the fixture, so I know what shapes it expects.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_python_errors"… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Pattern 1 anchors on trimmed.starts_with("FAILED ") — exactly the shape ANSI defeats. Now the capture, in a scratch dir under /tmp, never this repo.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ mkdir -p /tmp/py861-proj/tests && cat > /tmp/py861-proj/test… (10 lines) ✓ (385ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Capture taken: **17 lines carry ESC bytes with `--color=yes`, 0 with --color=no**. Now the critical follow-ups — the default piped shape (what a watch command actually runs), which escape forms appear, and whether the FAILED lines specifically are hit.
+  ▶ $ cd /tmp/py861-proj && /tmp/py861/bin/pytest 2>&1 | cat > cap… (9 lines) ✓ (161ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Default piped: 0 ESC bytes — pytest disables colour on a pipe, so yoyo's own watch loop was never affected. But forced colour puts ESC[31m before the word FAILED, defeating starts_with("FAILED ") exactly. Let me check the env-var route (the analogue of CARGO_TERM_COLOR=always, which was #859's real-world trigger) and get the verbatim fixture bytes.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/py861-proj && PY_COLORS=1 /tmp/py861/bin/pytest 2>&1… (5 lines) ✓ (182ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+PY_COLORS=1 reproduces it on a plain pipe with no flag — the product-real path, exactly parallel to CARGO_TERM_COLOR=always for #859. Let me see the existing stripper and how the TypeScript half wired it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "strip_ansi_escapes" src… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 1 is settled: ANSI is present (85 ESC bytes, all CSI/SGR, 0 OSC; PY_COLORS=1 reproduces on a plain pipe). Step 2 it is. Let me see the parse_rust_errors precedent at line 313 and how lines is indexed here.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '308,318p' src/watch.rs; … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The precedent at 313–314 is exactly the shape needed. Test first — let me write the failing test using the verbatim captured bytes.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_python_errors_… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3822,3850p' src/watch.rs ✓ (3ms)
+  2 tools completed in 3.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Way over budget — moving fast now. Adding the test with the verbatim captured bytes plus the fix; the step-4 positive control is what proves the test fails without it.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (2 → 93 lines)
+  +     /// #861 (Python half): `pytest` colours its summary, and the escape sits
+  +     /// *in front of* the `FAILED` token, which defeats `starts_with("FAILED ")`.
+  +     ///
+  +     /// Both fixtures are **captured verbatim** from a real run rather than
+  +     /// hand-typed (rounds 81 and 87 each lost a bet to a hand-typed fixture,
+  +     /// which pins my belief about the input rather than the input):
+  +     ///   `python3 -m venv /tmp/py861 && /tmp/py861/bin/pip install pytest`
+  +     ///   `cd /tmp/py861-proj && pytest --color=yes 2>&1 | cat`
+  +     /// pytest 9.1.1, 2026-09-06. The whole capture carried **85 ESC bytes, all
+  +     /// 85 CSI (SGR form), 0 OSC** — so OSC-8 hyperlinks are deliberately not
+  +     /// exercised here, exactly as #859 records for cargo.
+  +     #[test]
+  +     fn parse_python_errors_reads_a_coloured_pytest_summary_861() {
+  +         let coloured = "\u{1b}[31mFAILED\u{1b}[0m tests/test_auth.py::\u{1b}[1mtest_login\u{1b}[0m - assert 401 == 200\n\u{1b}[31mFAILED\u{1b}[0m tests/test_auth.py::\u{1b}[1mtest_signup\u{1b}[0m - ValueError: invalid email\n";
+  +         let plain = "FAILED tests/test_auth.py::test_login - assert 401 == 200\nFAILED tests/test_auth.py::test_signup - ValueError: invalid email\n";
+  + 
+  +         // Anti-vacuous: the fixtures must really differ in the way claimed, or
+  +         // a transcription slip could make this pass by having both sides agree
+  +         // on nothing.
+  +         assert!(
+  ... (73 more lines)
+ ✓ (1m 18s)
+  +     /// #861 (Python half): `pytest` colours its summary, and the escape sits
+  +     /// *in front of* the `FAILED` token, which defeats `starts_with("FAILED ")`.
+  +     ///
+  +     /// Both fixtures are **captured verbatim** from a real run rather than
+  +     /// hand-typed (rounds 81 and 87 each lost a bet to a hand-typed fixture,
+  +     /// which pins my belief about the input rather than the input):
+  +     ///   `python3 -m venv /tmp/py861 && /tmp/py861/bin/pip install pytest`
+  +     ///   `cd /tmp/py861-proj && pytest --color=yes 2>&1 | cat`
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Test added. Let me confirm it fails against the current code — that's the defect reproduction.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo parse_pyth… ✓ (140ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Defect reproduced empirically: coloured output yields zero errors, plain yields 2 — total blindness. Now the fix, at the one line-loop site.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (3 → 28 lines)
+    pub fn parse_python_errors(output: &str) -> Vec<CompilerError> {
+        let mut errors: Vec<CompilerError> = Vec::new();
+  -     let lines: Vec<&str> = output.lines().collect();
+  +     // #861: strip ANSI *before* any anchor below runs. `pytest` colours its
+  +     // summary and puts the escape *in front of* the `FAILED` token, which
+  +     // defeats `starts_with("FAILED ")` outright — measured 2026-09-06 against
+  +     // pytest 9.1.1: a coloured capture yielded **0** errors where its plain
+  +     // twin yielded 2. Applied at this ONE site rather than per-pattern so
+  +     // every helper reading these lines inherits it: a per-pattern fix restores
+  +     // the error and still loses the `file`/`line`, because the location
+  +     // anchors are defeated by exactly the same mechanism. #859's reasoning
+  +     // verbatim, one parser over, and the same two-line shape
+  +     // `parse_rust_errors` uses above.
+  +     //
+  +     // Measured scope, so this is not read as wider than it is: piped with no
+  +     // flag pytest emits **no** escapes at all (0 ESC bytes), so the shape
+  +     // yoyo's own watch loop sees was never affected. The exposed paths are a
+  +     // forced `--color=yes` (in a Makefile, tox.ini or CI config) and
+  +     // `PY_COLORS=1` in the environment — the latter reproduces on a plain
+  +     // pipe, and is the analogue of the `CARGO_TERM_COLOR=always` route that
+  ... (9 more lines)
+ ✓ (1m 22s)
+    pub fn parse_python_errors(output: &str) -> Vec<CompilerError> {
+        let mut errors: Vec<CompilerError> = Vec::new();
+  -     let lines: Vec<&str> = output.lines().collect();
+  +     // #861: strip ANSI *before* any anchor below runs. `pytest` colours its
+  +     // summary and puts the escape *in front of* the `FAILED` token, which
+  +     // defeats `starts_with("FAILED ")` outright — measured 2026-09-06 against
+  +     // pytest 9.1.1: a coloured capture yielded **0** errors where its plain
+  +     // twin yielded 2. Applied at this ONE site rather than per-pattern so
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo parse_pyth… ✓ (133ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 7 pass — 5 pre-existing unedited plus the 2 new. Let me find what the auto-check flagged.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (22.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy clean. The module-size landmine fired exactly as step 3 warned — 123 past the 100-line grace, fatal. Pasting the line verbatim from what the gate itself printed, never hand-typed.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/watch.rs"' tests/m… ✓ (2ms)
+
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/watch.rs", 4295),
+  +     ("src/watch.rs", 4418),
+ ✓ (1m 7s)
+  -     ("src/watch.rs", 4295),
+  +     ("src/watch.rs", 4418),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (268ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 14s (2 ✓)
+
+Gate clean, zero warnings. Now step 4 — the positive control, as one atomic mutate→run→restore, serially, with a NEUTERED marker so tests/neutered_guards.rs enforces the restore.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/watch… (11 lines) ✓ (30.7s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

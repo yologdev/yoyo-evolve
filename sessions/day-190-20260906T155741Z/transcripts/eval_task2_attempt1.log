@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 800,860p src/watch.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn strip_ansi_escapes" … ✓ (4ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/watch.rs && cargo test…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && grep -rn "NEU… ✓ (4ms)
+ ✓ (155ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (243ms)
+  5 tools completed in 15.4s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (136ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (47.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 22s (2 ✓)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+Summary of what I actually verified:
+
+• **The fix is at the one site the task specified.** `parse_python_errors` now does `output.lines().map(strip_ansi_escapes)` into a `Cow` vec, then re-borrows into the unchanged `Vec<&str> lines` — so every anchor and the location extraction inherit the strip, which is precisely why #859 rejected a per-pattern fix. No second stripper was written; strip_ansi_escapes at src/watch.rs:261 already existed with two live consumers.
+• **The measurement is recorded, not guessed. The comment carries the date, pytest version, the escape census (85 ESC, all CSI, 0 OSC), and — importantly — the honest scope: pytest emits 0** escapes on a plain pipe, so the shape the watch loop normally sees was never affected; the exposed routes are --color=yes and PY_COLORS=1.
+• **Guards are non-vacuous and the near-miss survives.** The coloured test asserts the fixture really contains ESC and the plain one really does not, asserts field-for-field equality *and* literal values (so a regression breaking both identically can't pass), and asserts no escape survives into message/file/code. cargo test --bin yoyo parse_python_errors → 7 passed: all 5 pre-existing fixtures green and unedited in the diff.
+• **Module-size landmine cleared correctly. `wc -l src/watch.rs` = 4418, register entry = 4418, `cargo test --test module_size` → 28 passed with zero* gate warnings (the 4 `grep -i warn` hits are test names*, not gate output).
+• **No stranded definitions** (the #618/#653/#658 shape): this diff adds a consumer, not a definition; no new enum variants, no renames, `lines` keeps its type. Tree is clean and carries no sabotage markers, so the positive control was restored.
+
+One piece of cleanup feedback noted in the verdict rather than failed on: CLAUDE.md's watch.rs bullet still describes parse_python_errors as structurally-exposed-but-unobserved and on #861 — that clause is now stale, and a follow-up should correct it while stating that eslint/jest remain uncaptured.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
