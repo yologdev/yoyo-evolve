@@ -1,0 +1,127 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by measuring what the current allow-list actually admits.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "origin" scripts/skill_e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "core: true\|allow.list\… ✓ (6ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,370p' scripts/skill_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "origin: yoyo" scripts/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 858 2>/dev/null | … ✓ (5ms)
+ ✓ (468ms)
+  5 tools completed in 9.4s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== OLD: whole-file grep '… ✓ (58ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && OLD=""; NEW=""; for f in skills/… ✓ (87ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== all skills: origin / c… ✓ (115ms)
+  3 tools completed in 16.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Measured. The defect reproduces — and yopedia is the one that matters: origin: creator with `core: false`, i.e. no backstop. Now the fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '302,310p' scripts/skill_… ✓ (3ms)
+  ▶ edit scripts/skill_evolve.sh (4 → 23 lines)
+    revert_agent_work() {
+        git reset --hard "$HEAD_BEFORE"
+        git clean -fd skills/skill-evolve-* 2>/dev/null || true
+  + }
+  + 
+  + # Helper: emit a skill file's YAML frontmatter — the block between the `---` on
+  + # LINE 1 and the next `---` line. Emits NOTHING (so every caller refuses) when
+  + # the file has no frontmatter, when line 1 is not `---`, when the block is
+  + # unterminated, or when the file is unreadable: CLAUDE.md's provenance rule is
+  + # "(missing) — unknown provenance. Off-limits (default-safe)", so this fails
+  + # CLOSED. Scoping matters because a permission list's false positives cluster on
+  + # the highest-stakes files: the ones most likely to CONTAIN the string
+  + # `origin: yoyo` at line start are the meta-skills that DOCUMENT the Create
+  + # template, and those are exactly the files that must never be edited (#858,
+  + # evt-0014). Measured before the fix: a whole-file grep admitted 8 skills, two of
+  + # them `origin: creator` (skill-creator, skill-evolve); frontmatter-scoped admits
+  + # the 6 genuine ones.
+  + skill_frontmatter() {
+  +     awk 'NR == 1 && $0 != "---" { exit }
+  +          NR == 1 { next }
+  ... (3 more lines)
+ ✓ (1m 16s)
+    revert_agent_work() {
+        git reset --hard "$HEAD_BEFORE"
+        git clean -fd skills/skill-evolve-* 2>/dev/null || true
+  + }
+  + 
+  + # Helper: emit a skill file's YAML frontmatter — the block between the `---` on
+  + # LINE 1 and the next `---` line. Emits NOTHING (so every caller refuses) when
+  + # the file has no frontmatter, when line 1 is not `---`, when the block is
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/skill_evolve.sh (9 → 17 lines)
+                    # Use the post-agent file content for the origin check (the agent may have just created it).
+  +                 # `core: true` stays a WHOLE-FILE match on purpose: scoping it to the
+  +                 # frontmatter would let a file that only mentions the string in prose
+  +                 # become admitted, i.e. it would WIDEN the permission list. The two
+  +                 # checks answer different questions and are deliberately not folded
+  +                 # into one match — sharing it would break whichever caller lost.
+                    if grep -q "^core: true" "$f" 2>/dev/null; then
+                        VIOLATIONS="${VIOLATIONS}  - HARD RULE #1 violation: $f carries core: true\n"
+                        continue
+                    fi
+  -                 if ! grep -q "^origin: yoyo$" "$f" 2>/dev/null; then
+  -                     VIOLATIONS="${VIOLATIONS}  - HARD RULE #1 violation: $f lacks 'origin: yoyo' (not eligible)\n"
+  +                 # Provenance is FRONTMATTER-SCOPED and line-anchored: a mid-sentence
+  +                 # mention, an indented list item or a fenced example can never declare
+  +                 # a skill eligible (#858, evt-0014). No frontmatter -> refused.
+  +                 if ! skill_frontmatter "$f" | grep -q "^origin: yoyo$"; then
+  +                     VIOLATIONS="${VIOLATIONS}  - HARD RULE #1 violation: $f lacks 'origin: yoyo' in its frontmatter (not eligible)\n"
+                        continue
+                    fi
+ ✓ (1m 28s)
+                    # Use the post-agent file content for the origin check (the agent may have just created it).
+  +                 # `core: true` stays a WHOLE-FILE match on purpose: scoping it to the
+  +                 # frontmatter would let a file that only mentions the string in prose
+  +                 # become admitted, i.e. it would WIDEN the permission list. The two
+  +                 # checks answer different questions and are deliberately not folded
+  +                 # into one match — sharing it would break whichever caller lost.
+                    if grep -q "^core: true" "$f" 2>/dev/null; then
+                        VIOLATIONS="${VIOLATIONS}  - HARD RULE #1 violation: $f carries core: true\n"
+  ... (11 more lines)
+  3 tools completed in 3m 0s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm -rf /tmp/… (16 lines) ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && FX=$(mktemp … (17 lines) ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && FX=/tmp/tmp.… (8 lines) ✓ (31ms)
+  3 tools completed in 14.9s (2 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && eval "$(sed … (11 lines) ✓ (132ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Real tree: identical before and after — the honest "already carried" outcome. Now the docs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "diff-scope guard" CLAUD… ✓ (4ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `scripts/skill_evolve.sh` — one cycle entry point. Gates: dirty-tree refusal, session-counter ≥ 5, 24h cooldown, `cargo build && cargo test` green. Post-agent: diff-scope guard (`origin: yoyo` + not `core: true` + within allow-list), build/test re-verify, revert on any violation.
+  + - `scripts/skill_evolve.sh` — one cycle entry point. Gates: dirty-tree refusal, session-counter ≥ 5, 24h cooldown, `cargo build && cargo test` green. Post-agent: diff-scope guard (`origin: yoyo` + not `core: true` + within allow-list), build/test re-verify, revert on any violation. Day 189 (#858, evt-0014's slice): the **provenance** half of that guard is **frontmatter-scoped and line-anchored** — `skill_frontmatter` emits only the block between the `---` on **line 1** and the next `---`, … [yoyo: 2869 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 27s)
+  - - `scripts/skill_evolve.sh` — one cycle entry point. Gates: dirty-tree refusal, session-counter ≥ 5, 24h cooldown, `cargo build && cargo test` green. Post-agent: diff-scope guard (`origin: yoyo` + not `core: true` + within allow-list), build/test re-verify, revert on any violation.
+  + - `scripts/skill_evolve.sh` — one cycle entry point. Gates: dirty-tree refusal, session-counter ≥ 5, 24h cooldown, `cargo build && cargo test` green. Post-agent: diff-scope guard (`origin: yoyo` + not `core: true` + within allow-list), build/test re-verify, revert on any violation. Day 189 (#858, evt-0014's slice): the **provenance** half of that guard is **frontmatter-scoped and line-anchored** — `skill_frontmatter` emits only the block between the `---` on **line 1** and the next `---`, … [yoyo: 2869 more bytes elided — diff lines are capped at 500 bytes]
+  2 tools completed in 1m 45s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build --quiet… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (185ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet 2>&1 | tail -… ✓ (1m 27s)
+  3 tools completed in 1m 34s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

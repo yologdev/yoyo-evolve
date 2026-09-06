@@ -1,0 +1,49 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this diff by testing the actual awk helper against the fixtures the task specified.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '305,335p' scripts/skill_… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "origin: yoyo\|skill_fro… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && D=$(mktemp -d) && sed -n '323,32… ✓ (7ms)
+  3 tools completed in 11.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && D=$(mktemp -… (6 lines) ✓ (47ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && D=$(mktemp -d) && sed -n '323,32… ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; D=$(mktemp -d); sed -n '323,328p' … ✓ (104ms)
+  3 tools completed in 17.3s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; bash -n scripts/skill_evolve.sh &&… ✓ (7ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 28s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 42s (2 ✓)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+Evidence gathered:
+
+Fixture control (scratch `mktemp -d`, helper extracted from the shipped script with `sed`):
+
+| fixture | expected | OLD | NEW |
+|---|---|---|---|
+| A — frontmatter origin: yoyo | yes | yes | yes ✓ near-miss guard |
+| B — creator + prose mention | no | yes | no ✓ the defect |
+| C — creator + fenced example | no | yes | no ✓ |
+| D — no frontmatter | no | yes | no ✓ fails closed |
+| E — yoyo + core: true | no | no | no ✓ |
+| F — unterminated block | no | yes | no ✓ fails closed |
+
+A being admitted by both is the direction that proves the fix narrows the match rather than emptying the list.
+
+Real tree — origin match alone: OLD admits 8 (including skill-creator, skill-evolve, both origin: creator documenting the string), NEW admits the 6 genuine ones. Full guard as shipped: byte-identical before and after, confirming the doc's honest "latent defence-in-depth hole, not a live exploit" headline. skills/yopedia/SKILL.md really is core: false + origin: creator, so the "backstop is not universal" claim holds too.
+
+Touchpoints: skill_frontmatter (line 323) has its single consumer (line 366) in the same diff, defined before the block that uses it; the violation message was updated alongside. bash -n parses clean — worth checking since no test covers this script.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

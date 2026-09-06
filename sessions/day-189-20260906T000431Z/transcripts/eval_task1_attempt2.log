@@ -1,0 +1,36 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat ✓ (9ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~2 --stat && echo "…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 python3 scripts/count… ✓ (14ms)
+ ✓ (73ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "readable_at_depth\|src_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "870" CLAUDE.md | tail … ✓ (5ms)
+ ✓ (8ms)
+  6 tools completed in 16.5s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~2 --name-only && e… ✓ (16ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 20s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 39s (2 ✓)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+Summary of what I checked:
+
+The implementation half is solid. readable_at_depth is a genuine pure function with all seven rules implemented exactly as specified (rule 3 is the only new True; ADD_ONLY, SHAPE_UNKNOWN, and unenumerated shapes all refuse), backed by seven table rows including the rule-4 regression-surface guard. Site A is gated on not changed and splice_src, so a default run makes zero extra git calls. Site B returns `COULD_NOT_CHECK on not kept and spliced == 0 — correctly conditioned on the true invariant rather than on src_only_reading`. The eval-fix commit added the three downstream qualifiers that were genuinely required (without them the capability died one line after Site A admitted it), and the if kept: checkout guard is right, since `git checkout <parent> -- with an empty pathspec is a different command. --test returns ALL PASSED, exit 0, over the same 6 run verdicts, so RUN_VERDICTS` is untouched.
+
+**What fails it: the Docs step was skipped entirely.** `git diff HEAD~2 --name-only` returns only `scripts/counterfactual_green.py` across both task commits. CLAUDE.md was named in the task's `Files list and has an explicit ## Docs requirement, and grep -c readable_at_depth CLAUDE.md` returns 0.
+
+This is not bookkeeping in this repo. CLAUDE.md is re-injected as authoritative context every session, and its Day-188 paragraph currently asserts that a fix-loop commit editing only `#[cfg(test)] inside src/ "is classified NO_TEST_CHANGE` and is **never selected**, and the splicer can never see it." The second half of that sentence is now false as a description of the code — which is precisely the stale-claim shape that section of the file spends thousands of words documenting as having cost eight sessions on src/gasp.rs. The next reader inherits a wrong mechanism claim about the exact function this diff changed.
+
+The fix is one paragraph: mechanism, flag gating, the two sites, rules 4/5 as the safety property, and the stated limit that this makes 116 commits readable and not classifiable.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

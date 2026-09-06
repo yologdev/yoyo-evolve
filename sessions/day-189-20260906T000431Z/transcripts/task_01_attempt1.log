@@ -1,0 +1,161 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reproducing the known refusal, then build the pure function first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (70ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun… ✓ (61ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun… ✓ (67ms)
+  3 tools completed in 5.6s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 reproduces: NO_TEST_CHANGE with the flag on. Now let me read the exact code sites I need.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SRC_TESTS_READABLE\|SRC… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1600,1650p' scripts/coun… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1790,1830p' scripts/coun… ✓ (5ms)
+  3 tools completed in 5.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1838,1870p' scripts/coun… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2020,2100p' scripts/coun… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2000,2020p' scripts/coun… ✓ (5ms)
+  3 tools completed in 6.3s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the full picture now. Step 1 — the pure function first, before touching anything else.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1286,1300p' scripts/coun… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (2 → 59 lines)
+  + def readable_at_depth(shape, splice_readability, splice_enabled) -> bool:
+  +     """Is there anything to lay back for this commit, AT THE DEPTH BEING RUN? (#870, Day 189)
+  + 
+  +     THE SHAPE QUESTION IS DEPTH-DEPENDENT AND `classify_test_diff_shape` IS DEPTH-BLIND.
+  +     It looks only at top-level `tests/*.rs`, so a commit whose test edits are
+  +     `#[cfg(test)]` blocks inside `src/` yields `TEST_DIFF_NONE` and `run_counterfactual`
+  +     refuses before the worktree is even created. At TESTS-ONLY depth that refusal is
+  +     correct — with nothing to lay back the counterfactual tree IS the post-task tree, and
+  +     there is genuinely nothing to compare. At SRC+TESTS depth it is wrong, because
+  +     `splice_test_module` will lay pre-task `#[cfg(test)]` blocks back over post-task
+  +     `src/`. Measured Day 189 (20:04): two commits from the widened selector tier came back
+  +     `NO_TEST_CHANGE`, `baseline: not-run`, ZERO cargo runs, in under a second each — the
+  +     selector admitted them and this classifier refused them anyway.
+  + 
+  +     `splice_readability` is `classify_src_test_readability`'s value and IS NEVER
+  +     RE-DERIVED HERE. That function already answers exactly the splice precondition (does a
+  +     modified `src/*.rs` carry a module-level `#[cfg(test)]` AT THE PARENT?), is
+  +     table-tested, and a second copy would be #835's defect — two copies of a rule agree
+  +     the day they are written and diverge forever after.
+  + 
+  ... (39 more lines)
+ ✓ (1m 17s)
+  + def readable_at_depth(shape, splice_readability, splice_enabled) -> bool:
+  +     """Is there anything to lay back for this commit, AT THE DEPTH BEING RUN? (#870, Day 189)
+  + 
+  +     THE SHAPE QUESTION IS DEPTH-DEPENDENT AND `classify_test_diff_shape` IS DEPTH-BLIND.
+  +     It looks only at top-level `tests/*.rs`, so a commit whose test edits are
+  +     `#[cfg(test)]` blocks inside `src/` yields `TEST_DIFF_NONE` and `run_counterfactual`
+  +     refuses before the worktree is even created. At TESTS-ONLY depth that refusal is
+  +     correct — with nothing to lay back the counterfactual tree IS the post-task tree, and
+  ... (13 more lines)
+  2 tools completed in 1m 42s (2 ✓)
+
+Now the table test for it. Let me find where the classify_src_test_readability self-tests end.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_src_test_reada… ✓ (3ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4766,4790p' scripts/coun… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 38 lines)
+  +     # ---- #870, Day 189 (22:42): readable_at_depth — the depth-aware shape gate ---------
+  +     # THE ONLY NEW `True` IS ROW 3. Rows 4 and 5 are the guards against a manufactured
+  +     # green: a wrongly-admitted commit is compared against ITSELF and comes back EARNED,
+  +     # entering the exact rate DREAM.md publishes. A refusal only costs a shallower reading.
+  +     check("readable_at_depth: TOUCHES_PRE_EXISTING is readable at every depth (row 1)",
+  +           all(readable_at_depth(TEST_DIFF_TOUCHES_PRE_EXISTING, _r, _e)
+  +               for _r in (SRC_TESTS_READABLE, SRC_TESTS_NONE, SRC_TESTS_UNKNOWN)
+  +               for _e in (True, False)),
+  +           "a pre-existing tests/ edit must be readable regardless of flag/readability")
+  +     check("readable_at_depth: ADD_ONLY is NOT rerouted here (row 2)",
+  +           not any(readable_at_depth(TEST_DIFF_ADD_ONLY, _r, _e)
+  +                   for _r in (SRC_TESTS_READABLE, SRC_TESTS_NONE, SRC_TESTS_UNKNOWN)
+  +                   for _e in (True, False)),
+  +           "ADD_ONLY belongs to NO_PRE_EXISTING_TEST_EDIT, answered from the diff")
+  +     check("readable_at_depth: NONE + splice + READABLE is the NEW capability (row 3)",
+  +           readable_at_depth(TEST_DIFF_NONE, SRC_TESTS_READABLE, True) is True,
+  +           readable_at_depth(TEST_DIFF_NONE, SRC_TESTS_READABLE, True))
+  +     # ROW 4 IS THE ENTIRE REGRESSION SURFACE: every reading taken without the flag,
+  +     # including all 20 classifiable rows the published tests-only 10% rests on.
+  +     check("readable_at_depth: NONE without the flag is refused, whatever the "
+  ... (18 more lines)
+ ✓ (1m 16s)
+  +     # ---- #870, Day 189 (22:42): readable_at_depth — the depth-aware shape gate ---------
+  +     # THE ONLY NEW `True` IS ROW 3. Rows 4 and 5 are the guards against a manufactured
+  +     # green: a wrongly-admitted commit is compared against ITSELF and comes back EARNED,
+  +     # entering the exact rate DREAM.md publishes. A refusal only costs a shallower reading.
+  +     check("readable_at_depth: TOUCHES_PRE_EXISTING is readable at every depth (row 1)",
+  +           all(readable_at_depth(TEST_DIFF_TOUCHES_PRE_EXISTING, _r, _e)
+  +               for _r in (SRC_TESTS_READABLE, SRC_TESTS_NONE, SRC_TESTS_UNKNOWN)
+  +               for _e in (True, False)),
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (69ms)
+  3 tools completed in 1m 34s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 1 is green in isolation. Now Step 2 — but first let me check the parent_test_pathspec gate, which returns COULD_NOT_CHECK on an empty kept.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parent_test_pathspec" s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2018,2040p' scripts/coun… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.3s (2 ✓)
+
+Now Site A — and the empty-kept branch needs gating too, since git checkout <parent> -- with no pathspec is not safe.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 16 lines)
+  -     if not changed:
+  +     # #870, Day 189 (22:42): THE SHAPE QUESTION IS DEPTH-DEPENDENT. An empty `changed` is
+  +     # `TEST_DIFF_NONE`, which is a correct refusal at tests-only depth — with nothing to
+  +     # lay back the counterfactual tree IS the post-task tree — and WRONG at src+tests
+  +     # depth, where `splice_test_module` lays pre-task `#[cfg(test)]` blocks back over
+  +     # post-task `src/`. COST GUARD: `commit_src_test_readability` issues a `git show` per
+  +     # candidate, so it is reached ONLY when the flag is on AND there is no tests/ diff; a
+  +     # default run makes ZERO extra git calls and its behaviour is byte-identical.
+  +     src_only_reading = False
+  +     if not changed and splice_src:
+  +         src_only_reading = readable_at_depth(
+  +             TEST_DIFF_NONE, commit_src_test_readability(root, sha), True
+  +         )
+  +     if not changed and not src_only_reading:
+            # Nothing to counterfactual: the counterfactual tree IS the shipped tree. No
+            # baseline is needed and none is run — there is no comparison to license.
+            return NO_TEST_CHANGE, "no top-level tests/*.rs touched"
+ ✓ (1m 16s)
+  -     if not changed:
+  +     # #870, Day 189 (22:42): THE SHAPE QUESTION IS DEPTH-DEPENDENT. An empty `changed` is
+  +     # `TEST_DIFF_NONE`, which is a correct refusal at tests-only depth — with nothing to
+  +     # lay back the counterfactual tree IS the post-task tree — and WRONG at src+tests
+  +     # depth, where `splice_test_module` lays pre-task `#[cfg(test)]` blocks back over
+  +     # post-task `src/`. COST GUARD: `commit_src_test_readability` issues a `git show` per
+  +     # candidate, so it is reached ONLY when the flag is on AND there is no tests/ diff; a
+  +     # default run makes ZERO extra git calls and its behaviour is byte-identical.
+  ... (9 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,189 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, and what the evaluator says is missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short ✓ (4ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+Three failures: (1) the capability is dead downstream at parent_test_pathspec, (2) Site B missing, (3) CLAUDE.md untouched. Let me read the actual code.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- scripts/counter…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def run_counterfactual\… ✓ (3ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1847,2110p' scripts/coun… ✓ (5ms)
+  3 tools completed in 2.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me see the rest of the flow — the region between rollback and the cargo run, and the splice loop's end.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1918,1960p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2110,2210p' scripts/coun… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.9s (2 ✓)
+
+Now I see the full picture. There are three downstream refusals with empty-list semantics, not one. Let me read them precisely.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1930 && NR<=1975 {print… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Blocker 1 is line 1943. Now the second one (if not kept:):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=2020 && NR<=2070 {print… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both blockers located. Let me reproduce the current failure before changing anything (step 0 discipline).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "add_argument" scripts/c… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=2812 && NR<=2905 {print… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun… ✓ (73ms)
+  3 tools completed in 5.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reproduced the evaluator's exact receipt — blocker 1 at line 1943. Now the fixes. First, the rollback refusal:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (7 → 14 lines)
+        rollback = behavioural_test_files(out.splitlines(), register_only)
+  -     if not rollback:
+  +     if not rollback and not src_only_reading:
+  +         # `and not src_only_reading` (#870, Day 189): for a src-only reading `changed` is
+  +         # empty BY CONSTRUCTION, so `rollback` is empty too — and that is not the
+  +         # "register-only" fact this branch reports. Without the qualifier this returned
+  +         # NO_TEST_CHANGE with a literal empty file list, `only debt-register file(s)
+  +         # touched ()`, and the whole capability was dead one line after Site A admitted
+  +         # it. The tests-only path is UNCHANGED: with a non-empty `changed` this branch
+  +         # fires exactly as before, which is every reading ever recorded.
+            return NO_TEST_CHANGE, (
+                "only debt-register file(s) touched ("
+                + ", ".join(changed)
+ ✓ (1m 15s)
+        rollback = behavioural_test_files(out.splitlines(), register_only)
+  -     if not rollback:
+  +     if not rollback and not src_only_reading:
+  +         # `and not src_only_reading` (#870, Day 189): for a src-only reading `changed` is
+  +         # empty BY CONSTRUCTION, so `rollback` is empty too — and that is not the
+  +         # "register-only" fact this branch reports. Without the qualifier this returned
+  +         # NO_TEST_CHANGE with a literal empty file list, `only debt-register file(s)
+  +         # touched ()`, and the whole capability was dead one line after Site A admitted
+  ... (5 more lines)
+
+Now blocker 2 — the kept refusal and the checkout that follows it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (16 → 29 lines)
+  -         if not kept:
+  +         if not kept and not src_only_reading:
+                # THE DANGEROUS BRANCH, explicit and never a fall-through. Every touched test
+                # file is new, so there is nothing older to lay back; proceeding would run
+                # POST-task tests against POST-task src/ — just the baseline again — and would
+                # manufacture a FALSE EARNED. Widening what counts as readable is exactly the
+                # direction that can invent an earned green.
+  +             #
+  +             # `and not src_only_reading` (#870, Day 189): a src-only reading has an empty
+  +             # `rollback` by construction, so `parent_test_pathspec` returns ([], []) and
+  +             # this branch fired with an empty file list — `every touched test file is NEW
+  +             # at this commit ()` — which is not merely unhelpful, it is FALSE: no test
+  +             # file was touched at all. The refusal it exists to make is NOT dropped for
+  +             # that path, it MOVES to Site B below, where the question can actually be
+  +             # answered: there the splice has run, so "was anything laid back?" is a
+  +             # measured count rather than a guess. The tests-only path is UNCHANGED.
+                return COULD_NOT_CHECK, (
+                    "every touched test file is NEW at this commit ("
+                    + ", ".join(absent)
+                    + ") — nothing older to lay back, so there is no counterfactual to run"
+  ... (15 more lines)
+ ✓ (1m 16s)
+  -         if not kept:
+  +         if not kept and not src_only_reading:
+                # THE DANGEROUS BRANCH, explicit and never a fall-through. Every touched test
+                # file is new, so there is nothing older to lay back; proceeding would run
+                # POST-task tests against POST-task src/ — just the baseline again — and would
+                # manufacture a FALSE EARNED. Widening what counts as readable is exactly the
+                # direction that can invent an earned green.
+  +             #
+  ... (13 more lines)
+
+Now Site B — the post-splice guard. Let me see the exact end of the splice loop:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SPLICE (src+tests depth… ✓ (3ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=2180 && NR<=2202 {print… ✓ (4ms)
+
+Now Site B, inserted after the splice report and before the cargo run:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (6 → 33 lines)
+                    f"({register_refused} register-listed)",
+                    flush=True,
+                )
+  +             # ---- SITE B (#870, Day 189): NOTHING LAID BACK => NO COMPARISON. ----------
+  +             # `not kept` means the tests/ overlay contributed nothing, which for a
+  +             # src-only reading is true BY CONSTRUCTION. If the splice then also laid
+  +             # nothing back — every candidate refused by #894's register partition, a
+  +             # `git show` failure, a decode error, or SPLICE_NO_POST_MARKER — then the
+  +             # counterfactual tree IS the post-task tree, and running cargo against it
+  +             # would compare the shipped tree with itself and report a green. That green
+  +             # would be FALSE and it would enter the exact rate DREAM.md publishes.
+  +             #
+  +             # This is the refusal Site A's rule 3 promises: a commit is admitted on the
+  +             # PREDICTION that a splice is possible, and this is the one place that
+  +             # prediction is CHECKED against what actually happened. The condition is
+  +             # `not kept and spliced == 0` — "no overlay of ANY kind was applied" — rather
+  +             # than `src_only_reading`, because that is the true statement of the
+  +             # invariant: a commit with a real tests/ overlay is still readable at
+  +             # spliced == 0, and must not be refused here.
+  +             #
+  ... (10 more lines)
+ ✓ (1m 17s)
+                    f"({register_refused} register-listed)",
+                    flush=True,
+                )
+  +             # ---- SITE B (#870, Day 189): NOTHING LAID BACK => NO COMPARISON. ----------
+  +             # `not kept` means the tests/ overlay contributed nothing, which for a
+  +             # src-only reading is true BY CONSTRUCTION. If the splice then also laid
+  +             # nothing back — every candidate refused by #894's register partition, a
+  +             # `git show` failure, a decode error, or SPLICE_NO_POST_MARKER — then the
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=2160 && NR<=2232 {print… ✓ (5ms)
+  2 tools completed in 1m 26s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Site B is correctly placed inside if splice_src: and before the cargo run. Now verify self-tests still pass, then the live check:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (65ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 python3 scripts/coun… ✗ (2m 0s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 14s (1 ✓, 1 ✗)
+
+It's now running real cargo work — evidence it got past the pre-run refusals. Let me run it in the background (a pair takes ~3m07s) while I do non-conflicting work:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && nohup timeou… (2 lines) ✓ (2.0s)
