@@ -5077,6 +5077,185 @@ def run_self_tests():
           classify_src_test_readability(
               _mix, lambda p: False if p == "src/a.rs" else None))
 
+    # ---- #870/#894, Day 190: classify_splice_eligibility — one predicate deeper --------
+    # `readable_at_depth` rule 3 admits a commit when at least one modified `src/*.rs`
+    # carried a parent `#[cfg(test)]` module; #894's `partition_register_listed` then
+    # refuses any candidate that is register-listed. NEITHER CONSULTS THE OTHER, so
+    # READABLE is an upper bound wearing a measurement's clothes. These rows pin the
+    # composition, not a fourth copy of either rule.
+    _listed = frozenset({"src/cli.rs", "src/help.rs"})
+
+    # ANTI-VACUOUS, AND ASSERTED FIRST: a modified, UN-LISTED src/*.rs with a parent test
+    # module must come back SPLICEABLE. A classifier that finds nothing and reports a
+    # clean refusal is this very defect wearing the opposite sign, and it is quieter than
+    # the bug — it would make the wall look taller than it is and re-price #870 wrongly.
+    _one_free = parse_name_status("M\tsrc/gasp.rs\n")
+    check("splice-elig: an un-listed candidate WITH a parent module -> SPLICEABLE",
+          classify_splice_eligibility(_one_free, _listed, _yes)
+          == SPLICE_ELIG_SPLICEABLE,
+          classify_splice_eligibility(_one_free, _listed, _yes))
+
+    # 56a433e8's SHAPE, and the whole reason this measurement exists: admitted READABLE by
+    # rule 3, every candidate refused by #894, `src_spliced: 0`, guaranteed
+    # COULD_NOT_CHECK at the Site-B empty-splice guard — a refusal decidable from the diff
+    # plus the register, paid for with a worktree and a checkout.
+    _both_listed = parse_name_status("M\tsrc/cli.rs\nM\tsrc/help.rs\n")
+    check("splice-elig: every candidate register-listed -> ALL_REGISTER_REFUSED",
+          classify_splice_eligibility(_both_listed, _listed, _yes)
+          == SPLICE_ELIG_ALL_REGISTER_REFUSED,
+          classify_splice_eligibility(_both_listed, _listed, _yes))
+
+    # A DIFFERENT CAUSE WITH A DIFFERENT REMEDY, so it must never be folded into the
+    # register bucket: survivors exist, none carries a parent module. One is fixed by
+    # reconciling two guards; the other cannot be fixed at all.
+    check("splice-elig: survivors but no parent module -> NO_MODULE_AMONG_KEPT",
+          classify_splice_eligibility(_one_free, _listed, _no)
+          == SPLICE_ELIG_NO_MODULE_AMONG_KEPT,
+          classify_splice_eligibility(_one_free, _listed, _no))
+
+    # NEAR-MISS GUARD: no modified src/*.rs at all. Nothing to splice and nothing refused.
+    check("splice-elig: no src/ candidates at all -> NO_CANDIDATES",
+          classify_splice_eligibility(
+              parse_name_status("M\ttests/x.rs\n"), _listed, _yes)
+          == SPLICE_ELIG_NO_CANDIDATES,
+          classify_splice_eligibility(parse_name_status("M\ttests/x.rs\n"), _listed, _yes))
+    check("splice-elig: an empty row set -> NO_CANDIDATES",
+          classify_splice_eligibility([], _listed, _yes) == SPLICE_ELIG_NO_CANDIDATES,
+          classify_splice_eligibility([], _listed, _yes))
+
+    # PRECEDENCE: NO_CANDIDATES is checked FIRST, so an unreadable register cannot make a
+    # commit with nothing to splice look like a register casualty. The register is
+    # irrelevant when there is no candidate to apply it to.
+    check("splice-elig: NO_CANDIDATES wins even when the register is unreadable",
+          classify_splice_eligibility([], None, _yes) == SPLICE_ELIG_NO_CANDIDATES,
+          classify_splice_eligibility([], None, _yes))
+
+    # `register is None` IS ITS OWN BRANCH, never ALL_REGISTER_REFUSED. That outcome would
+    # be TRUE (nothing gets spliced) and FALSE ABOUT THE CAUSE, and the cause is what the
+    # remedy keys on: "refused because it is register-listed" and "refused because I could
+    # not read the register" are different facts.
+    check("splice-elig: an unreadable register -> UNKNOWN, never ALL_REGISTER_REFUSED",
+          classify_splice_eligibility(_one_free, None, _yes) == SPLICE_ELIG_UNKNOWN,
+          classify_splice_eligibility(_one_free, None, _yes))
+
+    # UNKNOWN IS NEVER FOLDED, and the direction is what matters: here the comfortable
+    # bucket is the one that makes the reachable population look BIGGER, which is the
+    # flattering direction for a starved milestone.
+    check("splice-elig: an unresolvable kept candidate -> UNKNOWN",
+          classify_splice_eligibility(_one_free, _listed, _dunno) == SPLICE_ELIG_UNKNOWN,
+          classify_splice_eligibility(_one_free, _listed, _dunno))
+
+    # PRECEDENCE among the kept rows, both directions, mirroring the sibling classifier.
+    _free_mix = parse_name_status("M\tsrc/gasp.rs\nM\tsrc/git.rs\n")
+    check("splice-elig: SPLICEABLE beats UNKNOWN (one resolved yes is enough)",
+          classify_splice_eligibility(
+              _free_mix, _listed,
+              lambda p: True if p == "src/git.rs" else None) == SPLICE_ELIG_SPLICEABLE,
+          classify_splice_eligibility(
+              _free_mix, _listed, lambda p: True if p == "src/git.rs" else None))
+    check("splice-elig: UNKNOWN beats NO_MODULE_AMONG_KEPT",
+          classify_splice_eligibility(
+              _free_mix, _listed,
+              lambda p: False if p == "src/gasp.rs" else None) == SPLICE_ELIG_UNKNOWN,
+          classify_splice_eligibility(
+              _free_mix, _listed, lambda p: False if p == "src/gasp.rs" else None))
+
+    # THE SPLIT TRACKS THE REGISTER RATHER THAN THE WALK, which is the in-test form of
+    # this task's positive control: the SAME rows and the SAME resolver, differing only in
+    # the register, must land in different buckets. A mixed diff is spliceable as long as
+    # ONE survivor carries a module — the refused sibling is simply left at its post-task
+    # version, which is #870 slice 2's own rule that every refusal fails toward EARNED.
+    _mixed_listing = parse_name_status("M\tsrc/cli.rs\nM\tsrc/gasp.rs\n")
+    check("splice-elig: one listed, one free with a module -> SPLICEABLE",
+          classify_splice_eligibility(_mixed_listing, _listed, _yes)
+          == SPLICE_ELIG_SPLICEABLE,
+          classify_splice_eligibility(_mixed_listing, _listed, _yes))
+    check("splice-elig: the same rows under a wider register -> ALL_REGISTER_REFUSED",
+          classify_splice_eligibility(
+              _mixed_listing, _listed | {"src/gasp.rs"}, _yes)
+          == SPLICE_ELIG_ALL_REGISTER_REFUSED,
+          classify_splice_eligibility(_mixed_listing, _listed | {"src/gasp.rs"}, _yes))
+
+    # SCOPE IS src_splice_candidates, NOT A SECOND PREDICATE (#835): A / D / R* rows are
+    # not candidates, so the measurement and the splicer cannot disagree about which files
+    # count.
+    for _status, _label in (("A", "added"), ("D", "deleted"), ("R100", "renamed")):
+        _txt = (f"{_status}\tsrc/x.rs\tsrc/y.rs\n" if _status.startswith("R")
+                else f"{_status}\tsrc/x.rs\n")
+        check(f"splice-elig: an {_label} src/ row is not a candidate -> NO_CANDIDATES",
+              classify_splice_eligibility(parse_name_status(_txt), _listed, _yes)
+              == SPLICE_ELIG_NO_CANDIDATES,
+              classify_splice_eligibility(parse_name_status(_txt), _listed, _yes))
+
+    # ---- #870/#894, Day 190: the census fold and its render ---------------------------
+    _readable_of = lambda _sha: SRC_TESTS_READABLE
+    _fl_rows = [
+        CensusRow("f1", "Day 190 (00:00): a (Task 1, eval-fix 1)", []),
+        CensusRow("f2", "Day 190 (00:00): b (Task 1, eval-fix 1)", []),
+    ]
+    # THE ENTIRE REGRESSION SURFACE: with no eligibility resolver the fold is byte-identical
+    # to the Day-188 shape, so every figure prior sessions read from `--src-census` is
+    # unmoved. Full dict equality, never membership.
+    check("src-census fold: no eligibility resolver -> the Day-188 dict, byte-identical",
+          src_census_fix_loop(_fl_rows, _readable_of) == {
+              "scanned": 2, SRC_TESTS_READABLE: 2, SRC_TESTS_NONE: 0,
+              SRC_TESTS_UNKNOWN: 0},
+          src_census_fix_loop(_fl_rows, _readable_of))
+
+    # The five counts are added only when a resolver is passed, are counted per commit,
+    # and are NEVER summed with the three readability counts above them.
+    _fold = src_census_fix_loop(
+        _fl_rows, _readable_of,
+        lambda sha: (SPLICE_ELIG_SPLICEABLE if sha == "f1"
+                     else SPLICE_ELIG_ALL_REGISTER_REFUSED),
+        register_read=True)
+    check("src-census fold: the five eligibility counts are per-commit and separate",
+          (_fold[SPLICE_ELIG_SPLICEABLE] == 1
+           and _fold[SPLICE_ELIG_ALL_REGISTER_REFUSED] == 1
+           and _fold[SPLICE_ELIG_NO_MODULE_AMONG_KEPT] == 0
+           and _fold[SPLICE_ELIG_NO_CANDIDATES] == 0
+           and _fold[SPLICE_ELIG_UNKNOWN] == 0
+           and _fold[SRC_TESTS_READABLE] == 2
+           and _fold["scanned"] == 2),
+          _fold)
+    check("src-census fold: an unenumerated eligibility answer is UNKNOWN, never a bucket",
+          src_census_fix_loop(_fl_rows, _readable_of,
+                              lambda _s: "SOMETHING_NOBODY_ENUMERATED",
+                              register_read=True)[SPLICE_ELIG_UNKNOWN] == 2,
+          src_census_fix_loop(_fl_rows, _readable_of,
+                              lambda _s: "SOMETHING_NOBODY_ENUMERATED",
+                              register_read=True))
+
+    # ANTI-VACUOUS RENDER, BOTH BRANCHES: a scanner that finds nothing and reports a clean
+    # split is this defect wearing the opposite sign. Neither refusal may read as
+    # "0 blocked".
+    _unread = src_census_fix_loop(_fl_rows, _readable_of, lambda _s: SPLICE_ELIG_UNKNOWN,
+                                  register_read=False)
+    check("src-census render: an unreadable register REFUSES, it is not '0 blocked'",
+          "not '0 blocked'" in render_src_census(_unread, "w")
+          and "register could not be read" in render_src_census(_unread, "w"),
+          render_src_census(_unread, "w")[-400:])
+    _all_unknown = src_census_fix_loop(_fl_rows, _readable_of,
+                                       lambda _s: SPLICE_ELIG_UNKNOWN, register_read=True)
+    check("src-census render: READABLE>0 and every lookup UNKNOWN -> a REFUSAL",
+          "EVERY eligibility " in render_src_census(_all_unknown, "w")
+          and "not '0 blocked'" in render_src_census(_all_unknown, "w"),
+          render_src_census(_all_unknown, "w")[-400:])
+
+    # NEAR-MISS GUARD: a healthy split renders the five counts and NO refusal — a
+    # detector that fires on good data is worse than none.
+    check("src-census render: a healthy split renders no COULD-NOT-CHECK refusal",
+          "not '0 blocked'" not in render_src_census(_fold, "w")
+          and "SPLICEABLE IS THE REACHABLE-AT-DEPTH DENOMINATOR"
+          in render_src_census(_fold, "w"),
+          render_src_census(_fold, "w")[-400:])
+    # And with no resolver at all the block is absent entirely, so a plain --src-census
+    # from before this change renders exactly as it did.
+    check("src-census render: no eligibility resolver -> no SPLICE ELIGIBILITY block",
+          "SPLICE ELIGIBILITY" not in render_src_census(
+              src_census_fix_loop(_fl_rows, _readable_of), "w"),
+          render_src_census(src_census_fix_loop(_fl_rows, _readable_of), "w")[-200:])
+
     # ---- #870, Day 189 (22:42): readable_at_depth — the depth-aware shape gate ---------
     # THE ONLY NEW `True` IS ROW 3. Rows 4 and 5 are the guards against a manufactured
     # green: a wrongly-admitted commit is compared against ITSELF and comes back EARNED,
