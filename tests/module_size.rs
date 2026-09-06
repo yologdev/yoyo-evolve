@@ -379,7 +379,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     ("src/tools.rs", 4037),
     // Day 163 (#726): -58 lines — emerging-risk annotation removed from
     // build_watch_fix_prompt, with its own test; see #724.
-    ("src/watch.rs", 4295),
+    ("src/watch.rs", 4418),
 ];
 
 /// A way the size gate can be violated. Five distinct values on purpose —

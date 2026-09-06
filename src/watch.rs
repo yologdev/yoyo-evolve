@@ -815,7 +815,32 @@ fn categorize_python_message(msg: &str) -> ErrorCategory {
 /// is named here and filed rather than guessed at.
 pub fn parse_python_errors(output: &str) -> Vec<CompilerError> {
     let mut errors: Vec<CompilerError> = Vec::new();
-    let lines: Vec<&str> = output.lines().collect();
+    // #861: strip ANSI *before* any anchor below runs. `pytest` colours its
+    // summary and puts the escape *in front of* the `FAILED` token, which
+    // defeats `starts_with("FAILED ")` outright — measured 2026-09-06 against
+    // pytest 9.1.1: a coloured capture yielded **0** errors where its plain
+    // twin yielded 2. Applied at this ONE site rather than per-pattern so
+    // every helper reading these lines inherits it: a per-pattern fix restores
+    // the error and still loses the `file`/`line`, because the location
+    // anchors are defeated by exactly the same mechanism. #859's reasoning
+    // verbatim, one parser over, and the same two-line shape
+    // `parse_rust_errors` uses above.
+    //
+    // Measured scope, so this is not read as wider than it is: piped with no
+    // flag pytest emits **no** escapes at all (0 ESC bytes), so the shape
+    // yoyo's own watch loop sees was never affected. The exposed paths are a
+    // forced `--color=yes` (in a Makefile, tox.ini or CI config) and
+    // `PY_COLORS=1` in the environment — the latter reproduces on a plain
+    // pipe, and is the analogue of the `CARGO_TERM_COLOR=always` route that
+    // made #859 product-real. The whole capture carried 85 ESC bytes, all 85
+    // CSI (SGR form), **0 OSC** — so OSC-8 hyperlinks are deliberately not
+    // handled, exactly as #859 records for cargo: a branch no fixture
+    // exercises is a claim no test can grade.
+    //
+    // A line with no ESC returns `Cow::Borrowed` and is byte-identical, which
+    // is the entire regression surface.
+    let stripped: Vec<std::borrow::Cow<'_, str>> = output.lines().map(strip_ansi_escapes).collect();
+    let lines: Vec<&str> = stripped.iter().map(|c| c.as_ref()).collect();
 
     // Track the last traceback frame so we can attach it to the error line
     let mut last_tb_file: Option<String> = None;
@@ -3844,6 +3869,104 @@ E       assert 3 == 4
             !e_lines.is_empty(),
             "should have assertion detail lines: {errors:?}"
         );
+    }
+
+    /// #861 (Python half): `pytest` colours its summary, and the escape sits
+    /// *in front of* the `FAILED` token, which defeats `starts_with("FAILED ")`.
+    ///
+    /// Both fixtures are **captured verbatim** from a real run rather than
+    /// hand-typed (rounds 81 and 87 each lost a bet to a hand-typed fixture,
+    /// which pins my belief about the input rather than the input):
+    ///   `python3 -m venv /tmp/py861 && /tmp/py861/bin/pip install pytest`
+    ///   `cd /tmp/py861-proj && pytest --color=yes 2>&1 | cat`
+    /// pytest 9.1.1, 2026-09-06. The whole capture carried **85 ESC bytes, all
+    /// 85 CSI (SGR form), 0 OSC** — so OSC-8 hyperlinks are deliberately not
+    /// exercised here, exactly as #859 records for cargo.
+    #[test]
+    fn parse_python_errors_reads_a_coloured_pytest_summary_861() {
+        let coloured = "\u{1b}[31mFAILED\u{1b}[0m tests/test_auth.py::\u{1b}[1mtest_login\u{1b}[0m - assert 401 == 200\n\u{1b}[31mFAILED\u{1b}[0m tests/test_auth.py::\u{1b}[1mtest_signup\u{1b}[0m - ValueError: invalid email\n";
+        let plain = "FAILED tests/test_auth.py::test_login - assert 401 == 200\nFAILED tests/test_auth.py::test_signup - ValueError: invalid email\n";
+
+        // Anti-vacuous: the fixtures must really differ in the way claimed, or
+        // a transcription slip could make this pass by having both sides agree
+        // on nothing.
+        assert!(
+            coloured.contains('\u{1b}'),
+            "coloured fixture must carry an ESC byte"
+        );
+        assert!(
+            !plain.contains('\u{1b}'),
+            "plain fixture must carry no ESC byte"
+        );
+
+        let from_colour = parse_python_errors(coloured);
+        let from_plain = parse_python_errors(plain);
+
+        // The two renderings must describe the same errors. Strictly stronger
+        // than either assertion alone: this fails both when colour *hides* an
+        // error and when the stripping branch *invents* one.
+        assert_eq!(
+            from_colour.len(),
+            from_plain.len(),
+            "coloured and plain pytest output must yield the same errors: {from_colour:?} vs {from_plain:?}"
+        );
+        assert_eq!(
+            from_colour.len(),
+            2,
+            "expected two failures: {from_colour:?}"
+        );
+
+        // Literal values asserted too, so a regression breaking BOTH renderings
+        // identically cannot pass by agreeing with itself.
+        for errs in [&from_colour, &from_plain] {
+            assert_eq!(errs[0].file.as_deref(), Some("tests/test_auth.py"));
+            assert_eq!(errs[0].message, "assert 401 == 200");
+            assert_eq!(errs[1].file.as_deref(), Some("tests/test_auth.py"));
+            assert_eq!(errs[1].message, "ValueError: invalid email");
+        }
+
+        // No escape byte may survive into a stored field: these go into an API
+        // prompt, where an escape is pure token waste.
+        for e in &from_colour {
+            assert!(
+                !e.message.contains('\u{1b}'),
+                "message kept an escape: {:?}",
+                e.message
+            );
+            assert!(
+                !e.file.as_deref().unwrap_or("").contains('\u{1b}'),
+                "file kept an escape: {:?}",
+                e.file
+            );
+            assert!(
+                !e.code.as_deref().unwrap_or("").contains('\u{1b}'),
+                "code kept an escape: {:?}",
+                e.code
+            );
+        }
+    }
+
+    /// #861 near-miss guard: uncoloured Python output is byte-identical to
+    /// before. This is every user whose runner disables colour on a pipe —
+    /// **which is pytest's own default**, measured the same session: piped with
+    /// no flag the capture carried **0** ESC bytes. A discriminator tested only
+    /// on the side that fires is vacuous green.
+    #[test]
+    fn parse_python_errors_uncoloured_output_is_unchanged_861() {
+        let output = "\
+FAILED tests/test_auth.py::test_login - AssertionError: expected 200 but got 401
+src/foo.py:42: error: Incompatible types in assignment
+";
+        let errors = parse_python_errors(output);
+        assert_eq!(errors.len(), 2, "should parse both shapes: {errors:?}");
+        assert_eq!(errors[0].file.as_deref(), Some("tests/test_auth.py"));
+        assert_eq!(
+            errors[0].message,
+            "AssertionError: expected 200 but got 401"
+        );
+        assert_eq!(errors[1].file.as_deref(), Some("src/foo.py"));
+        assert_eq!(errors[1].line, Some(42));
+        assert_eq!(errors[1].message, "Incompatible types in assignment");
     }
 
     // -----------------------------------------------------------------------
