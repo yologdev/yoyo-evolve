@@ -1,0 +1,195 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code — the measurement is the deliverable here, and I need to see the real list before I can drive it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TRANSIENT_ERROR_SHAPES"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn is_retriable_error" … ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.0s (2 ✓)
+
+The code comment already references a Day-189 corpus search and a broad_word_tests module. My own rule says to settle a task-file premise by grep rather than trust it — let me check what already exists before writing anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "broad_word_tests" -A 12…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RETRY_DIRECTIVES\|fn me… ✓ (5ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.9s (2 ✓)
+
+The task premise is stale — the corpus search already ran on Day 189 (19:08) and the verdict was recorded. Let me read the whole existing module before deciding what's actually left.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2255,2420p' src/prompt_r… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've found the key fact: the task premise is stale. Day 189 (19:08) already ran this measurement — corpus search over 5315 transcripts, verdict LEAVE ALL THREE, with the word-deletion column already pinned. My own rule says: when the capability exists, don't rebuild it — ask what about it is unguarded.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2420,2500p' src/prompt_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "authentication\|unautho… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 59.2s (2 ✓)
+
+Now I have the full picture. The Day-189 work is thorough — but I've found what it left unguarded, and it's exactly the row the task file asked for that Day 189 never covered.
+
+is_retriable_error scans two terminal families before the transient list. The existing test pins the numeric one. Nothing pins the non-numeric phrase family (authentication, quota exceeded, …) colliding with a broad word — the closest test drives "authentication failed", which carries no transient word at all, so the precedence never has to fire.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (1 → 78 lines)
+  +     /// A terminal **phrase** beats all three words — the guard the Day-189
+  +     /// verdict silently depends on and never asserted.
+  +     ///
+  +     /// `a_terminal_status_code_beats_every_one_of_the_three_broad_words` above
+  +     /// pins the *numeric* family. But `is_retriable_error` scans **two**
+  +     /// terminal families before the transient list, and the second is the
+  +     /// non-numeric phrase list (`authentication`, `permission denied`,
+  +     /// `quota exceeded`, `credit balance`, …). Nothing anywhere pinned a
+  +     /// collision between that family and one of the three broad words: the
+  +     /// closest pre-existing assertion drives `"authentication failed"`, which
+  +     /// carries no transient word at all, so the precedence never had to fire.
+  +     ///
+  +     /// It is load-bearing **because** the three words were deliberately left
+  +     /// broad. Keeping them means a billing or auth failure phrased in
+  +     /// transient language is terminal *only* by scan order — and that phrasing
+  +     /// is ordinary provider English, not a contrived shape: quota exhaustion
+  +     /// routinely says "capacity", and an auth failure behind a proxy routinely
+  +     /// says "connection". Reorder these two loops, or merge them for tidiness,
+  +     /// and a permanently dead key burns `MAX_RETRIES` attempts instead of
+  +     /// surfacing its real diagnosis. The words stay broad (corpus absence —
+  ... (58 more lines)
+ ✓ (1m 57s)
+  +     /// A terminal **phrase** beats all three words — the guard the Day-189
+  +     /// verdict silently depends on and never asserted.
+  +     ///
+  +     /// `a_terminal_status_code_beats_every_one_of_the_three_broad_words` above
+  +     /// pins the *numeric* family. But `is_retriable_error` scans **two**
+  +     /// terminal families before the transient list, and the second is the
+  +     /// non-numeric phrase list (`authentication`, `permission denied`,
+  +     /// `quota exceeded`, `credit balance`, …). Nothing anywhere pinned a
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo broad_word… ✓ (168ms)
+  2 tools completed in 2m 0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Test passes — the precedence holds and is now asserted. Now the positive control, as one atomic mutate→run→restore so the restore cannot be forgotten.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (20 lines) ✓ (26.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired — but it revealed something I must check before claiming the gap: terminal_family_wins_when_a_message_carries_both also went red. Let me read it rather than overstate my finding.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1155,1200p' src/prompt_r… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Important correction before I claim anything: that mutation broke the whole family at once, so the mechanism already had coverage. The honest test of whether my guard adds anything is a mutation only it can catch — removing one phrase entry.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (11 lines) ✓ (25.1s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The assert caught my own imprecise anchor — "quota exceeded", appears twice, so nothing was mutated and that 129-passed run was against the clean file. Retrying with a unique anchor.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (11 lines) ✓ (24.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The discriminating control fired exactly right: exactly 1 test red — mine — while terminal_family_wins_when_a_message_carries_both stayed green. So the guard is not redundant: the mechanism had coverage, per-entry coverage did not. Now the full gates.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (27.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Drift warning — and per my own four-times-recurring debt, I paste what the gate itself prints rather than hand-typing it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (162ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (524ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Zero warnings. Full suite now:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 41s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now CLAUDE.md — and the honest version of this is that the task's premise was stale, so the deliverable is different from the one commissioned.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - because a directive is mechanically detectable and its honesty is not.
+  + because a directive is mechanically detectable and its honesty is not. **Day 190 — the commissioned measurement ALREADY EXISTED, so the deliverable is the unguarded half of the decision instead.** The task asked to measure the three remaining broad words at the emission point and narrow what the measurement licensed; step 0 was to settle that premise by reading rather than trusting it, and `broad_word_tests` already held the whole thing — a corpus search over **5315 `audit-log` transcripts**… [yoyo: 4098 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 16s)
+  - because a directive is mechanically detectable and its honesty is not.
+  + because a directive is mechanically detectable and its honesty is not. **Day 190 — the commissioned measurement ALREADY EXISTED, so the deliverable is the unguarded half of the decision instead.** The task asked to measure the three remaining broad words at the emission point and narrow what the measurement licensed; step 0 was to settle that premise by reading rather than trusting it, and `broad_word_tests` already held the whole thing — a corpus search over **5315 `audit-log` transcripts**… [yoyo: 4098 more bytes elided — diff lines are capped at 500 bytes]
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+CLAUDE.md updated. Final verification, then commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (2m 34s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 14 test targets green, fmt and clippy clean. Committing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (33 lines) ✓ (31ms)
+
+Committed. Here's what happened, honestly.
+
+## The task premise was stale
+
+I was asked to measure three broad retry words (connection, timeout, capacity) and narrow what the measurement licensed. My own rule says settle a "nothing does X" premise by reading rather than trusting it — so I read `src/prompt_retry.rs first, and the measurement **already existed**. Day 189 (19:08) had searched 5315 audit-log` transcripts, found **zero** real provider errors carrying those words (every hit was my own prose about the detector), and recorded the verdict LEAVE ALL THREE — for corpus absence, not demonstrated load-bearing. The word-deletion column the task named as its load-bearing half was already live as a test.
+
+So: zero narrowings, which the task file named in advance as a complete outcome. Narrowing from an absent corpus is narrowing from imagination, and it fails in the expensive direction — a transient error read as terminal ends a run for good, where the bug it fixes only wastes attempts.
+
+## What I found instead
+
+The verdict rests on a dependency nothing asserted. `is_retriable_error scans **two** terminal families before the transient list, and only the *numeric* one was pinned against the three broad words. The non-numeric phrase family (authentication, quota exceeded`, …) is what makes leaving the words broad safe at all — a billing or auth failure phrased in transient language is terminal only by scan order, and that phrasing is ordinary provider English, not contrived. The closest existing test drove "authentication failed", which carries no transient word, so the precedence never had to fire.
+
+## The control corrected me, and I kept the correction
+
+My first framing — "completely unguarded" — was **too strong*. Mutating the phrase loop's early return reddened two* tests, so the mechanism already had coverage. The discriminating control is what settles whether the new guard is anything but ceremony: deleting only the "quota exceeded" entry turns exactly 1 test red (mine) while terminal_family_wins_when_a_message_carries_both stays green — its rows collide with rate-limit entries, never with the three broad words. Honest scope: per-entry coverage, not the mechanism; the two tests share zero phrase entries.
+
+A third control attempt **failed its own assert and mutated nothing** (`"quota exceeded",` occurs twice — the billing diagnostic has the other). The run that scrolled past was against the clean file and proves nothing. That's the anchor-precision guard working, and it's worth recording rather than hiding.
+
+Register moved 2486 → 2567, pasted from what the gate itself printed — that debt has recurred four times and it is one line.
+
+The limit: this makes the decision's dependency explicit; it does not make the words narrower. #855's remaining question is answerable only by a corpus that does not exist.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 1/1 (100.0%) — reactive was 0.0%
+     Surprises (not predicted): src/prompt_retry.rs
+

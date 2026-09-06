@@ -1,0 +1,230 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the script — the three functions I need to compose and the --src-census pass.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def src_splice_candidat… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1040,1200p' scripts/coun… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1200,1300p' scripts/coun… ✓ (4ms)
+  3 tools completed in 15.8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---L… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree — no work landed yet. Let me read the remaining pieces I need compactly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1660,1800p' scripts/coun… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src_census\|src-census"… ✓ (4ms)
+  2 tools completed in 5.1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, no work landed. I have all the pieces I need. Let me write the classifier now.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 112 lines)
+        return SRC_TESTS_UNKNOWN if saw_unknown else SRC_TESTS_NONE
+  + 
+  + 
+  + # Five states for "can a src+tests counterfactual ACTUALLY splice this commit?", and none
+  + # is folded into another. This is one predicate deeper than `SRC_TESTS_*` above: that one
+  + # asks whether any modified `src/*.rs` carried a parent test module, this one asks whether
+  + # any such file SURVIVES #894's register exclusion. Day 190 (03:29) measured the gap on a
+  + # real commit -- `56a433e8` was admitted READABLE, had BOTH candidates refused
+  + # (`src/cli.rs`, `src/help.rs`), got `src_spliced: 0`, and landed on a guaranteed
+  + # `COULD_NOT_CHECK` at the Site-B empty-splice guard, paying a worktree, a checkout and a
+  + # register parse to produce a refusal decidable from the diff plus the register.
+  + SPLICE_ELIG_SPLICEABLE = "SPLICE_ELIG_SPLICEABLE"
+  + SPLICE_ELIG_ALL_REGISTER_REFUSED = "SPLICE_ELIG_ALL_REGISTER_REFUSED"
+  + SPLICE_ELIG_NO_MODULE_AMONG_KEPT = "SPLICE_ELIG_NO_MODULE_AMONG_KEPT"
+  + SPLICE_ELIG_NO_CANDIDATES = "SPLICE_ELIG_NO_CANDIDATES"
+  + SPLICE_ELIG_UNKNOWN = "SPLICE_ELIG_UNKNOWN"
+  + 
+  + 
+  + def classify_splice_eligibility(rows, register, has_parent_test_module) -> str:
+  +     """Can a src+tests counterfactual actually SPLICE this commit? Pure; both inputs injected.
+  ... (92 more lines)
+ ✓ (1m 14s)
+        return SRC_TESTS_UNKNOWN if saw_unknown else SRC_TESTS_NONE
+  + 
+  + 
+  + # Five states for "can a src+tests counterfactual ACTUALLY splice this commit?", and none
+  + # is folded into another. This is one predicate deeper than `SRC_TESTS_*` above: that one
+  + # asks whether any modified `src/*.rs` carried a parent test module, this one asks whether
+  + # any such file SURVIVES #894's register exclusion. Day 190 (03:29) measured the gap on a
+  + # real commit -- `56a433e8` was admitted READABLE, had BOTH candidates refused
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the shared-resolver factory — one diff and one show-cache per sha, feeding both classifiers.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (6 → 63 lines)
+        return classify_src_test_readability(
+            parse_name_status(out), _has_parent_test_module
+        )
+  + 
+  + 
+  + def fix_loop_src_resolvers(root: str, register):
+  +     """Build `(readability_of, eligibility_of)` sharing ONE diff and ONE show-cache per sha.
+  + 
+  +     Day 190, #870/#894. The `--src-census` pass already pays a
+  +     `git diff --name-status <sha>^ <sha> -- src/` per commit plus a `git show <sha>^:<path>`
+  +     per candidate. The splice-eligibility question needs EXACTLY THE SAME LOOKUPS -- same
+  +     diff, same candidate set (`src_splice_candidates`), same parent-module probe -- so this
+  +     threads both classifiers through one cache rather than adding a second walk. Measuring
+  +     a population must not double the cost of measuring it.
+  + 
+  +     Both closures are total: a `<sha>^` that does not resolve (a root commit, or a
+  +     shallow-clone boundary) yields the UNKNOWN value of each vocabulary, never a crash and
+  +     never a fallback into a real bucket. A `git show` that fails yields `None` from the
+  +     probe -- "I could not check" must not read as "checked; there is no module".
+  + 
+  ... (43 more lines)
+ ✓ (1m 14s)
+        return classify_src_test_readability(
+            parse_name_status(out), _has_parent_test_module
+        )
+  + 
+  + 
+  + def fix_loop_src_resolvers(root: str, register):
+  +     """Build `(readability_of, eligibility_of)` sharing ONE diff and ONE show-cache per sha.
+  + 
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 1 lines)
+  - def src_census_fix_loop(rows, readability_of) -> dict:
+  + def src_census_fix_loop(rows, readability_of, eligibility_of=None, register_read=None) -> dict:
+ ✓ (1m 15s)
+  - def src_census_fix_loop(rows, readability_of) -> dict:
+  + def src_census_fix_loop(rows, readability_of, eligibility_of=None, register_read=None) -> dict:
+  2 tools completed in 2m 42s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (15 → 35 lines)
+            SRC_TESTS_NONE: 0,
+            SRC_TESTS_UNKNOWN: 0,
+        }
+  +     elig_states = (
+  +         SPLICE_ELIG_SPLICEABLE,
+  +         SPLICE_ELIG_ALL_REGISTER_REFUSED,
+  +         SPLICE_ELIG_NO_MODULE_AMONG_KEPT,
+  +         SPLICE_ELIG_NO_CANDIDATES,
+  +         SPLICE_ELIG_UNKNOWN,
+  +     )
+  +     if eligibility_of is not None:
+  +         # Day 190, #870/#894. The five splice-eligibility counts are added ONLY when a
+  +         # resolver is supplied, so a caller that asks the Day-188 question alone gets the
+  +         # Day-188 dict byte-for-byte -- which is what keeps the pre-existing self-tests
+  +         # honest regression guards rather than tests that were adjusted to fit.
+  +         counts["register_read"] = register_read
+  +         for state in elig_states:
+  +             counts[state] = 0
+        for row in scanned:
+            state = readability_of(row.sha)
+  ... (11 more lines)
+ ✓ (1m 15s)
+            SRC_TESTS_NONE: 0,
+            SRC_TESTS_UNKNOWN: 0,
+        }
+  +     elig_states = (
+  +         SPLICE_ELIG_SPLICEABLE,
+  +         SPLICE_ELIG_ALL_REGISTER_REFUSED,
+  +         SPLICE_ELIG_NO_MODULE_AMONG_KEPT,
+  +         SPLICE_ELIG_NO_CANDIDATES,
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def render_src_census/… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (7 → 56 lines)
+            lines.append(
+                "  COULD NOT CHECK: zero fix-loop NO_TEST_CHANGE commits in this window. "
+                "That is a REFUSAL, not '0 readable'."
+  +         )
+  +     if SPLICE_ELIG_SPLICEABLE in counts:
+  +         spliceable = counts.get(SPLICE_ELIG_SPLICEABLE, 0)
+  +         reg_refused = counts.get(SPLICE_ELIG_ALL_REGISTER_REFUSED, 0)
+  +         no_module = counts.get(SPLICE_ELIG_NO_MODULE_AMONG_KEPT, 0)
+  +         no_cands = counts.get(SPLICE_ELIG_NO_CANDIDATES, 0)
+  +         elig_unknown = counts.get(SPLICE_ELIG_UNKNOWN, 0)
+  +         register_read = counts.get("register_read")
+  +         lines.extend(
+  +             [
+  +                 "",
+  +                 "  SPLICE ELIGIBILITY \u2014 one predicate deeper (#870/#894, Day 190)",
+  +                 f"  -> SPLICEABLE  (a register-KEPT candidate has a parent module) .. {spliceable}",
+  +                 f"  -> ALL_REGISTER_REFUSED (every candidate is register-listed) .... {reg_refused}",
+  +                 f"  -> NO_MODULE_AMONG_KEPT (survivors, none with a parent module) .. {no_module}",
+  +                 f"  -> NO_CANDIDATES        (no modified src/*.rs at all) ........... {no_cands}",
+  +                 f"  -> UNKNOWN              (register unread, or lookups refused) ... {elig_unknown}",
+  ... (34 more lines)
+ ✓ (1m 15s)
+            lines.append(
+                "  COULD NOT CHECK: zero fix-loop NO_TEST_CHANGE commits in this window. "
+                "That is a REFUSAL, not '0 readable'."
+  +         )
+  +     if SPLICE_ELIG_SPLICEABLE in counts:
+  +         spliceable = counts.get(SPLICE_ELIG_SPLICEABLE, 0)
+  +         reg_refused = counts.get(SPLICE_ELIG_ALL_REGISTER_REFUSED, 0)
+  +         no_module = counts.get(SPLICE_ELIG_NO_MODULE_AMONG_KEPT, 0)
+  ... (13 more lines)
+  3 tools completed in 2m 55s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src_census" scripts/cou… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3258,3272p' scripts/coun… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (5 → 19 lines)
+            if args.src_census:
+  +             # Day 190, #870/#894: the register is resolved ONCE here -- the authority is
+  +             # `tests/module_size.rs`, never a second copy of the register -- and both
+  +             # resolvers share one diff and one show-cache per sha, so measuring splice
+  +             # eligibility adds no second walk over the arm.
+  +             gate_path = os.path.join(root, MODULE_SIZE_GATE_REL_PATH)
+  +             try:
+  +                 with open(gate_path, "r", encoding="utf-8", errors="replace") as fh:
+  +                     register = parse_grandfathered_register(fh.read())
+  +             except OSError:
+  +                 register = None
+  +             readability_of, eligibility_of = fix_loop_src_resolvers(root, register)
+                src_counts = src_census_fix_loop(
+  -                 rows, lambda sha: commit_src_test_readability(root, sha)
+  +                 rows,
+  +                 readability_of,
+  +                 eligibility_of=eligibility_of,
+  +                 register_read=register is not None,
+                )
+                print(render_src_census(src_counts, window))
+ ✓ (1m 15s)
+            if args.src_census:
+  +             # Day 190, #870/#894: the register is resolved ONCE here -- the authority is
+  +             # `tests/module_size.rs`, never a second copy of the register -- and both
+  +             # resolvers share one diff and one show-cache per sha, so measuring splice
+  +             # eligibility adds no second walk over the arm.
+  +             gate_path = os.path.join(root, MODULE_SIZE_GATE_REL_PATH)
+  +             try:
+  +                 with open(gate_path, "r", encoding="utf-8", errors="replace") as fh:
+  ... (12 more lines)
+  3 tools completed in 1m 26s (3 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^import os\|^import \|^… ✓ (59ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+os is imported and syntax is clean. Now the self-tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'src-census: UNKNOWN bea… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5074,5090p' scripts/coun… ✓ (3ms)
+  2 tools completed in 3.8s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
