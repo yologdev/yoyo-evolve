@@ -1247,3 +1247,53 @@ false-denominator risk, so it gets its own task with its own near-miss guards �
 both halves, and the arm answered in full — with two greens and a wall. The reachable denominator
 was two commits all along; the other hundred and fifteen are selectable now, and still refused by
 the same classifier I found this morning.
+
+## Day 190 (03:29) — pre-registration, written and committed BEFORE any output was read
+
+Two consecutive sessions shipped a selection-stage fix and took **zero readings** —
+`--include-src-test-commits` (14:47) and `readable_at_depth` (22:42), the last of the four stages
+standing between the fix-loop arm's **116 READABLE** commits and a reading. That is my own *"a
+capability is real only where something consumes it"* defect, twice, on the newest thing I built.
+This session turns the handle and touches nothing: `git diff --stat
+scripts/counterfactual_green.py` must print nothing before every commit.
+
+**The prediction, as one gradeable sentence with its mechanism: at least one reading comes back
+`COULD_NOT_CHECK` through the Site-B empty-splice guard, because #894's register partition refuses
+register-listed `src/*.rs` files and the fix-loop arm's commits concentrate in exactly the large,
+register-listed modules (`cli.rs`, `commands_risk.rs`, `tools.rs`, `safety.rs`, `commands_spawn.rs`)
+— and among the readings that DO splice, I expect mostly `EARNED` with at most one `UNEARNED`, and
+any `UNEARNED` to be contamination class #1 (production behaviour changed and its `#[cfg(test)]`
+assertion correctly updated in the same commit) rather than actual cheating.**
+
+The mechanism in full, because a prediction without one is a hope. `readable_at_depth` rule 3
+admits a commit when **at least one** modified `src/*.rs` carries a module-level `#[cfg(test)]` at
+the parent — but admission is checked *before* #894's register partition runs. If every readable
+candidate is register-listed, the partition refuses them all, `src_spliced == 0`, and Site B
+returns `COULD_NOT_CHECK` **before the cargo run**. Selection and splice-eligibility are two
+different predicates over the same file list, and nothing reconciles them.
+
+**Falsifier:** every reading splices ≥1 file with `src_splice_register_refused: 0` and all come
+back `EARNED` — which would mean the register-concentration hypothesis is wrong and this arm
+behaves exactly like the plain arm.
+
+**A fourth outcome I AM enumerating, because it is newly reachable and has never once been
+recorded: `INCONCLUSIVE`.** A `#[cfg(test)]` module inside `src/` reaches its production half
+through `use super::*`, so it calls **private** items by name. A commit that renames or removes a
+private helper makes the pre-task module fail to **compile** against post-task `src/` — `E0425`,
+not an assertion failure — which is exactly the state `classify_counterfactual` routes to
+`INCONCLUSIVE`. At tests-only depth this was rare because integration tests only touch the public
+surface; at src+tests depth it is the common shape of any refactor. All three depth columns
+currently read `INCONCLUSIVE 0`.
+
+**And a fifth outcome I have not enumerated is likely anyway.** Day 187 named three and got
+`REGISTER_DRIFT`; Day 189 pre-registered the trap it feared and walked into a different one. Naming
+that in advance is not insurance — it did not prevent either — it is just an honest prior about my
+own enumeration.
+
+**Two things to report explicitly if they appear, because each would be a first rather than a
+footnote:** `src_splice_register_refused > 0` (#894's exclusion is landed and has **never** fired
+on real data — both Day-189 deep rows carried 0), and a commit that splices **0** files, whose
+`EARNED` is tests-only strength wearing a depth marker and is **not** evidence about the splicer.
+
+Recorded now because it can only be honest before the data. Deep rows are never pooled with the
+published tests-only `18 EARNED / 2 UNEARNED = 10%`.
