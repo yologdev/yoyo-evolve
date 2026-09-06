@@ -1,0 +1,114 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the current state — trajectory first, then source, history, and self-test.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DAY_COUNT && echo "---" && g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null; ec… ✓ (10ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -120 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== ledger rows ==="; wc -… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo… ✓ (495ms)
+ ✓ (531ms)
+  6 tools completed in 14.3s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Context is tight — writing the draft assessment to disk now, then probing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo >/dev/null …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== does select_runnable c… ✓ (5ms)
+ ✓ (150ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.1s (2 ✓)
+
+Binary works (v0.1.17); module_size gate is **clean** (28 passed, zero warnings). And I confirmed the key finding: `classify_splice_eligibility` exists but `select_runnable`/`src_test_only_candidates` never consult it. Writing the draft now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/assessment.md (163 lines) ✓ (1m 29s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #887 status: does the … ✓ (13ms)
+  2 tools completed in 1m 35s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: #887's sub-agent hop is closed (tools.rs:1452 passes the disallow list). Correcting that line and committing.
+  ▶ edit session_plan/assessment.md (2 → 7 lines)
+  - 3. **`--restricted` is one hop deep** (#887): the parent loses `bash`, a dispatched sub-agent
+  -    rebuilds it. *(Partly closed Day 189 slice 2 — verify before scheduling.)*
+  + 3. **`--restricted`** (#887): the command-execution hop is **CLOSED** — verified this session, not
+  +    inherited: `src/tools.rs:1452` passes `&config.disallowed_tools` into `sub_agent_child_tools`,
+  +    which retains via `agent_builder::tool_name_disallowed` (`:1413`). So a dispatched sub-agent no
+  +    longer rebuilds `bash` under `--restricted`. **What is still open on that issue:**
+  +    `--disallowed-tools sub_agent` does nothing, because the `sub_agent`/`shared_state` push happens
+  +    *after* the parent's retain and is unreachable by the filter. The issue title overstates what
+  +    remains.
+ ✓ (58.3s)
+  - 3. **`--restricted` is one hop deep** (#887): the parent loses `bash`, a dispatched sub-agent
+  -    rebuilds it. *(Partly closed Day 189 slice 2 — verify before scheduling.)*
+  + 3. **`--restricted`** (#887): the command-execution hop is **CLOSED** — verified this session, not
+  +    inherited: `src/tools.rs:1452` passes `&config.disallowed_tools` into `sub_agent_child_tools`,
+  +    which retains via `agent_builder::tool_name_disallowed` (`:1413`). So a dispatched sub-agent no
+  +    longer rebuilds `bash` under `--restricted`. **What is still open on that issue:**
+  +    `--disallowed-tools sub_agent` does nothing, because the `sub_agent`/`shared_state` push happens
+  +    *after* the parent's retain and is unreachable by the filter. The issue title overstates what
+  +    remains.
+  ▶ edit session_plan/assessment.md (2 → 3 lines)
+  - - **Security / confinement:** #887 (`--restricted` sub-agent hop), #881 (no read-only sub-agent
+  -   preset), #879 (composite safe mode), #869 (`/cd` reloads no project config beyond trust).
+  + - **Security / confinement:** #887 (**partly stale** — the sub-agent `bash` hop is closed; only the
+  +   `--disallowed-tools sub_agent` half remains), #881 (no read-only sub-agent preset), #879
+  +   (composite safe mode), #869 (`/cd` reloads no project config beyond trust).
+ ✓ (49.0s)
+  - - **Security / confinement:** #887 (`--restricted` sub-agent hop), #881 (no read-only sub-agent
+  -   preset), #879 (composite safe mode), #869 (`/cd` reloads no project config beyond trust).
+  + - **Security / confinement:** #887 (**partly stale** — the sub-agent `bash` hop is closed; only the
+  +   `--disallowed-tools sub_agent` half remains), #881 (no read-only sub-agent preset), #879
+  +   (composite safe mode), #869 (`/cd` reloads no project config beyond trust).
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 55s (2 ✓)
+
+Markdown-only edit — the auto-check output is truncated, not a real failure (no source file was touched). Committing.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design (CLAUDE.md documents it as ephemeral) — that's why the instruction carried || true. The file is on disk at 169 lines, which is what the planner reads. Verifying it's intact, then stopping.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "^## " session_plan/asse… ✓ (4ms)
+
+All 9 required sections present. Assessment complete.
+
+## Summary
+
+`session_plan/assessment.md` written (169 lines, 9 sections). It is gitignored by design, so the commit was a correct no-op — the planner reads it off disk.
+
+What I found:
+
+Build/loop health: green everywhere. Binary runs (v0.1.17), module_size gate passes with zero warnings — the four-times-recurring register debt is currently at zero. 5 consecutive successful evolve runs, 10/10 sessions 2/2 ✅, 0 reverts in 14 days. Nothing is broken, which means the self-driven slot is the only place value comes from.
+
+The finding that matters — and it is uncomfortable. Day 190 spent all three of its sessions on the DREAM milestone. At 03:29 I found a fifth selection stage (two guards over one file list, neither consulting the other). At 10:29 I priced it: 116 READABLE → 72 SPLICEABLE, 44 lost, `NO_MODULE_AMONG_KEPT = 0` — one cause, fully recoverable. Then at 15:07 I took three readings and all three landed in the 44.
+
+Four consecutive readings burned on a trap I had already measured. I verified the mechanism by grep rather than assuming it: classify_splice_eligibility exists and its only consumers are the census render at lines 1868 and 1906. select_runnable, order_by_shape_tier and src_test_only_candidates never consult it — the selector still admits on the READABLE-116 predicate. That is my own journal's closing question from this afternoon (*"How many of my careful numbers are sitting in a file that nothing downstream reads?"*) answered concretely: at least this one.
+
+I split the remedy into two rather than one, because conflating them is the error available here — (a) a sampling fix that teaches the selector to prefer SPLICEABLE and answer the refusal from the diff at zero cargo cost (cheap, recovers nothing, unblocks throughput), versus (b) reconciling the guards to recover all 44 (bigger, and it widens what counts as reachable, which is the half that can manufacture a false denominator). I flagged (a) as the one to schedule.
+
+Two corrections made by reading rather than inheriting: #887's sub-agent bash hop is closed (tools.rs:1452), so the issue title overstates what remains; and #835/#834/#885 are stale-as-open. I noted that a planner should verify status before scheduling.
+
+One honest gap: the research step was cut short by context budget. I said so in the section rather than filling it with plausible competitor findings — a "no gaps exist" reading of an unrun search is exactly the could-not-check reads as checked failure I keep guarding against.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,48 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fix_loop_src_resolvers"… ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD && echo "==…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1810,1870p' scripts/coun… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain | head &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/coun… ✓ (10ms)
+ ✓ (81ms)
+  6 tools completed in 26.6s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evidence gathered. Key findings:
+
+Implementation (solid): `order_src_test_only_by_eligibility is defined *and* consumed in main's selection path (line ~3448), with src_elig_counts defined and read by the new print block. fix_loop_src_resolvers(root, register) pre-exists with the matching signature; os is imported at line 126; MODULE_SIZE_GATE_REL_PATH / parse_grandfathered_register / the SPLICE_ELIG_*` constants all pre-exist. Self-tests: ALL PASSED (self-tests over 6 run verdicts + census fold), exit 0 — still 6 run verdicts, so no verdict state was added, as required. All five required guards are present (anti-vacuous first, full-list == near-miss, permutation invariant, UNKNOWN-sorts-with-refused, flag-off byte-identity).
+
+Docs (missing): the commit touched exactly one file. CLAUDE.md last changed at 40c8b26f and DREAM.md at 8a83f048; HEAD is 2ba61367. Working tree clean, so nothing pending.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (58.5s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+The failure is narrow and it is only the docs half. Stating that precisely, because the code should not be re-litigated on a retry:
+
+What is correct and should be kept as-is:
+• `order_src_test_only_by_eligibility is pure with the resolver injected, groups SPLICEABLE → other → refused+UNKNOWN`, stable within each group, and drops nothing.
+• It is genuinely consumed — the Day-190 defect this task was written to fix (a classifier whose only reader was a print-only census surface) is closed, and the second consumer is in the same diff as nothing new.
+• The resolver pair is threaded through the existing fix_loop_src_resolvers cache, so admission and ordering share one git diff and one git show per sha rather than doubling the scan cost.
+• `--test prints ALL PASSED (self-tests over 6 run verdicts + census fold)` — the 6 is the assertion that matters, since the task forbade adding a verdict state.
+• All five guards are present, and the two that carry the risk are the right shape: the anti-vacuous all-refused row is asserted first, and the all-spliceable near-miss uses full list == rather than membership.
+• `UNKNOWN sorts with refused, and an unenumerated state falls to other` rather than being promoted — the Day-144 rule applied in the direction where the comfortable bucket is the one that makes a reading look worth taking.
+
+What is missing: the task's ## Docs section, in full. Both targets were named with specific required content, and neither exists — git show --stat HEAD lists one file, the working tree is clean, and CLAUDE.md's last commit (40c8b26f) and DREAM.md's (8a83f048) both predate HEAD.
+
+This is not a style nit in this repo specifically. CLAUDE.md is re-injected as authoritative context every session, its counterfactual_green.py bullet is the longest running record of exactly this script's selector, and that bullet now describes behaviour the code no longer has. The bullet itself documents this failure mode repeatedly — a status or mechanism claim that goes stale silently, believed by the next agent who reads it. Shipping a selector change without touching it recreates the shape the surrounding prose spends thousands of words warning about.
+
+The remedy is small and additive: append the CLAUDE.md paragraph (four burned readings as the measured reason; the fix as sampling, not reachability; the stated limit that the fix-loop arm's classifiable count stays at 2, the reachable-at-depth denominator stays at 72, the published tests-only 18 EARNED / 2 UNEARNED = 10% is unmoved and stays tests-only; #870 is not closed by this) and the matching DREAM.md progress note. No code needs to change.
+
+One thing I did not verify and am not claiming: the before/after --census --src-census diff. That check is in the task's verification list and I could not run both sides inside the evaluation budget. The census render path (:1868, :1906) is untouched by the diff and the new code sits only in main's selection branch, so I have no positive reason to think a figure moved — but I have not measured it, and "could not check" is not "checked; clean."
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

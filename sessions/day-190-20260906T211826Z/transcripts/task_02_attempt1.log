@@ -1,0 +1,277 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the register entries and the actual run_grep code — step 0 is falsifying the stated blocker.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_grep" tests/git_cho…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Command::new(\"git\")" … ✓ (2ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '80,120p' tests/git_choke…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1290,1400p' src/commands… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn run_git\|fn git_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,140p' src/git.rs ✓ (3ms)
+ ✓ (3ms)
+  6 tools completed in 13.9s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '185,220p' src/git.rs ✓ (2ms)
+ ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 25.5s (2 ✓)
+
+Clean tree. Now step 0 — probe the register's stated blocker for run_grep_count rather than reasoning about it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ set -e (19 lines) ✓ (63ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The defect reproduces — git grep -c octal-escapes non-ASCII paths, and a space is not quoted (the near-miss). Now claim 1, the .status() probe:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ set -e (27 lines) ✓ (131ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both halves of the stated blocker are false, measured rather than reasoned:
+
+• `.status()` probe: output_probe agrees with status_probe in both directions, and nothing printed to the terminal between the markers — Command::output() captures stderr by construction (69 bytes into a Vec nobody reads). Same falsification Day 189 found in the sibling entry.
+• **`git grep -c quotes non-ASCII paths**: "src/n\303\244me.rs":1 today vs src/näme.rs:1` through the chokepoint. A space is not quoted — the near-miss.
+
+Branch (a): convert. Let me read the exact code and callers.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_grep_count\|struct …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1300,1312p;1355,1400p' s… ✓ (4ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "run_grep_count" src/ &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1362,1382p' src/commands… ✓ (5ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "run_grep_count" src/ |…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1306 && NR<=1385 {print… ✓ (6ms)
+ ✓ (10ms)
+  6 tools completed in 15.0s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Full function in hand. Now the conversion — dir-taking seam plus both sites through the chokepoint.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (34 → 72 lines)
+    /// Uses `git grep -c` or `grep -rc` depending on whether we're in a git repo.
+    /// Filters out files with 0 matches (plain grep includes them, git grep doesn't).
+    fn run_grep_count(args: &GrepArgs) -> Result<Vec<GrepCountEntry>, String> {
+  -     let in_git_repo = std::process::Command::new("git")
+  -         .args(["rev-parse", "--is-inside-work-tree"])
+  -         .stdout(std::process::Stdio::null())
+  -         .stderr(std::process::Stdio::null())
+  -         .status()
+  -         .map(|s| s.success())
+  -         .unwrap_or(false);
+  +     run_grep_count_in(std::path::Path::new("."), args)
+  + }
+    
+  -     let output = if in_git_repo {
+  -         let mut cmd = std::process::Command::new("git");
+  -         cmd.args(["grep", "-c", "--color=never"]);
+  + /// `run_grep_count`, resolved against an explicit directory.
+  + ///
+  + /// The dir-taking seam, matching `list_project_files_in` / `get_recent_git_files_in` /
+  + /// `apply_patch_in`: the process CWD is **global**, so a test that moved it would
+  ... (67 more lines)
+ ✓ (12.1s)
+    /// Uses `git grep -c` or `grep -rc` depending on whether we're in a git repo.
+    /// Filters out files with 0 matches (plain grep includes them, git grep doesn't).
+    fn run_grep_count(args: &GrepArgs) -> Result<Vec<GrepCountEntry>, String> {
+  -     let in_git_repo = std::process::Command::new("git")
+  -         .args(["rev-parse", "--is-inside-work-tree"])
+  -         .stdout(std::process::Stdio::null())
+  -         .stderr(std::process::Stdio::null())
+  -         .status()
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the plain-grep arm and the final match still need aligning.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (7 → 11 lines)
+            cmd.arg(&args.pattern);
+            cmd.arg(&args.path);
+  -         cmd.output()
+  +         // Same wrapper text as before. The git arm's inner `e` now carries the
+  +         // chokepoint's own `git not found: …` prefix, in a branch that is
+  +         // unreachable when git is absent — the probe above also spawns git, so a
+  +         // missing git routes here, to plain grep, instead.
+  +         cmd.output().map_err(|e| format!("Failed to run grep: {e}"))
+        };
+    
+        match output {
+ ✗ (0ms)
+    │ old_text matches 2 locations in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs. Include more surrounding context to make the match unique.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (27 → 31 lines)
+            cmd.arg(&args.pattern);
+            cmd.arg(&args.path);
+  -         cmd.output()
+  +         // Same wrapper text as before. The git arm's inner `e` now carries the
+  +         // chokepoint's own `git not found: …` prefix, in a branch that is
+  +         // unreachable when git is absent — the probe above also spawns git, so a
+  +         // missing git routes here, to plain grep, instead.
+  +         cmd.output().map_err(|e| format!("Failed to run grep: {e}"))
+        };
+    
+        match output {
+  ···
+                    .collect();
+                Ok(entries)
+            }
+  -         Err(e) => Err(format!("Failed to run grep: {e}")),
+  +         Err(e) => Err(e),
+        }
+    }
+ ✓ (1m 27s)
+            cmd.arg(&args.pattern);
+            cmd.arg(&args.path);
+  -         cmd.output()
+  +         // Same wrapper text as before. The git arm's inner `e` now carries the
+  +         // chokepoint's own `git not found: …` prefix, in a branch that is
+  +         // unreachable when git is absent — the probe above also spawns git, so a
+  +         // missing git routes here, to plain grep, instead.
+  +         cmd.output().map_err(|e| format!("Failed to run grep: {e}"))
+  ... (11 more lines)
+  2 tools completed in 1m 36s (1 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && ec… ✓ (315ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Build green, and the ratchet fires exactly as designed — "the debt is paid, delete that entry." That's the self-verifying half. Now the register:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/git_chokepoint.rs (23 → 22 lines)
+        (
+            "src/commands_search.rs",
+            "run_grep",
+  -         "two sites in one fn: a .status() probe with both stdout and stderr nulled (no \
+  -          status-only chokepoint helper exists, and routing it through .output() changes what \
+  -          the probe costs and captures), and a `git grep` builder whose argv is assembled \
+  -          incrementally under conditionals for -i, -c, pattern and path — which the \
+  -          chokepoint's &[&str] arg-slice signature cannot express without materialising every \
+  -          combination.",
+  -     ),
+  -     (
+  -         "src/commands_search.rs",
+  -         "run_grep_count",
+  -         "two sites in one fn, same shapes as run_grep's: the nulled-stdio .status() probe and \
+  -          an incremental `git grep -c` builder.",
+  +         "two sites in one fn: a .status() probe with both stdout and stderr nulled, and a \
+  +          `git grep` builder whose argv is assembled incrementally under conditionals for -i, \
+  +          -c, pattern and path. NOTE (Day 190): BOTH halves of this reason were measured FALSE \
+  +          while converting the sibling run_grep_count — Command::output() captures both streams \
+  +          by construction and never inherits the terminal (so the nulls are redundant), and an \
+  ... (15 more lines)
+ ✓ (59.9s)
+        (
+            "src/commands_search.rs",
+            "run_grep",
+  -         "two sites in one fn: a .status() probe with both stdout and stderr nulled (no \
+  -          status-only chokepoint helper exists, and routing it through .output() changes what \
+  -          the probe costs and captures), and a `git grep` builder whose argv is assembled \
+  -          incrementally under conditionals for -i, -c, pattern and path — which the \
+  -          chokepoint's &[&str] arg-slice signature cannot express without materialising every \
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_chokepoint… ✓ (201ms)
+  2 tools completed in 1m 4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate green. Census: 81 total sites, 5 non-test — 1 chokepoint + 4 bypasses under 2 entries (was 6 under 3). Now the tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_grep_count_finds… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=3149 && NR<=3170 {print… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (5 → 126 lines)
+            assert!(!entries.is_empty(), "Should find 'fn main' counts in src/");
+            assert!(entries.iter().any(|e| e.file.contains("main.rs")));
+            assert!(entries.iter().all(|e| e.count > 0));
+  +     }
+  + 
+  +     /// Build a scratch git repo in a tempdir carrying one file per name given.
+  +     ///
+  +     /// Never this repo: `run_git`'s `#[cfg(test)]` destructive guard exists because
+  +     /// tests once mutated the live checkout, and #780 removed every process-CWD move
+  +     /// for the same class of reason. `git` is shelled directly here on purpose — a
+  +     /// test-region site is *supposed* to bypass the chokepoint.
+  +     fn grep_scratch_repo(names: &[&str], body: &str) -> tempfile::TempDir {
+  +         let tmp = tempfile::TempDir::new().expect("tempdir");
+  +         let root = tmp.path();
+  +         std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+  +         for name in names {
+  +             std::fs::write(root.join(name), body).expect("write fixture");
+  +         }
+  +         for argv in [
+  +             vec!["init", "-q", "."],
+  ... (105 more lines)
+ ✓ (1m 34s)
+            assert!(!entries.is_empty(), "Should find 'fn main' counts in src/");
+            assert!(entries.iter().any(|e| e.file.contains("main.rs")));
+            assert!(entries.iter().all(|e| e.count > 0));
+  +     }
+  + 
+  +     /// Build a scratch git repo in a tempdir carrying one file per name given.
+  +     ///
+  +     /// Never this repo: `run_git`'s `#[cfg(test)]` destructive guard exists because
+  ... (13 more lines)
+  3 tools completed in 2m 0s (3 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5506 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+te...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The module-size gate fired — let me paste the line it prints rather than hand-typing it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (162ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/("src\/commands_search… ✓ (384ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo run_grep_c… ✓ (139ms)
+  3 tools completed in 6.3s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+
