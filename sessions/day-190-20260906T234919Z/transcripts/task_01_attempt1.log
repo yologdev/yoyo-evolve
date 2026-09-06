@@ -1,0 +1,180 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the issue and the actual code to confirm the mechanism before fixing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 896 2>&1 | head -6…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "amend_scratch_repo\|mas… ✓ (4ms)
+ ✓ (569ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+The receipt confirms the mechanism verbatim. Now let me read the actual fixture code.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3210,3300p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3300,3410p' src/commands… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 25.1s (2 ✓)
+
+Mechanism confirmed in the source. Let me verify it experimentally in a scratch dir before touching anything (step 0 — a measured "this is fine" would be a real result).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf amendprobe && mkdir amendprobe && cd amend… (15 lines) ✓ (1.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed — Date: lines differ by exactly one second, matching #896's receipt verbatim. Now let me verify the pin removes it, then apply.
+  ▶ $ cd /tmp && rm -rf pinprobe && mkdir pinprobe && cd pinprobe (16 lines) ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The pin works — and the commit hashes now match too (973395a both), so the fixture is identical by construction. Applying the fix:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git.rs (4 → 33 lines)
+  +     /// A fixed instant for every scratch commit, so two repos built moments
+  +     /// apart are identical **by construction** rather than by luck (#896).
+  +     ///
+  +     /// `git commit --amend` prints a ` Date: <author date>` line whenever the
+  +     /// author date differs from the committer date — which is always true of an
+  +     /// amend, since the amend rewrites the committer date to "now" and keeps the
+  +     /// original author date. With the ambient wall clock as the author date, two
+  +     /// repos created either side of a second boundary print different `Date:`
+  +     /// lines and the byte-identity fixtures below fail with a receipt like
+  +     /// `Date: Sun Sep 6 20:46:10` vs `...:11`. A `cargo test` failure means
+  +     /// `git reset --hard` in `scripts/evolve.sh`, so that race reverted a whole
+  +     /// unrelated session before it was named.
+  +     ///
+  +     /// **Pinning the clock, not masking the line, is the deliberate remedy** and
+  +     /// this comment is why: pinning removes the *source* of divergence, so any
+  +     /// future wall-clock-derived field (a reflog line, a relative-time
+  +     /// rendering, a `Date:` on some other code path) is covered for free.
+  +     /// Masking in `mask_commit_hash` would remove the *evidence* and cover
+  +     /// exactly one field, making the next instance of this class invisible
+  +     /// rather than impossible.
+  ... (12 more lines)
+ ✓ (16.2s)
+  +     /// A fixed instant for every scratch commit, so two repos built moments
+  +     /// apart are identical **by construction** rather than by luck (#896).
+  +     ///
+  +     /// `git commit --amend` prints a ` Date: <author date>` line whenever the
+  +     /// author date differs from the committer date — which is always true of an
+  +     /// amend, since the amend rewrites the committer date to "now" and keeps the
+  +     /// original author date. With the ambient wall clock as the author date, two
+  +     /// repos created either side of a second boundary print different `Date:`
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the definition needs its consumer in the same edit (my own standing rule). Wiring it now:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git.rs (9 → 11 lines)
+                let out = std::process::Command::new("git")
+                    .args(&args)
+                    .current_dir(repo)
+  +                 .env("GIT_AUTHOR_DATE", SCRATCH_COMMIT_DATE)
+  +                 .env("GIT_COMMITTER_DATE", SCRATCH_COMMIT_DATE)
+                    .output()
+                    .unwrap();
+                assert!(out.status.success(), "scratch repo setup failed: {args:?}");
+ ✓ (2m 1s)
+                let out = std::process::Command::new("git")
+                    .args(&args)
+                    .current_dir(repo)
+  +                 .env("GIT_AUTHOR_DATE", SCRATCH_COMMIT_DATE)
+  +                 .env("GIT_COMMITTER_DATE", SCRATCH_COMMIT_DATE)
+                    .output()
+                    .unwrap();
+                assert!(out.status.success(), "scratch repo setup failed: {args:?}");
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Fix is in. Running the checks:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green. Now the determinism check — the actual deliverable. Let me first confirm the two fixtures really run (0.08s looked fast):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo amend_ 2>&… ✓ (214ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo -- --exact… ✓ (200ms)
+  2 tools completed in 3.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both target fixtures run and pass. Now the determinism check — 30+ runs, since a single green run is not evidence against a second-boundary race:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && pass=0; fail… (9 lines) ✓ (5.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+30/30. Now the positive control — one atomic mutate → run → restore, with the NEUTERED marker so tests/neutered_guards.rs enforces the restore. My fix is uncommitted, so I restore from a backup rather than git checkout:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (12 lines) ✓ (28.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired exactly: both byte-identity tests red, reproducing #896's receipt verbatim, restore byte-identical, zero markers left. Now the direction that matters — does the near-miss guard stay green under the same sabotage?
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (11 lines) ✓ (28.7s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Near-miss guard stays green while the byte-identity test goes red — the direction that proves it tests the pass-through, not the fix. Both controls ran serially, byte-identical restores, zero markers. Now the docs:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `commands_git' CLAUD… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No commands_git.rs bullet exists — these fixtures were born in the #864 fourth-payment paragraph. Let me find its home:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'commit --amend` calls c… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The fourth payment (line 128) is where the amend sites were routed and these fixtures born. Let me see what follows it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '129,131p' CLAUDE.md | cu… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Line 129 starts a new paragraph, so my note goes after 128. Writing it:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (28ms)
+
+Now the full verification suite:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (27.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 41s)
+  2 tools completed in 2m 11s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

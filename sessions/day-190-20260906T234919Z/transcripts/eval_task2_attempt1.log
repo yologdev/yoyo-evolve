@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1200,1350p' src/commands… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_git_output" -A 2… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test mo… ✓ (257ms)
+  3 tools completed in 13.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (166ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 18s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 35s (2 ✓)
+
+Verdict: PASS
+
+The diff does exactly what the task asked, and the two structural gates confirm it rather than my reading it:
+
+• Conversion is correct on the sharp details. -C <dir> sits before `grep (the one silent way to get this wrong — git grep -C<n> is a context-window flag), the argv is one Vec<String> borrowed once, and the probe drops the measured-redundant Stdio::null()` pair.
+• Error behaviour genuinely unchanged. I checked `run_git_output` at `src/git.rs:189` — it only returns `Err` on `git not found`, so `git grep`'s exit-1 no-match still arrives as `Ok(out)` with empty stdout, identical to the old cmd.output(). The double-wrap was correctly removed from the terminal match since both arms now wrap their own.
+• Step 2 is self-verifying and it verified. cargo test --test git_chokepoint --test module_size → 28 passed, and module_size printed **zero** drift warnings, so both register edits landed (the diff also absorbed a pre-existing commands_git.rs 3410→3441 drift, which is the right thing to do rather than leaving it to accumulate).
+• Tests are at the emission point and the near-miss guard is the load-bearing one: whole-vector assert_eq! on src/plain.rs and `src/we ird.rs` — the space case is what proves this is a narrowing, since git doesn't quote a space.
+
+One note, not a fault: the CLAUDE.md paragraph was dropped, which the task explicitly listed as droppable tail item 1. The mechanism is still documented in the run_grep_in doc comment and in the surviving run_grep_with_context register entry, so a later reader lands on it. #864 correctly stays open with 2 bypasses under 1 entry.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

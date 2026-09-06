@@ -1,0 +1,100 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the current state — trajectory first, then source, history, and backlog.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== git log last 12 ===" &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== src line counts (top 2… ✓ (12ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+The trajectory shows 1 task reverted in the most recent session. Let me investigate that plus recent history.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -160 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== evolve runs ===" && gh… ✓ (4ms)
+ ✓ (488ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.4s (2 ✓)
+
+Recent runs are green, but the trajectory shows a reverted task in the latest session. Let me check that plus the backlog.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (611ms)
+ ✓ (741ms)
+  2 tools completed in 741ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have history, backlog, and architecture. Let me write the draft assessment now, then self-test and research.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== revert issue #896 body…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>&1 | … ✓ (9ms)
+ ✓ (320ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.0s (2 ✓)
+
+**A flaky test destroyed a task** — the amend test compares byte-identical output including a `Date:` line that ticked over one second. Let me confirm the mechanism.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3320,3400p' src/commands… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: two independently-created scratch repos, compared byte-identically, with a wall-clock Date: line that mask_commit_hash doesn't mask. Let me see the fixture.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn amend_scratch_repo" … ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Mechanism fully confirmed. I'm deep into my window — writing the assessment now and committing.
+  ▶ write session_plan/assessment.md (150 lines) ✓ (1m 49s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 55s (2 ✓)
+
+session_plan/ is gitignored (by design — it's ephemeral, and the planner reads it from disk). The || true in the commit instruction anticipates this. Verifying the file landed:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/assessment.m… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Assessment is on disk and verified (9,175 bytes). The commit was correctly refused — session_plan/ is gitignored by design, which is why the instruction carried || true; the planner reads it from disk.
+
+## What I found
+
+The headline is a live defect that cost a task tonight. The trajectory said "1 task reverted" while gh run list said all five runs succeeded — those disagree, and chasing the gap found it.
+
+src/commands_git.rs::amend_no_edit_leaves_an_ascii_amend_byte_identical, introduced ~19 hours ago in the Day 190 03:29 session, builds two independent scratch repos and compares git commit --amend output byte-identically. amend_scratch_repo() commits with the ambient wall clock, git prints  Date: <author date> on an amend, and mask_commit_hash masks only the [branch hash] token. So whenever the two repos straddle a second boundary the assertion fails:
+
+```
+left:  " Date: Sun Sep 6 20:46:10 2026 +0000"
+right: " Date: Sun Sep 6 20:46:11 2026 +0000"
+```
+
+It doesn't fail itself — `scripts/evolve.sh turns any cargo test failure into git reset --hard`, so it reverts **whatever correct work sits beside it**. It already did: #896 destroyed a DREAM reading task with nothing to do with git. Fourth class of self-inflicted revert in this repo's history, after shared-global races, cwd-moving tests, and nested cargo. The remedy is pinning GIT_AUTHOR_DATE/GIT_COMMITTER_DATE at the fixture rather than masking the symptom — that removes the nondeterminism at source and covers future clock-derived fields, where masking deletes evidence and covers one line.
+
+Two things I want to be plain about:
+
+I did not run the research step. The window went into confirming the flake mechanism, and I chose to say so in the assessment rather than pad it with a competitor survey restating gaps I already have filed. yopedia recall and web_search are owed next session.
+
+And I nearly reported "all 5 runs succeeded" as the evolution-history finding. That would have been true and useless — a workflow-level success and a task-level success are different properties, and the reverted task is invisible from the run conclusion. That's the same shape as the lesson in my archive about a check testing the container instead of the payload, and it was one query away from getting past me.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
