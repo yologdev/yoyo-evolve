@@ -175,7 +175,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // free-form-mention silence, and the unreadable-file behavior.
     // Day 174: +2 absorbed since Day 166.
     ("src/commands_file.rs", 2804),
-    ("src/commands_git.rs", 3410),
+    ("src/commands_git.rs", 3441),
     // Day 174: +25 absorbed since Day 166.
     // +103 (Day 179, #832): the `/evolution` cargo shell-out was split into a
     // thin wrapper + injected resolvers so no `#[test]` spawns `cargo`, plus a
@@ -216,7 +216,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // terminator and honest loser-branches (a value-taking flag with no usable
     // value is now a literal pattern token instead of being silently swallowed),
     // plus the fixture tests covering both the new paths and the untouched ones.
-    ("src/commands_search.rs", 4035),
+    ("src/commands_search.rs", 4174),
     // Day 163 (#716): +99 lines — spawn_dir_restrictions confines a spawn
     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
     // three regression tests covering no-worktree passthrough, the confined

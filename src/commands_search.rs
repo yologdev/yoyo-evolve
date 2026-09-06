@@ -1216,37 +1216,76 @@ pub struct GrepMatch {
 /// Uses `git grep` when inside a git repo (faster, respects .gitignore),
 /// falls back to `grep -rn` with common directory exclusions.
 pub fn run_grep(args: &GrepArgs) -> Result<Vec<GrepMatch>, String> {
-    let in_git_repo = std::process::Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+    run_grep_in(std::path::Path::new("."), args)
+}
 
-    let output = if in_git_repo {
-        let mut cmd = std::process::Command::new("git");
-        cmd.args(["grep", "-n", "--color=never"]);
+/// `run_grep`, resolved against an explicit directory.
+///
+/// The dir-taking seam (#864, #780): every probe and invocation resolves against
+/// `root`, so no test has to move the process CWD, which is process-global.
+/// Routed through `crate::git::run_git_output` — a raw `Output` with **no blob
+/// trim** — so the existing `lines()`/`filter_map` parsing is preserved
+/// byte-for-byte, and the site inherits `-c core.quotepath=off` plus every future
+/// global applied at the chokepoint. Without that, `core.quotepath` defaults to
+/// *on* and a file named `src/näme.rs` comes back as the literal bytes
+/// `"src/n\303\244me.rs"` — quotes and octal escapes included — which no consumer
+/// can use as a path.
+fn run_grep_in(root: &std::path::Path, args: &GrepArgs) -> Result<Vec<GrepMatch>, String> {
+    let root_str = root.to_string_lossy().into_owned();
+
+    // `-C <dir>` sits BEFORE the subcommand because it is a git *global* —
+    // `git grep -C<n>` is an entirely different flag (a context-window read), so
+    // putting the directory global after `grep` would silently mean something else.
+    //
+    // The register claimed this probe needs `Stdio::null()` on both streams so a
+    // non-repo fails silently. Measured false while converting the sibling
+    // `run_grep_count`: `Command::output()` captures both streams by construction
+    // and never inherits the terminal, so the nulls only suppressed bytes landing
+    // in a `Vec` nobody reads.
+    let in_git_repo =
+        crate::git::run_git_output(&["-C", &root_str, "rev-parse", "--is-inside-work-tree"])
+            .map(|out| out.status.success())
+            .unwrap_or(false);
+
+    let output: Result<std::process::Output, String> = if in_git_repo {
+        // The register also claimed the chokepoint's `&[&str]` signature "cannot
+        // express" an argv assembled incrementally under conditionals without
+        // materialising every combination. That is arithmetically wrong, not
+        // merely pessimistic: it costs ONE `Vec<String>` built by pushes and
+        // borrowed once, never a product of `-i` × `-c` × pattern × path × globs.
+        let mut argv: Vec<String> = vec![
+            "-C".to_string(),
+            root_str.clone(),
+            "grep".to_string(),
+            "-n".to_string(),
+            "--color=never".to_string(),
+        ];
         if !args.case_sensitive {
-            cmd.arg("-i");
+            argv.push("-i".to_string());
         }
         if args.count_only {
-            cmd.arg("-c");
+            argv.push("-c".to_string());
         }
-        cmd.arg("--");
-        cmd.arg(&args.pattern);
+        argv.push("--".to_string());
+        argv.push(args.pattern.clone());
         if args.path != "." {
-            cmd.arg(&args.path);
+            argv.push(args.path.clone());
         }
         if let Some(ref glob) = args.include {
-            cmd.arg(glob);
+            argv.push(glob.clone());
         }
         if let Some(ref glob) = args.exclude {
-            cmd.arg(format!(":(exclude){glob}"));
+            argv.push(format!(":(exclude){glob}"));
         }
-        cmd.output()
+        let borrowed: Vec<&str> = argv.iter().map(String::as_str).collect();
+        crate::git::run_git_output(&borrowed).map_err(|e| format!("Failed to run grep: {e}"))
     } else {
+        // Deliberately NOT routed through the chokepoint: this shells `grep`, not
+        // `git`, so `src/git.rs` has nothing to say about it. It gains only
+        // `.current_dir(root)` so the seam means the same thing on both arms, and
+        // keeps its wrapper text verbatim.
         let mut cmd = std::process::Command::new("grep");
+        cmd.current_dir(root);
         cmd.args(["-rn", "--color=never"]);
         if !args.case_sensitive {
             cmd.arg("-i");
@@ -1269,7 +1308,10 @@ pub fn run_grep(args: &GrepArgs) -> Result<Vec<GrepMatch>, String> {
         ]);
         cmd.arg(&args.pattern);
         cmd.arg(&args.path);
-        cmd.output()
+        // Same wrapper text as before. The git arm's inner `e` now carries the
+        // chokepoint's own error string; both arms still surface as
+        // `Failed to run grep: …`, so no caller sees a different failure mode.
+        cmd.output().map_err(|e| format!("Failed to run grep: {e}"))
     };
 
     match output {
@@ -1295,7 +1337,8 @@ pub fn run_grep(args: &GrepArgs) -> Result<Vec<GrepMatch>, String> {
                 .collect();
             Ok(matches)
         }
-        Err(e) => Err(format!("Failed to run grep: {e}")),
+        // Both arms already wrapped their own error above, so no second wrap here.
+        Err(e) => Err(e),
     }
 }
 
@@ -3284,6 +3327,102 @@ src/b.rs:20:match two";
         assert_eq!(entries.len(), 1, "plain-grep fallback should still match");
         assert!(entries[0].file.ends_with("plain.rs"));
         assert_eq!(entries[0].count, 1);
+    }
+
+    /// Non-count `GrepArgs` for the `run_grep_in` emission-point tests.
+    fn match_args(pattern: &str) -> GrepArgs {
+        GrepArgs {
+            pattern: pattern.to_string(),
+            path: ".".to_string(),
+            case_sensitive: true,
+            context_lines: None,
+            include: None,
+            exclude: None,
+            count_only: false,
+        }
+    }
+
+    #[test]
+    fn run_grep_in_returns_a_non_ascii_path_raw_not_quotepath_escaped() {
+        // git's `core.quotepath` defaults to ON, so `git grep -n` renders a
+        // non-ASCII filename as the literal bytes `"src/n\303\244me.rs"` —
+        // surrounding quotes and octal escapes included — which no consumer can use
+        // as a path. This is `/grep`'s match list, so a real match was being
+        // attributed to a filename that does not exist. Routing through the
+        // chokepoint inherits `-c core.quotepath=off` and the name comes back raw
+        // (#864, fifth payment).
+        let name = "src/näme.rs";
+        // Anti-vacuous: a transcription slip that made the fixture pure ASCII would
+        // let this test pass by agreeing with itself.
+        assert!(
+            !name.is_ascii(),
+            "fixture must actually carry a non-ASCII byte"
+        );
+
+        let tmp = grep_scratch_repo(&[name], "fn f() { needle_marker(); }\n");
+        let matches = run_grep_in(tmp.path(), &match_args("needle_marker")).unwrap();
+
+        assert_eq!(
+            matches,
+            vec![GrepMatch {
+                file: name.to_string(),
+                line_num: 1,
+                text: "fn f() { needle_marker(); }".to_string(),
+            }],
+            "non-ASCII path must come back raw, not quoted/octal-escaped"
+        );
+    }
+
+    #[test]
+    fn run_grep_in_leaves_ascii_and_spaced_paths_byte_identical() {
+        // The near-miss guard, and the half that matters: this is every user whose
+        // filenames are ordinary, i.e. the entire regression surface. A path with a
+        // SPACE is the sharp case — git does not quote a space, which is exactly
+        // what makes it prove this is a pure narrowing rather than a rewrite. A
+        // discriminator tested only on the side that fires is vacuous green.
+        let tmp = grep_scratch_repo(
+            &["src/plain.rs", "src/we ird.rs"],
+            "fn f() { needle_marker(); }\n",
+        );
+        let mut matches = run_grep_in(tmp.path(), &match_args("needle_marker")).unwrap();
+        matches.sort_by(|a, b| a.file.cmp(&b.file));
+
+        // Whole-vector equality, never a `contains`: that is every existing user.
+        assert_eq!(
+            matches,
+            vec![
+                GrepMatch {
+                    file: "src/plain.rs".to_string(),
+                    line_num: 1,
+                    text: "fn f() { needle_marker(); }".to_string(),
+                },
+                GrepMatch {
+                    file: "src/we ird.rs".to_string(),
+                    line_num: 1,
+                    text: "fn f() { needle_marker(); }".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn run_grep_in_falls_back_to_plain_grep_outside_a_repo() {
+        // Graceful degradation, pinned rather than assumed: a directory that is not
+        // a git repo takes the plain-`grep` arm, which the conversion deliberately
+        // left unrouted (it shells `grep`, not `git`) and which now runs with
+        // `.current_dir(root)` so the seam means the same thing on both arms.
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(tmp.path().join("src")).expect("mkdir src");
+        std::fs::write(
+            tmp.path().join("src/plain.rs"),
+            "fn f() { needle_marker(); }\n",
+        )
+        .expect("write fixture");
+
+        let matches = run_grep_in(tmp.path(), &match_args("needle_marker")).unwrap();
+        assert_eq!(matches.len(), 1, "plain-grep fallback should still match");
+        assert!(matches[0].file.ends_with("plain.rs"));
+        assert_eq!(matches[0].line_num, 1);
     }
 
     #[test]

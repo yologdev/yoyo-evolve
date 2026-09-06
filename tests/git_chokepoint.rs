@@ -85,29 +85,14 @@ use std::path::Path;
 /// `tests/cargo_spawning_tests.rs` used for theirs. Each reason states what is
 /// true and no more — including, for one entry, that there is **no** structural
 /// blocker.
-const REGISTERED_GIT_BYPASSES: &[(&str, &str, &str)] = &[
-    (
-        "src/commands_search.rs",
-        "run_grep",
-        "two sites in one fn: a .status() probe with both stdout and stderr nulled, and a \
-         `git grep` builder whose argv is assembled incrementally under conditionals for -i, \
-         -c, pattern and path. NOTE (Day 190): BOTH halves of this reason were measured FALSE \
-         while converting the sibling run_grep_count — Command::output() captures both streams \
-         by construction and never inherits the terminal (so the nulls are redundant), and an \
-         incremental argv costs ONE Vec<String> borrowed once, never a combinatorial \
-         expansion. This entry is retained only because #864 converts one site per task; it is \
-         a scheduling boundary, not a technical blocker, and the remedy is the diff that \
-         landed for run_grep_count.",
-    ),
-    (
-        "src/commands_search.rs",
-        "run_grep_with_context",
-        "two sites in one fn, same shapes as run_grep's: the nulled-stdio .status() probe and \
+const REGISTERED_GIT_BYPASSES: &[(&str, &str, &str)] = &[(
+    "src/commands_search.rs",
+    "run_grep_with_context",
+    "two sites in one fn, same shapes as run_grep's: the nulled-stdio .status() probe and \
          an incremental `git grep` builder, here with -B/-A context flags computed at runtime. \
          Same Day-190 correction as run_grep's entry: the stated blocker was measured false, \
          so this is a scheduling boundary rather than a technical one.",
-    ),
-];
+)];
 
 /// The one file that *is* the chokepoint, and is exempt by definition.
 const CHOKEPOINT_FILE: &str = "src/git.rs";
