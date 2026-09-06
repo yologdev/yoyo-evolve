@@ -1285,6 +1285,114 @@ def classify_src_test_readability(rows, has_parent_test_module) -> str:
     return SRC_TESTS_UNKNOWN if saw_unknown else SRC_TESTS_NONE
 
 
+# Five states for "can a src+tests counterfactual ACTUALLY splice this commit?", and none
+# is folded into another. This is one predicate deeper than `SRC_TESTS_*` above: that one
+# asks whether any modified `src/*.rs` carried a parent test module, this one asks whether
+# any such file SURVIVES #894's register exclusion. Day 190 (03:29) measured the gap on a
+# real commit -- `56a433e8` was admitted READABLE, had BOTH candidates refused
+# (`src/cli.rs`, `src/help.rs`), got `src_spliced: 0`, and landed on a guaranteed
+# `COULD_NOT_CHECK` at the Site-B empty-splice guard, paying a worktree, a checkout and a
+# register parse to produce a refusal decidable from the diff plus the register.
+SPLICE_ELIG_SPLICEABLE = "SPLICE_ELIG_SPLICEABLE"
+SPLICE_ELIG_ALL_REGISTER_REFUSED = "SPLICE_ELIG_ALL_REGISTER_REFUSED"
+SPLICE_ELIG_NO_MODULE_AMONG_KEPT = "SPLICE_ELIG_NO_MODULE_AMONG_KEPT"
+SPLICE_ELIG_NO_CANDIDATES = "SPLICE_ELIG_NO_CANDIDATES"
+SPLICE_ELIG_UNKNOWN = "SPLICE_ELIG_UNKNOWN"
+
+
+def classify_splice_eligibility(rows, register, has_parent_test_module) -> str:
+    """Can a src+tests counterfactual actually SPLICE this commit? Pure; both inputs injected.
+
+    Day 190, #870/#894. `rows` are `(status, path)` pairs from
+    `git diff --name-status <parent> <sha> -- src/`; `register` is the module-size
+    register (a path set, or `None` meaning the gate could not be read);
+    `has_parent_test_module(path)` answers `True` / `False` / `None` for the file's
+    version AT THE PARENT.
+
+    WHY THIS EXISTS, and it is a MEASUREMENT and not a fix. Day 190 (03:29) found a FIFTH
+    selection stage, and it is the first that is not a gate a flag can pass:
+    `readable_at_depth` rule 3 admits a commit when AT LEAST ONE modified `src/*.rs`
+    carried a module-level `#[cfg(test)]` at the parent, and #894's
+    `partition_register_listed` then refuses any candidate that is register-listed.
+    NEITHER CONSULTS THE OTHER. So a commit can be admitted as READABLE, have every one of
+    its candidates refused, and land on a guaranteed `COULD_NOT_CHECK` -- and the
+    `--src-census` READABLE figure is therefore AN UPPER BOUND WEARING A MEASUREMENT'S
+    CLOTHES. That is exactly the denominator overstatement #875 found in the plain arm
+    (45 behavioural -> 32 signal-bearing), one predicate deeper.
+
+    THIS DOES NOT FIX THE COLLISION and must not be read as doing so. Both guards are
+    correct alone -- #894's exclusion is right (splicing a register-listed file perturbs
+    `tests/module_size.rs`, whose subject is `src/` line counts) and rule 3's admission is
+    right (it asks the splice precondition). The composition is what is wrong, and the
+    fix's SIZE depends entirely on this number: if SPLICEABLE is ~110 of 116, stage 5 is a
+    nuisance; if it is ~10, stage 5 IS the wall and #870 gets re-priced. Characterising
+    the population comes before changing the pipeline (#875's discipline).
+
+    IT COMPOSES THREE EXISTING FUNCTIONS AND WRITES NO NEW PREDICATE. `src_splice_candidates`
+    decides which paths are candidates, `partition_register_listed` decides which survive
+    #894, and the parent-module question is the same one `classify_src_test_readability`
+    asks -- re-asked over only the KEPT rows, which is the exact Site-B condition. A
+    fourth copy of any of those rules is the defect #835 was filed for: two copies of a
+    rule agree the day they are written and diverge forever after.
+
+    FIVE STATES:
+
+      * `SPLICE_ELIG_SPLICEABLE` -- at least one register-KEPT candidate carries a parent
+        `#[cfg(test)]` module. A deep reading can actually lay something back. THIS IS THE
+        REACHABLE-AT-DEPTH DENOMINATOR.
+      * `SPLICE_ELIG_ALL_REGISTER_REFUSED` -- candidates exist and every one is
+        register-listed. Guaranteed `COULD_NOT_CHECK` at Site B. `56a433e8`'s shape.
+      * `SPLICE_ELIG_NO_MODULE_AMONG_KEPT` -- survivors exist but none carries a parent
+        test module. ALSO a guaranteed `COULD_NOT_CHECK`, and a DIFFERENT CAUSE with a
+        different remedy, so it must not be folded into the register bucket: one is fixed
+        by reconciling two guards, the other cannot be fixed at all.
+      * `SPLICE_ELIG_NO_CANDIDATES` -- no modified `src/*.rs` at all. Nothing to splice and
+        nothing was refused; the register is irrelevant here, which is why this is checked
+        FIRST.
+      * `SPLICE_ELIG_UNKNOWN` -- the register parse refused, or every kept candidate's
+        readability lookup answered `None`.
+
+    `UNKNOWN` IS NEVER FOLDED, and the direction matters: an unknown must not be promoted
+    into the comfortable bucket (Day 144), and HERE THE COMFORTABLE BUCKET IS THE ONE THAT
+    MAKES THE REACHABLE POPULATION LOOK BIGGER, which is the flattering direction for a
+    starved milestone. `register is None` is its own explicit branch rather than being left
+    to `partition_register_listed` (which refuses everything on `None`), because "refused
+    because it is register-listed" and "refused because I could not read the register" are
+    different facts and the second must never wear the first's name.
+
+    PRECEDENCE among the kept rows mirrors `classify_src_test_readability`: one resolved
+    `True` makes the commit spliceable however many siblings could not be resolved, and
+    `UNKNOWN` beats `NO_MODULE_AMONG_KEPT`.
+
+    ANTI-VACUOUS: a row set genuinely containing a modified, un-listed `src/*.rs` with a
+    parent test module must come back `SPLICEABLE`. A classifier that finds nothing and
+    reports a clean refusal is this defect wearing the opposite sign, and it is quieter
+    than the bug.
+
+    THE STATED LIMIT: this measures whether a commit COULD be spliced. It is not a claim
+    that splicing it would produce a classifiable verdict, and IT ENTERS NO DENOMINATOR OF
+    ANY PUBLISHED RATE.
+    """
+    candidates = src_splice_candidates(rows)
+    if not candidates:
+        return SPLICE_ELIG_NO_CANDIDATES
+    if register is None:
+        # Could not read the authority. Refusing every candidate here would be TRUE of the
+        # outcome and FALSE about the cause, and the cause is what the remedy keys on.
+        return SPLICE_ELIG_UNKNOWN
+    kept, _refused = partition_register_listed(candidates, register)
+    if not kept:
+        return SPLICE_ELIG_ALL_REGISTER_REFUSED
+    saw_unknown = False
+    for path in kept:
+        answer = has_parent_test_module(path)
+        if answer is None:
+            saw_unknown = True
+        elif answer:
+            return SPLICE_ELIG_SPLICEABLE
+    return SPLICE_ELIG_UNKNOWN if saw_unknown else SPLICE_ELIG_NO_MODULE_AMONG_KEPT
+
+
 def readable_at_depth(shape, splice_readability, splice_enabled) -> bool:
     """Is there anything to lay back for this commit, AT THE DEPTH BEING RUN? (#870, Day 189)
 
@@ -1706,7 +1814,64 @@ def commit_src_test_readability(root: str, sha: str) -> str:
     )
 
 
-def src_census_fix_loop(rows, readability_of) -> dict:
+def fix_loop_src_resolvers(root: str, register):
+    """Build `(readability_of, eligibility_of)` sharing ONE diff and ONE show-cache per sha.
+
+    Day 190, #870/#894. The `--src-census` pass already pays a
+    `git diff --name-status <sha>^ <sha> -- src/` per commit plus a `git show <sha>^:<path>`
+    per candidate. The splice-eligibility question needs EXACTLY THE SAME LOOKUPS -- same
+    diff, same candidate set (`src_splice_candidates`), same parent-module probe -- so this
+    threads both classifiers through one cache rather than adding a second walk. Measuring
+    a population must not double the cost of measuring it.
+
+    Both closures are total: a `<sha>^` that does not resolve (a root commit, or a
+    shallow-clone boundary) yields the UNKNOWN value of each vocabulary, never a crash and
+    never a fallback into a real bucket. A `git show` that fails yields `None` from the
+    probe -- "I could not check" must not read as "checked; there is no module".
+
+    The register is resolved ONCE by the caller and injected here, so a per-commit
+    re-parse of `tests/module_size.rs` cannot drift between commits inside one scan.
+    """
+    diff_cache: dict = {}
+    show_cache: dict = {}
+
+    def _rows(sha: str):
+        if sha not in diff_cache:
+            rc, out = run_cmd(
+                ["git", "-C", root, "diff", "--name-status", f"{sha}^", sha, "--", "src/"],
+                timeout=60,
+            )
+            diff_cache[sha] = None if rc != 0 else parse_name_status(out)
+        return diff_cache[sha]
+
+    def _probe(sha: str):
+        def _has_parent_test_module(path: str):
+            key = (sha, path)
+            if key not in show_cache:
+                rc2, text = run_cmd(
+                    ["git", "-C", root, "show", f"{sha}^:{path}"], timeout=60
+                )
+                show_cache[key] = None if rc2 != 0 else (test_module_start(text) is not None)
+            return show_cache[key]
+
+        return _has_parent_test_module
+
+    def readability_of(sha: str) -> str:
+        rows = _rows(sha)
+        if rows is None:
+            return SRC_TESTS_UNKNOWN
+        return classify_src_test_readability(rows, _probe(sha))
+
+    def eligibility_of(sha: str) -> str:
+        rows = _rows(sha)
+        if rows is None:
+            return SPLICE_ELIG_UNKNOWN
+        return classify_splice_eligibility(rows, register, _probe(sha))
+
+    return readability_of, eligibility_of
+
+
+def src_census_fix_loop(rows, readability_of, eligibility_of=None, register_read=None) -> dict:
     """Count the fix-loop arm's `NO_TEST_CHANGE` commits by src+tests readability.
 
     Day 188, #870. Pure: `readability_of(sha)` is injected, the discipline `added_ts` and
@@ -1737,6 +1902,21 @@ def src_census_fix_loop(rows, readability_of) -> dict:
         SRC_TESTS_NONE: 0,
         SRC_TESTS_UNKNOWN: 0,
     }
+    elig_states = (
+        SPLICE_ELIG_SPLICEABLE,
+        SPLICE_ELIG_ALL_REGISTER_REFUSED,
+        SPLICE_ELIG_NO_MODULE_AMONG_KEPT,
+        SPLICE_ELIG_NO_CANDIDATES,
+        SPLICE_ELIG_UNKNOWN,
+    )
+    if eligibility_of is not None:
+        # Day 190, #870/#894. The five splice-eligibility counts are added ONLY when a
+        # resolver is supplied, so a caller that asks the Day-188 question alone gets the
+        # Day-188 dict byte-for-byte -- which is what keeps the pre-existing self-tests
+        # honest regression guards rather than tests that were adjusted to fit.
+        counts["register_read"] = register_read
+        for state in elig_states:
+            counts[state] = 0
     for row in scanned:
         state = readability_of(row.sha)
         if state not in (SRC_TESTS_READABLE, SRC_TESTS_NONE, SRC_TESTS_UNKNOWN):
@@ -1744,6 +1924,11 @@ def src_census_fix_loop(rows, readability_of) -> dict:
             # bucket. Same conservative direction the classifier itself takes.
             state = SRC_TESTS_UNKNOWN
         counts[state] += 1
+        if eligibility_of is not None:
+            elig = eligibility_of(row.sha)
+            if elig not in elig_states:
+                elig = SPLICE_ELIG_UNKNOWN
+            counts[elig] += 1
     return counts
 
 
@@ -1788,6 +1973,55 @@ def render_src_census(counts: dict, window: str) -> str:
             "  COULD NOT CHECK: zero fix-loop NO_TEST_CHANGE commits in this window. "
             "That is a REFUSAL, not '0 readable'."
         )
+    if SPLICE_ELIG_SPLICEABLE in counts:
+        spliceable = counts.get(SPLICE_ELIG_SPLICEABLE, 0)
+        reg_refused = counts.get(SPLICE_ELIG_ALL_REGISTER_REFUSED, 0)
+        no_module = counts.get(SPLICE_ELIG_NO_MODULE_AMONG_KEPT, 0)
+        no_cands = counts.get(SPLICE_ELIG_NO_CANDIDATES, 0)
+        elig_unknown = counts.get(SPLICE_ELIG_UNKNOWN, 0)
+        register_read = counts.get("register_read")
+        lines.extend(
+            [
+                "",
+                "  SPLICE ELIGIBILITY \u2014 one predicate deeper (#870/#894, Day 190)",
+                f"  -> SPLICEABLE  (a register-KEPT candidate has a parent module) .. {spliceable}",
+                f"  -> ALL_REGISTER_REFUSED (every candidate is register-listed) .... {reg_refused}",
+                f"  -> NO_MODULE_AMONG_KEPT (survivors, none with a parent module) .. {no_module}",
+                f"  -> NO_CANDIDATES        (no modified src/*.rs at all) ........... {no_cands}",
+                f"  -> UNKNOWN              (register unread, or lookups refused) ... {elig_unknown}",
+                "",
+                "  SPLICEABLE IS THE REACHABLE-AT-DEPTH DENOMINATOR, and the READABLE figure",
+                "  above it is AN UPPER BOUND: `readable_at_depth` admits a commit when any",
+                "  modified src/*.rs carried a parent #[cfg(test)] module, and #894's register",
+                "  exclusion then refuses register-listed candidates. NEITHER CONSULTS THE",
+                "  OTHER, so a commit can be admitted READABLE, have every candidate refused,",
+                "  and land on a guaranteed COULD_NOT_CHECK at the Site-B empty-splice guard.",
+                "",
+                "  The five counts are NEVER summed with each other or with the three above.",
+                "  ALL_REGISTER_REFUSED and NO_MODULE_AMONG_KEPT are both guaranteed refusals",
+                "  and are kept apart because their CAUSES differ: the first is two correct",
+                "  guards colliding and is fixable by reconciling them; the second is a commit",
+                "  with no pre-existing module to lay back and is not fixable at all.",
+                "",
+                "  THIS MEASURES; IT DOES NOT FIX. `readable_at_depth`,",
+                "  `partition_register_listed`, `run_counterfactual` and `select_runnable` are",
+                "  untouched, and nothing here enters any denominator of any published rate.",
+            ]
+        )
+        # Anti-vacuous, and stated FIRST in the reader's eye because a scanner that finds
+        # nothing and reports a clean split is this very defect wearing the opposite sign.
+        if register_read is False:
+            lines.append("")
+            lines.append(
+                "  COULD NOT CHECK: the module-size register could not be read, so every "
+                "commit above is UNKNOWN. That is a REFUSAL, not '0 blocked'."
+            )
+        elif readable > 0 and elig_unknown == scanned:
+            lines.append("")
+            lines.append(
+                "  COULD NOT CHECK: the READABLE set is non-empty and EVERY eligibility "
+                "lookup came back UNKNOWN. That is a REFUSAL, not '0 blocked'."
+            )
     return "\n".join(lines)
 
 
@@ -3029,8 +3263,22 @@ def main(argv):
         # were read from. The resolver is injected here, at the ONE call site, so
         # `src_census_fix_loop` stays pure and table-testable with no git.
         if args.src_census:
+            # Day 190, #870/#894: the register is resolved ONCE here -- the authority is
+            # `tests/module_size.rs`, never a second copy of the register -- and both
+            # resolvers share one diff and one show-cache per sha, so measuring splice
+            # eligibility adds no second walk over the arm.
+            gate_path = os.path.join(root, MODULE_SIZE_GATE_REL_PATH)
+            try:
+                with open(gate_path, "r", encoding="utf-8", errors="replace") as fh:
+                    register = parse_grandfathered_register(fh.read())
+            except OSError:
+                register = None
+            readability_of, eligibility_of = fix_loop_src_resolvers(root, register)
             src_counts = src_census_fix_loop(
-                rows, lambda sha: commit_src_test_readability(root, sha)
+                rows,
+                readability_of,
+                eligibility_of=eligibility_of,
+                register_read=register is not None,
             )
             print(render_src_census(src_counts, window))
         status = 0
