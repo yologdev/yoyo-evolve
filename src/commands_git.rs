@@ -3220,6 +3220,35 @@ mod tests {
     // always against a scratch repo in a tempdir, never this repo (`run_git`'s
     // `#[cfg(test)]` destructive guard, and #780's cwd lessons).
 
+    /// A fixed instant for every scratch commit, so two repos built moments
+    /// apart are identical **by construction** rather than by luck (#896).
+    ///
+    /// `git commit --amend` prints a ` Date: <author date>` line whenever the
+    /// author date differs from the committer date — which is always true of an
+    /// amend, since the amend rewrites the committer date to "now" and keeps the
+    /// original author date. With the ambient wall clock as the author date, two
+    /// repos created either side of a second boundary print different `Date:`
+    /// lines and the byte-identity fixtures below fail with a receipt like
+    /// `Date: Sun Sep 6 20:46:10` vs `...:11`. A `cargo test` failure means
+    /// `git reset --hard` in `scripts/evolve.sh`, so that race reverted a whole
+    /// unrelated session before it was named.
+    ///
+    /// **Pinning the clock, not masking the line, is the deliberate remedy** and
+    /// this comment is why: pinning removes the *source* of divergence, so any
+    /// future wall-clock-derived field (a reflog line, a relative-time
+    /// rendering, a `Date:` on some other code path) is covered for free.
+    /// Masking in `mask_commit_hash` would remove the *evidence* and cover
+    /// exactly one field, making the next instance of this class invisible
+    /// rather than impossible.
+    ///
+    /// **Both** variables are pinned, never just the author date: leaving the
+    /// committer date on the wall clock would keep a live differential in the
+    /// fixture for any field that ever renders it. And they are set on the
+    /// **child process** via `Command::env` — never `std::env::set_var`, which
+    /// is process-global and would be the shared-global race class
+    /// `tests/global_state_races.rs` exists to enumerate (#780).
+    const SCRATCH_COMMIT_DATE: &str = "2026-01-01T00:00:00+00:00";
+
     /// Build a scratch repo with one commit. Shells `git` directly on purpose:
     /// a test-region site is *supposed* to bypass the chokepoint so it never
     /// trips the destructive guard.
@@ -3243,6 +3272,8 @@ mod tests {
             let out = std::process::Command::new("git")
                 .args(&args)
                 .current_dir(repo)
+                .env("GIT_AUTHOR_DATE", SCRATCH_COMMIT_DATE)
+                .env("GIT_COMMITTER_DATE", SCRATCH_COMMIT_DATE)
                 .output()
                 .unwrap();
             assert!(out.status.success(), "scratch repo setup failed: {args:?}");
