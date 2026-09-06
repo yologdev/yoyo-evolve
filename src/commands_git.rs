@@ -1275,13 +1275,20 @@ fn auto_stage_tracked() -> bool {
     }
 }
 
-/// Run `git commit --amend` with a new message, including the co-authored trailer.
-fn run_git_amend_with_message(message: &str) -> (bool, String) {
-    let with_trailer = append_co_authored_trailer(message);
-    match std::process::Command::new("git")
-        .args(["commit", "--amend", "-m", &with_trailer])
-        .output()
-    {
+/// Merge a raw git `Output` into the `(success, text)` shape both amend paths return.
+///
+/// One statement of the rule, read by both seams below — two copies would agree
+/// the day they are written and diverge forever after.
+///
+/// Preserves the pre-chokepoint behaviour: **stdout when non-empty, otherwise
+/// stderr, with no trim** (callers trim at their own print sites). The one
+/// deliberate difference is the spawn-failure branch: the chokepoint maps an
+/// unspawnable `git` to `"git not found: <io error>"`, so that text now reads
+/// `error: git not found: …` where it used to read `error: …`. That branch fires
+/// only when git is absent from the machine entirely, it is strictly more
+/// informative, and it is named here rather than left to be discovered.
+fn amend_result(out: Result<std::process::Output, String>) -> (bool, String) {
+    match out {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -1292,20 +1299,57 @@ fn run_git_amend_with_message(message: &str) -> (bool, String) {
     }
 }
 
+/// Run `git commit --amend` with a new message in `dir`, including the
+/// co-authored trailer (#864 — the dir-taking seam).
+///
+/// Routes through `crate::git::run_git_output`, so it inherits
+/// `-c core.quotepath=off` and every future global applied at the chokepoint.
+/// The product-visible gain: git's ` create mode 100644 <path>` summary lines
+/// used to come back as the literal bytes `"n\303\244me.txt"` — surrounding
+/// quotes and octal escapes included — for any path with a non-ASCII character.
+///
+/// `-C <dir>` is placed **before** the subcommand because it is a git *global*;
+/// `git apply -C<n>` is an entirely different flag. `run_git_output` returns the
+/// raw `Output` with **no blob trim**, so the `(bool, String)` merge above is
+/// preserved byte-for-byte.
+fn run_git_amend_with_message_in(dir: &std::path::Path, message: &str) -> (bool, String) {
+    let with_trailer = append_co_authored_trailer(message);
+    let dir = dir.to_string_lossy();
+    amend_result(crate::git::run_git_output(&[
+        "-C",
+        &dir,
+        "commit",
+        "--amend",
+        "-m",
+        &with_trailer,
+    ]))
+}
+
+/// Run `git commit --amend` with a new message, including the co-authored trailer.
+///
+/// The `Path::new(".")` wrapper over the seam above — the shape
+/// `list_project_files_in` / `apply_patch_in` / `get_recent_git_files_in` /
+/// `push_handoff_branch` already use, so **no cwd is moved** (#780).
+fn run_git_amend_with_message(message: &str) -> (bool, String) {
+    run_git_amend_with_message_in(std::path::Path::new("."), message)
+}
+
+/// Run `git commit --amend --no-edit` in `dir`, amending without changing the
+/// message (#864 — the dir-taking seam; see `run_git_amend_with_message_in`).
+fn run_git_amend_no_edit_in(dir: &std::path::Path) -> (bool, String) {
+    let dir = dir.to_string_lossy();
+    amend_result(crate::git::run_git_output(&[
+        "-C",
+        &dir,
+        "commit",
+        "--amend",
+        "--no-edit",
+    ]))
+}
+
 /// Run `git commit --amend --no-edit` to amend without changing the message.
 fn run_git_amend_no_edit() -> (bool, String) {
-    match std::process::Command::new("git")
-        .args(["commit", "--amend", "--no-edit"])
-        .output()
-    {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let text = if stdout.is_empty() { stderr } else { stdout };
-            (output.status.success(), text)
-        }
-        Err(e) => (false, format!("error: {e}")),
-    }
+    run_git_amend_no_edit_in(std::path::Path::new("."))
 }
 
 /// Get the message of the last commit.
@@ -3168,5 +3212,199 @@ mod tests {
             ref_range: Some("main..dev".to_string()),
         };
         assert_eq!(opts.ref_range, Some("main..dev".to_string()));
+    }
+
+    // ---- #864 fourth payment: the two `git commit --amend` sites now route
+    // through the chokepoint. Tests assert at the EMISSION POINT — the
+    // `(bool, String)` a caller receives — never the argv one layer below, and
+    // always against a scratch repo in a tempdir, never this repo (`run_git`'s
+    // `#[cfg(test)]` destructive guard, and #780's cwd lessons).
+
+    /// Build a scratch repo with one commit. Shells `git` directly on purpose:
+    /// a test-region site is *supposed* to bypass the chokepoint so it never
+    /// trips the destructive guard.
+    fn amend_scratch_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        for args in [
+            vec!["init", "-q", "."],
+            vec!["config", "user.email", "t@example.com"],
+            vec!["config", "user.name", "T"],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(repo)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "scratch repo setup failed: {args:?}");
+        }
+        std::fs::write(repo.join("a.txt"), "x\n").unwrap();
+        for args in [vec!["add", "-A"], vec!["commit", "-qm", "init"]] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(repo)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "scratch repo setup failed: {args:?}");
+        }
+        dir
+    }
+
+    /// Git prints `[branch <short-hash>] subject` on an amend, and the hash is
+    /// not stable across two repos. Mask exactly that token so a whole-string
+    /// comparison stays an equality rather than degrading into a `contains`.
+    fn mask_commit_hash(s: &str) -> String {
+        s.lines()
+            .map(|line| match (line.find('['), line.find(']')) {
+                (Some(a), Some(b)) if b > a => {
+                    let inner = &line[a + 1..b];
+                    match inner.rsplit_once(' ') {
+                        Some((branch, _hash)) => {
+                            format!("{}[{branch} HASH]{}", &line[..a], &line[b + 1..])
+                        }
+                        None => line.to_string(),
+                    }
+                }
+                _ => line.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The raw bypass this conversion replaced, kept in the test module as the
+    /// "before" reference. `.current_dir()` stands in for the process cwd the
+    /// production code used to rely on — equivalent for this comparison, and it
+    /// moves no cwd (#780).
+    fn raw_amend_bypass(repo: &std::path::Path, args: &[&str]) -> (bool, String) {
+        match std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+        {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let text = if stdout.is_empty() { stderr } else { stdout };
+                (output.status.success(), text)
+            }
+            Err(e) => (false, format!("error: {e}")),
+        }
+    }
+
+    #[test]
+    fn amend_reports_a_non_ascii_path_raw_not_quotepath_escaped() {
+        let dir = amend_scratch_repo();
+        let repo = dir.path();
+
+        let name = "näme.txt";
+        // Anti-vacuous: the fixture must really carry a non-ASCII byte, so a
+        // transcription slip cannot make this pass by agreeing with itself.
+        assert!(
+            name.bytes().any(|b| b >= 0x80),
+            "fixture is not non-ASCII: {name}"
+        );
+
+        std::fs::write(repo.join(name), "n\n").unwrap();
+        let staged = std::process::Command::new("git")
+            .args(["add", "-A"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(staged.status.success());
+
+        let (ok, text) = run_git_amend_with_message_in(repo, "msg");
+        assert!(ok, "amend should succeed: {text}");
+        assert!(
+            text.contains(name),
+            "expected the raw path in the amend summary, got: {text:?}"
+        );
+        assert!(
+            !text.contains("\\303\\244"),
+            "path came back quotepath-escaped: {text:?}"
+        );
+    }
+
+    #[test]
+    fn amend_with_message_leaves_an_ascii_amend_byte_identical() {
+        // The near-miss guard, and the entire regression surface: every user
+        // whose paths are ASCII. Differential against the raw bypass rather
+        // than against a literal I guessed at.
+        let before_dir = amend_scratch_repo();
+        let after_dir = amend_scratch_repo();
+
+        for repo in [before_dir.path(), after_dir.path()] {
+            std::fs::write(repo.join("b.txt"), "y\n").unwrap();
+            let out = std::process::Command::new("git")
+                .args(["add", "-A"])
+                .current_dir(repo)
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+        }
+
+        let trailered = append_co_authored_trailer("hello");
+        let (before_ok, before_text) =
+            raw_amend_bypass(before_dir.path(), &["commit", "--amend", "-m", &trailered]);
+        let (after_ok, after_text) = run_git_amend_with_message_in(after_dir.path(), "hello");
+
+        assert!(before_ok, "reference amend failed: {before_text}");
+        assert_eq!(before_ok, after_ok);
+        assert_eq!(
+            mask_commit_hash(&before_text),
+            mask_commit_hash(&after_text)
+        );
+    }
+
+    #[test]
+    fn amend_no_edit_leaves_an_ascii_amend_byte_identical() {
+        let before_dir = amend_scratch_repo();
+        let after_dir = amend_scratch_repo();
+
+        for repo in [before_dir.path(), after_dir.path()] {
+            std::fs::write(repo.join("b.txt"), "y\n").unwrap();
+            let out = std::process::Command::new("git")
+                .args(["add", "-A"])
+                .current_dir(repo)
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+        }
+
+        let (before_ok, before_text) =
+            raw_amend_bypass(before_dir.path(), &["commit", "--amend", "--no-edit"]);
+        let (after_ok, after_text) = run_git_amend_no_edit_in(after_dir.path());
+
+        assert!(before_ok, "reference amend failed: {before_text}");
+        assert_eq!(before_ok, after_ok);
+        assert_eq!(
+            mask_commit_hash(&before_text),
+            mask_commit_hash(&after_text)
+        );
+    }
+
+    #[test]
+    fn a_failed_amend_reports_the_same_text_as_before() {
+        // A silently-different failure mode is a regression dressed as a
+        // cleanup. An empty repo has nothing to amend, and git's refusal
+        // carries no hash, so this is an exact byte comparison.
+        let before_dir = tempfile::tempdir().unwrap();
+        let after_dir = tempfile::tempdir().unwrap();
+        for repo in [before_dir.path(), after_dir.path()] {
+            let out = std::process::Command::new("git")
+                .args(["init", "-q", "."])
+                .current_dir(repo)
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+        }
+
+        let (before_ok, before_text) =
+            raw_amend_bypass(before_dir.path(), &["commit", "--amend", "--no-edit"]);
+        let (after_ok, after_text) = run_git_amend_no_edit_in(after_dir.path());
+
+        assert!(!before_ok, "an empty repo should have nothing to amend");
+        assert!(!before_text.is_empty(), "refusal text should not be empty");
+        assert_eq!(before_ok, after_ok);
+        assert_eq!(before_text, after_text);
     }
 }

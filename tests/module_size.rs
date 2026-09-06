@@ -175,7 +175,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // free-form-mention silence, and the unreadable-file behavior.
     // Day 174: +2 absorbed since Day 166.
     ("src/commands_file.rs", 2804),
-    ("src/commands_git.rs", 3172),
+    ("src/commands_git.rs", 3410),
     // Day 174: +25 absorbed since Day 166.
     // +103 (Day 179, #832): the `/evolution` cargo shell-out was split into a
     // thin wrapper + injected resolvers so no `#[test]` spawns `cargo`, plus a

@@ -87,20 +87,6 @@ use std::path::Path;
 /// blocker.
 const REGISTERED_GIT_BYPASSES: &[(&str, &str, &str)] = &[
     (
-        "src/commands_git.rs",
-        "run_git_amend_with_message",
-        "returns (bool, String) merging exit status with stdout-or-stderr; run_git collapses \
-         that into Result (stdout on success, stderr on failure) and loses the \
-         success-with-stderr case. `commit` is also in DESTRUCTIVE_GIT_COMMANDS, so the \
-         chokepoint's #[cfg(test)] guard would panic from the project root.",
-    ),
-    (
-        "src/commands_git.rs",
-        "run_git_amend_no_edit",
-        "same shape as run_git_amend_with_message: merged (bool, String) return, and \
-         `commit` trips the chokepoint's destructive-command test guard.",
-    ),
-    (
         "src/commands_search.rs",
         "run_grep",
         "two sites in one fn: a .status() probe with both stdout and stderr nulled (no \
