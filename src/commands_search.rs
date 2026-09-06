@@ -1311,34 +1311,72 @@ pub struct GrepCountEntry {
 /// Uses `git grep -c` or `grep -rc` depending on whether we're in a git repo.
 /// Filters out files with 0 matches (plain grep includes them, git grep doesn't).
 fn run_grep_count(args: &GrepArgs) -> Result<Vec<GrepCountEntry>, String> {
-    let in_git_repo = std::process::Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+    run_grep_count_in(std::path::Path::new("."), args)
+}
 
-    let output = if in_git_repo {
-        let mut cmd = std::process::Command::new("git");
-        cmd.args(["grep", "-c", "--color=never"]);
+/// `run_grep_count`, resolved against an explicit directory.
+///
+/// The dir-taking seam, matching `list_project_files_in` / `get_recent_git_files_in` /
+/// `apply_patch_in`: the process CWD is **global**, so a test that moved it would
+/// corrupt every sibling test resolving a relative path concurrently (#780 spent two
+/// whole tasks removing those). Returned paths keep whatever form git/grep printed.
+///
+/// Both git invocations route through `crate::git::run_git_output` (#864), so they
+/// inherit `-c core.quotepath=off` and every future global applied at the chokepoint.
+/// `run_git_output` is the right helper for the same reason the two prior payments
+/// chose it: it hands back a raw `Output` with **no** blob trim, so the existing
+/// `lines()`/`filter_map` parsing is preserved byte-for-byte.
+fn run_grep_count_in(
+    root: &std::path::Path,
+    args: &GrepArgs,
+) -> Result<Vec<GrepCountEntry>, String> {
+    let root_str = root.to_string_lossy().into_owned();
+
+    // `-C <dir>` sits BEFORE the subcommand because it is a git *global* —
+    // `git grep -C<n>` is an entirely different flag (context lines).
+    //
+    // The `.stdout(null()).stderr(null())` this replaces was redundant, measured
+    // rather than reasoned (the Day-189 falsification, one function over):
+    // `Command::output()` captures both streams by construction and never inherits
+    // the terminal. Probed in a scratch dir — inside a repo both shapes answer
+    // `true` with 5 stdout bytes; outside one both answer `false` with 69 stderr
+    // bytes landing in a `Vec` nobody reads, and neither printed a single byte.
+    let in_git_repo =
+        crate::git::run_git_output(&["-C", &root_str, "rev-parse", "--is-inside-work-tree"])
+            .map(|out| out.status.success())
+            .unwrap_or(false);
+
+    let output: Result<std::process::Output, String> = if in_git_repo {
+        // The register claimed the chokepoint's `&[&str]` signature "cannot express
+        // this without materialising every combination". It costs one `Vec<String>`
+        // built incrementally and borrowed once — the *one* argv actually assembled,
+        // never a combinatorial expansion.
+        let mut argv: Vec<String> = vec![
+            "-C".to_string(),
+            root_str.clone(),
+            "grep".to_string(),
+            "-c".to_string(),
+            "--color=never".to_string(),
+        ];
         if !args.case_sensitive {
-            cmd.arg("-i");
+            argv.push("-i".to_string());
         }
-        cmd.arg("--");
-        cmd.arg(&args.pattern);
+        argv.push("--".to_string());
+        argv.push(args.pattern.clone());
         if args.path != "." {
-            cmd.arg(&args.path);
+            argv.push(args.path.clone());
         }
         if let Some(ref glob) = args.include {
-            cmd.arg(glob);
+            argv.push(glob.clone());
         }
         if let Some(ref glob) = args.exclude {
-            cmd.arg(format!(":(exclude){glob}"));
+            argv.push(format!(":(exclude){glob}"));
         }
-        cmd.output()
+        let borrowed: Vec<&str> = argv.iter().map(String::as_str).collect();
+        crate::git::run_git_output(&borrowed).map_err(|e| format!("Failed to run grep: {e}"))
     } else {
         let mut cmd = std::process::Command::new("grep");
+        cmd.current_dir(root);
         cmd.args(["-rc", "--color=never"]);
         if !args.case_sensitive {
             cmd.arg("-i");
@@ -1358,7 +1396,11 @@ fn run_grep_count(args: &GrepArgs) -> Result<Vec<GrepCountEntry>, String> {
         ]);
         cmd.arg(&args.pattern);
         cmd.arg(&args.path);
-        cmd.output()
+        // Same wrapper text as before. The git arm's inner `e` now carries the
+        // chokepoint's own `git not found: …` prefix, in a branch that is
+        // unreachable when git is absent — the probe above also spawns git, so a
+        // missing git routes here, to plain grep, instead.
+        cmd.output().map_err(|e| format!("Failed to run grep: {e}"))
     };
 
     match output {
@@ -1380,7 +1422,7 @@ fn run_grep_count(args: &GrepArgs) -> Result<Vec<GrepCountEntry>, String> {
                 .collect();
             Ok(entries)
         }
-        Err(e) => Err(format!("Failed to run grep: {e}")),
+        Err(e) => Err(e),
     }
 }
 
@@ -3121,6 +3163,127 @@ src/b.rs:20:match two";
         assert!(!entries.is_empty(), "Should find 'fn main' counts in src/");
         assert!(entries.iter().any(|e| e.file.contains("main.rs")));
         assert!(entries.iter().all(|e| e.count > 0));
+    }
+
+    /// Build a scratch git repo in a tempdir carrying one file per name given.
+    ///
+    /// Never this repo: `run_git`'s `#[cfg(test)]` destructive guard exists because
+    /// tests once mutated the live checkout, and #780 removed every process-CWD move
+    /// for the same class of reason. `git` is shelled directly here on purpose — a
+    /// test-region site is *supposed* to bypass the chokepoint.
+    fn grep_scratch_repo(names: &[&str], body: &str) -> tempfile::TempDir {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        for name in names {
+            std::fs::write(root.join(name), body).expect("write fixture");
+        }
+        for argv in [
+            vec!["init", "-q", "."],
+            vec!["config", "user.email", "t@example.invalid"],
+            vec!["config", "user.name", "t"],
+            vec!["add", "-A"],
+            vec!["commit", "-qm", "fixture"],
+        ] {
+            let ok = std::process::Command::new("git")
+                .current_dir(root)
+                .args(&argv)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            assert!(ok, "scratch repo setup failed: git {argv:?}");
+        }
+        tmp
+    }
+
+    fn count_args(pattern: &str) -> GrepArgs {
+        GrepArgs {
+            pattern: pattern.to_string(),
+            path: ".".to_string(),
+            case_sensitive: true,
+            context_lines: None,
+            include: None,
+            exclude: None,
+            count_only: true,
+        }
+    }
+
+    #[test]
+    fn run_grep_count_in_returns_a_non_ascii_path_raw_not_quotepath_escaped() {
+        // git's `core.quotepath` defaults to ON, so `git grep -c` renders a
+        // non-ASCII filename as the literal bytes `"src/n\303\244me.rs"` —
+        // surrounding quotes and octal escapes included — which no consumer can
+        // use as a path. Routing through the chokepoint inherits
+        // `-c core.quotepath=off` and the name comes back raw (#864).
+        let name = "src/näme.rs";
+        // Anti-vacuous: a transcription slip that made the fixture pure ASCII
+        // would let this test pass by agreeing with itself.
+        assert!(
+            !name.is_ascii(),
+            "fixture must actually carry a non-ASCII byte"
+        );
+
+        let tmp = grep_scratch_repo(&[name], "fn f() { needle_marker(); }\n");
+        let entries = run_grep_count_in(tmp.path(), &count_args("needle_marker")).unwrap();
+
+        assert_eq!(
+            entries,
+            vec![GrepCountEntry {
+                file: name.to_string(),
+                count: 1,
+            }],
+            "non-ASCII path must come back raw, not quoted/octal-escaped"
+        );
+    }
+
+    #[test]
+    fn run_grep_count_in_leaves_ascii_and_spaced_paths_byte_identical() {
+        // The near-miss guard, and the half that matters: this is every user whose
+        // filenames are ordinary, i.e. the entire regression surface. A path with a
+        // SPACE is the sharp case — git does not quote a space, which is exactly
+        // what makes it prove this is a pure narrowing rather than a rewrite.
+        let tmp = grep_scratch_repo(
+            &["src/plain.rs", "src/we ird.rs"],
+            "fn f() { needle_marker(); }\n",
+        );
+        let mut entries = run_grep_count_in(tmp.path(), &count_args("needle_marker")).unwrap();
+        entries.sort_by(|a, b| a.file.cmp(&b.file));
+
+        // Whole-vector equality, never a `contains`: that is every existing user.
+        assert_eq!(
+            entries,
+            vec![
+                GrepCountEntry {
+                    file: "src/plain.rs".to_string(),
+                    count: 1,
+                },
+                GrepCountEntry {
+                    file: "src/we ird.rs".to_string(),
+                    count: 1,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn run_grep_count_in_falls_back_to_plain_grep_outside_a_repo() {
+        // Graceful degradation, pinned rather than assumed: a directory that is not
+        // a git repo takes the plain-`grep` arm, which the conversion left on its
+        // own error text and now runs with `.current_dir(root)`.
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(tmp.path().join("src")).expect("mkdir src");
+        std::fs::write(
+            tmp.path().join("src/plain.rs"),
+            "fn f() { needle_marker(); }\n",
+        )
+        .expect("write fixture");
+
+        let entries = run_grep_count_in(tmp.path(), &count_args("needle_marker")).unwrap();
+        assert_eq!(entries.len(), 1, "plain-grep fallback should still match");
+        assert!(entries[0].file.ends_with("plain.rs"));
+        assert_eq!(entries[0].count, 1);
     }
 
     #[test]
