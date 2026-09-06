@@ -2454,6 +2454,87 @@ mod broad_word_tests {
         ": "
     }
 
+    /// A terminal **phrase** beats all three words — the guard the Day-189
+    /// verdict silently depends on and never asserted.
+    ///
+    /// `a_terminal_status_code_beats_every_one_of_the_three_broad_words` above
+    /// pins the *numeric* family. But `is_retriable_error` scans **two**
+    /// terminal families before the transient list, and the second is the
+    /// non-numeric phrase list (`authentication`, `permission denied`,
+    /// `quota exceeded`, `credit balance`, …). Nothing anywhere pinned a
+    /// collision between that family and one of the three broad words: the
+    /// closest pre-existing assertion drives `"authentication failed"`, which
+    /// carries no transient word at all, so the precedence never had to fire.
+    ///
+    /// It is load-bearing **because** the three words were deliberately left
+    /// broad. Keeping them means a billing or auth failure phrased in
+    /// transient language is terminal *only* by scan order — and that phrasing
+    /// is ordinary provider English, not a contrived shape: quota exhaustion
+    /// routinely says "capacity", and an auth failure behind a proxy routinely
+    /// says "connection". Reorder these two loops, or merge them for tidiness,
+    /// and a permanently dead key burns `MAX_RETRIES` attempts instead of
+    /// surfacing its real diagnosis. The words stay broad (corpus absence —
+    /// see `LOAD_BEARING`); this asserts the thing that makes leaving them safe.
+    #[test]
+    fn a_terminal_phrase_beats_every_one_of_the_three_broad_words() {
+        // (terminal phrase, broad word, the transient half on its own)
+        let rows: [(&str, &str, &str); 3] = [
+            (
+                "authentication failed",
+                "connection",
+                "connection rejected by the proxy",
+            ),
+            (
+                "permission denied",
+                "timeout",
+                "timeout policy is admin-only",
+            ),
+            (
+                "quota exceeded",
+                "capacity",
+                "no capacity left on your plan",
+            ),
+        ];
+        for (terminal, word, transient) in rows {
+            // Anti-vacuous in both halves: the transient tail really is
+            // retriable on its own, and it is retriable on *this* word rather
+            // than on some sibling entry — so the `false` below is precedence
+            // firing rather than an inert fixture agreeing with itself.
+            let lower_tail = transient.to_lowercase();
+            let hits: Vec<&str> = TRANSIENT_ERROR_SHAPES
+                .iter()
+                .filter(|k| lower_tail.contains(*k))
+                .copied()
+                .collect();
+            assert_eq!(
+                hits,
+                vec![word],
+                "{transient:?} must isolate {word:?} for this row to prove anything"
+            );
+            assert!(
+                is_retriable_error(transient),
+                "{transient:?} should be retriable on {word:?} alone"
+            );
+            // And the terminal half must be terminal on the PHRASE, with no
+            // digits in it at all, or this row would be re-testing the numeric
+            // family the sibling test already covers.
+            assert!(
+                !terminal.chars().any(|c| c.is_ascii_digit()),
+                "{terminal:?} must carry no status code — the numeric family \
+                 is pinned by a_terminal_status_code_beats_every_one_of_the_three_broad_words"
+            );
+
+            let combined = format!("{terminal}{} {transient}", american_colon().trim_end());
+            assert!(
+                !is_retriable_error(&combined),
+                "{combined:?} carries the terminal phrase {terminal:?} and must \
+                 not be retriable — the phrase family is scanned before the \
+                 transient list, and that ordering is what makes leaving \
+                 {word:?} broad safe"
+            );
+        }
+    }
+
     /// The two error strings this repo has actually observed, quoted from
     /// CLAUDE.md — neither involves the three words, which is the honest bound
     /// on the #855 measurement: the misclassifying rows were all invented.
