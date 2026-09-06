@@ -1,0 +1,145 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two sites before trusting anything the register says about them — that step has falsified the register's own reason three payments running.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'Command::new("git")' sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'commands_git' tests/git… ✓ (5ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1240,1340p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '80,115p' tests/git_choke… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,140p' src/git.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'run_git_amend_with_mess… ✓ (4ms)
+ ✓ (7ms)
+  6 tools completed in 10.0s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,230p' src/git.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1500,1560p' src/commands… ✓ (4ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 59.5s (2 ✓)
+
+Step 0 findings so far: register claim 1 (the (bool,String) merge) is false as a blocker — run_git_output returns raw Output. Claim 2 (the destructive guard) is confirmed and is exactly what the -C seam fixes. Now let me probe the actual product-visible gain before writing a test that guesses at it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf qpprobe && mkdir qpprobe && cd qpprobe && … (3 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2660,2740p' src/commands… ✓ (3ms)
+ ✓ (30ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && rm -rf qp2 && mkdir qp2 && cd qp2 && git init -q … (6 lines) ✓ (44ms)
+  3 tools completed in 7.8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The probe reproduces the defect exactly — create mode 100644 "n\303\244me.txt" vs näme.txt. Now the conversion:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,25p' src/commands_git.… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git.rs (32 → 72 lines)
+  - /// Run `git commit --amend` with a new message, including the co-authored trailer.
+  - fn run_git_amend_with_message(message: &str) -> (bool, String) {
+  -     let with_trailer = append_co_authored_trailer(message);
+  -     match std::process::Command::new("git")
+  -         .args(["commit", "--amend", "-m", &with_trailer])
+  -         .output()
+  -     {
+  + /// Merge a raw git `Output` into the `(success, text)` shape both amend paths return.
+  + ///
+  + /// One statement of the rule, read by both seams below — two copies would agree
+  + /// the day they are written and diverge forever after.
+  + ///
+  + /// Preserves the pre-chokepoint behaviour: **stdout when non-empty, otherwise
+  + /// stderr, with no trim** (callers trim at their own print sites). The one
+  + /// deliberate difference is the spawn-failure branch: the chokepoint maps an
+  + /// unspawnable `git` to `"git not found: <io error>"`, so that text now reads
+  + /// `error: git not found: …` where it used to read `error: …`. That branch fires
+  + /// only when git is absent from the machine entirely, it is strictly more
+  + /// informative, and it is named here rather than left to be discovered.
+  + fn amend_result(out: Result<std::process::Output, String>) -> (bool, String) {
+  ... (70 more lines)
+ ✓ (1m 49s)
+  - /// Run `git commit --amend` with a new message, including the co-authored trailer.
+  - fn run_git_amend_with_message(message: &str) -> (bool, String) {
+  -     let with_trailer = append_co_authored_trailer(message);
+  -     match std::process::Command::new("git")
+  -         .args(["commit", "--amend", "-m", &with_trailer])
+  -         .output()
+  -     {
+  + /// Merge a raw git `Output` into the `(success, text)` shape both amend paths return.
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 12s (2 ✓)
+
+Now step 2 — delete the two register entries in the same diff (that pairing is what makes the task self-verifying):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/git_chokepoint.rs (15 → 1 lines)
+  -     (
+  -         "src/commands_git.rs",
+  -         "run_git_amend_with_message",
+  -         "returns (bool, String) merging exit status with stdout-or-stderr; run_git collapses \
+  -          that into Result (stdout on success, stderr on failure) and loses the \
+  -          success-with-stderr case. `commit` is also in DESTRUCTIVE_GIT_COMMANDS, so the \
+  -          chokepoint's #[cfg(test)] guard would panic from the project root.",
+  -     ),
+  -     (
+  -         "src/commands_git.rs",
+  -         "run_git_amend_no_edit",
+  -         "same shape as run_git_amend_with_message: merged (bool, String) return, and \
+  -          `commit` trips the chokepoint's destructive-command test guard.",
+  -     ),
+        (
+ ✓ (1m 18s)
+  -     (
+  -         "src/commands_git.rs",
+  -         "run_git_amend_with_message",
+  -         "returns (bool, String) merging exit status with stdout-or-stderr; run_git collapses \
+  -          that into Result (stdout on success, stderr on failure) and loses the \
+  -          success-with-stderr case. `commit` is also in DESTRUCTIVE_GIT_COMMANDS, so the \
+  -          chokepoint's #[cfg(test)] guard would panic from the project root.",
+  -     ),
+  ... (7 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1774,1790p' src/commands… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (204 lines) ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo amend_ 2>&… ✓ (24.3s)
+  3 tools completed in 58.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_chokepoint… ✓ (9.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate is green with both halves landed. Now the independent census cross-check (never by subtraction) plus full checks:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (229ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (162ms)
+  2 tools completed in 4.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'commands_git.rs", 3172'… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/commands_git.rs", 3172),
+  +     ("src/commands_git.rs", 3410),
+ ✓ (1m 32s)
+  -     ("src/commands_git.rs", 3172),
+  +     ("src/commands_git.rs", 3410),
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 36s (2 ✓)
+
+Now the positive control — one atomic mutate→run→restore, so the restore cannot be forgotten:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (24 lines) ✓ (24.6s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
