@@ -1,0 +1,40 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -20 … ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- scripts/check_a… ✓ (6ms)
+  3 tools completed in 9.8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== self-tests added in co… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^def run_self_tests/,0' sc… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 90 python3 scripts/check… ✓ (104ms)
+  3 tools completed in 17.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 16s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+What I verified:
+
+The **core is good.** `reconcile_moved_tests` implements exactly the mechanism asked for: cross-file reconciliation over the already-parsed hunks (no second `git` call, no tree walk), downgrade-only guarded by an early if f.verdict != WEAKENED: continue, all-or-nothing via the destinations = None; break on the first unexplained name, and the vacuous-truth case (if not lost) refused explicitly rather than left to the loop. MOVED is its own value with its own count line and its own listing section, and the LIMITS block was rewritten honestly (naming the partial-move and renamed-fn residue). removed_test_fn_names was extracted with both consumers landing in the same diff. I ran the tool: self-tests pass, and --from HEAD~3 --to HEAD renders cleanly — counts is a Counter, so counts[MOVED] is 0-safe.
+
+Two failures, both structural:
+
+1. **Zero self-tests were added.** `git show HEAD | grep -c "check("` → `0`. The 61 assertions in `run_self_tests` are all pre-existing, and the sole `MOVED grep hit in that block is a substring of S_TEST_REMOVED`. The task enumerated five table rows, an anti-vacuous test asserted first, a byte-identical near-miss guard and a real-commit assertion — none exist. This makes the mandated positive control unrunnable: neutering reconcile_moved_tests reddens nothing, so "read the width of the red as the scope of the claim" has no red to read. That is the cannot-fail-loudly defect landing inside the instrument whose entire subject is unverified green.
+
+2. **CLAUDE.md untouched.** It is named in the task's `Files:` and has an explicit `## Docs` section listing the required contents. `git show --stat HEAD` shows one file changed. A new fourth verdict state ships undocumented in the file re-injected as authoritative context every session — the same stale/absent-claim shape that bullet's own history records repeatedly.
+
+forgotten_touchpoints passes cleanly; product_surface is N/A (hand-run script, not wired into cargo test or any binary).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,177 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the script to see what landed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git show…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MOVED\|reconcile_moved_… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+The core landed; the tests and docs did not. Let me read the relevant code.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '280,320p;480,610p' scrip…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '380,480p' scripts/check_… ✓ (5ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+Now let me look at the self-test block to match its style.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def run_self_tests" scr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/def run_self_tests/,0' scr… ✓ (5ms)
+ ✓ (7ms)
+  2 tools completed in 7ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me re-orient: the core landed, tests and docs did not. First, verify current state and reproduce step 0.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-list --count HEAD && git… ✓ (45ms)
+ ✓ (66ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+Clone is already deep (5589 commits). Now reproduce step 0 — the measured claim the whole discriminator rests on.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format='%H %s' 1b50…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --name-status 1b502eacb… ✓ (5ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.0s (2 ✓)
+
+A src/agent_builder.rs is in the diff — step 0.3 holds. Now run both the pre-change and post-change tool on it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD~1:scripts/check_as…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- NEW (post-discriminato… ✓ (118ms)
+ ✓ (177ms)
+  2 tools completed in 178ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 fully reproduces: old tool → 3 WEAKENED, new tool → 0 WEAKENED, 3 MOVED, destination named. Now the near-miss baseline — old vs new on a no-move window.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 /tmp/caw_old.py --from H… ✓ (100ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The only diffs are the two deliberate additions (LIMITS rewrite, MOVED count line). Let me confirm every finding row is byte-identical.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -v "MOVED \.\." /tmp/new_h5… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Report body is byte-identical. Now let me check the regexes the fixtures must satisfy.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "FN_NAME_RE =\|TEST_ATTR…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '340,370p' scripts/check_… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have what I need. Let me find the insertion point in the self-test block.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "clean report says none\… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1035,1041p' scripts/chec… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 36.7s (2 ✓)
+
+Now let me check render_report's shape so the byte-identity guard asserts the right string.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def render_report/,/^d… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+render_report returns the scan block only — clean for byte-identity. Let me generate the exact expected literal for the near-miss fixture.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (16 lines) ✓ (42ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll write the self-tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (1 → 212 lines)
+  +     # ======================================================================================
+  +     # reconcile_moved_tests -- the move-vs-deletion discriminator.
+  +     #
+  +     # Measured reason (Day 191): 1b502eacb937 scored 3 WEAKENED and is innocent -- it is the
+  +     # Day-58 agent-builder extraction, tree-wide assertion count 5062 before and 5062 after.
+  +     # Both error directions are expensive, so both are pinned here: forgiving a real
+  +     # weakening silences the vein this instrument exists for, and accusing a move is a false
+  +     # accusation against a past commit.
+  +     # ======================================================================================
+  + 
+  +     # -- ANTI-VACUOUS, ASSERTED FIRST ------------------------------------------------------
+  +     # A reconciler handed nothing must move nothing. One that finds nothing and forgives
+  +     # everything is this defect wearing the opposite sign, and it is quieter than the bug.
+  +     check("reconcile: empty findings move nothing", reconcile_moved_tests([], []) == ([], 0))
+  +     check(
+  +         "reconcile: findings with no hunks to pair against move nothing",
+  +         reconcile_moved_tests(
+  +             [Finding("src/main.rs", "@@ -1,2 +1,1 @@", WEAKENED, [S_TEST_REMOVED], "d")], []
+  +         )[1]
+  +         == 0,
+  ... (192 more lines)
+ ✓ (1m 16s)
+  +     # ======================================================================================
+  +     # reconcile_moved_tests -- the move-vs-deletion discriminator.
+  +     #
+  +     # Measured reason (Day 191): 1b502eacb937 scored 3 WEAKENED and is innocent -- it is the
+  +     # Day-58 agent-builder extraction, tree-wide assertion count 5062 before and 5062 after.
+  +     # Both error directions are expensive, so both are pinned here: forgiving a real
+  +     # weakening silences the vein this instrument exists for, and accusing a move is a false
+  +     # accusation against a past commit.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (56ms)
+  2 tools completed in 1m 18s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Self-tests pass. Let me confirm the new checks actually landed and count them.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "--- new… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+17 new checks. Now the positive control — one atomic mutate→run→restore, with the sabotage marked so tests/neutered_guards.rs enforces the restore.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (10 lines) ✓ (85ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control fired — 5 red. Let me capture the full list to read the width of the red precisely.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (8 lines) ✓ (81ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
