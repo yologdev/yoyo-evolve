@@ -1,0 +1,231 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code in src/agent_builder.rs to see the exact shape of the retain and the push.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '70,110p' src/agent_build…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '860,960p' src/agent_buil… ✓ (7ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+The output is being elided. Let me read the exact region with line numbers.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent\|shared_state…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/agent_builder.rs | se… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "LITE_TOOLS\|compute_lit…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_sub_agent_tool… ✓ (4ms)
+ ✓ (10ms)
+  4 tools completed in 16.8s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: I need to know whether --lite's computed disallow list contains sub_agent, since that decides whether the gate changes lite's behaviour.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '444,460p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/agent_builder.rs" t… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 49.3s (2 ✓)
+
+compute_lite_disallowed_tools iterates BUILTIN_TOOL_NAMES, which includes sub_agent and shared_state. So --lite already claims 4 tools in its own stderr line while shipping 6. That settles the design: move the push above the retain so the single existing filter statement covers every tool, and encode the #715 pairing as one pure function.
+
+Let me write the pure function and its test first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (3 → 32 lines)
+    pub(crate) fn tool_name_disallowed(name: &str, disallowed: &[String]) -> bool {
+        disallowed.iter().any(|d| d == name)
+  + }
+  + 
+  + /// Expand a disallow list with the one pairing rule the tool set carries, so
+  + /// the filter downstream stays a SINGLE `retain` statement (#887 step 1).
+  + ///
+  + /// The rule, and it is a decision rather than a side effect: the parent holds
+  + /// `shared_state` *only* to pre-populate artifacts for the sub-agents it
+  + /// dispatches (#715 — the documented RLM step is store-then-reference). With
+  + /// `sub_agent` disallowed there is nobody on the other end of that store, so it
+  + /// is not worth a tool slot and goes with it. A later reader must not "restore"
+  + /// `shared_state` here as an unrelated tool that happened to be caught.
+  + ///
+  + /// It runs in ONE direction only, deliberately: disallowing `shared_state`
+  + /// alone leaves `sub_agent` in place, because a parent that cannot pre-populate
+  + /// the store can still dispatch sub-agents perfectly well — the reverse is not
+  + /// true, which is exactly why the pairing is asymmetric.
+  + ///
+  + /// An EMPTY list returns an empty list, and a list naming neither tool is
+  ... (12 more lines)
+ ✓ (16.9s)
+    pub(crate) fn tool_name_disallowed(name: &str, disallowed: &[String]) -> bool {
+        disallowed.iter().any(|d| d == name)
+  + }
+  + 
+  + /// Expand a disallow list with the one pairing rule the tool set carries, so
+  + /// the filter downstream stays a SINGLE `retain` statement (#887 step 1).
+  + ///
+  + /// The rule, and it is a decision rather than a side effect: the parent holds
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the standing rule is never to add a definition without its consumer. Wiring the call site now: move the push above the retain so the single existing retain covers every tool.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (35 → 44 lines)
+  -             // Filter out disallowed tools (--disallowed-tools flag or --lite)
+  -             if !self.disallowed_tools.is_empty() {
+  -                 tools.retain(|t| !tool_name_disallowed(t.name(), &self.disallowed_tools));
+  +             // Add sub-agent tool. It sits ABOVE the disallow retain below (and
+  +             // still BELOW the `--allowed-tools` whitelist retain above, so that
+  +             // flag's semantics are unchanged) — #887 step 1. It used to be
+  +             // pushed *after* the retain, which made `--disallowed-tools
+  +             // sub_agent` completely inert and made `--lite` ship 6 tools while
+  +             // its own stderr line claimed 4. Pushing first leaves exactly ONE
+  +             // statement of the filter, so no future tool can be added past it.
+  +             //
+  +             // Wrapped with a session-wide call cap as a runaway-loop circuit
+  +             // breaker. The parent also gets `shared_state` here (#715): the
+  +             // documented RLM step is store-then-reference, so the parent needs a
+  +             // handle on the same store its sub-agents read. Paired with
+  +             // `sub_agent` deliberately — a store with nobody on the other end is
+  +             // not worth a tool slot — and that pairing is encoded once, in
+  +             // `effective_disallowed_tools`, rather than as a side effect here.
+  +             let (sub_agent_tool, shared_state) = build_sub_agent_tool(self);
+  +             // Already `Box<dyn AgentTool>` — and possibly a
+  ... (47 more lines)
+ ✓ (2m 1s)
+  -             // Filter out disallowed tools (--disallowed-tools flag or --lite)
+  -             if !self.disallowed_tools.is_empty() {
+  -                 tools.retain(|t| !tool_name_disallowed(t.name(), &self.disallowed_tools));
+  +             // Add sub-agent tool. It sits ABOVE the disallow retain below (and
+  +             // still BELOW the `--allowed-tools` whitelist retain above, so that
+  +             // flag's semantics are unchanged) — #887 step 1. It used to be
+  +             // pushed *after* the retain, which made `--disallowed-tools
+  +             // sub_agent` completely inert and made `--lite` ship 6 tools while
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both edits are in. Let me verify the build compiles and see the current call site.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "effective_disallowed_to… ✓ (3ms)
+ ✓ (175ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+Build passes: push at 974/975 now sits above the disallow retain at 981, still below the allowed retain at 947. Now the tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn tool_name_disallowed… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3240,3246p' src/agent_bu… ✓ (3ms)
+  2 tools completed in 2.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now adding both tests — the pure table for the pairing rule, and the source-level ordering guard.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (2 → 92 lines)
+  +     #[test]
+  +     fn effective_disallowed_tools_pairs_shared_state_with_sub_agent() {
+  +         // The #715 pairing rule, asserted at its emission point — the list the
+  +         // single `retain` in `configure_agent` actually consults.
+  +         //
+  +         // The empty and untouched rows are the NEAR-MISS GUARDS and they are the
+  +         // whole regression surface: every user who has passed neither
+  +         // `--disallowed-tools` nor `--lite` nor `--restricted` must get a list
+  +         // that filters nothing, so a broken pairing rule cannot pass by
+  +         // quietly removing a tool from everyone.
+  +         let cases: &[(&[&str], &[&str], &str)] = &[
+  +             (&[], &[], "empty in, empty out — the regression surface"),
+  +             (
+  +                 &["bash"],
+  +                 &["bash"],
+  +                 "a list naming neither tool is returned unchanged",
+  +             ),
+  +             (
+  +                 &["sub_agent"],
+  +                 &["sub_agent", "shared_state"],
+  ... (72 more lines)
+ ✓ (2m 2s)
+  +     #[test]
+  +     fn effective_disallowed_tools_pairs_shared_state_with_sub_agent() {
+  +         // The #715 pairing rule, asserted at its emission point — the list the
+  +         // single `retain` in `configure_agent` actually consults.
+  +         //
+  +         // The empty and untouched rows are the NEAR-MISS GUARDS and they are the
+  +         // whole regression surface: every user who has passed neither
+  +         // `--disallowed-tools` nor `--lite` nor `--restricted` must get a list
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo agent_buil… ✓ (189ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 7s (2 ✓)
+
+All 90 agent_builder tests pass, so the failure is elsewhere. Checking the module-size gate:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (180ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate printed its own remedy. Pasting that line verbatim rather than hand-typing it:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/agent_builder.rs", 3506),
+  +     ("src/agent_builder.rs", 3634),
+ ✓ (1m 16s)
+  -     ("src/agent_builder.rs", 3506),
+  +     ("src/agent_builder.rs", 3634),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 18s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 49s (2 ✓)
+
+All green: 5513 passed, clippy clean. Now the positive controls, run serially as atomic mutate→run→restore with the NEUTERED marker in place.
+
+Control B first — the discriminating one (mutate a single datum in the new rule):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent… (12 lines) ✓ (28.7s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control B is exactly discriminating: exactly 1 test red (my new pairing test), while the pre-existing tool_name_disallowed predicate test and every near-miss row stayed green.
+
+Now Control C — the wiring guard, which is the one that matters given #893's receipt:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c NEUT… (15 lines) ✓ (27.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control C reproduces the #887 defect exactly and reddens only the wiring guard — the pairing test stayed green, which is the direction proving it tests the wiring rather than the rule. 0 markers left after both restores.
+
+Verifying the restored tree is green and the diff is exactly my intended change:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 27s)
+  2 tools completed in 3m 30s (1 ✓, 1 ✗)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

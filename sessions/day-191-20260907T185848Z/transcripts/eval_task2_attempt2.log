@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 900,1010p src/agent_build… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "LITE_TOOLS" src/cli*.rs… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (801ms)
+  3 tools completed in 13.6s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 27s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md.
+
+PASS. The diff does exactly what the task specified and nothing wider:
+
+• **The move (shape a)**: `build_sub_agent_tool` + `SharedStateTool` push now sits between the `--allowed-tools` whitelist retain (untouched, so that flag's semantics don't move) and the disallow retain, which now covers every tool in the list. One statement of the filter, with the reason written at the code as required.
+• **The pairing**: encoded once in the new pure `effective_disallowed_tools`, one-directional (`shared_state` alone does not remove `sub_agent`), with its consumer landing in the same diff — the retain and the stderr line both read it, so the removal is not silent.
+• **Regression surface**: empty-in/empty-out is the first table row, asserted with a whole-vector `assert_eq!`; with no flag the `if !disallowed.is_empty()` guard skips the retain entirely.
+• **Wiring guard**: `the_sub_agent_push_sits_above_the_disallow_retain` asserts both directions (index ordering *and* exactly one push site) with runtime-assembled needles, and its doc comment states its own limit rather than implying coverage it lacks — directly addressing #893's receipt.
+• **Register**: 3506 → 3634, and wc -l src/agent_builder.rs returns exactly 3634.
+• **Out-of-scope traps avoided**: RESTRICTED_REMOVED_TOOLS untouched, restricted_mode_note/help.rs untouched, no changes to src/tools.rs.
+
+One note, not a failure: the --lite consequence (now 4 tools instead of 6) is a real behaviour change riding along, but it is on an opt-in flag, moves toward what LITE_TOOLS already promised, and is disclosed both at the code and in CLAUDE.md.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

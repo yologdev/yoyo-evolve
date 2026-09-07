@@ -1,0 +1,233 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the target file to understand its structure, particularly around git_diff and the sibling subprocess calls.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def git_diff\|def git_c… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '460,620p' scripts/check_… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.9s (2 ✓)
+
+Now let me reproduce the blocker before changing anything.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- sh… (9 lines) ✓ (29ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree — nothing landed yet. Let me reproduce the blocker, then edit.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== 2da73436 (Day 188) ===… ✓ (61ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The task file's blocker claim just did not reproduce on that sha. Probing all four before designing anything — a stated blocker is a claim, not a measurement.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for s in 1b5… (5 lines) ✓ (17ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tree still clean. All four parents are currently reachable — so the stated blocker did not reproduce. Verifying the crash class is real with a fabricated unreachable ref:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (136ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Crash class confirmed real. Capturing the byte-identity baseline before editing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tm… (5 lines) ✓ (144ms)
+
+Baselines captured. Now the edit — a COULD_NOT_CHECK refusal at each site that shells git with check=True:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '30,70p' scripts/check_as… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Making the edit now — a refusal path at each check=True site:
+  ▶ edit scripts/check_assertion_weakening.py (3 → 74 lines)
+    WEAKENED = "WEAKENED"
+    STRENGTHENED = "STRENGTHENED"
+    UNKNOWN = "UNKNOWN"
+  + 
+  + # --------------------------------------------------------------------------------------
+  + # COULD_NOT_CHECK: a REFUSAL, deliberately NOT a fourth verdict.
+  + #
+  + # It is not in the three-state set above and never enters a hunk tally, because it answers
+  + # a different question. `UNKNOWN` means "a hunk touched test-ish lines and I could not
+  + # judge the direction" -- a real classification over a real diff. This means "I never
+  + # obtained a diff at all". Different facts, different remedies; folding them would put a
+  + # missing input in the same bucket as a measured one, which is the shrinking-denominator
+  + # defect this repo keeps fixing.
+  + #
+  + # It exits NON-ZERO and says outright that it is not a clean bill: "could not check" must
+  + # never read as "checked; clean" -- the same refusal the pre-push hook, CiScan's
+  + # could-not-run branch and UngradedScan's unread-lines clause already make. Reporting
+  + # `0 findings` and exit 0 over a diff that was never fetched is the exact shape this whole
+  + # instrument exists to detect, one layer up.
+  + COULD_NOT_CHECK = "COULD_NOT_CHECK"
+  ... (54 more lines)
+ ✓ (1m 15s)
+    WEAKENED = "WEAKENED"
+    STRENGTHENED = "STRENGTHENED"
+    UNKNOWN = "UNKNOWN"
+  + 
+  + # --------------------------------------------------------------------------------------
+  + # COULD_NOT_CHECK: a REFUSAL, deliberately NOT a fourth verdict.
+  + #
+  + # It is not in the three-state set above and never enters a hunk tally, because it answers
+  ... (13 more lines)
+
+Now the two check=True sites, and the main catch:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/check_assertion_weakening.py (30 → 50 lines)
+  + def repo_is_shallow() -> bool:
+  +     """Best-effort: only used to word the refusal, never to decide anything."""
+  +     try:
+  +         out = subprocess.run(
+  +             ["git", "rev-parse", "--is-shallow-repository"],
+  +             capture_output=True,
+  +             text=True,
+  +             check=False,
+  +         ).stdout.strip()
+  +         return out == "true"
+  +     except OSError:
+  +         return False
+  + 
+  + 
+  + def _git_or_refuse(argv: list[str], ref: str) -> str:
+  +     """Run a git command that must succeed, converting failure into a named refusal.
+  + 
+  +     The two callers below both used `check=True`, so an unreachable ref surfaced as an
+  +     uncaught CalledProcessError traceback four frames from here. A traceback beats silence
+  +     and is still not a refusal: it names no remedy and it is not a state a caller can
+  ... (33 more lines)
+ ✓ (1m 15s)
+  + def repo_is_shallow() -> bool:
+  +     """Best-effort: only used to word the refusal, never to decide anything."""
+  +     try:
+  +         out = subprocess.run(
+  +             ["git", "rev-parse", "--is-shallow-repository"],
+  +             capture_output=True,
+  +             text=True,
+  +             check=False,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/check_assertion_weakening.py (6 → 2 lines)
+  -     return subprocess.run(
+  -         ["git", "diff", "--diff-filter=d", f"{sha}^", sha, "--", "*.rs"],
+  -         capture_output=True,
+  -         text=True,
+  -         check=False,
+  -     ).stdout
+  +     argv = ["git", "diff", "--diff-filter=d", f"{sha}^", sha, "--", "*.rs"]
+  +     return _git_or_refuse(argv, f"{sha}^")
+ ✓ (1m 14s)
+  -     return subprocess.run(
+  -         ["git", "diff", "--diff-filter=d", f"{sha}^", sha, "--", "*.rs"],
+  -         capture_output=True,
+  -         text=True,
+  -         check=False,
+  -     ).stdout
+  +     argv = ["git", "diff", "--diff-filter=d", f"{sha}^", sha, "--", "*.rs"]
+  +     return _git_or_refuse(argv, f"{sha}^")
+  2 tools completed in 2m 38s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "--- git… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the main catch — narrow, on the named exception only:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/check_assertion_weakening.py (5 → 20 lines)
+    
+        if args.test:
+            return run_self_tests()
+  + 
+  +     # Narrow catch: GitRefUnreachable ONLY, never a blanket `except`. A blanket catch would
+  +     # swallow a real bug in the classifier and report it as a missing input, which is the
+  +     # same category error (a defect wearing a refusal's clothes) one layer down.
+  +     try:
+  +         return _run(args)
+  +     except GitRefUnreachable as exc:
+  +         print(
+  +             could_not_check_message(exc.ref, exc.argv, exc.stderr, repo_is_shallow()),
+  +             file=sys.stderr,
+  +         )
+  +         return EXIT_COULD_NOT_CHECK
+  + 
+  + 
+  + def _run(args):
+ ✓ (1m 14s)
+    
+        if args.test:
+            return run_self_tests()
+  + 
+  +     # Narrow catch: GitRefUnreachable ONLY, never a blanket `except`. A blanket catch would
+  +     # swallow a real bug in the classifier and report it as a missing input, which is the
+  +     # same category error (a defect wearing a refusal's clothes) one layer down.
+  +     try:
+  ... (10 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c "… (5 lines) ✓ (178ms)
+  2 tools completed in 1m 20s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Refusal works, byte-identity holds on both paths. Now the self-tests:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def run_self_tests/,/^… ✓ (5ms)
+  ▶ edit scripts/check_assertion_weakening.py (7 → 51 lines)
+        check("empty diff clean", (findings, rust_hunks, test_hunks) == ([], 0, 0))
+        report = render_report([], 0, 0, 0, "empty")
+        check("clean report says none", "WEAKENED candidates: none" in report, report)
+  + 
+  +     # -- COULD_NOT_CHECK: an unreachable ref REFUSES, it does not report a clean scan ------
+  +     # Driven by a FABRICATED bogus sha, never by relying on this clone being shallow: the
+  +     # clone depth changes between sessions, so a test keyed on it is a test that silently
+  +     # stops testing.
+  +     bogus = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  +     raised = None
+  +     try:
+  +         git_diff(bogus, "HEAD")
+  +     except GitRefUnreachable as exc:
+  +         raised = exc
+  +     check("unreachable ref raises GitRefUnreachable", raised is not None)
+  +     if raised is not None:
+  +         check("the refusal names the ref verbatim", bogus in raised.ref, raised.ref)
+  + 
+  +     rc = main(["--from", bogus, "--to", "HEAD"])
+  +     check("could-not-check exits NON-ZERO", rc == EXIT_COULD_NOT_CHECK, rc)
+  ... (29 more lines)
+ ✓ (1m 14s)
+        check("empty diff clean", (findings, rust_hunks, test_hunks) == ([], 0, 0))
+        report = render_report([], 0, 0, 0, "empty")
+        check("clean report says none", "WEAKENED candidates: none" in report, report)
+  + 
+  +     # -- COULD_NOT_CHECK: an unreachable ref REFUSES, it does not report a clean scan ------
+  +     # Driven by a FABRICATED bogus sha, never by relying on this clone being shallow: the
+  +     # clone depth changes between sessions, so a test keyed on it is a test that silently
+  +     # stops testing.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (55ms)
+  3 tools completed in 1m 31s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
