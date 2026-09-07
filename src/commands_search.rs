@@ -3553,7 +3553,9 @@ src/b.rs:20:match two";
 
         let out = run_grep_with_context_in(tmp.path(), &context_args("needle_marker")).unwrap();
         assert!(
-            out.contains("line_before") && out.contains("needle_marker") && out.contains("line_after"),
+            out.contains("line_before")
+                && out.contains("needle_marker")
+                && out.contains("line_after"),
             "plain-grep fallback should still return the match with its context: {out:?}"
         );
     }
