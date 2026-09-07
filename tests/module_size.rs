@@ -216,7 +216,13 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // terminator and honest loser-branches (a value-taking flag with no usable
     // value is now a literal pattern token instead of being silently swallowed),
     // plus the fixture tests covering both the new paths and the untouched ones.
-    ("src/commands_search.rs", 4307),
+    // Day 191: 4307 -> 4309 (+2). NOT this task's diff — pre-existing drift the
+    // gate had been warning about for five sessions running. The warning goes to
+    // the stderr of a *passing* test and the evolve loop's only consumer of
+    // `cargo test` reads the exit code, so nothing ever acted on it. Paid here
+    // rather than absorbed: an absorbed entry is stale-high, which loosens the
+    // ratchet — the file could shed those lines and nothing would fire.
+    ("src/commands_search.rs", 4309),
     // Day 163 (#716): +99 lines — spawn_dir_restrictions confines a spawn
     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
     // three regression tests covering no-worktree passthrough, the confined
@@ -290,6 +296,18 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 164: +45 lines — provenance corroboration gate for filter_test_output
     // (a `✓` glyph is a shape, a runner summary is provenance) + its regression tests.
     ("src/format/output.rs", 2885),
+    // Day 191 (GitSpawn): NEW entry, 2031 lines, 31 past the 2000-line cap and
+    // inside the 50-line grace band. The diff is the `FSMONITOR_OFF` const, its
+    // doc comment (the disclosure, the reproduction, and the stated named-key
+    // limit) and one `cmd.args()` line in `git_command()` — a security fix that
+    // neutralises repository-supplied `core.fsmonitor` at the chokepoint.
+    // Registering rather than splitting is deliberate, and the reason is the
+    // Day-183 `src/prompt_retry.rs` precedent verbatim: a register edit cannot
+    // half-land, a pure move can, and a half-landed move is a reverted session
+    // that would take the security fix with it. The consequence is stated rather
+    // than smuggled: this file is now grandfathered, so branch 2/3's ±100 drift
+    // band applies to it from here on. The better fix is a split; owed, not done.
+    ("src/git.rs", 2031),
     ("src/help.rs", 2759), // Day 188: +4 paid off (was 2755 at Day 187).
     // Day 161 (#662 half 1): +9 lines — run_prompt_auto_retry now breaks out of
     // the retry loop (with one dim stderr line) on deterministic tool refusals
