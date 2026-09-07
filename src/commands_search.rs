@@ -1507,42 +1507,87 @@ pub fn format_grep_count_results(entries: &[GrepCountEntry]) -> String {
 /// context lines, and `--` group separators. We return the raw string
 /// for formatting rather than parsing into `GrepMatch` structs.
 fn run_grep_with_context(args: &GrepArgs) -> Result<String, String> {
+    run_grep_with_context_in(std::path::Path::new("."), args)
+}
+
+/// `run_grep_with_context`, resolved against an explicit directory.
+///
+/// The dir-taking seam, matching `run_grep_in` / `run_grep_count_in` /
+/// `get_recent_git_files_in` / `apply_patch_in`. The process CWD is global, so no
+/// test may move it (#780 spent two whole tasks removing those).
+///
+/// Routed through the `src/git.rs` chokepoint (#864's sixth and final payment), so
+/// it inherits `-c core.quotepath=off` and every future global applied there.
+/// Without it git returns a non-ASCII path as the literal bytes
+/// `"src/n\303\244me.rs"` — surrounding quotes and octal escapes included — which no
+/// consumer can use as a path, so `/grep --context`'s own result surface attributed
+/// real matches to filenames that do not exist.
+fn run_grep_with_context_in(root: &std::path::Path, args: &GrepArgs) -> Result<String, String> {
     let (before, after) = args.context_lines.unwrap_or((0, 0));
+    let root_str = root.to_string_lossy().into_owned();
 
-    let in_git_repo = std::process::Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+    // `-C <dir>` sits BEFORE the subcommand because it is a git *global*:
+    // `git grep -C<n>` is an entirely different flag (a context window), which is
+    // exactly what this function computes at runtime, so getting the position
+    // wrong here would silently change behaviour rather than fail loudly.
+    //
+    // The register claimed this probe needed `.stderr(Stdio::null())` so a non-repo
+    // directory fails silently. Measured false (Day 191, the same correction Day 189
+    // made for `get_recent_git_files` and Day 190 for `run_grep_count`):
+    // `Command::output()` captures both streams by construction and never inherits
+    // the terminal, so the nulls only suppressed bytes landing in a `Vec` nobody
+    // reads. Probed in a scratch repo: nulled-`.status()` and `.output()` return the
+    // identical verdict, and nothing reaches the terminal either way.
+    let in_git_repo =
+        crate::git::run_git_output(&["-C", &root_str, "rev-parse", "--is-inside-work-tree"])
+            .map(|out| out.status.success())
+            .unwrap_or(false);
 
-    let output = if in_git_repo {
-        let mut cmd = std::process::Command::new("git");
-        cmd.args(["grep", "-n", "--color=never"]);
+    let output: Result<std::process::Output, String> = if in_git_repo {
+        // The register also claimed an argv "assembled incrementally under
+        // conditionals" cannot go through the chokepoint's `&[&str]` signature
+        // "without materialising every combination". Measured false: it costs one
+        // `Vec<String>` built by pushes and borrowed once — never a product of
+        // `-i` × `-B` × `-A` × pattern × path × globs. Argument order is preserved
+        // byte-for-byte from the pre-conversion builder.
+        let mut argv: Vec<String> = vec![
+            "-C".to_string(),
+            root_str.clone(),
+            "grep".to_string(),
+            "-n".to_string(),
+            "--color=never".to_string(),
+        ];
         if !args.case_sensitive {
-            cmd.arg("-i");
+            argv.push("-i".to_string());
         }
         if before > 0 {
-            cmd.args(["-B", &before.to_string()]);
+            argv.push("-B".to_string());
+            argv.push(before.to_string());
         }
         if after > 0 {
-            cmd.args(["-A", &after.to_string()]);
+            argv.push("-A".to_string());
+            argv.push(after.to_string());
         }
-        cmd.arg("--");
-        cmd.arg(&args.pattern);
+        argv.push("--".to_string());
+        argv.push(args.pattern.clone());
         if args.path != "." {
-            cmd.arg(&args.path);
+            argv.push(args.path.clone());
         }
         if let Some(ref glob) = args.include {
-            cmd.arg(glob);
+            argv.push(glob.clone());
         }
         if let Some(ref glob) = args.exclude {
-            cmd.arg(format!(":(exclude){glob}"));
+            argv.push(format!(":(exclude){glob}"));
         }
-        cmd.output()
+        let borrowed: Vec<&str> = argv.iter().map(String::as_str).collect();
+        crate::git::run_git_output(&borrowed).map_err(|e| format!("Failed to run grep: {e}"))
     } else {
+        // Deliberately NOT routed through the chokepoint: this shells `grep`, not
+        // `git`, so the chokepoint has nothing to say about it. It gains only
+        // `.current_dir(root)` so the seam means the same thing on both arms, and
+        // keeps its wrapper text verbatim.
         let mut cmd = std::process::Command::new("grep");
+        cmd.current_dir(root);
         cmd.args(["-rn", "--color=never"]);
         if !args.case_sensitive {
             cmd.arg("-i");
@@ -1568,12 +1613,16 @@ fn run_grep_with_context(args: &GrepArgs) -> Result<String, String> {
         ]);
         cmd.arg(&args.pattern);
         cmd.arg(&args.path);
-        cmd.output()
+        // Same wrapper text as before. The git arm's inner `e` now carries the
+        // chokepoint's own error string; both arms still surface as
+        // `Failed to run grep: …`, so no caller sees a different failure mode.
+        cmd.output().map_err(|e| format!("Failed to run grep: {e}"))
     };
 
     match output {
         Ok(out) => Ok(String::from_utf8_lossy(&out.stdout).to_string()),
-        Err(e) => Err(format!("Failed to run grep: {e}")),
+        // Both arms already wrapped their own error above, so no second wrap here.
+        Err(e) => Err(e),
     }
 }
 
@@ -3423,6 +3472,90 @@ src/b.rs:20:match two";
         assert_eq!(matches.len(), 1, "plain-grep fallback should still match");
         assert!(matches[0].file.ends_with("plain.rs"));
         assert_eq!(matches[0].line_num, 1);
+    }
+
+    /// `match_args` with `-B1 -A1`, so the context arm is actually exercised.
+    fn context_args(pattern: &str) -> GrepArgs {
+        GrepArgs {
+            context_lines: Some((1, 1)),
+            ..match_args(pattern)
+        }
+    }
+
+    /// Three lines, so `-B1 -A1` has real context on both sides of the match.
+    const CONTEXT_BODY: &str = "line_before\nfn f() { needle_marker(); }\nline_after\n";
+
+    #[test]
+    fn run_grep_with_context_in_returns_a_non_ascii_path_raw_not_quotepath_escaped() {
+        // git's `core.quotepath` defaults to ON, so `git grep -n -B1 -A1` renders a
+        // non-ASCII filename as the literal bytes `"src/n\303\244me.rs"` —
+        // surrounding quotes and octal escapes included — on EVERY line of the
+        // group, match and context alike. This is `/grep --context`'s own result
+        // surface, so real matches were being attributed to a filename that does not
+        // exist. Routing through the chokepoint inherits `-c core.quotepath=off`
+        // (#864, sixth and final payment).
+        let name = "src/näme.rs";
+        // Anti-vacuous: a transcription slip that made the fixture pure ASCII would
+        // let this test pass by agreeing with itself.
+        assert!(
+            !name.is_ascii(),
+            "fixture must actually carry a non-ASCII byte"
+        );
+
+        let tmp = grep_scratch_repo(&[name], CONTEXT_BODY);
+        let out = run_grep_with_context_in(tmp.path(), &context_args("needle_marker")).unwrap();
+
+        // Whole-string equality at the emission point — the `String` a caller
+        // receives, never the argv one layer below.
+        assert_eq!(
+            out,
+            "src/näme.rs-1-line_before\n\
+             src/näme.rs:2:fn f() { needle_marker(); }\n\
+             src/näme.rs-3-line_after\n",
+            "non-ASCII path must come back raw on every context line, not quoted/octal-escaped"
+        );
+    }
+
+    #[test]
+    fn run_grep_with_context_in_leaves_ascii_and_spaced_paths_byte_identical() {
+        // The near-miss guard, and the half that matters: this is every user whose
+        // filenames are ordinary, i.e. the entire regression surface. A path with a
+        // SPACE is the sharp case — git does not quote a space, which is exactly
+        // what makes it prove this is a pure narrowing rather than a rewrite. A
+        // discriminator tested only on the side that fires is vacuous green.
+        let tmp = grep_scratch_repo(&["src/plain.rs", "src/we ird.rs"], CONTEXT_BODY);
+        let out = run_grep_with_context_in(tmp.path(), &context_args("needle_marker")).unwrap();
+
+        // Whole-string equality, never a `contains`, and it pins the `--` group
+        // separator too: the context arm returns raw output for formatting, so the
+        // separator is part of the value a caller receives.
+        assert_eq!(
+            out,
+            "src/plain.rs-1-line_before\n\
+             src/plain.rs:2:fn f() { needle_marker(); }\n\
+             src/plain.rs-3-line_after\n\
+             --\n\
+             src/we ird.rs-1-line_before\n\
+             src/we ird.rs:2:fn f() { needle_marker(); }\n\
+             src/we ird.rs-3-line_after\n"
+        );
+    }
+
+    #[test]
+    fn run_grep_with_context_in_falls_back_to_plain_grep_outside_a_repo() {
+        // Graceful degradation, pinned rather than assumed: a directory that is not
+        // a git repo takes the plain-`grep` arm, which the conversion deliberately
+        // left unrouted (it shells `grep`, not `git`) and which now runs with
+        // `.current_dir(root)` so the seam means the same thing on both arms.
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(tmp.path().join("src")).expect("mkdir src");
+        std::fs::write(tmp.path().join("src/plain.rs"), CONTEXT_BODY).expect("write fixture");
+
+        let out = run_grep_with_context_in(tmp.path(), &context_args("needle_marker")).unwrap();
+        assert!(
+            out.contains("line_before") && out.contains("needle_marker") && out.contains("line_after"),
+            "plain-grep fallback should still return the match with its context: {out:?}"
+        );
     }
 
     #[test]

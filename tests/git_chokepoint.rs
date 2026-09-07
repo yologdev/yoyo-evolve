@@ -85,14 +85,18 @@ use std::path::Path;
 /// `tests/cargo_spawning_tests.rs` used for theirs. Each reason states what is
 /// true and no more — including, for one entry, that there is **no** structural
 /// blocker.
-const REGISTERED_GIT_BYPASSES: &[(&str, &str, &str)] = &[(
-    "src/commands_search.rs",
-    "run_grep_with_context",
-    "two sites in one fn, same shapes as run_grep's: the nulled-stdio .status() probe and \
-         an incremental `git grep` builder, here with -B/-A context flags computed at runtime. \
-         Same Day-190 correction as run_grep's entry: the stated blocker was measured false, \
-         so this is a scheduling boundary rather than a technical one.",
-)];
+/// Deliberate exceptions: `(path, enclosing fn, why it cannot go through the chokepoint)`.
+///
+/// **EMPTY, and that is a legitimate terminal state rather than a broken scan**
+/// (`tests/orphan_modules.rs` ships `REGISTERED_ORPHANS` empty for the same reason).
+/// #864 was paid down one site per task across six payments — `list_project_files`
+/// (Day 183), `get_recent_git_files` and `push_and_open_pr` (Day 189),
+/// `run_grep_count` and `run_grep` (Day 190), `run_grep_with_context` (Day 191) —
+/// and every one of the five register reasons that named a *technical* blocker was
+/// measured **false** when probed. The gate's anti-vacuous branch is on the
+/// **scanned site set**, not on this register, so it still fails loudly if the scan
+/// ever returns nothing.
+const REGISTERED_GIT_BYPASSES: &[(&str, &str, &str)] = &[];
 
 /// The one file that *is* the chokepoint, and is exempt by definition.
 const CHOKEPOINT_FILE: &str = "src/git.rs";
@@ -416,13 +420,22 @@ fn every_direct_git_invocation_is_at_the_chokepoint_or_registered() {
 }
 
 /// The register is debt, not absolution: every entry must carry a real reason.
+///
+/// **There is deliberately NO `!is_empty()` assertion here.** One used to sit at the
+/// top of this test, and it was an anti-vacuous guard pointed at the wrong object:
+/// the register is the thing #864 exists to *empty*, so guarding it against
+/// emptiness makes paying the debt off in full a test failure. The gate's real
+/// anti-vacuous branch is on the **scanned site set**
+/// (`every_direct_git_invocation_is_at_the_chokepoint_or_registered` asserts
+/// `scan.total_sites > 0` first), which is what actually catches a broken scanner
+/// reporting a clean bill of health. Same precedent and same reasoning as
+/// `tests/cargo_spawning_tests.rs`, whose register emptied on Day 188, and
+/// `tests/orphan_modules.rs`, which shipped empty from the start.
+///
+/// The loop below still stands: a *future* entry must carry a non-empty reason, so
+/// re-registering a bypass without justifying it is still fatal.
 #[test]
 fn every_register_entry_carries_a_reason() {
-    assert!(
-        !REGISTERED_GIT_BYPASSES.is_empty(),
-        "REGISTERED_GIT_BYPASSES is empty — 11 bypasses were measured on Day 182, so an \
-         empty register means the scan or the register was silently emptied."
-    );
     for (path, context, reason) in REGISTERED_GIT_BYPASSES {
         assert!(
             !reason.trim().is_empty(),
