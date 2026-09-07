@@ -1668,8 +1668,13 @@ class ModuleRisk:
 
     # (path, lines, headroom_to_fatal) for the worst unlisted file over the cap.
     worst_unlisted: tuple | None
-    # (path, lines, recorded, headroom_to_fatal) for the worst register drift
-    # past MODULE_DRIFT_REPORT_FRACTION of the grace band.
+    # (path, lines, recorded, headroom_to_fatal, kind) for the worst register
+    # drift past MODULE_DRIFT_REPORT_FRACTION of the grace band. ONE slot, both
+    # directions: the register is one register, so this picks its worst offender
+    # exactly as `worst_unlisted` picks the unlisted set's. `kind` is
+    # "growth" | "shrink" | "paid-off" and decides the WORDING, so two facts
+    # with two different remedies are never folded into one sentence.
+    # Indices 0..3 are the pre-#885 shape and are deliberately unchanged.
     worst_drift: tuple | None
     scanned: int
 
@@ -1738,10 +1743,26 @@ def module_size_risks(spec: ModuleGateSpec, files) -> ModuleRisk:
     gate itself never prints. The gate says "you are 42 over"; it never says
     "8 more lines reverts your session", and that is the whole point of this
     section rather than a restatement of the warning.
+
+    Register drift is read in BOTH directions (#885 half 2). The gate has been
+    fatal on a >100-line shrink since Day 187 and that warning had the same
+    non-reader the growth warning had for eight days: it goes to the stderr of
+    a PASSING test, and the only consumer of `cargo test` in the evolve loop
+    reads the exit code. `MODULE_DRIFT_REPORT_FRACTION` is read by both
+    directions — one statement of "how much drift is worth mentioning", never
+    a second threshold to drift against the first.
     """
     worst_unlisted = None
     worst_drift = None
     drift_floor = spec.drift_grace * MODULE_DRIFT_REPORT_FRACTION
+
+    def bid(candidate):
+        # Smallest headroom wins; ties go to the first seen, matching the
+        # pre-existing `<` on the unlisted side.
+        nonlocal worst_drift
+        if worst_drift is None or candidate[3] < worst_drift[3]:
+            worst_drift = candidate
+
     for path, lines in files:
         recorded = spec.register.get(path)
         if recorded is None:
@@ -1749,12 +1770,21 @@ def module_size_risks(spec: ModuleGateSpec, files) -> ModuleRisk:
                 headroom = spec.max_lines + spec.overshoot_grace - lines
                 if worst_unlisted is None or headroom < worst_unlisted[2]:
                     worst_unlisted = (path, lines, headroom)
+        elif lines < spec.max_lines:
+            # A different fact with a different remedy, so it is checked FIRST
+            # and is NOT gated by the report floor: the debt is fully paid, the
+            # gate is fatal on it right now, and the fix is to DELETE the entry
+            # rather than to update the number. Headroom 0 = already fatal, so
+            # it correctly outranks every ordinary drift in the bid.
+            bid((path, lines, recorded, 0, "paid-off"))
         elif lines > recorded:
             drift = lines - recorded
             if drift > drift_floor:
-                headroom = recorded + spec.drift_grace - lines
-                if worst_drift is None or headroom < worst_drift[3]:
-                    worst_drift = (path, lines, recorded, headroom)
+                bid((path, lines, recorded, recorded + spec.drift_grace - lines, "growth"))
+        elif lines < recorded:
+            shrink = recorded - lines
+            if shrink > drift_floor:
+                bid((path, lines, recorded, spec.drift_grace - shrink, "shrink"))
     return ModuleRisk(worst_unlisted, worst_drift, len(files))
 
 
@@ -1815,12 +1845,27 @@ def render_module_sizes(spec: ModuleGateSpec, risk: ModuleRisk) -> str:
             f"GRANDFATHERED_OVERSIZED_MODULES."
         )
     if risk.worst_drift is not None:
-        path, n, recorded, headroom = risk.worst_drift
-        lines.append(
-            f"{path} is {n} lines vs its recorded {recorded} (+{n - recorded} drift) "
-            f"— {headroom} more line(s) makes it FATAL. "
-            f'Fix: paste ("{path}", {n}) over its entry.'
-        )
+        path, n, recorded, headroom, kind = risk.worst_drift
+        if kind == "paid-off":
+            lines.append(
+                f"{path} is {n} lines vs its recorded {recorded} — it has dropped "
+                f"BELOW the {spec.max_lines}-line cap entirely, which `cargo test` "
+                f"treats as FATAL right now. Fix: DELETE its "
+                f"GRANDFATHERED_OVERSIZED_MODULES entry — the debt is paid, so the "
+                f"remedy is removal, not a new number."
+            )
+        elif kind == "shrink":
+            lines.append(
+                f"{path} is {n} lines vs its recorded {recorded} (-{recorded - n} shrink) "
+                f"— {headroom} more line(s) of shrink makes it FATAL. "
+                f'Fix: paste ("{path}", {n}) over its entry.'
+            )
+        else:
+            lines.append(
+                f"{path} is {n} lines vs its recorded {recorded} (+{n - recorded} drift) "
+                f"— {headroom} more line(s) makes it FATAL. "
+                f'Fix: paste ("{path}", {n}) over its entry.'
+            )
     return "\n".join(lines)
 
 
@@ -4357,6 +4402,85 @@ src/commands_config.rs
     assert_true(
         "module_size_risks: a +1 drift is under the floor and stays silent",
         module_size_risks(spec, [("src/cli.rs", 5350)]).worst_drift is None,
+    )
+
+    # --- #885 half 2: the mirror direction. Day 187 made a >100-line SHRINK
+    # fatal, and that warning had the same non-reader the growth warning had
+    # for eight days. Same register slot, same report floor, own wording.
+    shrink = module_size_risks(spec, [("src/cli.rs", 5300)])  # recorded 5349, -49
+    assert_true("module_size_risks: shrink past the report floor is caught", shrink.worst_drift is not None)
+    assert_eq(
+        "module_size_risks: shrink is tagged as its own kind, never as growth",
+        field(shrink.worst_drift, 4),
+        "shrink",
+    )
+    assert_eq(
+        "module_size_risks: shrink headroom is drift_grace - shrink (100 - 49)",
+        field(shrink.worst_drift, 3),
+        "51",
+    )
+    # Both sides of the SAME floor the growth side uses — a discriminator
+    # tested only where it fires is vacuous green. 100 * 0.25 = 25.
+    assert_true(
+        "module_size_risks: a 25-line shrink is AT the floor and stays silent",
+        module_size_risks(spec, [("src/cli.rs", 5324)]).worst_drift is None,
+    )
+    assert_true(
+        "module_size_risks: a 26-line shrink is past the floor and speaks (other side)",
+        module_size_risks(spec, [("src/cli.rs", 5323)]).worst_drift is not None,
+    )
+    # A listed file that has dropped BELOW the cap is a different fact with a
+    # different remedy (delete the entry), so it is NOT folded into ordinary
+    # shrink drift and is NOT gated by the report floor — the gate is fatal on
+    # it right now, so its headroom is 0 and it outranks every ordinary drift.
+    paid = module_size_risks(spec, [("src/cli.rs", 1999)])
+    assert_eq(
+        "module_size_risks: a listed file below the cap gets its own kind, not 'shrink'",
+        field(paid.worst_drift, 4),
+        "paid-off",
+    )
+    assert_eq(
+        "module_size_risks: a paid-off entry reads as already fatal (headroom 0)",
+        field(paid.worst_drift, 3),
+        "0",
+    )
+    both = module_size_risks(spec, [("src/cli.rs", 1999), ("src/format/mod.rs", 2690)])
+    assert_eq(
+        "module_size_risks: the already-fatal paid-off entry outranks ordinary growth drift",
+        field(both.worst_drift, 0),
+        "src/cli.rs",
+    )
+    # Render: each direction says the number the gate never prints, and the
+    # paid-off remedy is DELETE rather than a new number.
+    shrink_out = render_module_sizes(spec, shrink)
+    assert_true(
+        "render: the shrink line names shrink headroom, not growth headroom",
+        "51 more line(s) of shrink makes it FATAL" in shrink_out,
+    )
+    assert_true(
+        "render: the shrink line prints the literal register line to paste",
+        '("src/cli.rs", 5300)' in shrink_out,
+    )
+    assert_true(
+        "render: AT-RISK stays at most 2 lines plus its header with shrink in play",
+        len(render_module_sizes(spec, both).splitlines()) <= 3,
+    )
+    paid_out = render_module_sizes(spec, paid)
+    assert_true(
+        "render: the paid-off remedy is DELETE the entry, not paste a new number",
+        "DELETE its GRANDFATHERED_OVERSIZED_MODULES entry" in paid_out,
+    )
+    assert_true(
+        "render: the paid-off line does NOT tell the reader to paste an entry back",
+        '("src/cli.rs", 1999)' not in paid_out,
+    )
+    # Near-miss guard: a register whose entries all match renders the empty
+    # string byte-identically. Asserted with == on the whole render, never a
+    # `contains` — silence is the entire regression surface.
+    assert_eq(
+        "render: entries matching their recorded counts render the empty string, byte-identically",
+        render_module_sizes(spec, module_size_risks(spec, [("src/cli.rs", 5349), ("src/format/mod.rs", 2629)])),
+        "",
     )
 
     # render_module_sizes: three states, none folded into another.
