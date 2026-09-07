@@ -2981,6 +2981,104 @@ def src_test_only_candidates(rows, population, recorded, readability_of):
     return out
 
 
+def read_module_size_register(root: str):
+    """Parse `tests/module_size.rs`'s register, or `None`. I/O half, ONE statement.
+
+    Day 191, #870/#894. Both consumers -- `--src-census` and the batch selector -- read
+    the SAME authority through this one function rather than each opening the gate file
+    themselves. Two copies of a file read agree the day they are written and diverge
+    forever after (the `significant_braces` precedent), and the failure direction matters:
+    a site that quietly treated an unreadable gate as an EMPTY register would call every
+    file un-listed and therefore spliceable, which is the flattering direction.
+
+    `None` means COULD NOT READ, never "the register is empty" -- the distinction every
+    consumer downstream depends on.
+    """
+    gate_path = os.path.join(root, MODULE_SIZE_GATE_REL_PATH)
+    try:
+        with open(gate_path, "r", encoding="utf-8", errors="replace") as fh:
+            return parse_grandfathered_register(fh.read())
+    except OSError:
+        return None
+
+
+def order_src_test_only_by_eligibility(rows, eligibility_of):
+    """Reorder src-test-only rows so SPLICEABLE ones run first. Pure: resolver injected.
+
+    Returns `(ordered, counts)`. Day 191, #870 -- the SAMPLING half, never the
+    reachability half.
+
+    WHY THIS EXISTS, measured rather than assumed. Day 190 spent FOUR consecutive
+    fix-loop readings (`56a433e8`, `c1f36051`, `bd09d778`, `419134e8`) and got FOUR
+    `COULD_NOT_CHECK`, every one the same register collision, on `src/help.rs`,
+    `src/tool_wrappers.rs` and `src/cli.rs` -- roughly 16 minutes of cargo spent to
+    re-confirm a wall the same day had already priced at 44 commits. It is not bad luck:
+    the selector picks NEWEST-FIRST, my newest commits touch my BIGGEST files, and my
+    biggest files are exactly the ones listed in `GRANDFATHERED_OVERSIZED_MODULES` that
+    `partition_register_listed` refuses to splice. I wrote "a sample drawn newest-first is
+    not a random sample" on Day 186 and then let the sampler keep doing it.
+
+    THE MEASUREMENT ALREADY EXISTED AND NOTHING DOWNSTREAM READ IT.
+    `classify_splice_eligibility` landed Day 190 and measured 116 READABLE -> 72
+    SPLICEABLE, with `NO_MODULE_AMONG_KEPT = 0` and `UNKNOWN = 0`. Its only consumers were
+    the two census RENDER sites; `select_runnable`, `order_by_shape_tier` and
+    `src_test_only_candidates` never consulted it -- the last takes a `readability_of`
+    resolver, i.e. the READABLE-116 predicate, not the SPLICEABLE-72 one. That is my own
+    "a capability is real only where something consumes it" rule landing on my newest
+    classifier one session after I built it. This is that consumer. No new classifier is
+    written here and `classify_splice_eligibility` itself is untouched.
+
+    PREFERENCE, NEVER EXCLUSION, and never a drop. All rows stay in the queue: the refused
+    ones cost nothing to keep, the ledger wants them recorded, and filtering them out
+    would make it permanently incomplete while making an unfalsifiable claim about what
+    was skipped -- the same reasoning `order_by_shape_tier` already encodes for its own
+    three tiers. Order is STABLE WITHIN A GROUP, so the only thing that changes is
+    grouping.
+
+    `SPLICE_ELIG_UNKNOWN` SORTS WITH THE REFUSED GROUP, deliberately. An unknown must
+    never be promoted into the comfortable bucket (Day 144), and here the comfortable
+    bucket is the one that makes a reading look worth taking. A state nobody enumerated is
+    counted as UNKNOWN and sorted the same conservative way.
+
+    DELIBERATELY OUT OF SCOPE, so a later reader does not "simplify" either one in:
+
+      * THE RECONCILIATION FIX. Making the 44 register-refused commits READABLE means
+        widening what counts as reachable, which is the half that can manufacture a false
+        denominator. It stays on #870, with its own near-miss guards.
+      * ANSWERING `ALL_REGISTER_REFUSED` FROM THE DIFF at zero cargo cost, before the
+        worktree. That touches `run_counterfactual` -- the risky function -- and probably
+        wants its own verdict state. Ordering alone is sufficient today: the arm holds 72
+        spliceable commits and roughly one has been read, so the refused 44 will not come
+        up for many sessions.
+
+    THE STATED LIMIT: this changes what is SAMPLED. It does not make any commit more
+    answerable, it does not grow the reachable denominator by one, and it does not close
+    #870.
+    """
+    counts = {
+        SPLICE_ELIG_SPLICEABLE: 0,
+        SPLICE_ELIG_ALL_REGISTER_REFUSED: 0,
+        SPLICE_ELIG_NO_MODULE_AMONG_KEPT: 0,
+        SPLICE_ELIG_NO_CANDIDATES: 0,
+        SPLICE_ELIG_UNKNOWN: 0,
+    }
+    spliceable = []
+    rest = []
+    for row in rows or ():
+        state = eligibility_of(row.sha)
+        if state in counts:
+            counts[state] += 1
+        else:
+            # An unenumerated answer is an UNKNOWN, not a fourth group: it is counted,
+            # never dropped, and it sorts with the refusals.
+            counts[SPLICE_ELIG_UNKNOWN] += 1
+        if state == SPLICE_ELIG_SPLICEABLE:
+            spliceable.append(row)
+        else:
+            rest.append(row)
+    return spliceable + rest, counts
+
+
 def merge_src_test_only(ordered, tier_counts, src_only_rows):
     """Splice src-test-only rows in AFTER the signal-bearing tier. Pure.
 
@@ -3267,12 +3365,7 @@ def main(argv):
             # `tests/module_size.rs`, never a second copy of the register -- and both
             # resolvers share one diff and one show-cache per sha, so measuring splice
             # eligibility adds no second walk over the arm.
-            gate_path = os.path.join(root, MODULE_SIZE_GATE_REL_PATH)
-            try:
-                with open(gate_path, "r", encoding="utf-8", errors="replace") as fh:
-                    register = parse_grandfathered_register(fh.read())
-            except OSError:
-                register = None
+            register = read_module_size_register(root)
             readability_of, eligibility_of = fix_loop_src_resolvers(root, register)
             src_counts = src_census_fix_loop(
                 rows,
@@ -3342,12 +3435,25 @@ def main(argv):
         # with no git; one `git diff --name-status` + one `git show` per modified src/
         # file, and only for NO_TEST_CHANGE rows of this population.
         src_only = []
+        src_elig_counts = None
         if args.include_src_test_commits:
+            # Day 191, #870: ONE resolver pair, so the readability lookup and the
+            # eligibility lookup share `diff_cache`/`show_cache` instead of each issuing
+            # its own `git diff` per candidate. The register is the AUTHORITY
+            # (`tests/module_size.rs`), read through the one shared helper.
+            register = read_module_size_register(root)
+            readability_of, eligibility_of = fix_loop_src_resolvers(root, register)
             src_only = src_test_only_candidates(
                 rows,
                 args.population,
                 recorded,
-                lambda sha: commit_src_test_readability(root, sha),
+                readability_of,
+            )
+            # #894's partition refuses register-listed `src/*.rs`, so a commit whose every
+            # candidate is listed is a guaranteed COULD_NOT_CHECK at the Site-B
+            # empty-splice guard. Prefer the ones that can actually splice; drop nothing.
+            src_only, src_elig_counts = order_src_test_only_by_eligibility(
+                src_only, eligibility_of
             )
         todo = merge_src_test_only(todo, tier_counts, src_only)
         if args.max_runs is not None:
@@ -3395,6 +3501,30 @@ def main(argv):
                     "widening, not evidence the arm is empty — either every candidate "
                     "came back SRC_TESTS_NONE/UNKNOWN, or they are all already recorded."
                 )
+            elif src_elig_counts is not None:
+                # Day 191, #870: a silent reordering is invisible. The counts are never
+                # summed into behavioural, signal-bearing or the src-test-only total.
+                _sp = src_elig_counts[SPLICE_ELIG_SPLICEABLE]
+                _rr = src_elig_counts[SPLICE_ELIG_ALL_REGISTER_REFUSED]
+                _other = (
+                    src_elig_counts[SPLICE_ELIG_NO_MODULE_AMONG_KEPT]
+                    + src_elig_counts[SPLICE_ELIG_NO_CANDIDATES]
+                    + src_elig_counts[SPLICE_ELIG_UNKNOWN]
+                )
+                print(
+                    f"src-test-only: {_sp} spliceable (a register-KEPT candidate carries "
+                    f"a parent #[cfg(test)] module), {_rr} register-refused (every "
+                    "candidate is listed in tests/module_size.rs, so #894's partition "
+                    f"refuses it and the run is a guaranteed COULD_NOT_CHECK), {_other} "
+                    "other/unknown — run in that order, none dropped."
+                )
+                if _sp == 0:
+                    print(
+                        "src-test-only: ZERO spliceable remain. Every reading below will "
+                        "splice nothing and land on COULD_NOT_CHECK at the Site-B "
+                        "empty-splice guard — this arm's cheap readings are exhausted, "
+                        "and the remedy is #870's reconciliation, not another reading."
+                    )
         sys.stdout.flush()
 
         # ONE shared target dir for the whole batch: adjacent commits share dependencies,
@@ -5345,6 +5475,87 @@ def run_self_tests():
           [r.sha for r in src_test_only_candidates(
               _three, POP_PLAIN, set(), _readable)] == ["n1", "n2", "n3"],
           [r.sha for r in src_test_only_candidates(_three, POP_PLAIN, set(), _readable)])
+
+    # ---- #870, Day 191: order_src_test_only_by_eligibility — the SAMPLING half ---------
+    # Day 190 burned FOUR consecutive fix-loop readings on four COULD_NOT_CHECKs, every
+    # one the same register collision, because the selector picks newest-first and my
+    # newest commits touch my biggest — i.e. register-listed — files.
+    _e_rows = [_row("e1"), _row("e2"), _row("e3"), _row("e4")]
+
+    # ANTI-VACUOUS, ASSERTED FIRST: an all-refused input returns ALL of them, never an
+    # empty list. A selector that finds nothing and returns nothing is this defect wearing
+    # the opposite sign, and it is quieter than the bug.
+    _all_ref, _ar_counts = order_src_test_only_by_eligibility(
+        _e_rows, lambda _s: SPLICE_ELIG_ALL_REGISTER_REFUSED
+    )
+    check("splice-order: an ALL-REGISTER-REFUSED input returns ALL rows, not none",
+          [r.sha for r in _all_ref] == ["e1", "e2", "e3", "e4"]
+          and _ar_counts[SPLICE_ELIG_ALL_REGISTER_REFUSED] == 4
+          and _ar_counts[SPLICE_ELIG_SPLICEABLE] == 0,
+          ([r.sha for r in _all_ref], _ar_counts))
+
+    # NEAR-MISS GUARD, and it is the entire regression surface: when every row is already
+    # spliceable the order is BYTE-IDENTICAL. Full list equality, never membership — this
+    # is the direction that proves the guard tests the pass-through rather than the fix.
+    _all_sp, _as_counts = order_src_test_only_by_eligibility(
+        _e_rows, lambda _s: SPLICE_ELIG_SPLICEABLE
+    )
+    check("splice-order: an ALL-SPLICEABLE input is returned BYTE-IDENTICAL",
+          _all_sp == _e_rows and _as_counts[SPLICE_ELIG_SPLICEABLE] == 4,
+          ([r.sha for r in _all_sp], _as_counts))
+
+    # THE GROUPING, and STABILITY WITHIN A GROUP: e2/e4 are spliceable and keep their
+    # relative newest-first order; e1/e3 follow, also in their original order.
+    _mix = {"e1": SPLICE_ELIG_ALL_REGISTER_REFUSED, "e2": SPLICE_ELIG_SPLICEABLE,
+            "e3": SPLICE_ELIG_ALL_REGISTER_REFUSED, "e4": SPLICE_ELIG_SPLICEABLE}
+    _mixed, _m_counts = order_src_test_only_by_eligibility(
+        _e_rows, lambda s: _mix[s]
+    )
+    check("splice-order: SPLICEABLE first, stable within each group",
+          [r.sha for r in _mixed] == ["e2", "e4", "e1", "e3"]
+          and _m_counts[SPLICE_ELIG_SPLICEABLE] == 2
+          and _m_counts[SPLICE_ELIG_ALL_REGISTER_REFUSED] == 2,
+          ([r.sha for r in _mixed], _m_counts))
+
+    # PERMUTATION INVARIANT: same elements, same count, nothing added, nothing lost. The
+    # cheapest possible regression guard, and it fails loudly the moment a group is
+    # dropped rather than merely reordered.
+    check("splice-order: the output is a PERMUTATION of the input (nothing dropped)",
+          sorted(r.sha for r in _mixed) == sorted(r.sha for r in _e_rows)
+          and len(_mixed) == len(_e_rows),
+          ([r.sha for r in _mixed], [r.sha for r in _e_rows]))
+
+    # UNKNOWN SORTS WITH THE REFUSALS, NOT WITH SPLICEABLE — its own row, because an
+    # unknown must never be promoted into the comfortable bucket (Day 144), and here the
+    # comfortable bucket is the one that makes a reading look worth taking.
+    _unk = {"e1": SPLICE_ELIG_UNKNOWN, "e2": SPLICE_ELIG_SPLICEABLE,
+            "e3": SPLICE_ELIG_NO_MODULE_AMONG_KEPT, "e4": SPLICE_ELIG_UNKNOWN}
+    _uo, _u_counts = order_src_test_only_by_eligibility(_e_rows, lambda s: _unk[s])
+    check("splice-order: UNKNOWN sorts with the refused group, never with spliceable",
+          [r.sha for r in _uo] == ["e2", "e1", "e3", "e4"]
+          and _u_counts[SPLICE_ELIG_UNKNOWN] == 2
+          and _u_counts[SPLICE_ELIG_NO_MODULE_AMONG_KEPT] == 1,
+          ([r.sha for r in _uo], _u_counts))
+
+    # A STATE NOBODY ENUMERATED is counted as UNKNOWN and sorted the same conservative
+    # way — counted, never dropped, never promoted.
+    _bogus, _b_counts = order_src_test_only_by_eligibility(
+        [_row("z1")], lambda _s: "SPLICE_ELIG_SOMETHING_NEW"
+    )
+    check("splice-order: an unenumerated state counts as UNKNOWN and is NOT dropped",
+          [r.sha for r in _bogus] == ["z1"]
+          and _b_counts[SPLICE_ELIG_UNKNOWN] == 1
+          and _b_counts[SPLICE_ELIG_SPLICEABLE] == 0,
+          ([r.sha for r in _bogus], _b_counts))
+
+    # FLAG OFF: with no src-test-only rows there is nothing to order, and the counts are
+    # all zero rather than absent.
+    _empty, _e_counts = order_src_test_only_by_eligibility(
+        [], lambda _s: SPLICE_ELIG_SPLICEABLE
+    )
+    check("splice-order: an EMPTY input is empty, with a full zeroed count map",
+          _empty == [] and sum(_e_counts.values()) == 0 and len(_e_counts) == 5,
+          (_empty, _e_counts))
 
     # FLAG-OFF BYTE-IDENTITY, and it is the whole regression surface: every reading
     # already in the ledger and every future one taken without the flag. Full list
