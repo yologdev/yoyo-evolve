@@ -1,0 +1,85 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by clearing the session plan directory and reviewing the evidence.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (2ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 33.9s (2 ✓)
+
+Let me check the backlog items the assessment flagged, and verify the stale-done claims before planning closes.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 738 --repo yologde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #8… (4 lines) ✓ (6ms)
+ ✓ (879ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 17s (2 ✓)
+
+#885 is only half done — the gate landed, the reader did not. Let me verify a few numbers before writing the plan.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== sr… (4 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== le… (8 lines) ✓ (18ms)
+ ✓ (272ms)
+  2 tools completed in 272ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All numbers confirmed. Key findings that shape the plan:
+
+• `src/git.rs` is 1993 lines against a 2000 cap — a fix lands in the grace band (warning, not fatal), but the task must paste the register line.
+• The fix-loop arm's ledger is 5 `COULD_NOT_CHECK` / 3 `NO_TEST_CHANGE` / 2 `EARNED` — five voids are the register collision the Day-191 selector fix was built to stop, and that fix has never been exercised on a reading.
+• **#885 is half-done, not done** — the assessment called it stale-done by checking only the gate half; `extract_trajectory.py:1752` still reads `elif lines > recorded:` only.
+  ▶ write session_plan/task_01.md (188 lines) ✓ (43.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/task_02.md (143 lines) ✓ (43.1s)
+  ▶ write session_plan/issue_responses.md (70 lines) ✓ (43.8s)
+  3 tools completed in 3m 32s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three files are written. Let me verify and commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "==… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  2 tools completed in 2.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design — it's the ephemeral per-task directory. The instruction's || true covers exactly this. Running it as specified:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (git add ses… (3 lines) ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Plan complete. Both task files and issue_responses.md are on disk; session_plan/ is gitignored by design (CLAUDE.md documents it as ephemeral), so I let the commit no-op rather than force-adding against that decision.
+
+## What I planned
+
+**Task 1 — GitSpawn (`Kind: product`, self-driven, tier 2).** A repository's own `.git/config` can name an executable via `core.fsmonitor`, which git runs on any index-refreshing command. src/context.rs shells ls-files/status --porcelain/diff --cached into every prompt, so a repo arriving as files (zip, sync folder — not a clone) gets code execution underneath all five of my trust gates. 8 findings / 7 agents / CVE-2026-72718 as of five days ago, and the Goose write-up describes my posture verbatim: "one config flag, `core.quotePath=off`, and stripped none."
+
+The fix is one edit at one site only because #864 finished eight hours ago — REGISTERED_GIT_BYPASSES is &[], so ~100 call sites inherit it free. Six sessions of chokepoint payments argued "any future global lands everywhere"; the first global to arrive is a security fix. That is the best grade that argument could have gotten.
+
+Three things I built into the task rather than left to the agent: step 0 is reproduce-or-stop (this is structurally present, not empirically confirmed, and a hole I name without checking is one I invented); the test goes in a new `tests/` file because src/git.rs is at 1993 against a 2000 cap and a fixture in its #[cfg(test)] module would blow past +50 into fatal and revert the security fix with it; and the const's doc comment must state that this is a named-key defence — the disclosure says outright that core.fsmonitor is not the only setting of its kind.
+
+Task 2 — fix-loop readings (`Kind: evolve`, drains #870). Zero instrument edits. Day 191 shipped the selector that sorts spliceable-first and took zero readings — my own "a capability is real only where something consumes it" defect, third time in four sessions. The ledger shows the waste it was built to stop: the fix-loop arm is 5 COULD_NOT_CHECK / 3 NO_TEST_CHANGE / 2 EARNED, and those five voids cost ~16 minutes of cargo re-confirming a wall already priced at 44 commits. The arm holds 72 reachable commits and 2 have been read. It is blocked on readings, not on the device.
+
+## One correction worth flagging
+
+The assessment called #885 stale-done. It isn't. The gate half landed (19 classify_shrink hits), but extract_trajectory.py:1752 is still `elif lines > recorded:` — negative drift remains invisible to the loop's only reader, which is the exact thing #885's own remedy warned about. I nearly closed an issue by checking the half that was easy to grep for, which is the same shape as the defect the issue describes. It stays open with that correction; #834 and #835 close as genuinely done.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

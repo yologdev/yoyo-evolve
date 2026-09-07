@@ -1,0 +1,166 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Step 0 — reproduce the mechanism before writing any fix. A hole I name without checking is a hole I may have invented.
+  ▶ $ git --version; echo "---"; cd /tmp && rm -rf gitspawn_probe && mkdir -p gitspawn… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the reproduction proper — hostile .git/config with core.fsmonitor:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/gitspawn_probe && git config user.email "probe@examp… (11 lines) ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+REPRODUCED. The sentinel exists. Now let me confirm the proposed fix actually neutralises it, and check the other commands context.rs uses:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/gitspawn_probe && rm -f SENTINEL 1788783207828038056… (14 lines) ✓ (33ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reproduction confirmed on git 2.55.0: all three commands context.rs uses fire the helper, and -c core.fsmonitor= neutralises it. Let me check my current state and move to the fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree. Now the chokepoint:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '95,145p' src/git.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "QUOTEPATH_OFF" src/git.… ✓ (5ms)
+  2 tools completed in 5.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reproduction is solid. Now Step 1 — the fix at the chokepoint, small and at one site:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (3 → 40 lines)
+    const QUOTEPATH_OFF: [&str; 2] = ["-c", "core.quotepath=off"];
+  + 
+  + /// Neutralise `core.fsmonitor`, which a **repository** can use to make git
+  + /// execute an arbitrary program on our host.
+  + ///
+  + /// The mechanism (Manifold Security, "The git you didn't run", disclosed
+  + /// 2026-09-02; 8 findings across 7 agents; Goose CVE-2026-72718, CVSS 7.0):
+  + /// git reads `core.fsmonitor` from the repository's own `.git/config` and
+  + /// **executes** the program it names on any operation that refreshes the index.
+  + /// A repo arriving as *files with `.git` intact* — a zip, a shared drive, a
+  + /// sync folder, anything but a `git clone`, which does not copy local config —
+  + /// therefore runs code the moment an agent gathers startup context.
+  + ///
+  + /// **Measured before this landed, not inferred** (git 2.55.0, scratch repo
+  + /// under `/tmp`): a `.git/config` carrying
+  + /// `[core] fsmonitor = touch <sentinel>` creates the sentinel under
+  + /// `git status --porcelain`, `git ls-files` **and** `git diff --cached` — the
+  + /// exact three commands `src/context.rs` runs on every prompt (`:49`, `:79`,
+  + /// `:84`) — and `-c core.fsmonitor=` suppresses it on all three.
+  + ///
+  ... (20 more lines)
+ ✓ (12.4s)
+    const QUOTEPATH_OFF: [&str; 2] = ["-c", "core.quotepath=off"];
+  + 
+  + /// Neutralise `core.fsmonitor`, which a **repository** can use to make git
+  + /// execute an arbitrary program on our host.
+  + ///
+  + /// The mechanism (Manifold Security, "The git you didn't run", disclosed
+  + /// 2026-09-02; 8 findings across 7 agents; Goose CVE-2026-72718, CVSS 7.0):
+  + /// git reads `core.fsmonitor` from the repository's own `.git/config` and
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the "definition without its consumer" rule firing. Wiring it now:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (5 → 6 lines)
+    fn git_command() -> std::process::Command {
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(QUOTEPATH_OFF);
+  +     cmd.args(FSMONITOR_OFF);
+        cmd
+    }
+ ✓ (1m 18s)
+    fn git_command() -> std::process::Command {
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(QUOTEPATH_OFF);
+  +     cmd.args(FSMONITOR_OFF);
+        cmd
+    }
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '143,175p' src/git.rs && … ✓ (4ms)
+  2 tools completed in 1m 23s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Fix is in. src/git.rs is 2031 — 31 over cap, inside the 50-line grace band. Now the behavioural test in a new top-level file:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn run_git_in_dir" … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+tests/ is a separate crate and this is a binary-only crate — I can't import git::run_git_in_dir there. Let me check what the binary exposes:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^\[lib\]\|^\[\[bin\]\]\… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Binary-only crate, so the test must drive the real binary. yoyo tree shells git ls-files in the process cwd — one of the three commands I reproduced. Let me verify it works end-to-end:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ec… ✓ (129ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me verify that "neutralised" is my fix and not a vacuous pass — the control must still fire:
+  ▶ $ cd /tmp/gitspawn_probe && rm -f SENTINEL && git ls-files >/d… (4 lines) ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed end-to-end: plain git ls-files fires in that repo, yoyo tree does not. Now the test file:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/tests/git_config_injection.rs (198 lines) ✓ (45.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_config_inj… ✓ (193ms)
+  2 tools completed in 49.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+3/3 green. Now Step 3 — the size gate:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (117ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both lines printed. Pasting exactly what the gate emitted, never hand-typed:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'commands_search.rs\|GRA… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '215,224p' tests/module_s… ✓ (2ms)
+  2 tools completed in 2.9s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

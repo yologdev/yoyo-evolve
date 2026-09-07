@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,175p' src/git.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/git.rs src/commands_se… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 400 cargo test --test gi… ✓ (276ms)
+  3 tools completed in 7.7s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test mo… ✓ (118ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (44.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 4s (2 ✓)
+
+Verdict: PASS — written to session_plan/eval_task_1.md.
+
+What I verified (not re-running the full suite):
+
+1. **The fix is where the task said and nowhere else.** `FSMONITOR_OFF` is a second const beside `QUOTEPATH_OFF` (which is neither renamed nor folded), consumed by one `cmd.args() line inside git_command() — i.e. only where the Command is built, so destructive_guard's args[0] stays the caller's verb. src/context.rs, run_git, run_git_in_dir, run_git_output` and every caller are untouched.
+
+2. The test is not vacuous, and I confirmed that by running it. 3/3 pass. The anti-vacuous control is asserted first and is the load-bearing part: it clears the sentinel, runs a plain git ls-files in the same repo, and asserts the sentinel does appear — so on a git version that ignored core.fsmonitor the whole file would fail loudly rather than pass by having nothing to trigger. Host git is 2.55.0, matching the recorded measurement.
+
+3. The near-miss guard runs the right direction. Two separate tests assert yoyo tree output with whole-string `assert_eq!` — an ordinary repo, and a hostile repo whose helper was neutralised. The second is the one a naive fix would fail: suppressing the helper by breaking git would satisfy "sentinel absent" while blinding the file list.
+
+4. Size gate paid honestly. src/git.rs is 2031 lines and registered at 2031; src/commands_search.rs is 4309 and registered at 4309 — both match the tree exactly, so nothing was hand-typed wrong. `cargo test --test module_size prints zero warnings, which closes the five-session commands_search.rs` drift the task named.
+
+5. Docs carry the limit, not just the fix. The CLAUDE.md bullet records the disclosure date, the CVE, the reproduction verbatim with the git version, and — the part that matters most — that this is a named-key defence with ten other executable-naming config keys uncovered, plus the grandfathering consequence stated rather than smuggled past.
+
+One observation, not a fault: the test file drives CARGO_BIN_EXE_yoyo rather than calling run_git_in_dir directly (binary-only crate), which its module doc explains and which is the stronger check anyway — real chokepoint, real binary, real hostile repo.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

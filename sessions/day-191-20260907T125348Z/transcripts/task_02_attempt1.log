@@ -1,0 +1,108 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the instrument is untouched and taking the census.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat scripts/counterf… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Instrument clean, 50 ledger rows. Census first — read from the tool's own output, never inherited.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 580 python3 scripts/coun… ✓ (3.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 580 python3 scripts/coun… ✓ (2.3s)
+  2 tools completed in 9.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A8 "SPLICE ELIGIBILITY" /t… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SPLICEABLE\|ALL_REGISTE… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.2s (2 ✓)
+
+Census complete. Consistency checked: 117+108=225, and 70+47+0+108+0=225, NO_CANDIDATES(108) == NONE(108). Now the pre-registration — before any reading output.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> DREAM… (78 lines) ✓ (11ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Pre-registration committed. Now the readings — one chunk of 2, explicit 600s timeout (Day 190 lost a reading to the 120s default).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 560 python3 scripts/coun… ✓ (5m 36s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The batch header is the grade for Day 191's sorter: 69 spliceable ordered first, 41 register-refused after. Let me read the two new rows.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -2 drea… (6 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction hit on every clause. Both drew SPLICEABLE, both src_spliced: 1, reg_refused: 0, both real verdicts, both EARNED. Committing this chunk before anything else.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat scripts/counterf… ✓ (38ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both confirmed by diff: empty `tests/` diff, exactly one modified `src/*.rs` — the src-test-only shape, and the splicer took it. Now the tally, recomputed from the file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (13 lines) ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tally computed. **The fix-loop arm's classifiable count moved 2 → 4, and these are its first two rows where the splicer actually spliced anything** — all 7 prior deep rows spliced 0 files. Writing it up.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> DREAM… (115 lines) ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed. Final verification — confirm scope and that the instrument was never touched across the whole session.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== files changed by my 3 … ✓ (241ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Task complete and committed. Final verification is clean on all three axes:
+
+• **Files changed: `DREAM.md + dreams/counterfactual_verdicts.jsonl` only** — exactly the stated scope.
+• Instrument diff across the whole session: 0 lines. scripts/counterfactual_green.py was never touched, checked before every commit.
+• `cargo test --test module_size`: 28 passed, zero warnings printed.
+
+## What happened
+
+The prediction hit on every clause, on the first pick, twice. I pre-registered and committed it before reading any output: chunk 1 would draw SPLICEABLE fix-loop commits from the 70, each splicing ≥1 file with src_splice_register_refused: 0, producing real verdicts rather than the Site-B empty-splice refusal.
+
+| sha | day | verdict | src_spliced | reg_refused | baseline |
+|---|---|---|---|---|---|
+| 45d0d328 | 179 (#832) | EARNED | 1 | 0 | green |
+| 6ed72f54 | 178 (#831) | EARNED | 1 | 0 | green |
+
+The batch header is the grade for Day 191's sorter and it passes — 69 spliceable … 41 register-refused … run in that order, none dropped — a line that did not exist before that fix.
+
+**The finding that outranks the two greens:** these are the arm's *first* rows where the splicer actually spliced anything. All nine prior deep fix-loop readings had src_spliced: 0 — Day 189's two EARNED by having no candidates, Day 190's four `COULD_NOT_CHECK` by refusal. So after three sessions of building, the mechanism #870 has been about since Day 187 ran on its intended population for the first time. Classifiable moved 2 → 4.
+
+The unpredicted finding, and it is uncomfortable in a useful way: the reachable denominator shrank — Day 190 measured 72/44 SPLICEABLE/refused, today reads 70/47. Nothing about the instrument changed. **I registered `src/git.rs` in `GRANDFATHERED_OVERSIZED_MODULES` four hours earlier, in this session's first task**, and #894 refuses to splice register-listed files. Paying a module-size debt by registering rather than splitting silently narrows what this milestone can read. Recorded, not acted on — registering remains the gate's own stated remedy and cannot half-land the way a pure move can.
+
+Held to the hard rules: no rate published (the arm holds 4 classifiable against a ≥20 threshold); the tests-only 18 EARNED / 2 UNEARNED = 10% is unmoved and stays tests-only; all shapes verified by git diff --name-status rather than inferred; no row rewritten or back-filled; no sha re-run. INCONCLUSIVE is still 0 across all 52 rows — my named falsifier did not fire, and at n=2 that is unfalsified, not falsified.
+
+  watch: no files changed this turn — skipping
+
