@@ -64,6 +64,14 @@ WEAKENED = "WEAKENED"
 STRENGTHENED = "STRENGTHENED"
 UNKNOWN = "UNKNOWN"
 
+# A fourth, added Day 191, and it is its OWN value -- never folded into STRENGTHENED
+# (nothing got stronger), never into UNKNOWN (this is a judgement, not a refusal), and
+# never silently dropped from the report. `git diff` is per-file, so a `#[test]` fn that
+# walked to a sibling module is textually identical to one that died; `reconcile_moved_tests`
+# tells those apart by reading the SAME diff's additions. See that function for the two
+# safety properties and for why the count is printed rather than quietly subtracted.
+MOVED = "MOVED"
+
 # --------------------------------------------------------------------------------------
 # COULD_NOT_CHECK: a REFUSAL, deliberately NOT a fourth verdict.
 #
@@ -281,6 +289,23 @@ def _relaxed_comparison(removed: str, added: str) -> str | None:
 # --------------------------------------------------------------------------------------
 
 
+def fn_names_on(lines: list[str]) -> list[str]:
+    """Every `fn` name appearing on these lines. Pure."""
+    return [m for ln in lines for m in FN_NAME_RE.findall(ln)]
+
+
+def removed_test_fn_names(removed_lines: list[str], added_lines: list[str]) -> list[str]:
+    """The fn names a hunk removed and did not put back IN THE SAME HUNK.
+
+    This is the rule the `fn gone:` detail line already used, lifted into one statement
+    rather than copied: `classify_assertion_change` calls it to word its note and
+    `reconcile_moved_tests` calls it to decide a downgrade, so the report and the
+    discriminator can never disagree about which names a hunk lost. Two copies of a rule
+    agree the day they are written and diverge forever after.
+    """
+    return [m for m in fn_names_on(removed_lines) if not any(m in a for a in added_lines)]
+
+
 class HunkVerdict:
     __slots__ = ("verdict", "shapes", "detail")
 
@@ -322,12 +347,7 @@ def classify_assertion_change(
     # ---- shape 6 / mirror: whole tests removed or added -------------------------------
     if len(r_attrs) > len(a_attrs):
         shapes.append(S_TEST_REMOVED)
-        gone_names = [
-            m
-            for ln in removed_lines
-            for m in FN_NAME_RE.findall(ln)
-            if not any(m in a for a in added_lines)
-        ]
+        gone_names = removed_test_fn_names(removed_lines, added_lines)
         notes.append(
             f"{len(r_attrs) - len(a_attrs)} test attribute(s) removed"
             + (f"; fn gone: {', '.join(gone_names[:3])}" if gone_names else "")
@@ -467,12 +487,105 @@ class Finding:
         self.detail = detail
 
 
+def reconcile_moved_tests(findings, hunks):
+    """Downgrade WEAKENED -> MOVED for a test that walked next door rather than dying.
+
+    THE MECHANISM is cross-file reconciliation over the SAME diff, not a tree walk. `git
+    diff` is per-file, so a `#[test]` fn whose name is removed in file A and added in file
+    B within one commit registers as a deleted assertion in A with nothing on that side
+    saying it survived. This reads data `scan_diff` has already parsed -- no second `git`
+    call, no second checkout, no tree-wide assertion count.
+
+    TWO SAFETY PROPERTIES. Do not "simplify" either away; both error directions are
+    expensive, and they are expensive in opposite ways.
+
+      1. DOWNGRADE ONLY. This may turn WEAKENED into MOVED and nothing else. It never
+         upgrades, never touches STRENGTHENED, never touches UNKNOWN. A reconciler able to
+         promote could manufacture a clean bill out of a real finding.
+
+      2. ALL-OR-NOTHING. A finding becomes MOVED only if EVERY name it lost reappears as
+         an addition elsewhere in the same diff. A partial move stays WEAKENED, because a
+         real deletion sitting beside a real move must not be forgiven by its neighbour.
+
+    A finding that lost NO fn name is never MOVED. "Every removed name reappeared" is
+    vacuously true over an empty set, and that vacuous truth would forgive a pure
+    assertion-deleted weakening -- which is the exact signal this whole vein exists to
+    find, so the empty case is refused explicitly rather than left to the loop.
+
+    Wrongly calling a real weakening a MOVE silences that vein. Wrongly calling a move a
+    WEAKENING is a false accusation against a past commit. That asymmetry is why MOVED is
+    reported as its own count with its names and destinations listed rather than quietly
+    subtracted: a human can audit either mistake straight from the output.
+
+    Pairing a finding back to its hunk is by `(path, header)`. Within a single diff a hunk
+    header encodes line numbers, so two hunks in one file cannot share one -- and
+    `scan_diff` is called per commit under `--per-commit`, so there is no cross-commit
+    collision either. A finding whose hunk cannot be found is left exactly as it was.
+    """
+    own_of = {}
+    for h in hunks:
+        own_of.setdefault((h.path, h.header), h)
+
+    reconciled = []
+    moved_count = 0
+    for f in findings:
+        # Property 1: downgrade only. Everything that is not WEAKENED passes through
+        # untouched, by object identity, so a no-move diff is a pure pass-through.
+        if f.verdict != WEAKENED:
+            reconciled.append(f)
+            continue
+        own = own_of.get((f.path, f.header))
+        if own is None:
+            reconciled.append(f)
+            continue
+        lost = removed_test_fn_names(own.removed, own.added)
+        if not lost:
+            # Refused explicitly: see the vacuous-truth paragraph above.
+            reconciled.append(f)
+            continue
+
+        destinations = {}
+        for name in lost:
+            where = sorted(
+                {
+                    h.path
+                    for h in hunks
+                    if h is not own and is_rust_source(h.path) and name in fn_names_on(h.added)
+                }
+            )
+            if not where:
+                # Property 2: all-or-nothing. One unexplained name and the whole finding
+                # keeps its WEAKENED verdict.
+                destinations = None
+                break
+            destinations[name] = where
+        if destinations is None:
+            reconciled.append(f)
+            continue
+
+        paths = sorted({p for ws in destinations.values() for p in ws})
+        detail = (
+            f"{f.detail}; MOVED: every removed test fn reappears in this same diff "
+            f"[{', '.join(sorted(destinations))} -> {', '.join(paths)}]"
+        )
+        reconciled.append(Finding(f.path, f.header, MOVED, f.shapes, detail))
+        moved_count += 1
+
+    return reconciled, moved_count
+
+
 def scan_diff(text: str) -> tuple[list[Finding], int, int]:
-    """Return `(findings, rust_hunks_seen, test_hunks_examined)`."""
+    """Return `(findings, rust_hunks_seen, test_hunks_examined)`.
+
+    The tuple shape is unchanged: the MOVED count is derivable from the findings
+    themselves, so `render_report` counts it with the other three rather than having it
+    threaded through a widened signature.
+    """
     findings: list[Finding] = []
     rust_hunks = 0
     test_hunks = 0
-    for hunk in parse_unified_diff(text):
+    hunks = parse_unified_diff(text)
+    for hunk in hunks:
         if not is_rust_source(hunk.path):
             continue
         rust_hunks += 1
@@ -485,6 +598,7 @@ def scan_diff(text: str) -> tuple[list[Finding], int, int]:
         findings.append(
             Finding(hunk.path, hunk.header, verdict.verdict, verdict.shapes, verdict.detail)
         )
+    findings, _ = reconcile_moved_tests(findings, hunks)
     return findings, rust_hunks, test_hunks
 
 
@@ -499,9 +613,11 @@ read as "checked; clean"):
   1. It matches TEXT SHAPES, NOT SEMANTICS. A legitimately narrowed assertion — the code
      genuinely changed, so the old assertion was wrong — is textually indistinguishable
      from a loosened one. Every WEAKENED line below is a CANDIDATE for a human or a next
-     session to read. This tool does not convict. It also cannot tell a MOVE from a
-     DELETION: git diff is per-file, so a test relocated to a sibling module registers as
-     a removed assertion in the source file.
+     session to read. This tool does not convict. It CAN now tell a cross-file MOVE from
+     a DELETION -- a test fn removed in one file and added in another within the same
+     diff is reconciled to MOVED rather than accused -- but only within the diff it was
+     given: a fn renamed as it moved, or moved to a path outside this ref range or
+     outside `*.rs`, is still WEAKENED, and a PARTIAL move stays WEAKENED on purpose.
   2. It sees only what a diff between two refs contains. scripts/evolve.sh reverts a
      failed task with `git reset --hard PRE_TASK_SHA`, so WEAKENING INSIDE A REVERTED TASK
      IS INVISIBLE TO IT FOREVER — and the sessions most likely to contain the behaviour
@@ -531,6 +647,7 @@ def render_report(findings, commits, rust_hunks, test_hunks, window, max_finding
     out.append(f"  WEAKENED ..................... {counts[WEAKENED]}")
     out.append(f"  STRENGTHENED ................. {counts[STRENGTHENED]}")
     out.append(f"  UNKNOWN ...................... {counts[UNKNOWN]}")
+    out.append(f"  MOVED ........................ {counts[MOVED]}")
     out.append("")
 
     weak = [f for f in findings if f.verdict == WEAKENED]
@@ -556,6 +673,22 @@ def render_report(findings, commits, rust_hunks, test_hunks, window, max_finding
             out.append(f"  ? {f.path}  {f.detail}")
         if len(unknown) > 10:
             out.append(f"  ... (+{len(unknown) - 10} more elided)")
+
+    moved = [f for f in findings if f.verdict == MOVED]
+    if moved:
+        out.append("")
+        out.append(
+            f"MOVED ({len(moved)}): scored WEAKENED, then reconciled -- every test fn they "
+            "removed reappears as an addition elsewhere in this same diff, so the test "
+            "relocated rather than died. Listed, never quietly subtracted: read these to "
+            "audit the discriminator itself."
+        )
+        for f in moved[:10]:
+            out.append(f"  = {f.path}  [{', '.join(f.shapes)}]")
+            out.append(f"      {f.header}")
+            out.append(f"      {f.detail}")
+        if len(moved) > 10:
+            out.append(f"  ... (+{len(moved) - 10} more elided)")
     return "\n".join(out)
 
 
