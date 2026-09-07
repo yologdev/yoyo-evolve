@@ -1,0 +1,222 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the selector code in scripts/counterfactual_green.py.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_splice_eligibi… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2862,3060p' scripts/coun… ✓ (4ms)
+  3 tools completed in 5.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3320,3400p' scripts/coun… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1830,1900p' scripts/coun… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fix_loop_src_resolvers\… ✓ (4ms)
+  3 tools completed in 6.7s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3255,3300p' scripts/coun… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the full picture. Let me write the ordering function first, placed right after src_test_only_candidates.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/counterfactual_green.… ✓ (139ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/counterfactual_green.py (1 → 99 lines)
+  + def read_module_size_register(root: str):
+  +     """Parse `tests/module_size.rs`'s register, or `None`. I/O half, ONE statement.
+  + 
+  +     Day 191, #870/#894. Both consumers -- `--src-census` and the batch selector -- read
+  +     the SAME authority through this one function rather than each opening the gate file
+  +     themselves. Two copies of a file read agree the day they are written and diverge
+  +     forever after (the `significant_braces` precedent), and the failure direction matters:
+  +     a site that quietly treated an unreadable gate as an EMPTY register would call every
+  +     file un-listed and therefore spliceable, which is the flattering direction.
+  + 
+  +     `None` means COULD NOT READ, never "the register is empty" -- the distinction every
+  +     consumer downstream depends on.
+  +     """
+  +     gate_path = os.path.join(root, MODULE_SIZE_GATE_REL_PATH)
+  +     try:
+  +         with open(gate_path, "r", encoding="utf-8", errors="replace") as fh:
+  +             return parse_grandfathered_register(fh.read())
+  +     except OSError:
+  +         return None
+  + 
+  ... (79 more lines)
+ ✓ (1m 14s)
+  + def read_module_size_register(root: str):
+  +     """Parse `tests/module_size.rs`'s register, or `None`. I/O half, ONE statement.
+  + 
+  +     Day 191, #870/#894. Both consumers -- `--src-census` and the batch selector -- read
+  +     the SAME authority through this one function rather than each opening the gate file
+  +     themselves. Two copies of a file read agree the day they are written and diverge
+  +     forever after (the `significant_braces` precedent), and the failure direction matters:
+  +     a site that quietly treated an unreadable gate as an EMPTY register would call every
+  ... (13 more lines)
+  2 tools completed in 1m 39s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The ordering function is in. Now let me wire it into main() — first the --src-census register read to use the shared helper:
+  ▶ edit scripts/counterfactual_green.py (7 → 2 lines)
+  -             gate_path = os.path.join(root, MODULE_SIZE_GATE_REL_PATH)
+  -             try:
+  -                 with open(gate_path, "r", encoding="utf-8", errors="replace") as fh:
+  -                     register = parse_grandfathered_register(fh.read())
+  -             except OSError:
+  -                 register = None
+  +             register = read_module_size_register(root)
+                readability_of, eligibility_of = fix_loop_src_resolvers(root, register)
+ ✓ (1m 14s)
+  -             gate_path = os.path.join(root, MODULE_SIZE_GATE_REL_PATH)
+  -             try:
+  -                 with open(gate_path, "r", encoding="utf-8", errors="replace") as fh:
+  -                     register = parse_grandfathered_register(fh.read())
+  -             except OSError:
+  -                 register = None
+  +             register = read_module_size_register(root)
+                readability_of, eligibility_of = fix_loop_src_resolvers(root, register)
+
+Now the batch selector path:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (8 → 21 lines)
+            src_only = []
+  +         src_elig_counts = None
+            if args.include_src_test_commits:
+  +             # Day 191, #870: ONE resolver pair, so the readability lookup and the
+  +             # eligibility lookup share `diff_cache`/`show_cache` instead of each issuing
+  +             # its own `git diff` per candidate. The register is the AUTHORITY
+  +             # (`tests/module_size.rs`), read through the one shared helper.
+  +             register = read_module_size_register(root)
+  +             readability_of, eligibility_of = fix_loop_src_resolvers(root, register)
+                src_only = src_test_only_candidates(
+                    rows,
+                    args.population,
+                    recorded,
+  -                 lambda sha: commit_src_test_readability(root, sha),
+  +                 readability_of,
+  +             )
+  +             # #894's partition refuses register-listed `src/*.rs`, so a commit whose every
+  +             # candidate is listed is a guaranteed COULD_NOT_CHECK at the Site-B
+  +             # empty-splice guard. Prefer the ones that can actually splice; drop nothing.
+  +             src_only, src_elig_counts = order_src_test_only_by_eligibility(
+  ... (2 more lines)
+ ✓ (1m 14s)
+            src_only = []
+  +         src_elig_counts = None
+            if args.include_src_test_commits:
+  +             # Day 191, #870: ONE resolver pair, so the readability lookup and the
+  +             # eligibility lookup share `diff_cache`/`show_cache` instead of each issuing
+  +             # its own `git diff` per candidate. The register is the AUTHORITY
+  +             # (`tests/module_size.rs`), read through the one shared helper.
+  +             register = read_module_size_register(root)
+  ... (13 more lines)
+
+Now the print — a silent reordering is invisible:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (8 → 32 lines)
+                        "src-test-only: ZERO selectable. That is a REFUSAL to report a clean "
+                        "widening, not evidence the arm is empty — either every candidate "
+                        "came back SRC_TESTS_NONE/UNKNOWN, or they are all already recorded."
+  +                 )
+  +             elif src_elig_counts is not None:
+  +                 # Day 191, #870: a silent reordering is invisible. The counts are never
+  +                 # summed into behavioural, signal-bearing or the src-test-only total.
+  +                 _sp = src_elig_counts[SPLICE_ELIG_SPLICEABLE]
+  +                 _rr = src_elig_counts[SPLICE_ELIG_ALL_REGISTER_REFUSED]
+  +                 _other = (
+  +                     src_elig_counts[SPLICE_ELIG_NO_MODULE_AMONG_KEPT]
+  +                     + src_elig_counts[SPLICE_ELIG_NO_CANDIDATES]
+  +                     + src_elig_counts[SPLICE_ELIG_UNKNOWN]
+  +                 )
+  +                 print(
+  +                     f"src-test-only: {_sp} spliceable (a register-KEPT candidate carries "
+  +                     f"a parent #[cfg(test)] module), {_rr} register-refused (every "
+  +                     "candidate is listed in tests/module_size.rs, so #894's partition "
+  +                     f"refuses it and the run is a guaranteed COULD_NOT_CHECK), {_other} "
+  +                     "other/unknown — run in that order, none dropped."
+  ... (8 more lines)
+ ✓ (1m 14s)
+                        "src-test-only: ZERO selectable. That is a REFUSAL to report a clean "
+                        "widening, not evidence the arm is empty — either every candidate "
+                        "came back SRC_TESTS_NONE/UNKNOWN, or they are all already recorded."
+  +                 )
+  +             elif src_elig_counts is not None:
+  +                 # Day 191, #870: a silent reordering is invisible. The counts are never
+  +                 # summed into behavioural, signal-bearing or the src-test-only total.
+  +                 _sp = src_elig_counts[SPLICE_ELIG_SPLICEABLE]
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The wiring is done. Now the self-tests — the five guards, with the anti-vacuous one asserted first:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "merge_src_test_only(_or… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5470,5490p' scripts/coun… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/counterfactual_green.py (3 → 84 lines)
+  +     # ---- #870, Day 191: order_src_test_only_by_eligibility — the SAMPLING half ---------
+  +     # Day 190 burned FOUR consecutive fix-loop readings on four COULD_NOT_CHECKs, every
+  +     # one the same register collision, because the selector picks newest-first and my
+  +     # newest commits touch my biggest — i.e. register-listed — files.
+  +     _e_rows = [_row("e1"), _row("e2"), _row("e3"), _row("e4")]
+  + 
+  +     # ANTI-VACUOUS, ASSERTED FIRST: an all-refused input returns ALL of them, never an
+  +     # empty list. A selector that finds nothing and returns nothing is this defect wearing
+  +     # the opposite sign, and it is quieter than the bug.
+  +     _all_ref, _ar_counts = order_src_test_only_by_eligibility(
+  +         _e_rows, lambda _s: SPLICE_ELIG_ALL_REGISTER_REFUSED
+  +     )
+  +     check("splice-order: an ALL-REGISTER-REFUSED input returns ALL rows, not none",
+  +           [r.sha for r in _all_ref] == ["e1", "e2", "e3", "e4"]
+  +           and _ar_counts[SPLICE_ELIG_ALL_REGISTER_REFUSED] == 4
+  +           and _ar_counts[SPLICE_ELIG_SPLICEABLE] == 0,
+  +           ([r.sha for r in _all_ref], _ar_counts))
+  + 
+  +     # NEAR-MISS GUARD, and it is the entire regression surface: when every row is already
+  +     # spliceable the order is BYTE-IDENTICAL. Full list equality, never membership — this
+  ... (64 more lines)
+ ✓ (1m 14s)
+  +     # ---- #870, Day 191: order_src_test_only_by_eligibility — the SAMPLING half ---------
+  +     # Day 190 burned FOUR consecutive fix-loop readings on four COULD_NOT_CHECKs, every
+  +     # one the same register collision, because the selector picks newest-first and my
+  +     # newest commits touch my biggest — i.e. register-listed — files.
+  +     _e_rows = [_row("e1"), _row("e2"), _row("e3"), _row("e4")]
+  + 
+  +     # ANTI-VACUOUS, ASSERTED FIRST: an all-refused input returns ALL of them, never an
+  +     # empty list. A selector that finds nothing and returns nothing is this defect wearing
+  ... (13 more lines)
+  3 tools completed in 1m 46s (3 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (73ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+ALL PASSED, exit 0, and still 6 run verdicts — no verdict state added. Now the false-denominator check, which is the one that matters:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (140ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census output is byte-identical — no denominator moved. Now the positive control, as one atomic mutate→run→restore with the sabotage marker in place:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (13 lines) ✓ (162ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

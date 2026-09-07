@@ -1,0 +1,167 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, what the census says, and what CLAUDE.md currently claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Four bypasses remain\|r… ✓ (6ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+The code landed correctly; only the CLAUDE.md docs step is missing. Let me get the census verbatim from a passing run and re-derive the distribution independently.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_chokepoint… ✓ (239ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The register is empty — 0 bypass sites, 0 entries. Now let me re-derive the distribution independently (not by subtraction) and find the previous census to supersede.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== independent scan: per-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== register state ===" &&… ✓ (5ms)
+ ✓ (10ms)
+  2 tools completed in 10ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: code landed, census captured, register confirmed empty at tests/git_chokepoint.rs:99. Let me re-derive the non-test distribution by an independent scan (not by subtraction), then fix CLAUDE.md.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (35 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "" CLAUDE.md && echo "--… ✓ (8ms)
+ ✓ (98ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.6s (2 ✓)
+
+Independent scan agrees exactly with the gate: 94 files / 78 total / 1 non-test (the chokepoint itself) / 77 test-region — non-test bypass distribution is empty everywhere. Let me check whether a fifth payment exists and find the insertion point.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== payment commits ===" &… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: the fifth payment (`9cdf6f83`) also shipped without a CLAUDE.md update — the file is stale by two payments. Let me read the stale passages and recover what step 0 measured.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==132' CLAUDE.md | tail -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/commands_se… ✓ (7ms)
+ ✓ (9ms)
+  2 tools completed in 9ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me recover step 0's full probe finding, then write the docs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/commands_se… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- tests/git_choke… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD^:tests/git_chokepo… ✓ (4ms)
+  3 tools completed in 6.6s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD^:tests/git_chokepo… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have everything. Now the docs — three stale passages to fix. First, the new payment paragraph:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 13 lines)
+    That is the honest state of a reason that has now failed four times out of four — the next session should convert rather than re-derive.
+  + 
+  + **The fifth and sixth payments (Day 190 `9cdf6f83` and Day 191 `7fc10e19`, #864) — `run_grep` and `run_grep_with_context` converted, THE REGISTER IS NOW EMPTY, and #864 CAN BE CLOSED.** **Superseded census and superseded closing claim, recorded rather than erased — and the stale halves are spread across the two paragraphs below as well as the one above:** *"Four bypasses remain and #864 stays open"*, the fourth payment's distribution (`commands_search.rs` **4** under 2 entries), limit 4's *"… [yoyo: 1316 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The total went DOWN, 82 → 78, and the test region did NOT grow — which contradicts the task file's own stated expectation and is worth recording rather than smoothing over.** Non-test dropped 5 → 1 (this pair's 4 sites), and the test region held at **77**. Every prior payment gained test-region sites, because each added scratch-repo fixtures that shell `git` directly on purpose — a test-region site is *supposed* to bypass the chokepoint so it never trips the destructive guard. The task… [yoyo: 397 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Step 0's probe, and this is the FIRST payment in six whose step 0 did not falsify a live claim — because the previous payment had already falsified it and written the correction *into the register*.** The deleted entry read, verbatim: *"two sites in one fn, same shapes as run_grep's: the nulled-stdio .status() probe and an incremental `git grep` builder, here with -B/-A context flags computed at runtime. Same Day-190 correction as run_grep's entry: the stated blocker was measured false, so t… [yoyo: 803 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The conversion follows the template with no invention.** `run_grep_with_context_in(root, args)` is the dir-taking seam and `run_grep_with_context()` is the `Path::new(".")` wrapper, matching `list_project_files_in` / `get_recent_git_files_in` / `run_grep_count_in` / `apply_patch_in` / `push_handoff_branch`, so **no test moves the process CWD** (#780). Both the probe and the `git grep` build route through `crate::git::run_git_output` — a raw `Output` with **no blob trim**, the reason all six … [yoyo: 2885 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The finding that outranks the conversion, and it is about THIS file rather than about git: the docs went stale by TWO payments, and the doc half is the half with no gate.** The fifth payment (`9cdf6f83`) landed its code, its tests and its register edit and updated **no** CLAUDE.md at all; the sixth's first attempt did exactly the same and was rejected by the evaluator for it. So for two consecutive payments this file asserted *"Four bypasses remain and #864 stays open"* and named `run_grep_wit… [yoyo: 1098 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **What remains: nothing. `REGISTERED_GIT_BYPASSES` ships EMPTY**, every production `git` invocation under `src/` now goes through `git_command()`, and each therefore inherits `-c core.quotepath=off` **and every future global applied at the chokepoint** — which was the structural point of #864 all along, rather than the path-quoting symptom that opened it. An empty register is a legitimate terminal state and not a broken scan (`tests/orphan_modules.rs` ships `REGISTERED_ORPHANS` empty for the s… [yoyo: 432 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 28s)
+    That is the honest state of a reason that has now failed four times out of four — the next session should convert rather than re-derive.
+  + 
+  + **The fifth and sixth payments (Day 190 `9cdf6f83` and Day 191 `7fc10e19`, #864) — `run_grep` and `run_grep_with_context` converted, THE REGISTER IS NOW EMPTY, and #864 CAN BE CLOSED.** **Superseded census and superseded closing claim, recorded rather than erased — and the stale halves are spread across the two paragraphs below as well as the one above:** *"Four bypasses remain and #864 stays open"*, the fourth payment's distribution (`commands_search.rs` **4** under 2 entries), limit 4's *"… [yoyo: 1316 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The total went DOWN, 82 → 78, and the test region did NOT grow — which contradicts the task file's own stated expectation and is worth recording rather than smoothing over.** Non-test dropped 5 → 1 (this pair's 4 sites), and the test region held at **77**. Every prior payment gained test-region sites, because each added scratch-repo fixtures that shell `git` directly on purpose — a test-region site is *supposed* to bypass the chokepoint so it never trips the destructive guard. The task… [yoyo: 397 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Step 0's probe, and this is the FIRST payment in six whose step 0 did not falsify a live claim — because the previous payment had already falsified it and written the correction *into the register*.** The deleted entry read, verbatim: *"two sites in one fn, same shapes as run_grep's: the nulled-stdio .status() probe and an incremental `git grep` builder, here with -B/-A context flags computed at runtime. Same Day-190 correction as run_grep's entry: the stated blocker was measured false, so t… [yoyo: 803 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  ... (5 more lines)
+
+Now the two remaining stale passages — limit 4 and the closing paragraph:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (3 → 3 lines)
+  - (4) the register key is `(path, fn)`, **not** `(path, line)`, so one entry covers **every** site inside that function — **three of the eight entries already stand for two sites each** (`run_grep`, `run_grep_count`, `run_grep_with_context`), so a second bypass added to an already-registered `fn` is inherited **silently**. That fourth limit is a deliberate trade stated rather than hidden: a line key would fire on every unrelated edit that shifts a line number, which is the churn that trains a re… [yoyo: 1523 more bytes elided — diff lines are capped at 500 bytes]
+  + (4) the register key is `(path, fn)`, **not** `(path, line)`, so one entry covers **every** site inside that function, and a second bypass added to an already-registered `fn` is inherited **silently** — **superseded detail, recorded rather than erased: this clause used to end "*three of the eight entries already stand for two sites each* (`run_grep`, `run_grep_count`, `run_grep_with_context`)", which was true when written and is now moot, because the register is EMPTY** (Day 191 — see the fi… [yoyo: 1812 more bytes elided — diff lines are capped at 500 bytes]
+    
+  - **What it deliberately does not do, stated rather than implied: it ENUMERATES the bypasses, it does not FIX them.** **10 of the 11** still shell `git` directly and still receive nothing applied at the chokepoint (one was converted on Day 183 — see the payment paragraph above; that number was 11 of 11 when the gate landed); `#864` stays open on the per-site work, which is a design decision per site (streaming output, custom stdio, a `Child` handle, a `.status()` probe, and two subcommands — `… [yoyo: 251 more bytes elided — diff lines are capped at 500 bytes]
+  + **Superseded claim, recorded rather than erased — this paragraph read "it ENUMERATES the bypasses, it does not FIX them … **10 of the 11** still shell `git` directly … `#864` stays open on the per-site work", and every clause of it is now false.** That was the honest state of the gate on the day it landed, and it stayed true through four payments; **as of Day 191 there are ZERO bypasses — the register is empty, all 11 are converted, and #864 can be closed.** The reasoning it carried was … [yoyo: 1032 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 27s)
+  - (4) the register key is `(path, fn)`, **not** `(path, line)`, so one entry covers **every** site inside that function — **three of the eight entries already stand for two sites each** (`run_grep`, `run_grep_count`, `run_grep_with_context`), so a second bypass added to an already-registered `fn` is inherited **silently**. That fourth limit is a deliberate trade stated rather than hidden: a line key would fire on every unrelated edit that shifts a line number, which is the churn that trains a re… [yoyo: 1523 more bytes elided — diff lines are capped at 500 bytes]
+  + (4) the register key is `(path, fn)`, **not** `(path, line)`, so one entry covers **every** site inside that function, and a second bypass added to an already-registered `fn` is inherited **silently** — **superseded detail, recorded rather than erased: this clause used to end "*three of the eight entries already stand for two sites each* (`run_grep`, `run_grep_count`, `run_grep_with_context`)", which was true when written and is now moot, because the register is EMPTY** (Day 191 — see the fi… [yoyo: 1812 more bytes elided — diff lines are capped at 500 bytes]
+    
+  - **What it deliberately does not do, stated rather than implied: it ENUMERATES the bypasses, it does not FIX them.** **10 of the 11** still shell `git` directly and still receive nothing applied at the chokepoint (one was converted on Day 183 — see the payment paragraph above; that number was 11 of 11 when the gate landed); `#864` stays open on the per-site work, which is a design decision per site (streaming output, custom stdio, a `Child` handle, a `.status()` probe, and two subcommands — `… [yoyo: 251 more bytes elided — diff lines are capped at 500 bytes]
+  + **Superseded claim, recorded rather than erased — this paragraph read "it ENUMERATES the bypasses, it does not FIX them … **10 of the 11** still shell `git` directly … `#864` stays open on the per-site work", and every clause of it is now false.** That was the honest state of the gate on the day it landed, and it stayed true through four payments; **as of Day 191 there are ZERO bypasses — the register is empty, all 11 are converted, and #864 can be closed.** The reasoning it carried was … [yoyo: 1032 more bytes elided — diff lines are capped at 500 bytes]
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Docs written. Now verifying the stale claims are gone and running the full check suite:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== stale claims still ass…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10ms)
+ ✓ (16.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.4s (2 ✓)
+
+Three occurrences each — I need to confirm every one is inside superseded framing, not asserting as current. Let me locate them:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Fou… (7 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three occurrences are inside superseded framing (line 128 is the historical Day-190 record, explicitly named as superseded by the new paragraph at 130 — the repo's documented "recorded rather than erased" convention). Now the full suite:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ec… ✓ (2m 2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 5511 tests pass. Let me confirm the two gates print zero warnings, then commit:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (17ms)
+ ✓ (191ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.7s (2 ✓)
+
+module_size prints zero warnings. But cargo fmt touched src/commands_search.rs — I must check whether that moved the line count the register pins:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_search.rs … ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+cargo fmt split a line: the file is now 4309 but the register pins 4307. That is exactly the drift the task warned recurs four times because the gate exits 0 while printing. Let me look at the raw output rather than my filtered view:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (162ms)
+

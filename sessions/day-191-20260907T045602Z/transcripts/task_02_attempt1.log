@@ -1,0 +1,334 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with STEP 0 — read the actual census the gate prints, not this task file's assumptions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_chokepoint…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REGISTERED_GIT_BYPASSES… ✓ (4ms)
+ ✓ (234ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.7s (2 ✓)
+
+The census says 1 register entry left — run_grep_with_context, 2 sites. Converting it empties the register and closes #864. Let me read the actual code and the already-converted sibling as the template.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_grep_with_contex…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'Command::new("git")' sr… ✓ (2ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+run_grep and run_grep_count are already converted. Only run_grep_with_context remains (2 sites). Let me read the proven template and the target.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1200,1360p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1500,1600p' src/commands… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census confirms: 1 register entry left — run_grep_with_context, 2 sites (1512, 1521). Converting it empties the register. Now STEP 0 — probe the stated reason with a real experiment.
+  ▶ $ cd /tmp && rm -rf p864 && mkdir p864 && cd p864 && git init -q . && git config u…  ▶ $ cd /tmp/p864 && echo "=== quotepath OFF ===" && git -c core.… (23 lines) ✓ (22ms)
+ ✓ (145ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.2s (2 ✓)
+
+Probe results are decisive. The defect reproduces ("src/n\303\244me.rs" quoted+octal-escaped; src/we ird.rs not quoted — the near-miss case), and .status()-with-nulled-stdio and .output() give the same answer with stderr_bytes=0.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/p864 && echo "=== quotepath OFF (what the chokepoint… (4 lines) ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 complete — measured, and this time the register reason is HONEST (it already records the Day-190 correction). Now the conversion, following the proven run_grep_in template.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1503,1512p' src/commands… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read src/commands_search.rs:1500..1526 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the conversion — replacing the header, the probe, and the git arm in one edit:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (37 → 82 lines)
+    fn run_grep_with_context(args: &GrepArgs) -> Result<String, String> {
+  +     run_grep_with_context_in(std::path::Path::new("."), args)
+  + }
+  + 
+  + /// `run_grep_with_context`, resolved against an explicit directory.
+  + ///
+  + /// The dir-taking seam, matching `run_grep_in` / `run_grep_count_in` /
+  + /// `get_recent_git_files_in` / `apply_patch_in`. The process CWD is global, so no
+  + /// test may move it (#780 spent two whole tasks removing those).
+  + ///
+  + /// Routed through the `src/git.rs` chokepoint (#864's sixth and final payment), so
+  + /// it inherits `-c core.quotepath=off` and every future global applied there.
+  + /// Without it git returns a non-ASCII path as the literal bytes
+  + /// `"src/n\303\244me.rs"` — surrounding quotes and octal escapes included — which no
+  + /// consumer can use as a path, so `/grep --context`'s own result surface attributed
+  + /// real matches to filenames that do not exist.
+  + fn run_grep_with_context_in(root: &std::path::Path, args: &GrepArgs) -> Result<String, String> {
+        let (before, after) = args.context_lines.unwrap_or((0, 0));
+  +     let root_str = root.to_string_lossy().into_owned();
+    
+  ... (81 more lines)
+ ✓ (14.2s)
+    fn run_grep_with_context(args: &GrepArgs) -> Result<String, String> {
+  +     run_grep_with_context_in(std::path::Path::new("."), args)
+  + }
+  + 
+  + /// `run_grep_with_context`, resolved against an explicit directory.
+  + ///
+  + /// The dir-taking seam, matching `run_grep_in` / `run_grep_count_in` /
+  + /// `get_recent_git_files_in` / `apply_patch_in`. The process CWD is global, so no
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the plain arm's tail and the bottom match still need the wrapper moved. Fixing both:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1613..1623 ✓ (1ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_search.rs (9 → 13 lines)
+            cmd.arg(&args.pattern);
+            cmd.arg(&args.path);
+  -         cmd.output()
+  +         // Same wrapper text as before. The git arm's inner `e` now carries the
+  +         // chokepoint's own error string; both arms still surface as
+  +         // `Failed to run grep: …`, so no caller sees a different failure mode.
+  +         cmd.output().map_err(|e| format!("Failed to run grep: {e}"))
+        };
+    
+        match output {
+            Ok(out) => Ok(String::from_utf8_lossy(&out.stdout).to_string()),
+  -         Err(e) => Err(format!("Failed to run grep: {e}")),
+  +         // Both arms already wrapped their own error above, so no second wrap here.
+  +         Err(e) => Err(e),
+        }
+ ✓ (1m 46s)
+            cmd.arg(&args.pattern);
+            cmd.arg(&args.path);
+  -         cmd.output()
+  +         // Same wrapper text as before. The git arm's inner `e` now carries the
+  +         // chokepoint's own error string; both arms still surface as
+  +         // `Failed to run grep: …`, so no caller sees a different failure mode.
+  +         cmd.output().map_err(|e| format!("Failed to run grep: {e}"))
+        };
+  ... (7 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Build passes. Now the tests — let me model them on the already-converted sibling's emission-point tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:3391..3461 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn grep_scratch_repo" -… ✓ (5ms)
+  2 tools completed in 5.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests. Let me first confirm git's exact context-output format so my assert_eq! expectations are grounded:
+  ▶ $ cd /tmp && rm -rf p864b && mkdir p864b && cd p864b && git init -q . && git confi… ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exact format confirmed. Now adding the three emission-point tests:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:3457..3481 ✓ (1ms)
+  ▶ edit src/commands_search.rs (5 → 89 lines)
+            assert_eq!(matches.len(), 1, "plain-grep fallback should still match");
+            assert!(matches[0].file.ends_with("plain.rs"));
+            assert_eq!(matches[0].line_num, 1);
+  +     }
+  + 
+  +     /// `match_args` with `-B1 -A1`, so the context arm is actually exercised.
+  +     fn context_args(pattern: &str) -> GrepArgs {
+  +         GrepArgs {
+  +             context_lines: Some((1, 1)),
+  +             ..match_args(pattern)
+  +         }
+  +     }
+  + 
+  +     /// Three lines, so `-B1 -A1` has real context on both sides of the match.
+  +     const CONTEXT_BODY: &str = "line_before\nfn f() { needle_marker(); }\nline_after\n";
+  + 
+  +     #[test]
+  +     fn run_grep_with_context_in_returns_a_non_ascii_path_raw_not_quotepath_escaped() {
+  +         // git's `core.quotepath` defaults to ON, so `git grep -n -B1 -A1` renders a
+  +         // non-ASCII filename as the literal bytes `"src/n\303\244me.rs"` —
+  ... (68 more lines)
+ ✓ (1m 47s)
+            assert_eq!(matches.len(), 1, "plain-grep fallback should still match");
+            assert!(matches[0].file.ends_with("plain.rs"));
+            assert_eq!(matches[0].line_num, 1);
+  +     }
+  + 
+  +     /// `match_args` with `-B1 -A1`, so the context arm is actually exercised.
+  +     fn context_args(pattern: &str) -> GrepArgs {
+  +         GrepArgs {
+  ... (13 more lines)
+  2 tools completed in 2m 6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo run_grep_w… ✓ (182ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 4 pass. Now step 2 — delete the register entry (self-verifying: converting without deleting fires the ratchet):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit tests/git_chokepoint.rs (8 → 12 lines)
+  - const REGISTERED_GIT_BYPASSES: &[(&str, &str, &str)] = &[(
+  -     "src/commands_search.rs",
+  -     "run_grep_with_context",
+  -     "two sites in one fn, same shapes as run_grep's: the nulled-stdio .status() probe and \
+  -          an incremental `git grep` builder, here with -B/-A context flags computed at runtime. \
+  -          Same Day-190 correction as run_grep's entry: the stated blocker was measured false, \
+  -          so this is a scheduling boundary rather than a technical one.",
+  - )];
+  + /// Deliberate exceptions: `(path, enclosing fn, why it cannot go through the chokepoint)`.
+  + ///
+  + /// **EMPTY, and that is a legitimate terminal state rather than a broken scan**
+  + /// (`tests/orphan_modules.rs` ships `REGISTERED_ORPHANS` empty for the same reason).
+  + /// #864 was paid down one site per task across six payments — `list_project_files`
+  + /// (Day 183), `get_recent_git_files` and `push_and_open_pr` (Day 189),
+  + /// `run_grep_count` and `run_grep` (Day 190), `run_grep_with_context` (Day 191) —
+  + /// and every one of the five register reasons that named a *technical* blocker was
+  + /// measured **false** when probed. The gate's anti-vacuous branch is on the
+  + /// **scanned site set**, not on this register, so it still fails loudly if the scan
+  + /// ever returns nothing.
+  + const REGISTERED_GIT_BYPASSES: &[(&str, &str, &str)] = &[];
+ ✓ (1m 6s)
+  - const REGISTERED_GIT_BYPASSES: &[(&str, &str, &str)] = &[(
+  -     "src/commands_search.rs",
+  -     "run_grep_with_context",
+  -     "two sites in one fn, same shapes as run_grep's: the nulled-stdio .status() probe and \
+  -          an incremental `git grep` builder, here with -B/-A context flags computed at runtime. \
+  -          Same Day-190 correction as run_grep's entry: the stated blocker was measured false, \
+  -          so this is a scheduling boundary rather than a technical one.",
+  - )];
+  ... (12 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_chokepoint… ✓ (228ms)
+  2 tools completed in 1m 9s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5512 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+This failure is correct and expected — and it's the last thing standing between me and an empty register. The assertion is an anti-vacuous guard on the wrong object: it guards the register, which is exactly what #864 exists to empty. Let me verify the scan-side guard exists first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "anti-vacuous\|is_empty(… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '390,412p' tests/git_chok… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.7s (2 ✓)
+
+Confirmed — the anti-vacuous branch is on the scan (scan.total_sites > 0, asserted first). The line-425 assertion is a second one pointed at the register, i.e. at the very thing #864 exists to empty. Same as the cargo_spawning_tests.rs Day-188 precedent:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit tests/git_chokepoint.rs (9 → 18 lines)
+    /// The register is debt, not absolution: every entry must carry a real reason.
+  + ///
+  + /// **There is deliberately NO `!is_empty()` assertion here.** One used to sit at the
+  + /// top of this test, and it was an anti-vacuous guard pointed at the wrong object:
+  + /// the register is the thing #864 exists to *empty*, so guarding it against
+  + /// emptiness makes paying the debt off in full a test failure. The gate's real
+  + /// anti-vacuous branch is on the **scanned site set**
+  + /// (`every_direct_git_invocation_is_at_the_chokepoint_or_registered` asserts
+  + /// `scan.total_sites > 0` first), which is what actually catches a broken scanner
+  + /// reporting a clean bill of health. Same precedent and same reasoning as
+  + /// `tests/cargo_spawning_tests.rs`, whose register emptied on Day 188, and
+  + /// `tests/orphan_modules.rs`, which shipped empty from the start.
+  + ///
+  + /// The loop below still stands: a *future* entry must carry a non-empty reason, so
+  + /// re-registering a bypass without justifying it is still fatal.
+    #[test]
+    fn every_register_entry_carries_a_reason() {
+  -     assert!(
+  -         !REGISTERED_GIT_BYPASSES.is_empty(),
+  -         "REGISTERED_GIT_BYPASSES is empty — 11 bypasses were measured on Day 182, so an \
+  ... (3 more lines)
+ ✓ (1m 15s)
+    /// The register is debt, not absolution: every entry must carry a real reason.
+  + ///
+  + /// **There is deliberately NO `!is_empty()` assertion here.** One used to sit at the
+  + /// top of this test, and it was an anti-vacuous guard pointed at the wrong object:
+  + /// the register is the thing #864 exists to *empty*, so guarding it against
+  + /// emptiness makes paying the debt off in full a test failure. The gate's real
+  + /// anti-vacuous branch is on the **scanned site set**
+  + /// (`every_direct_git_invocation_is_at_the_chokepoint_or_registered` asserts
+  ... (13 more lines)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The chokepoint gate passes now. The module-size gate went fatal — expected, the new fixtures grew the file. Let me get the literal line the gate prints (paste, never hand-type):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (189ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/commands_search.rs… ✓ (3ms)
+  ▶ edit tests/module_size.rs (1 → 1 lines)
+  -     ("src/commands_search.rs", 4174),
+  +     ("src/commands_search.rs", 4307),
+ ✓ (1m 16s)
+  -     ("src/commands_search.rs", 4174),
+  +     ("src/commands_search.rs", 4307),
+  3 tools completed in 1m 22s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 2)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     Predicted correctly: src/commands_search.rs
+
