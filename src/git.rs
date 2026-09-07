@@ -105,6 +105,43 @@ fn destructive_guard<'a>(args: &'a [&'a str], cwd: &std::path::Path) -> Option<&
 /// at the chokepoint every helper in this module already funnels through.
 const QUOTEPATH_OFF: [&str; 2] = ["-c", "core.quotepath=off"];
 
+/// Neutralise `core.fsmonitor`, which a **repository** can use to make git
+/// execute an arbitrary program on our host.
+///
+/// The mechanism (Manifold Security, "The git you didn't run", disclosed
+/// 2026-09-02; 8 findings across 7 agents; Goose CVE-2026-72718, CVSS 7.0):
+/// git reads `core.fsmonitor` from the repository's own `.git/config` and
+/// **executes** the program it names on any operation that refreshes the index.
+/// A repo arriving as *files with `.git` intact* — a zip, a shared drive, a
+/// sync folder, anything but a `git clone`, which does not copy local config —
+/// therefore runs code the moment an agent gathers startup context.
+///
+/// **Measured before this landed, not inferred** (git 2.55.0, scratch repo
+/// under `/tmp`): a `.git/config` carrying
+/// `[core] fsmonitor = touch <sentinel>` creates the sentinel under
+/// `git status --porcelain`, `git ls-files` **and** `git diff --cached` — the
+/// exact three commands `src/context.rs` runs on every prompt (`:49`, `:79`,
+/// `:84`) — and `-c core.fsmonitor=` suppresses it on all three.
+///
+/// **This does not reach yoyo's trust boundary, and cannot.** `--trust-project`,
+/// the trust store and the trust prompt gate *agent-layer* config (MCP servers,
+/// `permissions.allow`, shell hooks, `goal_verify`, `notify_command`). Git
+/// executes underneath all of it, before any prompt, and it is not a
+/// model-generated tool call, so the permission layer never sees it.
+///
+/// **STATED LIMIT — this is a NAMED-KEY defence, not a general one.** The
+/// disclosure says outright that *"`core.fsmonitor` is not the only setting of
+/// its kind"*, and the still-unpatched second variant names a different key.
+/// Git config can point at an executable through at least `core.sshCommand`,
+/// `core.pager`, `core.editor`, `core.askPass`, `credential.helper`,
+/// `diff.external`, `*.textconv`, `alias.*`, `core.hooksPath` and
+/// `uploadpack.packObjectsHook` — **none of which this covers**. They are
+/// deliberately not added on the strength of the article alone: each either
+/// changes behaviour a user relies on (`core.pager`, `core.editor`) or needs
+/// its own reproduction, and an unmeasured entry is how a security fix acquires
+/// a regression. "Could not check" must not read as "checked; clean".
+const FSMONITOR_OFF: [&str; 2] = ["-c", "core.fsmonitor="];
+
 /// Build a `git` command carrying yoyo's standard global flags.
 ///
 /// **Two constraints, both load-bearing — do not "simplify" either away.**
@@ -125,6 +162,7 @@ const QUOTEPATH_OFF: [&str; 2] = ["-c", "core.quotepath=off"];
 fn git_command() -> std::process::Command {
     let mut cmd = std::process::Command::new("git");
     cmd.args(QUOTEPATH_OFF);
+    cmd.args(FSMONITOR_OFF);
     cmd
 }
 
