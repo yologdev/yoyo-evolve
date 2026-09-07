@@ -1038,6 +1038,217 @@ def run_self_tests():
     report = render_report([], 0, 0, 0, "empty")
     check("clean report says none", "WEAKENED candidates: none" in report, report)
 
+    # ======================================================================================
+    # reconcile_moved_tests -- the move-vs-deletion discriminator.
+    #
+    # Measured reason (Day 191): 1b502eacb937 scored 3 WEAKENED and is innocent -- it is the
+    # Day-58 agent-builder extraction, tree-wide assertion count 5062 before and 5062 after.
+    # Both error directions are expensive, so both are pinned here: forgiving a real
+    # weakening silences the vein this instrument exists for, and accusing a move is a false
+    # accusation against a past commit.
+    # ======================================================================================
+
+    # -- ANTI-VACUOUS, ASSERTED FIRST ------------------------------------------------------
+    # A reconciler handed nothing must move nothing. One that finds nothing and forgives
+    # everything is this defect wearing the opposite sign, and it is quieter than the bug.
+    check("reconcile: empty findings move nothing", reconcile_moved_tests([], []) == ([], 0))
+    check(
+        "reconcile: findings with no hunks to pair against move nothing",
+        reconcile_moved_tests(
+            [Finding("src/main.rs", "@@ -1,2 +1,1 @@", WEAKENED, [S_TEST_REMOVED], "d")], []
+        )[1]
+        == 0,
+    )
+
+    # MOVED is a FOURTH value: it must never be one of the three a hunk can be classified
+    # into, or a downgrade would be indistinguishable from a classification.
+    check("MOVED is not a hunk verdict", MOVED not in (WEAKENED, STRENGTHENED, UNKNOWN))
+
+    ALPHA = ["    #[test]", "    fn test_alpha() {", "        assert_eq!(a, 1);", "    }"]
+    BETA = ["    #[test]", "    fn test_beta() {", "        assert_eq!(b, 2);", "    }"]
+    SRC_HDR = "@@ -1380,8 +725,1 @@ mod tests {"
+    DST_HDR = "@@ -0,0 +1,8 @@"
+
+    def weak_finding(path="src/main.rs", header=SRC_HDR):
+        return Finding(
+            path, header, WEAKENED, [S_TEST_REMOVED, S_ASSERTION_DELETED], "fn gone: test_alpha"
+        )
+
+    src_alpha = Hunk("src/main.rs", SRC_HDR, ALPHA, [])
+    dst_alpha = Hunk("src/agent_builder.rs", DST_HDR, [], ALPHA)
+
+    # -- row 1: removed in A, added in B -> MOVED ------------------------------------------
+    rec, moved = reconcile_moved_tests([weak_finding()], [src_alpha, dst_alpha])
+    check(
+        "reconcile: a test that walked next door is MOVED",
+        (moved, rec[0].verdict) == (1, MOVED),
+        (moved, rec[0].verdict),
+    )
+    check(
+        "reconcile: MOVED names the destination file so a human can audit it",
+        "src/agent_builder.rs" in rec[0].detail and "test_alpha" in rec[0].detail,
+        rec[0].detail,
+    )
+    check(
+        "reconcile: MOVED keeps the original shapes rather than laundering them",
+        rec[0].shapes == [S_TEST_REMOVED, S_ASSERTION_DELETED],
+        rec[0].shapes,
+    )
+
+    # -- row 2: removed with NO matching addition -> stays WEAKENED ------------------------
+    rec, moved = reconcile_moved_tests(
+        [weak_finding()], [src_alpha, Hunk("src/agent_builder.rs", DST_HDR, [], BETA)]
+    )
+    check(
+        "reconcile: a deletion with no matching addition stays WEAKENED",
+        (moved, rec[0].verdict) == (0, WEAKENED),
+        (moved, rec[0].verdict),
+    )
+
+    # -- row 3: ALL-OR-NOTHING -- two names lost, only one re-added -> stays WEAKENED ------
+    # A real deletion sitting beside a real move must not be forgiven by its neighbour.
+    rec, moved = reconcile_moved_tests(
+        [weak_finding()],
+        [Hunk("src/main.rs", SRC_HDR, ALPHA + BETA, []), dst_alpha],
+    )
+    check(
+        "reconcile: a PARTIAL move stays WEAKENED (all-or-nothing)",
+        (moved, rec[0].verdict) == (0, WEAKENED),
+        (moved, rec[0].verdict),
+    )
+
+    # -- row 4: DOWNGRADE ONLY -- STRENGTHENED is untouched, asserted BY IDENTITY ----------
+    s_find = Finding("src/main.rs", SRC_HDR, STRENGTHENED, [M_TEST_ADDED], "d")
+    rec, moved = reconcile_moved_tests([s_find], [src_alpha, dst_alpha])
+    check(
+        "reconcile: STRENGTHENED passes through untouched, by identity",
+        (moved, rec[0]) == (0, s_find) and rec[0] is s_find,
+        (moved, rec[0].verdict),
+    )
+
+    # -- row 5: DOWNGRADE ONLY -- UNKNOWN is untouched, asserted BY IDENTITY ---------------
+    u_find = Finding("src/main.rs", SRC_HDR, UNKNOWN, [], "d")
+    rec, moved = reconcile_moved_tests([u_find], [src_alpha, dst_alpha])
+    check(
+        "reconcile: UNKNOWN passes through untouched, by identity",
+        (moved, rec[0]) == (0, u_find) and rec[0] is u_find,
+        (moved, rec[0].verdict),
+    )
+
+    # -- row 6: the vacuous-truth refusal --------------------------------------------------
+    # "every removed name reappeared" is vacuously true over an empty set, and that would
+    # forgive a pure assertion deletion -- the exact signal this vein exists to find.
+    plain_hdr = "@@ -5,3 +5,1 @@"
+    rec, moved = reconcile_moved_tests(
+        [Finding("src/main.rs", plain_hdr, WEAKENED, [S_ASSERTION_DELETED], "d")],
+        [Hunk("src/main.rs", plain_hdr, ['        assert!(msg.contains("boom"));'], []), dst_alpha],
+    )
+    check(
+        "reconcile: a pure assertion deletion is never MOVED",
+        (moved, rec[0].verdict) == (0, WEAKENED),
+        (moved, rec[0].verdict),
+    )
+
+    # -- row 7: the destination must be a .rs file -----------------------------------------
+    rec, moved = reconcile_moved_tests(
+        [weak_finding()], [src_alpha, Hunk("CLAUDE.md", DST_HDR, [], ALPHA)]
+    )
+    check(
+        "reconcile: a non-.rs destination does not excuse a deletion",
+        (moved, rec[0].verdict) == (0, WEAKENED),
+        (moved, rec[0].verdict),
+    )
+
+    # -- NEAR-MISS GUARD: a diff with NO moved tests renders byte-identically ---------------
+    # This is the entire regression surface -- every window that contains no relocation is
+    # on this path. Asserted as FULL-STRING equality against the literal, never a
+    # `contains`, and the pass-through is separately asserted BY IDENTITY, which is the
+    # strongest available statement that reconciliation touched nothing.
+    no_move_diff = "\n".join(
+        [
+            "diff --git a/tests/module_size.rs b/tests/module_size.rs",
+            "--- a/tests/module_size.rs",
+            "+++ b/tests/module_size.rs",
+            "@@ -10,3 +10,3 @@",
+            '-    assert_eq!(msg, "exact");',
+            '+    assert!(msg.contains("exa"));',
+        ]
+    )
+    nm_findings, nm_rust, nm_test = scan_diff(no_move_diff)
+    check(
+        "near-miss: a no-move diff renders byte-identically",
+        render_report(nm_findings, 1, nm_rust, nm_test, "FIXTURE")
+        == (
+            "assertion-weakening scan over FIXTURE\n"
+            "\n"
+            "  commits scanned .............. 1\n"
+            "  *.rs hunks seen .............. 1\n"
+            "  test-file hunks examined ..... 1\n"
+            "\n"
+            "  WEAKENED ..................... 1\n"
+            "  STRENGTHENED ................. 0\n"
+            "  UNKNOWN ...................... 0\n"
+            "  MOVED ........................ 0\n"
+            "\n"
+            "WEAKENED candidates (1):\n"
+            "  ! tests/module_size.rs  [assert_eq!->contains]\n"
+            "      @@ -10,3 +10,3 @@\n"
+            "      assert_eq! 1 -> 0 while contains-assert 0 -> 1"
+        ),
+        render_report(nm_findings, 1, nm_rust, nm_test, "FIXTURE"),
+    )
+    nm_pass = [Finding("tests/x.rs", "@@ -1,2 +1,1 @@", WEAKENED, [S_ASSERTION_DELETED], "d")]
+    nm_rec, nm_moved = reconcile_moved_tests(nm_pass, parse_unified_diff(no_move_diff))
+    check(
+        "near-miss: with nothing to move, findings pass through by identity",
+        nm_moved == 0 and nm_rec[0] is nm_pass[0],
+        (nm_moved, nm_rec[0].verdict),
+    )
+
+    # -- REAL-COMMIT SHAPE: 1b502eacb937, fabricated from the real diff --------------------
+    # The Day-58 extraction: src/main.rs loses a #[test] fn and the new src/agent_builder.rs
+    # gains the same one. Pinned as a fixture so the self-test needs no git and no deepened
+    # clone; the live run is recorded in the write-up.
+    extraction_diff = "\n".join(
+        [
+            "diff --git a/src/main.rs b/src/main.rs",
+            "--- a/src/main.rs",
+            "+++ b/src/main.rs",
+            "@@ -1380,10 +725,2 @@ mod tests {",
+            "-    #[test]",
+            "-    fn test_agent_config_build_agent_openai() {",
+            '-        assert_eq!(cfg.provider, "openai");',
+            "-    }",
+            "diff --git a/src/agent_builder.rs b/src/agent_builder.rs",
+            "--- /dev/null",
+            "+++ b/src/agent_builder.rs",
+            "@@ -0,0 +1,10 @@",
+            "+    #[test]",
+            "+    fn test_agent_config_build_agent_openai() {",
+            '+        assert_eq!(cfg.provider, "openai");',
+            "+    }",
+        ]
+    )
+    ex_findings, _, _ = scan_diff(extraction_diff)
+    ex_verdicts = sorted(f.verdict for f in ex_findings)
+    check(
+        "1b502eacb937 shape: the extraction accuses nobody",
+        WEAKENED not in ex_verdicts,
+        ex_verdicts,
+    )
+    check(
+        "1b502eacb937 shape: the relocated test is MOVED, the new file STRENGTHENED",
+        ex_verdicts == sorted([MOVED, STRENGTHENED]),
+        ex_verdicts,
+    )
+    check(
+        "1b502eacb937 shape: the MOVED row names src/agent_builder.rs",
+        any(
+            f.verdict == MOVED and "src/agent_builder.rs" in f.detail for f in ex_findings
+        ),
+        [(f.verdict, f.detail) for f in ex_findings],
+    )
+
     # -- COULD_NOT_CHECK: an unreachable ref REFUSES, it does not report a clean scan ------
     # Driven by a FABRICATED bogus sha, never by relying on this clone being shallow: the
     # clone depth changes between sessions, so a test keyed on it is a test that silently
