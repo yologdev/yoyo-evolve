@@ -64,6 +64,77 @@ WEAKENED = "WEAKENED"
 STRENGTHENED = "STRENGTHENED"
 UNKNOWN = "UNKNOWN"
 
+# --------------------------------------------------------------------------------------
+# COULD_NOT_CHECK: a REFUSAL, deliberately NOT a fourth verdict.
+#
+# It is not in the three-state set above and never enters a hunk tally, because it answers
+# a different question. `UNKNOWN` means "a hunk touched test-ish lines and I could not
+# judge the direction" -- a real classification over a real diff. This means "I never
+# obtained a diff at all". Different facts, different remedies; folding them would put a
+# missing input in the same bucket as a measured one, which is the shrinking-denominator
+# defect this repo keeps fixing.
+#
+# It exits NON-ZERO and says outright that it is not a clean bill: "could not check" must
+# never read as "checked; clean" -- the same refusal the pre-push hook, CiScan's
+# could-not-run branch and UngradedScan's unread-lines clause already make. Reporting
+# `0 findings` and exit 0 over a diff that was never fetched is the exact shape this whole
+# instrument exists to detect, one layer up.
+COULD_NOT_CHECK = "COULD_NOT_CHECK"
+EXIT_COULD_NOT_CHECK = 3
+
+
+class GitRefUnreachable(Exception):
+    """A git ref could not be resolved -- almost always a shallow clone's graft boundary.
+
+    Raised only from the two sites that shell git with `check=True`. Deliberately narrow:
+    `main` catches THIS type, never a blanket `except`, because a blanket catch would
+    swallow real bugs in the classifier and report them as a missing input.
+    """
+
+    def __init__(self, ref: str, argv: list[str], stderr: str):
+        super().__init__(ref)
+        self.ref = ref
+        self.argv = argv
+        self.stderr = (stderr or "").strip()
+
+
+def could_not_check_message(ref: str, argv: list[str], stderr: str, shallow: bool) -> str:
+    """The refusal an operator reads. Pure, so the wording has one statement and a test.
+
+    Names the unreachable ref VERBATIM and names the remedy, because the operator's next
+    move should not require reading this source.
+
+    NO `--deepen` FLAG IS ADDED HERE, AND THAT IS DELIBERATE -- do not helpfully add one.
+    `scripts/counterfactual_green.py` already owns `--deepen`, and deepening writes to the
+    repository's SHARED OBJECT STORE rather than to any per-script state, so a second copy
+    would buy nothing and would be one more rule to drift out of step. The refusal names
+    the existing remedy instead.
+    """
+    lines = [
+        f"COULD NOT CHECK: git could not resolve the ref {ref!r}.",
+        "",
+        "  This is a REFUSAL, not a clean bill. NO diff was obtained, so nothing was",
+        "  scanned: it is NOT '0 weakenings found'. It is also not UNKNOWN, which means",
+        "  a hunk was read and could not be judged -- here there was no hunk to read.",
+        "",
+        f"  command: {' '.join(argv)}",
+    ]
+    if stderr:
+        lines.append(f"  git said: {stderr.splitlines()[0]}")
+    if shallow:
+        lines.append("  the clone is SHALLOW, so the ref is very likely past the graft boundary.")
+    else:
+        lines.append("  the clone is not shallow, so the ref is probably a typo or a bad sha.")
+    lines += [
+        "",
+        "  remedy: deepen the shared object store, then re-run --",
+        "    git fetch --deepen 6000",
+        "  or let the tool that owns deepening do it (same object store, and it prints a",
+        "  DEEPEN status line saying whether the deepen actually took):",
+        "    python3 scripts/counterfactual_green.py --census --deepen 6000",
+    ]
+    return "\n".join(lines)
+
 # Shape names, quoted verbatim in the report so a finding can be argued with.
 S_ASSERTION_DELETED = "assertion-deleted"
 S_EQ_TO_CONTAINS = "assert_eq!->contains"
@@ -493,13 +564,37 @@ def render_report(findings, commits, rust_hunks, test_hunks, window, max_finding
 # --------------------------------------------------------------------------------------
 
 
+def repo_is_shallow() -> bool:
+    """Best-effort: only used to word the refusal, never to decide anything."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--is-shallow-repository"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+        return out == "true"
+    except OSError:
+        return False
+
+
+def _git_or_refuse(argv: list[str], ref: str) -> str:
+    """Run a git command that must succeed, converting failure into a named refusal.
+
+    The two callers below both used `check=True`, so an unreachable ref surfaced as an
+    uncaught CalledProcessError traceback four frames from here. A traceback beats silence
+    and is still not a refusal: it names no remedy and it is not a state a caller can
+    handle. This converts it at the one place the subprocess is invoked.
+    """
+    proc = subprocess.run(argv, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise GitRefUnreachable(ref, argv, proc.stderr)
+    return proc.stdout
+
+
 def git_diff(from_ref: str, to_ref: str) -> str:
-    return subprocess.run(
-        ["git", "diff", f"{from_ref}..{to_ref}", "--", "*.rs"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
+    argv = ["git", "diff", f"{from_ref}..{to_ref}", "--", "*.rs"]
+    return _git_or_refuse(argv, f"{from_ref}..{to_ref}")
 
 
 def git_commit_count(from_ref: str, to_ref: str) -> int:
@@ -516,12 +611,8 @@ def git_commit_count(from_ref: str, to_ref: str) -> int:
 
 
 def git_commit_shas(from_ref: str, to_ref: str) -> list[str]:
-    out = subprocess.run(
-        ["git", "rev-list", "--reverse", f"{from_ref}..{to_ref}"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
+    argv = ["git", "rev-list", "--reverse", f"{from_ref}..{to_ref}"]
+    out = _git_or_refuse(argv, f"{from_ref}..{to_ref}")
     return [s for s in out.split() if s]
 
 
@@ -533,12 +624,8 @@ def git_diff_one_commit(sha: str) -> str:
     would otherwise be dominated by renames. The trade is stated rather than hidden — a
     genuinely deleted test file is invisible to --per-commit and visible to the net scan.
     """
-    return subprocess.run(
-        ["git", "diff", "--diff-filter=d", f"{sha}^", sha, "--", "*.rs"],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout
+    argv = ["git", "diff", "--diff-filter=d", f"{sha}^", sha, "--", "*.rs"]
+    return _git_or_refuse(argv, f"{sha}^")
 
 
 def build_parser():
@@ -579,6 +666,20 @@ def main(argv):
     if args.test:
         return run_self_tests()
 
+    # Narrow catch: GitRefUnreachable ONLY, never a blanket `except`. A blanket catch would
+    # swallow a real bug in the classifier and report it as a missing input, which is the
+    # same category error (a defect wearing a refusal's clothes) one layer down.
+    try:
+        return _run(args)
+    except GitRefUnreachable as exc:
+        print(
+            could_not_check_message(exc.ref, exc.argv, exc.stderr, repo_is_shallow()),
+            file=sys.stderr,
+        )
+        return EXIT_COULD_NOT_CHECK
+
+
+def _run(args):
     if args.stdin:
         text = sys.stdin.read()
         findings, rust_hunks, test_hunks = scan_diff(text)
@@ -803,6 +904,50 @@ def run_self_tests():
     check("empty diff clean", (findings, rust_hunks, test_hunks) == ([], 0, 0))
     report = render_report([], 0, 0, 0, "empty")
     check("clean report says none", "WEAKENED candidates: none" in report, report)
+
+    # -- COULD_NOT_CHECK: an unreachable ref REFUSES, it does not report a clean scan ------
+    # Driven by a FABRICATED bogus sha, never by relying on this clone being shallow: the
+    # clone depth changes between sessions, so a test keyed on it is a test that silently
+    # stops testing.
+    bogus = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    raised = None
+    try:
+        git_diff(bogus, "HEAD")
+    except GitRefUnreachable as exc:
+        raised = exc
+    check("unreachable ref raises GitRefUnreachable", raised is not None)
+    if raised is not None:
+        check("the refusal names the ref verbatim", bogus in raised.ref, raised.ref)
+
+    rc = main(["--from", bogus, "--to", "HEAD"])
+    check("could-not-check exits NON-ZERO", rc == EXIT_COULD_NOT_CHECK, rc)
+    check("could-not-check exit is not 0", rc != 0, rc)
+
+    msg = could_not_check_message(f"{bogus}..HEAD", ["git", "diff", "x"], "fatal: bad rev", True)
+    check("message names the ref verbatim", bogus in msg)
+    check("message refuses outright", "REFUSAL, not a clean bill" in msg, msg)
+    check("message denies a clean bill", "NOT '0 weakenings found'" in msg, msg)
+    check("message says it is not UNKNOWN", "not UNKNOWN" in msg, msg)
+    check("message names the shallow cause", "SHALLOW" in msg, msg)
+    check("message names the deepen remedy", "git fetch --deepen" in msg, msg)
+    check("message names the owning tool", "counterfactual_green.py" in msg, msg)
+    # Non-shallow wording is the other side of the discriminator: a branch tested only
+    # where it fires is vacuous green.
+    msg_deep = could_not_check_message("x..y", ["git", "diff"], "", False)
+    check("non-shallow says typo, not shallow", "not shallow" in msg_deep, msg_deep)
+    check("non-shallow still refuses", "REFUSAL, not a clean bill" in msg_deep, msg_deep)
+
+    # COULD_NOT_CHECK is a refusal, NOT a fourth verdict: it must never appear in the
+    # three-state set a hunk can be classified into.
+    check(
+        "COULD_NOT_CHECK is not a hunk verdict",
+        COULD_NOT_CHECK not in (WEAKENED, STRENGTHENED, UNKNOWN),
+    )
+
+    # -- NEAR-MISS GUARD: a REACHABLE ref must still scan normally and exit 0 --------------
+    # This is the entire regression surface -- every existing invocation is on this path.
+    rc_ok = main(["--from", "HEAD~1", "--to", "HEAD"])
+    check("a reachable ref still exits 0", rc_ok == 0, rc_ok)
 
     if failures:
         print(f"SELF-TESTS FAILED ({len(failures)}):", file=sys.stderr)
