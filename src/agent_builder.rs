@@ -82,6 +82,35 @@ pub(crate) fn tool_name_disallowed(name: &str, disallowed: &[String]) -> bool {
     disallowed.iter().any(|d| d == name)
 }
 
+/// Expand a disallow list with the one pairing rule the tool set carries, so
+/// the filter downstream stays a SINGLE `retain` statement (#887 step 1).
+///
+/// The rule, and it is a decision rather than a side effect: the parent holds
+/// `shared_state` *only* to pre-populate artifacts for the sub-agents it
+/// dispatches (#715 — the documented RLM step is store-then-reference). With
+/// `sub_agent` disallowed there is nobody on the other end of that store, so it
+/// is not worth a tool slot and goes with it. A later reader must not "restore"
+/// `shared_state` here as an unrelated tool that happened to be caught.
+///
+/// It runs in ONE direction only, deliberately: disallowing `shared_state`
+/// alone leaves `sub_agent` in place, because a parent that cannot pre-populate
+/// the store can still dispatch sub-agents perfectly well — the reverse is not
+/// true, which is exactly why the pairing is asymmetric.
+///
+/// An EMPTY list returns an empty list, and a list naming neither tool is
+/// returned unchanged. That is every user who has passed neither
+/// `--disallowed-tools` nor `--lite` nor `--restricted`, and it is the whole
+/// regression surface.
+pub(crate) fn effective_disallowed_tools(disallowed: &[String]) -> Vec<String> {
+    let mut effective = disallowed.to_vec();
+    if tool_name_disallowed("sub_agent", &effective)
+        && !tool_name_disallowed("shared_state", &effective)
+    {
+        effective.push("shared_state".to_string());
+    }
+    effective
+}
+
 /// How many times the pre-flight tool listing is attempted before the collision
 /// guard gives up for a server (#841).
 ///
@@ -922,31 +951,21 @@ impl AgentConfig {
                 );
             }
 
-            // Filter out disallowed tools (--disallowed-tools flag or --lite)
-            if !self.disallowed_tools.is_empty() {
-                tools.retain(|t| !tool_name_disallowed(t.name(), &self.disallowed_tools));
-                if self.lite {
-                    eprintln!(
-                        "{DIM}  🪶 Lite mode: {} tools ({}){RESET}",
-                        cli::LITE_TOOLS.len(),
-                        cli::LITE_TOOLS.join(", ")
-                    );
-                } else {
-                    eprintln!(
-                        "{DIM}  🔒 Disabled tools: {}{RESET}",
-                        self.disallowed_tools.join(", ")
-                    );
-                }
-            }
-
-            // Add sub-agent tool (separate from build_tools count and the
-            // allowed/disallowed filters above, same as the old with_sub_agent
-            // wiring — which just pushed the tool into this same list). Wrapped
-            // with a session-wide call cap as a runaway-loop circuit breaker.
-            // The parent also gets `shared_state` here (#715): the documented RLM
-            // step is store-then-reference, so the parent needs a handle on the same
-            // store its sub-agents read. Paired with `sub_agent` deliberately — a
-            // store with nobody on the other end is not worth a tool slot.
+            // Add sub-agent tool. It sits ABOVE the disallow retain below (and
+            // still BELOW the `--allowed-tools` whitelist retain above, so that
+            // flag's semantics are unchanged) — #887 step 1. It used to be
+            // pushed *after* the retain, which made `--disallowed-tools
+            // sub_agent` completely inert and made `--lite` ship 6 tools while
+            // its own stderr line claimed 4. Pushing first leaves exactly ONE
+            // statement of the filter, so no future tool can be added past it.
+            //
+            // Wrapped with a session-wide call cap as a runaway-loop circuit
+            // breaker. The parent also gets `shared_state` here (#715): the
+            // documented RLM step is store-then-reference, so the parent needs a
+            // handle on the same store its sub-agents read. Paired with
+            // `sub_agent` deliberately — a store with nobody on the other end is
+            // not worth a tool slot — and that pairing is encoded once, in
+            // `effective_disallowed_tools`, rather than as a side effect here.
             let (sub_agent_tool, shared_state) = build_sub_agent_tool(self);
             // Already `Box<dyn AgentTool>` — and possibly a
             // `FallbackSubAgentTool` wrapping the real one, so the session cap
@@ -954,6 +973,25 @@ impl AgentConfig {
             // model ends up answering.
             tools.push(with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP));
             tools.push(Box::new(SharedStateTool::new(shared_state)));
+
+            // Filter out disallowed tools (--disallowed-tools flag, --lite, or
+            // --restricted). ONE statement, covering every tool in the list.
+            let disallowed = effective_disallowed_tools(&self.disallowed_tools);
+            if !disallowed.is_empty() {
+                tools.retain(|t| !tool_name_disallowed(t.name(), &disallowed));
+                if self.lite {
+                    eprintln!(
+                        "{DIM}  🪶 Lite mode: {} tools ({}){RESET}",
+                        cli::LITE_TOOLS.len(),
+                        cli::LITE_TOOLS.join(", ")
+                    );
+                } else {
+                    // The EFFECTIVE list, not the caller's: if `shared_state`
+                    // was removed by the pairing rule the user must be told, or
+                    // it is a silent removal.
+                    eprintln!("{DIM}  🔒 Disabled tools: {}{RESET}", disallowed.join(", "));
+                }
+            }
 
             agent = agent.with_tools(tools);
         }
@@ -3200,6 +3238,96 @@ session will fail on the first turn with 'Tool names must be unique'."
             src.matches(&note_fn).count(),
             4,
             "expected one honest-count note per invalidated counter"
+        );
+    }
+
+    #[test]
+    fn effective_disallowed_tools_pairs_shared_state_with_sub_agent() {
+        // The #715 pairing rule, asserted at its emission point — the list the
+        // single `retain` in `configure_agent` actually consults.
+        //
+        // The empty and untouched rows are the NEAR-MISS GUARDS and they are the
+        // whole regression surface: every user who has passed neither
+        // `--disallowed-tools` nor `--lite` nor `--restricted` must get a list
+        // that filters nothing, so a broken pairing rule cannot pass by
+        // quietly removing a tool from everyone.
+        let cases: &[(&[&str], &[&str], &str)] = &[
+            (&[], &[], "empty in, empty out — the regression surface"),
+            (
+                &["bash"],
+                &["bash"],
+                "a list naming neither tool is returned unchanged",
+            ),
+            (
+                &["sub_agent"],
+                &["sub_agent", "shared_state"],
+                "#715: the store goes with the tool it exists to serve",
+            ),
+            (
+                &["sub_agent", "shared_state"],
+                &["sub_agent", "shared_state"],
+                "already paired — no duplicate entry",
+            ),
+            (
+                &["shared_state"],
+                &["shared_state"],
+                "ONE direction only: no sub_agent may still dispatch",
+            ),
+            (
+                &["bash", "sub_agent"],
+                &["bash", "sub_agent", "shared_state"],
+                "unrelated entries are preserved in order",
+            ),
+        ];
+
+        for (input, want, why) in cases {
+            let owned: Vec<String> = input.iter().map(|s| (*s).to_string()).collect();
+            let got = effective_disallowed_tools(&owned);
+            let want: Vec<String> = want.iter().map(|s| (*s).to_string()).collect();
+            // Whole-vector equality, never a `contains`: a `contains` would pass
+            // on a rule that also removed something it should not.
+            assert_eq!(got, want, "effective_disallowed_tools({input:?}) — {why}");
+        }
+    }
+
+    #[test]
+    fn the_sub_agent_push_sits_above_the_disallow_retain() {
+        // #887 step 1. Deliberately WEAK source-level guard, and its limit is
+        // stated here rather than implied: the parent's tool list is only
+        // reachable through `configure_agent`, which builds a yoagent `Agent`
+        // exposing no tool-name accessor, so this proves the push is
+        // POSITIONED above the filter — never that any given run filtered
+        // anything. The pure table test above is what proves the rule itself.
+        //
+        // #893's receipt was "the fix wired where the test could not see it",
+        // so this asserts BOTH directions: the push above the retain, and the
+        // retain reading the effective list. A guard checking only the first
+        // passes on a call site carrying both, which is how a half-applied
+        // edit reads as done.
+        let src = include_str!("agent_builder.rs");
+        // Needles assembled at runtime so this test cannot match its own source.
+        let push = format!("tools.push(with_session_{}", "cap(sub_agent_tool");
+        let retain = format!("tools.retain(|t| !tool_name_{}", "disallowed(t.name()");
+        let effective = format!("effective_disallowed_{}", "tools(&self.disallowed_tools)");
+
+        let push_at = src.find(&push).expect("sub_agent push must exist");
+        let retain_at = src.find(&retain).expect("disallow retain must exist");
+        assert!(
+            push_at < retain_at,
+            "the sub_agent push must sit ABOVE the disallow retain, or \
+             --disallowed-tools sub_agent is inert (#887)"
+        );
+        assert!(
+            src.contains(&effective),
+            "the retain must consult effective_disallowed_tools, or the #715 \
+             shared_state pairing never reaches the filter"
+        );
+        // The other direction: exactly one push site, so a stray copy left
+        // below the retain by a half-applied edit fails here.
+        assert_eq!(
+            src.matches(&push).count(),
+            1,
+            "expected exactly one sub_agent push site"
         );
     }
 
