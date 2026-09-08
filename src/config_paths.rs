@@ -397,6 +397,7 @@ pub(crate) fn should_prompt_for_trust(
 pub(crate) fn project_trust_grants(
     config_text: &str,
     goal_verify_exists: bool,
+    project_skills_exist: bool,
 ) -> Vec<&'static str> {
     let mut grants = Vec::new();
 
@@ -436,6 +437,17 @@ pub(crate) fn project_trust_grants(
 
     if goal_verify_exists {
         grants.push(".yoyo/goal_verify.md (a shell command /goal check runs)");
+    }
+
+    // #897, the sixth door. Keyed on the **directory existing**, not on a
+    // `.yoyo.toml` key, because skills are files rather than config entries —
+    // the same shape `goal_verify` already uses, which is the existing precedent
+    // for a grant that is a file. Without this a repo carrying *only*
+    // `.yoyo/skills/` produced an empty grant list, so `should_prompt_for_trust`
+    // returned false and the user was never asked at all — gate missing *and*
+    // prompt unable to fire, exactly the `notify_command` gap of Day 184.
+    if project_skills_exist {
+        grants.push(".yoyo/skills/ (instructions injected into the model's context)");
     }
 
     // `notify_command` is a shell string handed to `sh -c` when a prompt
@@ -935,32 +947,40 @@ and CI have nobody to answer, so they take the safe answer silently"
     fn test_project_trust_grants_detects_each_privilege_shape() {
         // [mcp_servers.*] — an external process yoyo would start.
         assert_eq!(
-            project_trust_grants("[mcp_servers.fs]\ncommand = \"npx\"\n", false),
+            project_trust_grants("[mcp_servers.fs]\ncommand = \"npx\"\n", false, false),
             vec!["MCP servers (external processes yoyo would start)"]
         );
         // The other MCP shape: a top-level list.
         assert_eq!(
-            project_trust_grants("mcp = [\"some-server\"]\n", false),
+            project_trust_grants("mcp = [\"some-server\"]\n", false, false),
             vec!["MCP servers (external processes yoyo would start)"]
         );
         // Only the *granting* half of [permissions].
         assert_eq!(
-            project_trust_grants("[permissions]\nallow = [\"curl *\"]\n", false),
+            project_trust_grants("[permissions]\nallow = [\"curl *\"]\n", false, false),
             vec!["auto-approved bash commands (permissions.allow)"]
         );
         // Shell hooks, in both the dotted-key and section shapes.
         assert_eq!(
-            project_trust_grants("hooks.pre.bash = \"echo hi\"\n", false),
+            project_trust_grants("hooks.pre.bash = \"echo hi\"\n", false, false),
             vec!["shell hooks (commands run on tool calls)"]
         );
         assert_eq!(
-            project_trust_grants("[hooks.post]\nbash = \"echo hi\"\n", false),
+            project_trust_grants("[hooks.post]\nbash = \"echo hi\"\n", false, false),
             vec!["shell hooks (commands run on tool calls)"]
         );
         // The fourth surface has no config key at all — it is a file on disk.
         assert_eq!(
-            project_trust_grants("", true),
+            project_trust_grants("", true, false),
             vec![".yoyo/goal_verify.md (a shell command /goal check runs)"]
+        );
+        // #897, the sixth door, and the reason it had to be added here as well as
+        // gated: a repo carrying ONLY `.yoyo/skills/` has an empty config, so
+        // without this row the grant list is empty, `should_prompt_for_trust`
+        // returns false, and the user is never asked at all.
+        assert_eq!(
+            project_trust_grants("", false, true),
+            vec![".yoyo/skills/ (instructions injected into the model's context)"]
         );
     }
 
@@ -973,16 +993,19 @@ and CI have nobody to answer, so they take the safe answer silently"
         assert!(project_trust_grants(
             "provider = \"anthropic\"\nmodel = \"claude-opus-4-6\"\nauto_watch = true\n\
 continue_on_silence = true\nwait_for_reset = true\nquiet = true\n",
+            false,
             false
         )
         .is_empty());
 
         // `permissions.deny` narrows yoyo rather than widening it — a repo may always
         // confine yoyo further without being trusted, so it is not a grant.
-        assert!(project_trust_grants("[permissions]\ndeny = [\"rm *\"]\n", false).is_empty());
+        assert!(
+            project_trust_grants("[permissions]\ndeny = [\"rm *\"]\n", false, false).is_empty()
+        );
 
         // An empty config asks nothing.
-        assert!(project_trust_grants("", false).is_empty());
+        assert!(project_trust_grants("", false, false).is_empty());
     }
 
     #[test]
@@ -990,8 +1013,9 @@ continue_on_silence = true\nwait_for_reset = true\nquiet = true\n",
         let all = project_trust_grants(
             "mcp = [\"srv\"]\nhooks.pre.bash = \"x\"\n[permissions]\nallow = [\"curl *\"]\n",
             true,
+            true,
         );
-        assert_eq!(all.len(), 4, "every grant present must be listed: {all:?}");
+        assert_eq!(all.len(), 5, "every grant present must be listed: {all:?}");
     }
 
     #[test]

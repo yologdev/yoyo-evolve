@@ -285,6 +285,7 @@ pub fn skill_flag_dirs() -> Vec<std::path::PathBuf> {
 /// One directory auto-discovery reads: where it is, its `load_dir_resilient`
 /// source tag, how it is named in the recorded `sources` list, and how it is
 /// named inside a malformed-skill warning (those last two differ for `global`).
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SkillSourceDir {
     dir: std::path::PathBuf,
     label: &'static str,
@@ -337,6 +338,130 @@ fn auto_discovery_sources(
     sources
 }
 
+/// The project-local skill source, as [`auto_discovery_sources`] labels it.
+///
+/// The gate keys on this label rather than on the path string, because the path
+/// is a display detail while the label is the *provenance* claim — and
+/// provenance is the whole question the trust boundary asks.
+const PROJECT_SKILL_LABEL: &str = "project";
+
+/// What [`gate_project_skills`] decided: the sources still worth reading, plus
+/// the project-local one if it was refused.
+struct SkillGateOutcome {
+    sources: Vec<SkillSourceDir>,
+    refused: Option<SkillSourceDir>,
+}
+
+/// The sixth door on the project-config trust boundary (#897): a project-local
+/// `.yoyo/skills/` directory.
+///
+/// Drop the project-local skill source **only** when the loaded config came from
+/// the project (`config::loaded_config_is_project_local`) and `--trust-project`
+/// was not passed. Home/XDG configs, trusted runs, and a tree with no
+/// `.yoyo/skills/` at all are byte-identical pass-throughs — which is
+/// essentially every user and the entire regression surface.
+///
+/// **Direction rule, and it is written here so nobody "sorts" it later.** The
+/// Day-166 asymmetry (`gate_project_permissions`) sorts *declarative* values
+/// yoyo merely interprets: a `deny` pattern or a path list only ever narrows
+/// yoyo, so a repo may always confine it further and those are kept verbatim. A
+/// skill is not one of those. A `SKILL.md` body is **instruction injected into
+/// the model's context** and its frontmatter declares `tools:`, so its entire
+/// content is model-facing code in the sense that matters here — it is refused
+/// like a shell hook (#820), and **direction is decided by what the entry *is*,
+/// never by what it does after it loads**. A hook runs one shell line; a skill
+/// steers every subsequent decision the model makes for the rest of the session,
+/// which makes this door strictly wider than the five already gated.
+///
+/// Out of scope **by provenance, which is reasoning rather than a measurement**:
+/// `--skills <dir>` directories never enter this list at all (they are loaded
+/// separately, and a flag the user typed is the user's own word — the same rule
+/// #749 applies to `--allow`), and `~/.yoyo/skills/` plus `/skill install`'s
+/// destination are user-level, not project-authored.
+fn gate_project_skills(
+    sources: Vec<SkillSourceDir>,
+    project_local: bool,
+    trusted: bool,
+) -> SkillGateOutcome {
+    // Home/XDG configs and explicitly trusted runs pass through untouched.
+    if !project_local || trusted {
+        return SkillGateOutcome {
+            sources,
+            refused: None,
+        };
+    }
+    let mut kept = Vec::with_capacity(sources.len());
+    let mut refused = None;
+    for source in sources {
+        if source.label == PROJECT_SKILL_LABEL {
+            refused = Some(source);
+        } else {
+            kept.push(source);
+        }
+    }
+    SkillGateOutcome {
+        sources: kept,
+        refused,
+    }
+}
+
+/// Names of the skills sitting in a directory, for the refusal message.
+///
+/// **These are directory names, not frontmatter `name:` values, and that is
+/// deliberate**: reading the frontmatter means parsing the very files being
+/// refused, and the message claims outright that nothing was loaded. A
+/// directory listing is the strongest evidence available without touching the
+/// contents. Sorted so the message is stable, and silent on an unreadable
+/// directory — a refusal that cannot list is still a refusal.
+fn project_skill_names_in(dir: &std::path::Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.path().join("SKILL.md").is_file())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    names
+}
+
+/// The stderr block shown when a project-local `.yoyo/skills/` is refused.
+///
+/// Names **every** refused skill, because a user cannot judge what they cannot
+/// see, and states outright that nothing was loaded. Names are run through
+/// [`sanitize_for_display`] (#873): a repository authors those filenames and
+/// this renders them into the terminal of someone who has explicitly not
+/// trusted that repository, so an escape sequence in a directory name must not
+/// be able to repaint the refusal around it.
+///
+/// `plain` drops the glyph **and** the em dashes for screen-reader output.
+/// The caller drops the whole message under `--quiet`.
+pub(crate) fn project_skill_refusal_message(names: &[String], plain: bool) -> String {
+    let marker = if plain { "" } else { "⚠ " };
+    let dash = if plain { ", " } else { " — " };
+    let listed = if names.is_empty() {
+        // Reachable: the directory exists but could not be listed. Say so
+        // rather than rendering an empty list as if nothing were there.
+        "    (could not list the directory)".to_string()
+    } else {
+        names
+            .iter()
+            .map(|n| format!("    {}", sanitize_for_display(n)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let count = names.len();
+    let noun = if count == 1 { "skill" } else { "skills" };
+    format!(
+        "{marker}A project-local .yoyo/skills/ offered {count} {noun} to steer this session. \
+yoyo did not load them:\n{listed}\n  A skill's body becomes instructions in the model's \
+context{dash}this project wrote them, not you. Nothing was loaded.\n  Re-run with \
+--trust-project to load them this session, or use --safe-mode to disable\n  all project \
+customizations."
+    )
+}
+
 /// Auto-discover skills from every directory in [`auto_discovery_sources`]:
 /// `/skill install`'s destination, `~/.yoyo/skills/` (user-global), and
 /// `.yoyo/skills/` (project-local).
@@ -358,7 +483,29 @@ fn auto_discover_skills(skills: &mut SkillSet) -> usize {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     let xdg = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from);
 
-    for source in auto_discovery_sources(home.as_deref(), xdg.as_deref()) {
+    // #897, the sixth trust door. A project-local `.yoyo/skills/` is model-facing
+    // instruction the *repository* authored, so it is gated exactly as project
+    // MCP servers (#748), `permissions.allow` (#749), shell hooks (#820),
+    // `.yoyo/goal_verify.md` (#761) and `notify_command` are. Placement is
+    // load-bearing: `parse_args` runs the one-time trust prompt before it reaches
+    // here, so a `y` typed at that question is honoured *this run* rather than
+    // arriving after the refusal it was meant to lift.
+    let gated = gate_project_skills(
+        auto_discovery_sources(home.as_deref(), xdg.as_deref()),
+        crate::config::loaded_config_is_project_local(),
+        is_trust_project(),
+    );
+    if let Some(refused) = &gated.refused {
+        // Only speak if there was something to refuse: an absent (or empty)
+        // `.yoyo/skills/` is the common case and must stay silent.
+        let names = project_skill_names_in(&refused.dir);
+        if refused.dir.is_dir() && !names.is_empty() && !is_quiet() {
+            let msg = project_skill_refusal_message(&names, crate::format::is_plain_output());
+            eprintln!("{YELLOW}{msg}{RESET}");
+        }
+    }
+
+    for source in gated.sources {
         if !source.dir.is_dir() {
             continue;
         }
@@ -2057,6 +2204,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
             let grants = crate::config_paths::project_trust_grants(
                 &raw_config_content,
                 std::path::Path::new(".yoyo/goal_verify.md").exists(),
+                std::path::Path::new(".yoyo/skills").is_dir(),
             );
             if crate::config_paths::should_prompt_for_trust(
                 false,
@@ -6242,6 +6390,183 @@ command = "server-two"
                 "no command means nothing to refuse (project_local={project_local})"
             );
         }
+    }
+
+    // ---- #897: the sixth trust door — project-local .yoyo/skills/ ----
+
+    /// Build a source list in the exact shape `auto_discovery_sources` returns.
+    fn skill_sources() -> Vec<SkillSourceDir> {
+        vec![
+            SkillSourceDir {
+                dir: std::path::PathBuf::from("/xdg/yoyo/skills"),
+                label: "installed",
+                display: "/xdg/yoyo/skills".to_string(),
+                warn_target: "/xdg/yoyo/skills".to_string(),
+            },
+            SkillSourceDir {
+                dir: std::path::PathBuf::from("/home/tester/.yoyo/skills"),
+                label: "global",
+                display: "~/.yoyo/skills/".to_string(),
+                warn_target: "/home/tester/.yoyo/skills".to_string(),
+            },
+            SkillSourceDir {
+                dir: std::path::PathBuf::from(".yoyo/skills"),
+                label: "project",
+                display: ".yoyo/skills/".to_string(),
+                warn_target: ".yoyo/skills/".to_string(),
+            },
+        ]
+    }
+
+    #[test]
+    fn gate_project_skills_refuses_only_the_project_source_and_only_when_untrusted() {
+        // The one refusing combination: config came from the project, and the
+        // user did not vouch for it.
+        let out = gate_project_skills(skill_sources(), true, false);
+        assert_eq!(
+            out.refused.as_ref().map(|s| s.label),
+            Some("project"),
+            "the project-local source is the one that must be refused"
+        );
+        // The user-level sources survive verbatim — whole-vec equality, not a
+        // `contains`, because what is KEPT is the security-relevant half.
+        assert_eq!(
+            out.sources,
+            skill_sources()[..2].to_vec(),
+            "user-level sources must pass through untouched"
+        );
+    }
+
+    #[test]
+    fn gate_project_skills_passes_through_byte_identically_in_every_other_combination() {
+        // A home/XDG config, a --trust-project run, and both together. This is
+        // essentially every user and the entire regression surface, so it is a
+        // whole-vec equality rather than a membership check — and `refused` must
+        // stay None rather than becoming Some(untouched).
+        for (project_local, trusted) in [(false, false), (false, true), (true, true)] {
+            let out = gate_project_skills(skill_sources(), project_local, trusted);
+            assert_eq!(
+                out.sources,
+                skill_sources(),
+                "project_local={project_local} trusted={trusted} must be byte-identical"
+            );
+            assert!(
+                out.refused.is_none(),
+                "nothing is refused when project_local={project_local} trusted={trusted}"
+            );
+        }
+    }
+
+    #[test]
+    fn gate_project_skills_with_no_project_source_refuses_nothing() {
+        // Anti-vacuous in the other direction: a list carrying no project-local
+        // source (a machine with no `.yoyo/skills/` in the search path at all)
+        // must survive whole even in the refusing combination, and must not
+        // report a refusal it did not make.
+        let user_only = skill_sources()[..2].to_vec();
+        let out = gate_project_skills(user_only.clone(), true, false);
+        assert_eq!(out.sources, user_only);
+        assert!(out.refused.is_none());
+    }
+
+    #[test]
+    fn auto_discovery_sources_labels_exactly_one_project_source() {
+        // The gate keys on the label, so a second `project`-labelled source (or a
+        // rename) would silently change what it refuses. Pin the key itself.
+        let dirs = auto_discovery_sources(
+            Some(std::path::Path::new("/home/tester")),
+            Some(std::path::Path::new("/xdg")),
+        );
+        let project: Vec<_> = dirs
+            .iter()
+            .filter(|d| d.label == PROJECT_SKILL_LABEL)
+            .collect();
+        assert_eq!(
+            project.len(),
+            1,
+            "exactly one project-local skill source: {dirs:?}"
+        );
+        assert_eq!(project[0].dir, std::path::PathBuf::from(".yoyo/skills"));
+    }
+
+    #[test]
+    fn project_skill_refusal_message_names_every_skill_and_both_hatches() {
+        let names = vec!["exfiltrate".to_string(), "helpful-looking".to_string()];
+        let msg = project_skill_refusal_message(&names, false);
+        // A user cannot judge what they cannot see: every refused skill by name.
+        assert!(msg.contains("exfiltrate"), "{msg}");
+        assert!(msg.contains("helpful-looking"), "{msg}");
+        // The claim that matters, stated outright.
+        assert!(msg.contains("Nothing was loaded"), "{msg}");
+        // Both escape hatches.
+        assert!(msg.contains("--trust-project"), "{msg}");
+        assert!(msg.contains("--safe-mode"), "{msg}");
+        // And WHY a skill is a trust question at all.
+        assert!(msg.contains("context"), "{msg}");
+    }
+
+    #[test]
+    fn project_skill_refusal_message_sanitizes_repo_authored_names() {
+        // #873: the repository authors these filenames and this renders them into
+        // the terminal of someone who explicitly did NOT trust that repository, so
+        // an escape sequence must not survive to repaint the refusal around it.
+        let hostile = format!("evil{}[2Kfake-line", '\u{1b}');
+        assert!(
+            hostile.as_bytes().contains(&0x1b),
+            "anti-vacuous: the fixture must really carry an ESC byte"
+        );
+        let msg = project_skill_refusal_message(&[hostile], false);
+        assert!(
+            !msg.as_bytes().contains(&0x1b),
+            "no raw ESC may reach the terminal: {msg:?}"
+        );
+        assert!(msg.contains("\\x1b"), "the escape is shown, not deleted");
+    }
+
+    #[test]
+    fn project_skill_refusal_message_is_glyph_free_when_plain() {
+        let names = vec!["greet".to_string()];
+        let msg = project_skill_refusal_message(&names, true);
+        assert!(!msg.contains('⚠'), "no marker under --screen-reader: {msg}");
+        assert!(
+            !msg.contains('—'),
+            "no em dash under --screen-reader: {msg}"
+        );
+        // Still says the two things that matter.
+        assert!(msg.contains("Nothing was loaded"), "{msg}");
+        assert!(msg.contains("greet"), "{msg}");
+    }
+
+    #[test]
+    fn project_skill_refusal_message_says_so_when_it_cannot_list() {
+        // An unreadable directory is a real state: say "could not list" rather
+        // than rendering an empty list as though nothing were there.
+        let msg = project_skill_refusal_message(&[], false);
+        assert!(msg.contains("could not list"), "{msg}");
+        assert!(msg.contains("Nothing was loaded"), "{msg}");
+    }
+
+    #[test]
+    fn project_skill_names_in_lists_skill_dirs_sorted_and_skips_non_skills() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for name in ["zeta", "alpha"] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+            std::fs::write(root.join(name).join("SKILL.md"), "# x").unwrap();
+        }
+        // A subdirectory with no SKILL.md is not a skill.
+        std::fs::create_dir_all(root.join("not-a-skill")).unwrap();
+        // Neither is a loose file.
+        std::fs::write(root.join("README.md"), "hi").unwrap();
+
+        assert_eq!(
+            project_skill_names_in(root),
+            vec!["alpha".to_string(), "zeta".to_string()],
+            "skill dirs only, sorted"
+        );
+
+        // A directory that does not exist lists nothing rather than panicking.
+        assert!(project_skill_names_in(&root.join("nope")).is_empty());
     }
 
     #[test]
