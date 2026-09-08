@@ -394,12 +394,95 @@ pub fn format_cache_stats(usage: &yoagent::Usage) -> Option<String> {
     }
     let rate = usage.cache_hit_rate();
     let pct = (rate * 100.0) as u32;
-    Some(format!(
+    let mut line = format!(
         "Cache: {}% hit rate ({} read, {} written)",
         pct,
         format_token_count(usage.cache_read),
         format_token_count(usage.cache_write),
-    ))
+    );
+    // Emitted at the chokepoint so BOTH doors (`/tokens` -> `handle_tokens`,
+    // `/cost` -> `handle_cost`) inherit it with zero caller edits. Wiring one
+    // and not the other is the "two doors, one policy, one deaf" shape this
+    // repo has shipped nine times.
+    //
+    // `rate` is the value already read from upstream above — deliberately NOT
+    // re-derived, so the denominator keeps exactly one statement
+    // (`yoagent::Usage::cache_hit_rate`) and the three guards protecting that
+    // contract stay meaningful.
+    if let Some(note) = cache_prefix_note(usage.cache_read, usage.cache_write, rate) {
+        line.push(' ');
+        line.push_str(note);
+    }
+    Some(line)
+}
+
+/// Below this hit rate a session with a live cache is treated as barely reusing
+/// its prefix.
+///
+/// **A judgment threshold, not a measurement.** Nothing measured says 0.5 is
+/// right; it is the point below which "the cache exists and is barely being
+/// reused" stops being noise and starts being worth a sentence. Moving it
+/// changes only how often the clause appears, never what it claims.
+const LOW_CACHE_HIT_FRACTION: f64 = 0.5;
+
+/// What the cache counters **prove** about a low hit rate — never a diagnosis.
+///
+/// `/cost` and `/tokens` report the rate and stop one step short of the thing
+/// the rate is *for*: a user reading `12%` has no next action. This appends the
+/// facts the two counters establish, plus the checkable candidates, and says
+/// outright that it cannot tell which one applies.
+///
+/// Two rules fire, and everything else returns `None` so the rendered line is
+/// byte-identical to before:
+/// - `cache_write > 0 && cache_read == 0` — the cache was written and never
+///   read this session, so every turn started a fresh prefix.
+/// - `cache_read > 0 && cache_write > 0 && hit_rate < LOW_CACHE_HIT_FRACTION` —
+///   most of this session's prompt tokens were cached *fresh* rather than
+///   reused.
+///
+/// `hit_rate` is **passed in**, computed by the caller from
+/// `usage.cache_hit_rate()`. It is deliberately not re-derived here: the
+/// denominator (`input + cache_read + cache_write`) has exactly one statement,
+/// upstream, and three tests guard that contract — a second copy would be the
+/// duplication defect and would make those guards worthless.
+///
+/// **The stated limit: this reports what the counters PROVE; it does not
+/// diagnose the cause and it cannot.** yoyo never compares this run's prefix
+/// against the previous one and has no TTL clock, so the named candidates are
+/// places to look, never a verdict — a confidently wrong cause attached to a
+/// number a user is about to act on is worse than silence. It also says nothing
+/// about whether caching is *configured* correctly, the same limit
+/// `format_cache_stats` already carries.
+///
+/// The text is ASCII and glyph-free by construction, so it inherits
+/// `format_cache_stats`'s freedom from a `plain` parameter.
+fn cache_prefix_note(cache_read: u64, cache_write: u64, hit_rate: f64) -> Option<&'static str> {
+    // One statement of the candidate sentence, shared by both arms. It is a
+    // macro rather than a `const` because `concat!` takes literals, and two
+    // hand-copied copies of the same sentence agree the day they are written
+    // and diverge forever after.
+    macro_rules! candidates {
+        () => {
+            "Check for a changed system prompt, a changed tool set, \
+             or an idle gap past the provider's cache TTL; \
+             these counters cannot tell which."
+        };
+    }
+
+    if cache_write > 0 && cache_read == 0 {
+        Some(concat!(
+            "The cache was written but never read this session, \
+             so every turn started a fresh prefix. ",
+            candidates!(),
+        ))
+    } else if cache_read > 0 && cache_write > 0 && hit_rate < LOW_CACHE_HIT_FRACTION {
+        Some(concat!(
+            "Most prompt tokens were cached fresh rather than reused. ",
+            candidates!(),
+        ))
+    } else {
+        None
+    }
 }
 
 /// The fraction of the context window the bar should draw as filled.
@@ -2054,6 +2137,20 @@ mod tests {
         // cache_hit_rate = 0 / (50k + 0 + 12k) = 0%
         assert!(result.contains("0%"), "got: {result}");
         assert!(result.contains("12.0k written"));
+
+        // Day 192: this state now also carries the prefix note (rule 1 fires —
+        // written, never read). The output genuinely changed here, so the test
+        // is STRENGTHENED to assert the whole new string rather than weakened
+        // to tolerate it.
+        assert_eq!(
+            result,
+            "Cache: 0% hit rate (0 read, 12.0k written) \
+             The cache was written but never read this session, \
+             so every turn started a fresh prefix. \
+             Check for a changed system prompt, a changed tool set, \
+             or an idle gap past the provider's cache TTL; \
+             these counters cannot tell which."
+        );
     }
 
     #[test]
@@ -2179,6 +2276,160 @@ mod tests {
             total_tokens: 15_000,
         };
         assert_eq!(format_cache_stats(&no_cache), None);
+    }
+
+    /// Table over the pure decision half, both directions.
+    ///
+    /// The near-miss rows are the half that matters: a discriminator tested
+    /// only where it fires is vacuous green, and this one's whole job is to
+    /// stay silent on a healthy session. The boundary is pinned on **both**
+    /// sides — exactly at `LOW_CACHE_HIT_FRACTION` must NOT fire (the
+    /// comparison is strict `<`), one step below must.
+    #[test]
+    fn cache_prefix_note_fires_only_on_what_the_counters_prove() {
+        // (cache_read, cache_write, hit_rate, should_fire, why)
+        let rows: &[(u64, u64, f64, bool, &str)] = &[
+            // Rule 1: written and never read.
+            (0, 12_000, 0.0, true, "written, never read"),
+            (0, 1, 0.0, true, "written once, never read"),
+            // Rule 2: reused, but barely.
+            (10_000, 90_000, 0.10, true, "low reuse"),
+            (1, 1, 0.499, true, "just below the threshold"),
+            // Near-miss: healthy reuse.
+            (150_000, 10_000, 0.93, false, "healthy hit rate"),
+            (1, 1, 0.51, false, "above the threshold"),
+            // Near-miss: the boundary itself. Strict `<`, so AT the threshold
+            // is silent.
+            (1, 1, LOW_CACHE_HIT_FRACTION, false, "exactly at threshold"),
+            // Near-miss: nothing was ever written, so there is no prefix story
+            // to tell even at a low rate.
+            (10_000, 0, 0.02, false, "cache_write == 0"),
+            // Near-miss: both counters zero. `format_cache_stats` returns
+            // `None` before reaching here, but the decision must stand alone.
+            (0, 0, 0.0, false, "no caching activity at all"),
+        ];
+
+        for &(read, write, rate, should_fire, why) in rows {
+            let got = cache_prefix_note(read, write, rate);
+            assert_eq!(
+                got.is_some(),
+                should_fire,
+                "read={read} write={write} rate={rate} ({why}): got {got:?}"
+            );
+        }
+    }
+
+    /// The clause names checkable candidates and refuses to name a cause.
+    ///
+    /// It is ASCII and em-dash-free by construction, so — like
+    /// `format_cache_stats` — it needs no `plain` parameter and none was added.
+    /// The anti-vacuous half is asserted first: a glyph check over a string
+    /// that was never built passes for the wrong reason.
+    #[test]
+    fn cache_prefix_note_names_candidates_and_claims_no_cause() {
+        for (read, write, rate) in [(0u64, 12_000u64, 0.0f64), (10_000, 90_000, 0.10)] {
+            let note = cache_prefix_note(read, write, rate)
+                .unwrap_or_else(|| panic!("expected a note for read={read} write={write}"));
+
+            // Anti-vacuous: the clause is genuinely non-empty, so the
+            // assertions below discriminate rather than passing on nothing.
+            assert!(!note.trim().is_empty(), "clause is empty");
+
+            // Names where to look.
+            assert!(note.contains("system prompt"), "got: {note}");
+            assert!(note.contains("tool set"), "got: {note}");
+            assert!(note.contains("TTL"), "got: {note}");
+
+            // And says outright that it cannot pick between them. This is the
+            // whole design rule: state facts, never a cause.
+            assert!(
+                note.contains("cannot tell which"),
+                "clause must refuse to name a cause, got: {note}"
+            );
+
+            // Glyph-free, so it is already safe under `--screen-reader`.
+            assert!(!note.contains('—'), "em dash in {note:?}");
+            assert!(note.is_ascii(), "non-ascii glyph in {note:?}");
+        }
+    }
+
+    /// Near-miss guard, and it is the **entire regression surface**: a healthy
+    /// caching session renders byte-identically to before this clause existed.
+    ///
+    /// Whole-string `assert_eq!` rather than a `contains`, so an appended
+    /// clause fails here instead of slipping through.
+    #[test]
+    fn a_healthy_cache_line_is_byte_identical_to_before_the_clause() {
+        let usage = yoagent::Usage {
+            input: 10_000,
+            output: 5_000,
+            cache_read: 150_000,
+            cache_write: 0,
+            total_tokens: 165_000,
+        };
+        assert_eq!(
+            format_cache_stats(&usage).expect("caching activity present"),
+            "Cache: 93% hit rate (150.0k read, 0 written)"
+        );
+
+        // The mixed healthy session too — this one has both counters non-zero,
+        // so it is the row rule 2 would reach if the threshold were wrong.
+        let mixed = yoagent::Usage {
+            input: 20_000,
+            output: 5_000,
+            cache_read: 80_000,
+            cache_write: 10_000,
+            total_tokens: 115_000,
+        };
+        assert_eq!(
+            format_cache_stats(&mixed).expect("caching activity present"),
+            "Cache: 72% hit rate (80.0k read, 10.0k written)"
+        );
+
+        // And no caching activity still renders nothing at all.
+        let no_cache = yoagent::Usage {
+            input: 10_000,
+            output: 5_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 15_000,
+        };
+        assert_eq!(format_cache_stats(&no_cache), None);
+    }
+
+    /// A genuinely low-reuse session gets the clause appended at the emission
+    /// point — the string a `/cost` or `/tokens` user actually reads, never the
+    /// helper one layer below.
+    #[test]
+    fn a_low_reuse_session_carries_the_clause_at_the_emission_point() {
+        // 20k read against 20k input + 20k read + 100k write = 140k total,
+        // so the upstream ratio is ~14%: the cache is live and barely reused.
+        let usage = yoagent::Usage {
+            input: 20_000,
+            output: 5_000,
+            cache_read: 20_000,
+            cache_write: 100_000,
+            total_tokens: 145_000,
+        };
+        let rendered = format_cache_stats(&usage).expect("caching activity present");
+
+        // Anti-vacuous: the fixture really is below the threshold, so this row
+        // cannot pass by being healthy.
+        assert!(
+            usage.cache_hit_rate() < LOW_CACHE_HIT_FRACTION,
+            "fixture is not actually low-reuse: {}",
+            usage.cache_hit_rate()
+        );
+
+        assert!(
+            rendered.starts_with("Cache: 14% hit rate"),
+            "got: {rendered}"
+        );
+        assert!(
+            rendered.contains("cached fresh rather than reused"),
+            "got: {rendered}"
+        );
+        assert!(rendered.contains("cannot tell which"), "got: {rendered}");
     }
 
     // === Day 76: Tests for new model pricing entries ===
