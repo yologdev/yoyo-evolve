@@ -3632,3 +3632,156 @@ mod tests {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Day 192 — a fatally-failed turn hands back the answer it already produced.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod fatal_text_handoff_tests {
+    use super::*;
+
+    /// Drive the branch exactly as both prompt loops drive it:
+    /// `into_result()` -> the matched arm -> (`fatal_handoff` on the fatal arm)
+    /// -> `build_outcome`, and hand back the `PromptOutcome` a caller receives.
+    ///
+    /// The two loops are `async` and do network I/O, so they cannot be driven
+    /// directly. This composes the same steps in the same order with the same
+    /// assignments, which is what makes the assertions below emission-point
+    /// assertions rather than assertions on `into_result` one layer under it.
+    /// Its own limit: it mirrors the loops, it is not the loops — a change to
+    /// how a loop consumes an arm is not visible from here.
+    fn outcome_from(state: PromptEventState) -> PromptOutcome {
+        // Deferred: both arms assign it, so an initializer here would be dead.
+        let collected_text;
+        let mut text_since_last_tool = String::new();
+        let mut last_tool_error: Option<String> = None;
+        let mut last_tool_name: Option<String> = None;
+        let mut api_error: Option<String> = None;
+
+        match state.into_result() {
+            // Mirrors run_prompt_with_changes' Done arm verbatim.
+            PromptResult::Done {
+                collected_text: text,
+                text_since_last_tool: closing,
+                last_tool_error: tool_err,
+                last_tool_name: tool_nm,
+                ..
+            } => {
+                collected_text = text;
+                text_since_last_tool = closing;
+                last_tool_error = tool_err;
+                last_tool_name = tool_nm;
+            }
+            // Mirrors both loops' terminal FatalError arm verbatim.
+            PromptResult::FatalError {
+                error_msg,
+                collected_text: fatal_text,
+                ..
+            } => {
+                (collected_text, api_error) = fatal_handoff(fatal_text, error_msg);
+            }
+            _ => panic!("fixture produced neither Done nor FatalError"),
+        }
+
+        build_outcome(
+            collected_text,
+            text_since_last_tool,
+            last_tool_error,
+            last_tool_name,
+            false,
+            api_error,
+        )
+    }
+
+    /// THE FIX. A turn that produced an answer and then died fatally hands the
+    /// caller BOTH the error and the text. Before Day 192 `FatalError` carried
+    /// no text at all, so the answer was discarded at the type level and #646's
+    /// surface-and-stop rule meant it was gone for good.
+    ///
+    /// The error is asserted unchanged in the same breath: this fix ADDS text,
+    /// it must never swallow, reword or downgrade the failure. A degraded run
+    /// stays legible AS degraded.
+    #[test]
+    fn a_fatal_turn_hands_back_the_answer_it_already_produced() {
+        let mut state = PromptEventState::new();
+        state.collected_text = "The auth bug is in session_refresh: the token \
+             is compared before it is decoded."
+            .to_string();
+        state.fatal_error = Some("tool call arguments were never assembled".to_string());
+
+        let outcome = outcome_from(state);
+
+        // Whole-value equality on the text, never a `contains`: a partial match
+        // would pass on a truncated or mangled answer.
+        assert_eq!(
+            outcome.text,
+            "The auth bug is in session_refresh: the token \
+             is compared before it is decoded.",
+            "a fatally-failed turn must hand back the text it already produced"
+        );
+        // The error is unchanged and still present.
+        assert_eq!(
+            outcome.last_api_error,
+            Some("tool call arguments were never assembled".to_string()),
+            "carrying the text must not swallow or reword the error"
+        );
+    }
+
+    /// NEAR-MISS GUARD A — the entire regression surface. A successful run is
+    /// byte-identical to before: every field, asserted individually, including
+    /// `last_api_error: None`. That is every user and every session, so if this
+    /// reddens the fix has reached a path it was never scoped to touch.
+    #[test]
+    fn a_successful_run_is_byte_identical() {
+        let mut state = PromptEventState::new();
+        state.collected_text = "Done — three files changed.".to_string();
+        state.text_since_last_tool = "Done — three files changed.".to_string();
+        state.last_tool_error = Some("edit_file: no match".to_string());
+        state.last_tool_name = Some("edit_file".to_string());
+
+        let outcome = outcome_from(state);
+
+        assert_eq!(outcome.text, "Done — three files changed.");
+        assert_eq!(
+            outcome.text_since_last_tool, "Done — three files changed.",
+            "#808's closing-text accumulator must be untouched by the fatal fix"
+        );
+        assert_eq!(
+            outcome.last_tool_error,
+            Some("edit_file: no match".to_string())
+        );
+        assert_eq!(outcome.last_tool_name, Some("edit_file".to_string()));
+        assert_eq!(
+            outcome.last_api_error, None,
+            "a successful run must not acquire an API error"
+        );
+        assert!(!outcome.was_overflow);
+    }
+
+    /// NEAR-MISS GUARD B — the boundary pin. A fatal turn that produced NO text
+    /// yields empty text, exactly as it did before, rather than a placeholder or
+    /// a copy of the error message. A discriminator tested only on the side that
+    /// fires is vacuous green.
+    ///
+    /// Stated limit (Day 191): this asserts ABSENCE, so a dead branch also
+    /// produces it — it is structurally incapable of failing under a positive
+    /// control that neuters the handoff. Count it as a boundary pin, never as
+    /// evidence that the pass-through works.
+    #[test]
+    fn a_fatal_turn_that_produced_nothing_still_yields_empty_text() {
+        let mut state = PromptEventState::new();
+        state.fatal_error = Some("stream ended before any content".to_string());
+
+        let outcome = outcome_from(state);
+
+        assert_eq!(
+            outcome.text, "",
+            "a fatal turn with no text must not gain a placeholder"
+        );
+        assert_eq!(
+            outcome.last_api_error,
+            Some("stream ended before any content".to_string())
+        );
+    }
+}
