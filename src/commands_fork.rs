@@ -419,6 +419,33 @@ fn format_restore_header(name: &str, outcome: &RestoreOutcome) -> String {
     format!("{GREEN}Restored checkpoint '{name}' ({counts}):{RESET}")
 }
 
+/// Compose the whole reply `/checkpoint restore <name>` prints — header, per-file
+/// action lines, or the refusal — as one string ending in a newline.
+///
+/// This is the **emission point**: the text a user actually receives. It exists as a
+/// function rather than as a `println!` in the dispatch arm because the refusal branch
+/// (`Err` from [`CheckpointStore::restore`]) never reaches [`format_restore_header`] at
+/// all, so no test of that renderer can ever cover a missing checkpoint. Composing both
+/// halves here is what makes all three states assertable in one statement.
+///
+/// Measured Day 192 (step 0 of this task) and **unchanged by it** — this is a pure
+/// extraction of the text the dispatch arm already printed, byte for byte:
+/// a real payload reports success, a missing name refuses and names itself, and a
+/// checkpoint holding no files says so instead of claiming a restore.
+fn checkpoint_restore_reply(store: &CheckpointStore, name: &str) -> String {
+    match store.restore(name) {
+        Ok(outcome) => {
+            let mut out = format!("{}\n", format_restore_header(name, &outcome));
+            for a in &outcome.actions {
+                out.push_str(a);
+                out.push('\n');
+            }
+            out
+        }
+        Err(e) => format!("{RED}{e}{RESET}\n"),
+    }
+}
+
 impl CheckpointStore {
     /// Create a new empty store.
     pub fn new() -> Self {
@@ -603,15 +630,7 @@ pub fn handle_checkpoint(input: &str, store: &mut CheckpointStore, changes: &Ses
                 println!("{RED}Usage: /checkpoint restore <name>{RESET}");
                 return;
             }
-            match store.restore(arg) {
-                Ok(outcome) => {
-                    println!("{}", format_restore_header(arg, &outcome));
-                    for a in &outcome.actions {
-                        println!("{a}");
-                    }
-                }
-                Err(e) => println!("{RED}{e}{RESET}"),
-            }
+            print!("{}", checkpoint_restore_reply(store, arg));
         }
         "diff" => {
             if arg.is_empty() {
@@ -1115,5 +1134,114 @@ mod tests {
         assert!(result.contains("/fork"));
         assert!(result.contains("switch"));
         assert!(result.contains("list"));
+    }
+}
+
+#[cfg(test)]
+mod checkpoint_restore_emission_tests {
+    //! Step 0 of Day 192 measured all three restore states at the emission point and
+    //! found them **already correct** — the rival's shape (report success while nothing
+    //! was restored) does not reproduce here. These tests exist because that correctness
+    //! was previously *unasserted*: the only coverage was over `store.restore` one layer
+    //! below, and over a **hand-built** `RestoreOutcome::default()` fed to the renderer,
+    //! which never proves a real empty checkpoint produces that outcome. The refusal
+    //! branch could not be covered at all, since `Err` never reaches the renderer.
+    use super::*;
+    use crate::session::{ChangeKind, SessionChanges};
+
+    /// (a) A checkpoint with a real payload reports success **and the payload lands**.
+    ///
+    /// Asserted FIRST and anti-vacuous on purpose: the file must genuinely come back,
+    /// so the refusal tests below cannot pass by having nothing to restore either way.
+    #[test]
+    fn checkpoint_restore_reply_restores_the_payload_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.txt");
+        std::fs::write(&f, "original").unwrap();
+        let path = f.to_str().unwrap().to_string();
+
+        let changes = SessionChanges::new();
+        changes.record(&path, ChangeKind::Write);
+        let mut store = CheckpointStore::new();
+        store.save("real", &changes);
+
+        std::fs::write(&f, "modified").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "modified",
+            "fixture must genuinely diverge before restore, or this proves nothing"
+        );
+
+        let reply = checkpoint_restore_reply(&store, "real");
+
+        // The payload landed — the check that matters, not the string.
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "original",
+            "the file must actually be restored"
+        );
+        assert_eq!(
+            reply,
+            format!(
+                "{GREEN}Restored checkpoint 'real' (1 restored):{RESET}\n  ✓ restored {path}\n"
+            )
+        );
+    }
+
+    /// (b) A name that does not exist refuses and names what was not found.
+    #[test]
+    fn checkpoint_restore_reply_refuses_a_name_that_does_not_exist() {
+        let store = CheckpointStore::new();
+        assert_eq!(
+            checkpoint_restore_reply(&store, "nope"),
+            format!("{RED}No checkpoint named 'nope'{RESET}\n")
+        );
+    }
+
+    /// (c1) A checkpoint that exists but holds no files says so rather than
+    /// claiming a restore. Driven through a **real** save/restore round-trip, not a
+    /// fabricated `RestoreOutcome`.
+    #[test]
+    fn checkpoint_restore_reply_claims_nothing_for_a_checkpoint_holding_no_files() {
+        let mut store = CheckpointStore::new();
+        store.save("empty", &SessionChanges::new());
+
+        // Anti-vacuous: it must be the empty-payload branch, not the missing-name one.
+        assert!(
+            store.checkpoints.contains_key("empty"),
+            "the checkpoint must exist, or this re-tests the refusal path"
+        );
+        assert_eq!(
+            checkpoint_restore_reply(&store, "empty"),
+            format!("{DIM}Checkpoint 'empty' holds no files — nothing to restore.{RESET}\n")
+        );
+    }
+
+    /// (c2) The rival's exact shape: the user asked to snapshot a file, `save` could not
+    /// read it and **silently stored nothing**, so the checkpoint exists with an empty
+    /// payload. Restore must not report success.
+    #[test]
+    fn checkpoint_restore_reply_claims_nothing_when_the_payload_was_never_readable() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("vanished.txt");
+        std::fs::write(&gone, "x").unwrap();
+        let changes = SessionChanges::new();
+        changes.record(gone.to_str().unwrap(), ChangeKind::Write);
+        std::fs::remove_file(&gone).unwrap();
+
+        let mut store = CheckpointStore::new();
+        store.save("unreadable", &changes);
+
+        // Anti-vacuous, and the finding itself: save stored 0 files for 1 requested.
+        assert!(store.checkpoints.contains_key("unreadable"));
+        assert_eq!(
+            store.checkpoints.get("unreadable").unwrap().files.len(),
+            0,
+            "save silently drops a file it cannot read"
+        );
+        assert_eq!(
+            checkpoint_restore_reply(&store, "unreadable"),
+            format!("{DIM}Checkpoint 'unreadable' holds no files — nothing to restore.{RESET}\n")
+        );
     }
 }
