@@ -346,8 +346,8 @@ pub(crate) fn external_server_report() -> ExternalServerReport {
 
 /// Render the report as the `external_servers` object of `--output-format json`.
 ///
-/// Pure, so the shape a script parses is pinned by a table test rather than by
-/// the global underneath it.
+/// Pure, so the shape a script parses is pinned by `external_servers_json_table`
+/// rather than by the global underneath it.
 ///
 /// **Emitted always, not only on failure.** The whole defect is that a script
 /// cannot distinguish a degraded run from a healthy one; a key that appears
@@ -3708,5 +3708,87 @@ session will fail on the first turn with 'Tool names must be unique'."
                  every_registered_builtin_tool_is_named_in_builtin_tool_names needs updating"
             );
         }
+    }
+
+    /// The shape a script parses, pinned as a table so the JSON contract is
+    /// asserted rather than assumed. Both directions: an all-empty report is
+    /// the healthy shape, and a populated one keeps each kind in its own array.
+    #[test]
+    fn external_servers_json_table() {
+        // Healthy: the key is present and every field is at its zero value.
+        assert_eq!(
+            external_servers_json(&ExternalServerReport::default()),
+            serde_json::json!({
+                "mcp_connected": 0,
+                "mcp_failed": [],
+                "openapi_connected": 0,
+                "openapi_failed": [],
+            })
+        );
+
+        // Degraded: kinds do not cross. An openapi failure must never report
+        // as mcp — a report that misattributes its source is worse than none.
+        let report = ExternalServerReport {
+            mcp_connected: 2,
+            mcp_failed: vec!["cmd-a".to_string()],
+            openapi_connected: 1,
+            openapi_failed: vec!["spec-b".to_string(), "spec-c".to_string()],
+        };
+        assert_eq!(
+            external_servers_json(&report),
+            serde_json::json!({
+                "mcp_connected": 2,
+                "mcp_failed": ["cmd-a"],
+                "openapi_connected": 1,
+                "openapi_failed": ["spec-b", "spec-c"],
+            })
+        );
+    }
+
+    /// The trap this task exists to avoid: the machine-readable reader must not
+    /// eat the model-facing note. `external_server_report()` clones a separate,
+    /// never-drained store, so `take_external_failure_note()` still speaks after
+    /// it — if the JSON field had shared the drainable store, wiring it would
+    /// have silently deleted the model's note, trading one audience for another.
+    #[test]
+    #[serial_test::serial]
+    fn reading_the_json_report_does_not_drain_the_model_facing_note() {
+        // Start from a known state: drain whatever an earlier test left behind.
+        let _ = take_external_failure_note();
+
+        record_failed_server("mcp", "server-drainguard");
+
+        // Anti-vacuous: the snapshot must genuinely carry the failure, so a
+        // broken reader cannot pass by both sides agreeing on nothing.
+        let snapshot = external_server_report();
+        assert!(
+            snapshot
+                .mcp_failed
+                .iter()
+                .any(|c| c == "server-drainguard"),
+            "the snapshot must see the failure it is being asked about: {snapshot:?}"
+        );
+
+        // Reading it twice must still not drain it.
+        assert_eq!(
+            external_server_report().mcp_failed,
+            snapshot.mcp_failed,
+            "the report is a snapshot, not a take"
+        );
+
+        // The model's note survives the JSON read.
+        let note = take_external_failure_note()
+            .expect("the model-facing note must survive the JSON reader");
+        assert!(
+            note.contains("server-drainguard"),
+            "the surviving note must still name the server: {note}"
+        );
+
+        // And it is still a one-shot: the JSON read did not resurrect it.
+        assert_eq!(
+            take_external_failure_note(),
+            None,
+            "the note must stay one-shot"
+        );
     }
 }
