@@ -155,7 +155,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // boundary — `gate_project_notify_command` + `project_notify_refusal_message`
     // and their table tests. A project-local `notify_command` is arbitrary shell
     // (`sh -c`), so it is executable code by the same test #820 applied to hooks.
-    ("src/cli.rs", 6945),
+    ("src/cli.rs", 6968), // Day 192: +23 for #891's `--cost-warn` flag door.
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
@@ -308,7 +308,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // than smuggled: this file is now grandfathered, so branch 2/3's ±100 drift
     // band applies to it from here on. The better fix is a split; owed, not done.
     ("src/git.rs", 2031),
-    ("src/help.rs", 2759), // Day 188: +4 paid off (was 2755 at Day 187).
+    ("src/help.rs", 2765), // Day 192: +6 documenting #891's `--cost-warn <usd>`.
     // Day 161 (#662 half 1): +9 lines — run_prompt_auto_retry now breaks out of
     // the retry loop (with one dim stderr line) on deterministic tool refusals
     // instead of burning MAX_AUTO_RETRIES on an identical answer.

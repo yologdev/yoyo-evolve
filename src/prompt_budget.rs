@@ -666,6 +666,87 @@ mod cost_budget_tests {
         assert!(msg.contains("$7.25") && msg.contains("$5.00"));
         assert!(msg.contains("1 run(s) used a model with no price"));
     }
+
+    /// The near-miss guard, and the ENTIRE regression surface of #891's flag:
+    /// neither `--cost-warn` nor `YOYO_COST_WARN_USD` resolves to `None` = OFF,
+    /// so `record_run_cost` returns before composing anything and every
+    /// existing user is byte-identical. Asserted on the resolved *value*, never
+    /// on rendered text — a `contains` on a string that was never built would
+    /// pass for the wrong reason.
+    #[test]
+    fn no_flag_and_no_env_is_off_which_is_every_existing_user() {
+        assert_eq!(resolve_cost_threshold(None, None), None);
+    }
+
+    /// Both directions of the precedence rule, because a discriminator tested
+    /// only on the side that fires is vacuous green: the flag must beat the env
+    /// var *and* the env var alone must still work (it was the only door until
+    /// this flag landed, so silently breaking it would be a regression on the
+    /// one existing user of the feature).
+    #[test]
+    fn the_flag_beats_the_env_var_and_the_env_var_alone_still_works() {
+        // Flag alone.
+        assert_eq!(resolve_cost_threshold(Some("5"), None), Some(5.0));
+        // Env alone — the pre-#891 door, unchanged.
+        assert_eq!(resolve_cost_threshold(None, Some("7.5")), Some(7.5));
+        // Both: the flag wins. Distinct values, so a resolver that read the
+        // wrong source cannot pass by the two agreeing.
+        assert_eq!(resolve_cost_threshold(Some("5"), Some("7.5")), Some(5.0));
+    }
+
+    /// Every unusable shape is OFF on **both** sources, through the one
+    /// existing parser rather than a second one. Fabricating a threshold out of
+    /// nonsense would alarm on the *first* run of every session that mistyped
+    /// the value — failing noisily at exactly the users who are already
+    /// confused.
+    #[test]
+    fn resolve_cost_threshold_refuses_every_unusable_value_on_both_sources() {
+        for raw in ["", "   ", "abc", "0", "0.0", "-1", "nan", "inf"] {
+            assert_eq!(
+                resolve_cost_threshold(Some(raw), None),
+                None,
+                "expected OFF for flag {:?}",
+                raw
+            );
+            assert_eq!(
+                resolve_cost_threshold(None, Some(raw)),
+                None,
+                "expected OFF for env {:?}",
+                raw
+            );
+        }
+
+        // Observed behaviour, pinned rather than left untested: an *unusable*
+        // flag is not "a flag was given", it is OFF, so `.or_else` falls
+        // through to the env var. That is the conservative direction — the
+        // alternative would let one typo silently disable a budget the user had
+        // already exported.
+        assert_eq!(resolve_cost_threshold(Some("abc"), Some("5")), Some(5.0));
+    }
+
+    /// Regression guard for the landmine #891's task file named: the threshold
+    /// used to live in a `OnceLock`, whose `set` **silently no-ops** once the
+    /// cell has been initialised — the exact trap `TRUST_PROJECT` carried until
+    /// Day 184. A test that only ever sets it once passes against the broken
+    /// cell, so this asserts it is re-settable in **both** directions.
+    #[test]
+    #[serial_test::serial]
+    fn the_cost_threshold_cell_is_resettable_in_both_directions() {
+        set_cost_threshold(Some(5.0));
+        assert_eq!(cost_threshold(), Some(5.0));
+
+        // On -> off. Under a `OnceLock` this second write would be discarded.
+        set_cost_threshold(None);
+        assert_eq!(cost_threshold(), None);
+
+        // Off -> on again, with a different value, so a cell stuck on its first
+        // answer cannot pass by coincidence.
+        set_cost_threshold(Some(2.5));
+        assert_eq!(cost_threshold(), Some(2.5));
+
+        // Leave the process in the shipped default state (off).
+        set_cost_threshold(None);
+    }
 }
 
 // A soft, opt-in wall-clock budget for evolution sessions. The hourly evolve

@@ -127,6 +127,7 @@ const GLOBAL_SETTERS: &[&str] = &[
     "todo_remove",
     // src/prompt_budget.rs
     "record_run_cost",
+    "set_cost_threshold",
     // src/watch.rs
     "clear_watch_command",
     "set_watch_command",
