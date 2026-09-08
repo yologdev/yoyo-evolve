@@ -3319,6 +3319,81 @@ session will fail on the first turn with 'Tool names must be unique'."
         );
     }
 
+    /// Every connect-failure arm must interpolate the error it was handed.
+    ///
+    /// **This guard exists because the task that produced it was FALSIFIED.**
+    /// Day 192 planned a `connect_failure_note` on the premise that
+    /// `connect_external_servers` "drops the error on the floor" and reports
+    /// only the count and the kind. Step 0 measured the opposite: all three
+    /// `Err` arms print `{e}` as the *first* thing they emit, in RED, naming
+    /// the server. There was no hole. So this is not that fix — it is the
+    /// guard that keeps the property true, which nothing did before.
+    ///
+    /// Worth having because those three arms are the most-edited lines in this
+    /// file: four consecutive sessions have added something beside `{e}`
+    /// (#841's honest skip message, #842's counter reset, Day 181's
+    /// model-facing note, #895's machine-readable report). Every one of them
+    /// left the error intact; the next could as easily replace it, and the
+    /// resulting defect is *exactly* the one the task described. A property
+    /// that survives four edits by luck is not an invariant until something
+    /// fails when it stops holding.
+    ///
+    /// The distribution is pinned, not just the total: two MCP loops and one
+    /// OpenAPI loop. A bare count of 3 would pass if someone dropped `{e}`
+    /// from the OpenAPI arm and duplicated an MCP one.
+    ///
+    /// LIMIT, in the same shape the sibling guard above states its own: this
+    /// proves the error is **positioned** in the format string, never that a
+    /// user saw it. `connect_external_servers` is `async` and spawns real
+    /// processes, so no test drives these arms behaviourally.
+    #[test]
+    fn every_connect_failure_arm_reports_the_error_it_was_handed() {
+        let src = include_str!("agent_builder.rs");
+        // Needles assembled at runtime so this test cannot match its own source.
+        let err_tail = [": {", "e}{RESET}"].concat();
+        let mcp_fail = ["mcp: failed to", "connect to"].join(" ");
+        let oa_fail = ["openapi: failed to", "load"].join(" ");
+
+        // Slice this function's body, the same bounds the sibling guard uses:
+        // the claim here is only about the three connect loops.
+        let start_marker = format!("async fn connect{}external{}servers(", "_", "_");
+        let start = src.find(&start_marker).expect("function must exist");
+        let end_marker = format!("fn insert{}client{}headers(", "_", "_");
+        let end = src[start..]
+            .find(&end_marker)
+            .expect("following function must exist")
+            + start;
+        let body = &src[start..end];
+
+        // ANTI-VACUOUS, asserted first: a slice that found nothing would
+        // satisfy every "expected N" assertion below by having nothing to
+        // count, which is this guard's own subject wearing the opposite sign.
+        assert!(
+            body.len() > 1000,
+            "sliced an empty/tiny body — the markers moved, so this guard checked nothing"
+        );
+
+        // One error interpolation per connect-failure arm. If a future edit
+        // replaces `{e}` with a count, a kind, or a note, this count drops and
+        // the arm that lost its cause has to be named.
+        assert_eq!(
+            body.matches(&err_tail).count(),
+            3,
+            "expected exactly three connect-failure lines that interpolate their error"
+        );
+        // Distribution, so one arm cannot cover for another.
+        assert_eq!(
+            body.matches(&mcp_fail).count(),
+            2,
+            "both MCP loops (--mcp flags, [mcp_servers.*]) must report their connect error"
+        );
+        assert_eq!(
+            body.matches(&oa_fail).count(),
+            1,
+            "the OpenAPI loop must report its load error"
+        );
+    }
+
     #[test]
     fn effective_disallowed_tools_pairs_shared_state_with_sub_agent() {
         // The #715 pairing rule, asserted at its emission point — the list the
