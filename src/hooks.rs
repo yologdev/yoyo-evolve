@@ -391,6 +391,14 @@ impl ShellHook {
                 Ok(None) => {
                     if start.elapsed() >= timeout {
                         let _ = child.kill();
+                        // Reap it (#892). Without this the child stays a zombie
+                        // until yoyo exits, so a hook that reliably hangs leaks
+                        // one PID per tool call for the whole session. `wait()`
+                        // after a successful `kill()` returns promptly because
+                        // SIGKILL is uncatchable, and both results stay
+                        // discarded: the error being returned is the TIMEOUT,
+                        // not the reap.
+                        let _ = child.wait();
                         return Err(format!("Hook '{}' timed out after 5 seconds", self.name));
                     }
                     std::thread::sleep(Duration::from_millis(50));
@@ -467,6 +475,76 @@ impl Hook for ShellHook {
     }
 }
 
+/// Edit-distance budget for suggesting a builtin whose name a hook key may have
+/// mistyped. Deliberately **tight**: this is a judgment threshold, not a
+/// measurement, and a confidently wrong suggestion in an advisory warning is
+/// worse than none. Ordinary typos (`bahs` -> `bash`) sit at 1-2; anything
+/// further away is more likely a genuine MCP tool name than a slip.
+const NEAREST_BUILTIN_MAX_DISTANCE: usize = 2;
+
+/// Pure: the builtin a hook's `tool_pattern` most plausibly meant, or `None`.
+///
+/// Two rules, in order, because neither alone covers the shapes that occur.
+/// 1. A **dropped suffix** (`write` for `write_file`) is the shape #892 was
+///    filed on, and edit distance cannot see it — `write` -> `write_file` is
+///    five insertions, a budget loose enough to suggest nonsense for unrelated
+///    names. The prefix form is unambiguous, so it is checked first.
+/// 2. Otherwise a **tight** edit distance for ordinary typos, reusing
+///    [`crate::commands::closest_match`] rather than growing a second distance
+///    function (the `significant_braces` precedent: two copies of a rule agree
+///    the day they are written and diverge forever after).
+///
+/// Only ever called for a pattern that is *not* in `known`, so `closest_match`'s
+/// distance-0 case is unreachable here.
+fn nearest_builtin<'a>(pattern: &str, known: &[&'a str]) -> Option<&'a str> {
+    if pattern.is_empty() {
+        return None;
+    }
+    if let Some(hit) = known
+        .iter()
+        .find(|k| k.strip_prefix(pattern).is_some_and(|r| r.starts_with('_')))
+    {
+        return Some(hit);
+    }
+    crate::commands::closest_match(pattern, known, NEAREST_BUILTIN_MAX_DISTANCE)
+}
+
+/// Pure: warn when a hook key names a tool that no builtin provides.
+///
+/// `hooks.pre.write` (a typo for `write_file`) builds a hook whose
+/// `matches_tool` can **never** be true, and a hook that never fires emits no
+/// output and no error — the quietest failure available, indistinguishable from
+/// a hook that ran and did nothing (#892). The config-key vocabulary and the
+/// tool-name vocabulary are two enumerations with nothing tying them together;
+/// this is the tie.
+///
+/// **It warns, it never refuses**, and the reason is written here rather than
+/// only in the docs: a user may legitimately hook an **MCP-provided** tool,
+/// whose name is not a builtin and cannot be known at parse time, so refusing
+/// would break working configs. That is also why the wording is a *question,
+/// not an accusation* — a warning that cries wolf on a legitimate config every
+/// session is how a reader learns to paste past a gate.
+///
+/// `None` for `*` and for every name in `known`; `Some(msg)` otherwise.
+/// Glyph-free under `plain` (marker **and** em dash).
+fn unknown_hook_tool_warning(tool_pattern: &str, known: &[&str], plain: bool) -> Option<String> {
+    if tool_pattern == "*" || known.contains(&tool_pattern) {
+        return None;
+    }
+
+    let marker = if plain { "warning:" } else { "⚠" };
+    let joiner = if plain { ";" } else { " —" };
+    let mut msg = format!(
+        "{marker} hook `{tool_pattern}`: no builtin tool has that name. That is \
+         fine if `{tool_pattern}` comes from an MCP server{joiner} otherwise this \
+         hook can never fire."
+    );
+    if let Some(nearest) = nearest_builtin(tool_pattern, known) {
+        msg.push_str(&format!(" Did you mean `{nearest}`?"));
+    }
+    Some(msg)
+}
+
 /// Parse shell hook definitions from a config HashMap.
 ///
 /// Expected key format: `hooks.pre.<tool>` or `hooks.post.<tool>`
@@ -498,6 +576,21 @@ pub fn parse_hooks_from_config(config: &HashMap<String, String>) -> Vec<ShellHoo
 
         if tool_pattern.is_empty() || value.is_empty() {
             continue; // Skip empty patterns or commands
+        }
+
+        // #892: a key naming a tool that does not exist parses fine and can
+        // never match, so say so. WARN, never refuse — an MCP-provided tool is
+        // a legitimate target whose name cannot be known here. The decision is
+        // pure and table-tested; only the two global reads live at this call
+        // site (the `rtk_announcement` shape).
+        if let Some(warning) = unknown_hook_tool_warning(
+            tool_pattern,
+            crate::agent_builder::BUILTIN_TOOL_NAMES,
+            crate::format::is_plain_output(),
+        ) {
+            if !crate::format::is_quiet() {
+                eprintln!("{warning}");
+            }
         }
 
         let phase_str = match phase {
@@ -1512,6 +1605,148 @@ mod tests {
             got.contains("3 chars elided"),
             "the count must be measured over the ESCAPED string, got tail: {}",
             &got[got.len().saturating_sub(80)..]
+        );
+    }
+
+    // --- #892 defect 1: an unreachable hook key is now audible ----------------
+
+    /// ANTI-VACUOUS, and asserted FIRST: a warner that fires on nothing and a
+    /// warner that fires on everything are the same bug wearing opposite signs.
+    /// So pin that the vocabulary is non-empty and that a genuinely unknown
+    /// pattern really does produce a warning, before asserting any silence.
+    #[test]
+    fn unknown_hook_tool_warning_is_anti_vacuous() {
+        let known = crate::agent_builder::BUILTIN_TOOL_NAMES;
+        assert!(
+            !known.is_empty(),
+            "BUILTIN_TOOL_NAMES is empty, so every silence below would be vacuous"
+        );
+        assert!(
+            unknown_hook_tool_warning("definitely_not_a_builtin", known, false).is_some(),
+            "an unknown pattern must warn, or this guard can never fire"
+        );
+    }
+
+    /// NEAR-MISS GUARD, and the entire regression surface: `*` and every real
+    /// builtin must stay silent. The list is ITERATED from the authority rather
+    /// than hand-typed — a second copy of the tool vocabulary is the very defect
+    /// being fixed, one layer up.
+    #[test]
+    fn unknown_hook_tool_warning_is_silent_for_the_wildcard_and_every_builtin() {
+        let known = crate::agent_builder::BUILTIN_TOOL_NAMES;
+        for plain in [false, true] {
+            assert_eq!(
+                unknown_hook_tool_warning("*", known, plain),
+                None,
+                "the wildcard matches every tool and must never warn"
+            );
+            for name in known {
+                assert_eq!(
+                    unknown_hook_tool_warning(name, known, plain),
+                    None,
+                    "`{name}` is a real builtin and must never warn"
+                );
+            }
+        }
+    }
+
+    /// The wording is the load-bearing half: a warning that cries wolf on a
+    /// legitimate MCP config every session is how a reader learns to paste past
+    /// a gate. So it must be a QUESTION, not an accusation — naming the pattern,
+    /// naming MCP as the legitimate case, and naming the consequence.
+    #[test]
+    fn unknown_hook_tool_warning_asks_rather_than_accuses() {
+        let known = crate::agent_builder::BUILTIN_TOOL_NAMES;
+        let msg = unknown_hook_tool_warning("write", known, false).expect("must warn");
+        assert!(msg.contains("write"), "must name the pattern: {msg}");
+        assert!(
+            msg.contains("MCP"),
+            "must name the legitimate MCP case, or it is an accusation: {msg}"
+        );
+        assert!(
+            msg.contains("can never fire"),
+            "must name the consequence: {msg}"
+        );
+        // The issue's own example: a dropped suffix, which edit distance alone
+        // cannot see (`write` -> `write_file` is five insertions).
+        assert!(
+            msg.contains("Did you mean `write_file`?"),
+            "must suggest the dropped-suffix builtin: {msg}"
+        );
+    }
+
+    /// Glyph-free under plain output — marker AND em dash, since asserting only
+    /// the marker is the half an assertion has caught before.
+    #[test]
+    fn unknown_hook_tool_warning_is_glyph_free_when_plain() {
+        let known = crate::agent_builder::BUILTIN_TOOL_NAMES;
+        let plain = unknown_hook_tool_warning("write", known, true).expect("must warn");
+        assert!(!plain.contains('⚠'), "no marker glyph in plain: {plain}");
+        assert!(!plain.contains('—'), "no em dash in plain: {plain}");
+        // Anti-vacuous the other way: the non-plain form really does carry both,
+        // so the assertions above discriminate rather than passing by accident.
+        let fancy = unknown_hook_tool_warning("write", known, false).expect("must warn");
+        assert!(fancy.contains('⚠') && fancy.contains('—'));
+    }
+
+    /// `nearest_builtin`'s two rules, and the case where it must stay quiet: a
+    /// far-away name is far more likely a real MCP tool than a slip, and a
+    /// confidently wrong suggestion is worse than none.
+    #[test]
+    fn nearest_builtin_table() {
+        let known = crate::agent_builder::BUILTIN_TOOL_NAMES;
+        for (pattern, want) in [
+            ("write", Some("write_file")), // dropped suffix
+            ("read", Some("read_file")),   // dropped suffix
+            ("list", Some("list_files")),  // dropped suffix
+            ("bahs", Some("bash")),        // ordinary typo, distance 2
+            ("serch", Some("search")),     // ordinary typo, distance 1
+            ("github_create_issue", None), // a real MCP name, no suggestion
+            ("", None),                    // guarded: empty suggests nothing
+        ] {
+            assert_eq!(
+                nearest_builtin(pattern, known),
+                want,
+                "nearest_builtin({pattern:?})"
+            );
+        }
+    }
+
+    // --- #892 defect 2: a timed-out hook is reaped ---------------------------
+
+    /// `run_command` spawns real processes and is driven by no test, so this is
+    /// a deliberately WEAK source-level guard, and its limit is stated rather
+    /// than implied: it proves the reap is POSITIONED after the kill inside the
+    /// timeout branch, never that any process was actually reaped. Needles are
+    /// assembled at runtime so this test's own source cannot satisfy it.
+    #[test]
+    fn test_run_command_reaps_the_child_it_kills_on_timeout() {
+        let src = include_str!("hooks.rs");
+        let body = src
+            .split_once("fn run_command(")
+            .expect("run_command must exist")
+            .1;
+        let body = body
+            .split_once("\nimpl Hook for ShellHook")
+            .map(|(before, _)| before)
+            .unwrap_or(body);
+
+        let kill = format!("child.{}()", "kill");
+        let wait = format!("child.{}()", "wait");
+        let kill_at = body
+            .find(&kill)
+            .unwrap_or_else(|| panic!("run_command must still call `{kill}` on timeout"));
+        let wait_at = body.find(&wait).unwrap_or_else(|| {
+            panic!(
+                "run_command kills the child on timeout but never calls `{wait}`, so it \
+                 stays a zombie until yoyo exits — a hook that reliably hangs leaks one \
+                 PID per tool call for the whole session (#892)."
+            )
+        });
+        assert!(
+            kill_at < wait_at,
+            "the reap must come AFTER the kill: waiting on a live hung child would \
+             block for as long as the hook hangs, which is the opposite of the fix."
         );
     }
 }
