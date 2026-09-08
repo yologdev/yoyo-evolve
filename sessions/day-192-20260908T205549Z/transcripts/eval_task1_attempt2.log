@@ -1,0 +1,53 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---D…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (2ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff e341f1a3..HEAD --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff e341f1a3..HEAD -- src/p… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff e341f1a3..HEAD -- src/p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fatal" src/prompt.rs | … ✓ (4ms)
+ ✓ (6ms)
+  6 tools completed in 9.6s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== FILES IN FULL TASK DIF… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff e341f1a3..HEAD | grep -… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "last_api_error\|is_erro… ✓ (3ms)
+  3 tools completed in 22.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '344,352p' src/main.rs; e… ✓ (3ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (52.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 28s (2 ✓)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+What landed correctly (Step 1 is genuinely good work):
+• `PromptResult::FatalError gained collected_text; into_result populates it from self.collected_text`
+• All four match arms updated in the same edit — build passes, no arm missed
+• Both prompt loops carry it out to PromptOutcome.text
+• `text_since_last_tool` deliberately **not** carried, so auto-continue's silence branch can't be fed by a dead turn — correct, and documented at the variant
+• The resample `continue` path left alone, so only the terminal failure carries its text
+• `api_error still set, so is_error` stays true — the error isn't softened
+
+What blocks the verdict:
+
+1. **Zero tests.** Step 2 was mandatory and named three specific emission-point tests plus a run positive control marked `NEUTERED`. Measured: `git diff --name-only` over e341f1a3..HEAD returns one file; grep -c "^+.*#\[test\]" returns 0; the single added "assert" is the word "asserting" inside a doc comment. So there is no evidence the recovered text reaches a caller, and no guard that the success path is byte-identical.
+
+2. **The helper's own doc comment names a consumer that doesn't exist.** `build_outcome` justifies itself as existing "so a test can compose `into_result()` → `fatal_handoff` → this function and be asserting on the emission point." The seam was built and the test was never written — the capability is real only where something consumes it shape, self-documented.
+
+3. **Step 0 question 2 is unanswered.** The task said that question decides whether `src/main.rs` is in the diff and named the #848 "works in json mode only" trap explicitly. `src/main.rs is untouched, and both the single-prompt and piped paths reach std::process::exit(1) on last_api_error.is_some()` (`main.rs:346`, `:592`). Whether a default-mode user actually sees the recovered text before that exit is exactly what was supposed to be checked in both modes, and nothing in the diff records it either way.
+
+4. **CLAUDE.md untouched*, though Housekeeping required the `prompt.rs` bullet carry the FatalError-only scope, the two siblings named as untraced*, and the stated limit.
+
+The mechanism reads right — but "it reads right" is precisely what the task refused to accept as evidence, and the re-land needs the three tests, the control, the step-0 answer, and the doc bullet.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

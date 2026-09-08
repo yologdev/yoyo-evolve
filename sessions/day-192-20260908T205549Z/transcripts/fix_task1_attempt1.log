@@ -1,0 +1,179 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state of the change, then add the missing tests and the CLAUDE.md update.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/prompt.rs… ✓ (5ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+The code carry is in place. Now let me answer the two Step-0 questions the evaluator says are unrecorded, then write the tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 200,270p src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct PromptOutcome" -… ✓ (3ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1800,1830p src/prompt.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn emit_output" -A 60 s… ✓ (2ms)
+ ✓ (4ms)
+  4 tools completed in 5.0s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 308,420p src/main.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 420,500p src/main.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1400,1470p src/prompt.rs ✓ (3ms)
+  3 tools completed in 21.6s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll add the seam so tests can assert on the value a caller receives. First, the two construction sites:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptOutcome {" src/pr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct PromptEventState… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1404,1416p src/prompt.rs … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1340,1360p src/prompt.rs … ✓ (5ms)
+  4 tools completed in 18.6s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Enough analysis — executing now. First the seam so tests can assert on the caller's value:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^async fn finish_prompt… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 160,200p src/prompt.rs ✓ (3ms)
+  2 tools completed in 2.7s (2 ✓)
+
+Now adding the two pure seams:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (3 → 41 lines)
+        /// fallback provider switching.
+        pub last_api_error: Option<String>,
+  + }
+  + 
+  + /// Day 192: the ONE statement of what a fatally-failed turn hands back.
+  + ///
+  + /// Returns `(text, api_error)` — the text the dead turn already produced, and
+  + /// the error **unchanged**. Both prompt loops call this from every `FatalError`
+  + /// arm, so "does a dead turn keep its answer?" has one answer rather than three
+  + /// copies that agree the day they are written.
+  + ///
+  + /// The error is carried verbatim and is never swallowed, reworded, reordered or
+  + /// downgraded: this ADDS text beside a failure, it does not soften the failure.
+  + /// A degraded run must stay legible **as degraded** (the commitment #895 made
+  + /// for `external_servers` one subsystem over).
+  + fn fatal_handoff(collected_text: String, error_msg: String) -> (String, Option<String>) {
+  +     (collected_text, Some(error_msg))
+  + }
+  + 
+  + /// Assemble the value a caller of the two prompt loops actually receives.
+  ... (21 more lines)
+ ✓ (13.8s)
+        /// fallback provider switching.
+        pub last_api_error: Option<String>,
+  + }
+  + 
+  + /// Day 192: the ONE statement of what a fatally-failed turn hands back.
+  + ///
+  + /// Returns `(text, api_error)` — the text the dead turn already produced, and
+  + /// the error **unchanged**. Both prompt loops call this from every `FatalError`
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — definitions need their consumers in the same edit. Wiring all five call sites now:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (6 → 5 lines)
+                    // Day 192: the resample path `continue`s above, so a discarded
+                    // attempt's text never survives — only the terminal, gone-for-good
+                    // failure carries its answer out to the caller.
+  -                 collected_text = fatal_text;
+  -                 api_error = Some(error_msg);
+  +                 (collected_text, api_error) = fatal_handoff(fatal_text, error_msg);
+                    break;
+ ✓ (13.8s)
+                    // Day 192: the resample path `continue`s above, so a discarded
+                    // attempt's text never survives — only the terminal, gone-for-good
+                    // failure carries its answer out to the caller.
+  -                 collected_text = fatal_text;
+  -                 api_error = Some(error_msg);
+  +                 (collected_text, api_error) = fatal_handoff(fatal_text, error_msg);
+                    break;
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (6 → 5 lines)
+                    // Day 192: same rule as the text path — the resample path
+                    // `continue`s above, so only the terminal failure carries its
+                    // already-produced answer out to the caller.
+  -                 collected_text = fatal_text;
+  -                 api_error = Some(error_msg);
+  +                 (collected_text, api_error) = fatal_handoff(fatal_text, error_msg);
+                    break;
+ ✓ (13.7s)
+                    // Day 192: same rule as the text path — the resample path
+                    // `continue`s above, so only the terminal failure carries its
+                    // already-produced answer out to the caller.
+  -                 collected_text = fatal_text;
+  -                 api_error = Some(error_msg);
+  +                 (collected_text, api_error) = fatal_handoff(fatal_text, error_msg);
+                    break;
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "collected_text = fatal_… ✓ (2ms)
+  3 tools completed in 35.6s (3 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1384,1396p src/prompt.rs ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1382..1396 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (6 → 5 lines)
+                            // Day 192: keep whatever the dead turn produced. The
+                            // error still surfaces below — this adds text, it does
+                            // not soften the failure.
+  -                         collected_text = fatal_text;
+  -                         api_error = Some(retry_err);
+  +                         (collected_text, api_error) = fatal_handoff(fatal_text, retry_err);
+                        }
+ ✓ (13.7s)
+                            // Day 192: keep whatever the dead turn produced. The
+                            // error still surfaces below — this adds text, it does
+                            // not soften the failure.
+  -                         collected_text = fatal_text;
+  -                         api_error = Some(retry_err);
+  +                         (collected_text, api_error) = fatal_handoff(fatal_text, retry_err);
+                        }
+  3 tools completed in 20.8s (3 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.17 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `build_outcome` is never used[0m
+   [1m[94m--> [0msrc/prompt.rs:221:4
+    [1m[94m|[0m
+[1m[94m221[0m [1m[94m|[0m fn build_outcome(
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wiring build_outcome at both construction sites:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "    PromptOutcome {" sr… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (49 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.7s)
+  3 tools completed in 22.1s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+

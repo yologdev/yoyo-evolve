@@ -1,0 +1,42 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "FatalError" src/ --inc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu… ✓ (11ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.1s (2 ✓)
+
+Diff touches only src/prompt.rs + tests/module_size.rs. Two things to verify: (a) the #848 trap — does the default output path actually render the recovered text, and (b) CLAUDE.md doc sync.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "==…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "last_api_error" src/mai… ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 335,360p src/main.rs && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "fatal_handoff\|FatalErr… ✓ (4ms)
+ ✓ (6ms)
+  4 tools completed in 8.7s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough evidence. Key findings:
+
+Code half — correct. FatalError gained collected_text; every match arm updated in the same diff (construction at :1010, both loops' terminal arms at :1397/:1723, the nested retry arm at :1381; the pre-existing test arms at :2783/:2809/:2868 use .. so they still compile). fatal_handoff and build_outcome each have consumers in this diff. Scope held to FatalError only. Three emission-point tests including both near-miss guards. Register line moved 3561 → 3787.
+
+Doc half — missing. git show --stat HEAD and git status --porcelain confirm the commit contains only src/prompt.rs + tests/module_size.rs, and grep -c "fatal_handoff\|carry the text on the FatalError" CLAUDE.md returns 0. The task explicitly required updating the prompt.rs bullet, and behavior did change — PromptOutcome.text is now populated on the fatal branch, which flows into build_json_output's response, so --output-format json now emits partial text beside is_error: true. CLAUDE.md's prompt.rs bullet still asserts the fatal path "surfaces as PromptResult::FatalError → PromptOutcome.last_api_error" with no mention of text — a now-incomplete claim in the file re-injected as authoritative context every session, which is the exact stale-claim shape that same file documents having cost two payments on #864.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (53.7s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+The implementation itself is good work: the enum widening is complete (all four match sites updated in the same edit, no dangling definitions), the scope stayed on FatalError exactly as instructed with the two siblings left alone, the error is carried verbatim, and the test set includes both required near-miss guards with the Day-191 caveat about guard B's absence-assertion honestly written into its own doc comment.
+
+The failure is narrow and mechanical: the task named a CLAUDE.md update as a deliverable, behavior changed in a way a caller can observe (--output-format json's response now carries partial text alongside `is_error: true), and the commit contains no doc change. CLAUDE.md's prompt.rs bullet still says the fatal path surfaces to last_api_error` and nothing else — which is now an incomplete authoritative claim in the one file re-injected every session. That is the same doc-staleness shape the file itself records having paid for twice on #864, and it is cheap to fix in a follow-up pass: the code needs no change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

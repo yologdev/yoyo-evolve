@@ -1,0 +1,259 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two defects in src/hooks.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/hooks.rs src/agent_bui…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "BUILTIN_TOOL_NAMES" src… ✓ (6ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+BUILTIN_TOOL_NAMES is already pub(crate) — so no agent_builder.rs edit is needed. Let me confirm and read the timeout branch.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '30,60p' src/agent_builde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_command" -A 75 s… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.3s (2 ✓)
+
+Both defects confirmed. Note: BUILTIN_TOOL_NAMES is already pub(crate) — the task's predicted agent_builder.rs edit is unnecessary. Checking the remaining unknowns:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn closest_match" -B4 -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/hooks.rs && e… ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+No changes yet — starting implementation. Let me see the insertion point for the pure function.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '462,482p' src/hooks.rs ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the pure decision function (defect 1):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (1 → 71 lines)
+  + /// Edit-distance budget for suggesting a builtin whose name a hook key may have
+  + /// mistyped. Deliberately **tight**: this is a judgment threshold, not a
+  + /// measurement, and a confidently wrong suggestion in an advisory warning is
+  + /// worse than none. Ordinary typos (`bahs` -> `bash`) sit at 1-2; anything
+  + /// further away is more likely a genuine MCP tool name than a slip.
+  + const NEAREST_BUILTIN_MAX_DISTANCE: usize = 2;
+  + 
+  + /// Pure: the builtin a hook's `tool_pattern` most plausibly meant, or `None`.
+  + ///
+  + /// Two rules, in order, because neither alone covers the shapes that occur.
+  + /// 1. A **dropped suffix** (`write` for `write_file`) is the shape #892 was
+  + ///    filed on, and edit distance cannot see it — `write` -> `write_file` is
+  + ///    five insertions, a budget loose enough to suggest nonsense for unrelated
+  + ///    names. The prefix form is unambiguous, so it is checked first.
+  + /// 2. Otherwise a **tight** edit distance for ordinary typos, reusing
+  + ///    [`crate::commands::closest_match`] rather than growing a second distance
+  + ///    function (the `significant_braces` precedent: two copies of a rule agree
+  + ///    the day they are written and diverge forever after).
+  + ///
+  + /// Only ever called for a pattern that is *not* in `known`, so `closest_match`'s
+  ... (51 more lines)
+ ✓ (13.7s)
+  + /// Edit-distance budget for suggesting a builtin whose name a hook key may have
+  + /// mistyped. Deliberately **tight**: this is a judgment threshold, not a
+  + /// measurement, and a confidently wrong suggestion in an advisory warning is
+  + /// worse than none. Ordinary typos (`bahs` -> `bash`) sit at 1-2; anything
+  + /// further away is more likely a genuine MCP tool name than a slip.
+  + const NEAREST_BUILTIN_MAX_DISTANCE: usize = 2;
+  + 
+  + /// Pure: the builtin a hook's `tool_pattern` most plausibly meant, or `None`.
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy caught exactly the "definition without its consumer" rule — wiring the call site now, plus defect 2.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (3 → 18 lines)
+            if tool_pattern.is_empty() || value.is_empty() {
+                continue; // Skip empty patterns or commands
+  +         }
+  + 
+  +         // #892: a key naming a tool that does not exist parses fine and can
+  +         // never match, so say so. WARN, never refuse — an MCP-provided tool is
+  +         // a legitimate target whose name cannot be known here. The decision is
+  +         // pure and table-tested; only the two global reads live at this call
+  +         // site (the `rtk_announcement` shape).
+  +         if let Some(warning) = unknown_hook_tool_warning(
+  +             tool_pattern,
+  +             crate::agent_builder::BUILTIN_TOOL_NAMES,
+  +             crate::format::is_plain_output(),
+  +         ) {
+  +             if !crate::format::is_quiet() {
+  +                 eprintln!("{warning}");
+  +             }
+            }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (4 → 12 lines)
+                        if start.elapsed() >= timeout {
+                            let _ = child.kill();
+  +                         // Reap it (#892). Without this the child stays a zombie
+  +                         // until yoyo exits, so a hook that reliably hangs leaks
+  +                         // one PID per tool call for the whole session. `wait()`
+  +                         // after a successful `kill()` returns promptly because
+  +                         // SIGKILL is uncatchable, and both results stay
+  +                         // discarded: the error being returned is the TIMEOUT,
+  +                         // not the reap.
+  +                         let _ = child.wait();
+                            return Err(format!("Hook '{}' timed out after 5 seconds", self.name));
+                        }
+ ✓ (13.8s)
+            if tool_pattern.is_empty() || value.is_empty() {
+                continue; // Skip empty patterns or commands
+  +         }
+  + 
+  +         // #892: a key naming a tool that does not exist parses fine and can
+  +         // never match, so say so. WARN, never refuse — an MCP-provided tool is
+  +         // a legitimate target whose name cannot be known here. The decision is
+  +         // pure and table-tested; only the two global reads live at this call
+  ... (10 more lines)
+ ✓ (27.5s)
+                        if start.elapsed() >= timeout {
+                            let _ = child.kill();
+  +                         // Reap it (#892). Without this the child stays a zombie
+  +                         // until yoyo exits, so a hook that reliably hangs leaks
+  +                         // one PID per tool call for the whole session. `wait()`
+  +                         // after a successful `kill()` returns promptly because
+  +                         // SIGKILL is uncatchable, and both results stay
+  +                         // discarded: the error being returned is the TIMEOUT,
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 30.2s (2 ✓)
+
+Both auto-checks raced on the same stale state. Verifying the edits actually landed:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unknown_hook_tool_warni… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The call site was lost — two edit_file calls in one parallel block raced on the same file (my own archive's serial-writes lesson, applied to edits). Re-applying serially:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '575,590p' src/hooks.rs ✓ (2ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed missing. Re-applying the call site alone:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (5 → 20 lines)
+            if tool_pattern.is_empty() || value.is_empty() {
+                continue; // Skip empty patterns or commands
+  +         }
+  + 
+  +         // #892: a key naming a tool that does not exist parses fine and can
+  +         // never match, so say so. WARN, never refuse — an MCP-provided tool is
+  +         // a legitimate target whose name cannot be known here. The decision is
+  +         // pure and table-tested; only the two global reads live at this call
+  +         // site (the `rtk_announcement` shape).
+  +         if let Some(warning) = unknown_hook_tool_warning(
+  +             tool_pattern,
+  +             crate::agent_builder::BUILTIN_TOOL_NAMES,
+  +             crate::format::is_plain_output(),
+  +         ) {
+  +             if !crate::format::is_quiet() {
+  +                 eprintln!("{warning}");
+  +             }
+            }
+    
+            let phase_str = match phase {
+ ✓ (1m 43s)
+            if tool_pattern.is_empty() || value.is_empty() {
+                continue; // Skip empty patterns or commands
+  +         }
+  + 
+  +         // #892: a key naming a tool that does not exist parses fine and can
+  +         // never match, so say so. WARN, never refuse — an MCP-provided tool is
+  +         // a legitimate target whose name cannot be known here. The decision is
+  +         // pure and table-tested; only the two global reads live at this call
+  ... (12 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests. Let me find the end of the test module:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/hooks.rs && echo "=… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "include_str!" src/hooks… ✓ (4ms)
+  2 tools completed in 5.7s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now appending all tests:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (10 → 152 lines)
+                got.contains("3 chars elided"),
+                "the count must be measured over the ESCAPED string, got tail: {}",
+                &got[got.len().saturating_sub(80)..]
+  +         );
+  +     }
+  + 
+  +     // --- #892 defect 1: an unreachable hook key is now audible ----------------
+  + 
+  +     /// ANTI-VACUOUS, and asserted FIRST: a warner that fires on nothing and a
+  +     /// warner that fires on everything are the same bug wearing opposite signs.
+  +     /// So pin that the vocabulary is non-empty and that a genuinely unknown
+  +     /// pattern really does produce a warning, before asserting any silence.
+  +     #[test]
+  +     fn unknown_hook_tool_warning_is_anti_vacuous() {
+  +         let known = crate::agent_builder::BUILTIN_TOOL_NAMES;
+  +         assert!(
+  +             !known.is_empty(),
+  +             "BUILTIN_TOOL_NAMES is empty, so every silence below would be vacuous"
+  +         );
+  +         assert!(
+  ... (128 more lines)
+ ✓ (1m 44s)
+                got.contains("3 chars elided"),
+                "the count must be measured over the ESCAPED string, got tail: {}",
+                &got[got.len().saturating_sub(80)..]
+  +         );
+  +     }
+  + 
+  +     // --- #892 defect 1: an unreachable hook key is now audible ----------------
+  + 
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test hooks 2>&1 | tail -25 ✓ (24.5s)
+  3 tools completed in 2m 28s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo hooks:: 2>… ✓ (275ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 49 pass. Now the positive control — both directions, serially, since a None-asserting guard cannot fail under a None-neutering:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^fn unknown_hook_tool_w… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/hooks… (10 lines) ✓ (23.1s)
+  2 tools completed in 27.5s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

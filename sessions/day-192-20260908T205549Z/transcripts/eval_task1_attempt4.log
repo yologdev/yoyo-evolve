@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the committed diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "FatalError" src/prompt.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "FatalError" src/ --inc… ✓ (5ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1690,1780p' src/prompt.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fatal_handoff\|build_ou… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn emit_output" -A 45 s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo fatal_text… ✓ (3ms)
+ ✓ (138ms)
+  6 tools completed in 16.4s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All evidence gathered. Writing the verdict.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 6s)
+
+Verdict written to session_plan/eval_task_1.md.
+
+PASS.
+
+What I verified:
+
+• **The fix itself** — `PromptResult::FatalError` gained `collected_text`, populated at the single construction site in `into_result` (`src/prompt.rs:1010`). All three fatal arms — text loop terminal (1436), text loop nested-retry (1392), content loop terminal (1755) — route through one fatal_handoff helper, so the rule has one statement rather than three copies. error_msg is passed through verbatim as Some(...); nothing swallows, rewords or downgrades it.
+• **Scope held** — `ContextOverflow` at ~1707 still does the old `api_error = Some(error_msg); break;`, and `RetriableError` is untouched. Both siblings are named in CLAUDE.md as out-of-scope, with ContextOverflow explicitly recorded as untraced rather than assumed clean.
+• **No dangling definitions** — `grep -rn "FatalError" src/` outside `prompt.rs` returns nothing (the enum is module-private), so every match site is in-file and all are updated. Both new functions have production consumers in the same diff: fatal_handoff ×3, build_outcome ×2.
+• Tests — ran the new module directly: 3 passed, including the byte-identical successful-run guard, which is the entire regression surface.
+• **The #848 trap — read `emit_output` at `src/main.rs:254-286`: `response.text` is consumed by `print_mode`'s `print!`, by `build_json_output`, and** by `write_output_file` for `--output`. So the recovered text reaches every output mode and `src/main.rs` correctly needed no edit — not a json-only fix.
+• **Housekeeping** — `tests/module_size.rs` register moved 3561 → 3787 rather than absorbing the drift; CLAUDE.md's `prompt.rs` bullet carries the Day-192 paragraph with the stated limit.
+
+One observation worth passing on rather than failing over: guard B (a_fatal_turn_that_produced_nothing_still_yields_empty_text) asserts absence, so a dead branch produces it too — the diff's own doc comment already says this and counts it as a boundary pin rather than evidence the pass-through works. That's the honest framing, and guard A is what actually carries the regression claim.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
