@@ -1,0 +1,288 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the existing format_cache_stats and its tests, so I know exactly what I'm extending.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_cache_stats\|cac…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/cost.rs && grep… ✓ (7ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:355..410  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_cache_stats\|cac… ✓ (1ms)
+ ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:2010..2195 ✓ (1ms)
+  5 tools completed in 6.3s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've read the function and its tests; no edits yet. Acting now — the pure decision half first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---B… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree. Adding the pure decision half beside format_cache_stats:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (13 → 92 lines)
+        }
+        let rate = usage.cache_hit_rate();
+        let pct = (rate * 100.0) as u32;
+  -     Some(format!(
+  +     let mut line = format!(
+            "Cache: {}% hit rate ({} read, {} written)",
+            pct,
+            format_token_count(usage.cache_read),
+            format_token_count(usage.cache_write),
+  -     ))
+  +     );
+  +     // Emitted at the chokepoint so BOTH doors (`/tokens` -> `handle_tokens`,
+  +     // `/cost` -> `handle_cost`) inherit it with zero caller edits. Wiring one
+  +     // and not the other is the "two doors, one policy, one deaf" shape this
+  +     // repo has shipped nine times.
+  +     //
+  +     // `rate` is the value already read from upstream above — deliberately NOT
+  +     // re-derived, so the denominator keeps exactly one statement
+  +     // (`yoagent::Usage::cache_hit_rate`) and the three guards protecting that
+  +     // contract stay meaningful.
+  ... (71 more lines)
+ ✓ (2m 17s)
+        }
+        let rate = usage.cache_hit_rate();
+        let pct = (rate * 100.0) as u32;
+  -     Some(format!(
+  +     let mut line = format!(
+            "Cache: {}% hit rate ({} read, {} written)",
+            pct,
+            format_token_count(usage.cache_read),
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The CANDIDATES const is dead weight — concat! needs literals. Fixing that so the candidate sentence still has exactly one statement:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (23 → 28 lines)
+    fn cache_prefix_note(cache_read: u64, cache_write: u64, hit_rate: f64) -> Option<&'static str> {
+  -     const CANDIDATES: &str = "Check for a changed system prompt, a changed tool set, \
+  -                               or an idle gap past the provider's cache TTL; \
+  -                               these counters cannot tell which.";
+  +     // One statement of the candidate sentence, shared by both arms. It is a
+  +     // macro rather than a `const` because `concat!` takes literals, and two
+  +     // hand-copied copies of the same sentence agree the day they are written
+  +     // and diverge forever after.
+  +     macro_rules! candidates {
+  +         () => {
+  +             "Check for a changed system prompt, a changed tool set, \
+  +              or an idle gap past the provider's cache TTL; \
+  +              these counters cannot tell which."
+  +         };
+  +     }
+    
+        if cache_write > 0 && cache_read == 0 {
+            Some(concat!(
+  -             "The cache was written but never read this session, so every turn started a fresh prefix. ",
+  -             "Check for a changed system prompt, a changed tool set, ",
+  ... (16 more lines)
+ ✗ (3ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs.
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The edit failed because I omitted the let _ = CANDIDATES; line. Retrying with the exact text:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (24 → 28 lines)
+    fn cache_prefix_note(cache_read: u64, cache_write: u64, hit_rate: f64) -> Option<&'static str> {
+  -     const CANDIDATES: &str = "Check for a changed system prompt, a changed tool set, \
+  -                               or an idle gap past the provider's cache TTL; \
+  -                               these counters cannot tell which.";
+  +     // One statement of the candidate sentence, shared by both arms. It is a
+  +     // macro rather than a `const` because `concat!` takes literals, and two
+  +     // hand-copied copies of the same sentence agree the day they are written
+  +     // and diverge forever after.
+  +     macro_rules! candidates {
+  +         () => {
+  +             "Check for a changed system prompt, a changed tool set, \
+  +              or an idle gap past the provider's cache TTL; \
+  +              these counters cannot tell which."
+  +         };
+  +     }
+    
+        if cache_write > 0 && cache_read == 0 {
+            Some(concat!(
+  -             "The cache was written but never read this session, so every turn started a fresh prefix. ",
+  -             "Check for a changed system prompt, a changed tool set, ",
+  ... (19 more lines)
+ ✓ (2m 17s)
+    fn cache_prefix_note(cache_read: u64, cache_write: u64, hit_rate: f64) -> Option<&'static str> {
+  -     const CANDIDATES: &str = "Check for a changed system prompt, a changed tool set, \
+  -                               or an idle gap past the provider's cache TTL; \
+  -                               these counters cannot tell which.";
+  +     // One statement of the candidate sentence, shared by both arms. It is a
+  +     // macro rather than a `const` because `concat!` takes literals, and two
+  +     // hand-copied copies of the same sentence agree the day they are written
+  +     // and diverge forever after.
+  ... (13 more lines)
+
+Now the tests. Adding the table test, near-miss guards, and glyph guard beside the existing cache tests:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (14 → 28 lines)
+            // cache_hit_rate = 0 / (50k + 0 + 12k) = 0%
+            assert!(result.contains("0%"), "got: {result}");
+            assert!(result.contains("12.0k written"));
+  + 
+  +         // Day 192: this state now also carries the prefix note (rule 1 fires —
+  +         // written, never read). The output genuinely changed here, so the test
+  +         // is STRENGTHENED to assert the whole new string rather than weakened
+  +         // to tolerate it.
+  +         assert_eq!(
+  +             result,
+  +             "Cache: 0% hit rate (0 read, 12.0k written) \
+  +              The cache was written but never read this session, \
+  +              so every turn started a fresh prefix. \
+  +              Check for a changed system prompt, a changed tool set, \
+  +              or an idle gap past the provider's cache TTL; \
+  +              these counters cannot tell which."
+  +         );
+        }
+ ✓ (2m 19s)
+            // cache_hit_rate = 0 / (50k + 0 + 12k) = 0%
+            assert!(result.contains("0%"), "got: {result}");
+            assert!(result.contains("12.0k written"));
+  + 
+  +         // Day 192: this state now also carries the prefix note (rule 1 fires —
+  +         // written, never read). The output genuinely changed here, so the test
+  +         // is STRENGTHENED to assert the whole new string rather than weakened
+  +         // to tolerate it.
+  ... (10 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the new test block, anchored after the upstream-contract guards:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (2 → 153 lines)
+  +         assert_eq!(format_cache_stats(&no_cache), None);
+  +     }
+  + 
+  +     /// Table over the pure decision half, both directions.
+  +     ///
+  +     /// The near-miss rows are the half that matters: a discriminator tested
+  +     /// only where it fires is vacuous green, and this one's whole job is to
+  +     /// stay silent on a healthy session. The boundary is pinned on **both**
+  +     /// sides — exactly at `LOW_CACHE_HIT_FRACTION` must NOT fire (the
+  +     /// comparison is strict `<`), one step below must.
+  +     #[test]
+  +     fn cache_prefix_note_fires_only_on_what_the_counters_prove() {
+  +         // (cache_read, cache_write, hit_rate, should_fire, why)
+  +         let rows: &[(u64, u64, f64, bool, &str)] = &[
+  +             // Rule 1: written and never read.
+  +             (0, 12_000, 0.0, true, "written, never read"),
+  +             (0, 1, 0.0, true, "written once, never read"),
+  +             // Rule 2: reused, but barely.
+  +             (10_000, 90_000, 0.10, true, "low reuse"),
+  +             (1, 1, 0.499, true, "just below the threshold"),
+  ... (133 more lines)
+ ✓ (2m 17s)
+  +         assert_eq!(format_cache_stats(&no_cache), None);
+  +     }
+  + 
+  +     /// Table over the pure decision half, both directions.
+  +     ///
+  +     /// The near-miss rows are the half that matters: a discriminator tested
+  +     /// only where it fires is vacuous green, and this one's whole job is to
+  +     /// stay silent on a healthy session. The boundary is pinned on **both**
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me see the actual failure:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo cache 2>&1… ✓ (180ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 17 cache tests pass. Checking what else the auto-check caught:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (1m 32s)
+  2 tools completed in 1m 50s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Unit tests all green (5544). One integration suite failed — almost certainly the module-size gate. Let me read it:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (193ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate prints its own pasteable remedy. But per the standing rule I must run cargo fmt first — a format pass after reading makes a pasted number stale in the shrinking direction:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/format/co… ✓ (12.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+cargo fmt moved it 2787 → 2790 — exactly why the rule says format first. Pasting the gate's own printed line:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/format/cost.rs", 2539), // Day 183: +133 for the cache-ratio provenance guards (denominator pinned to upstream, NaN contract, emission-point tie + near-miss).
+  +     ("src/format/cost.rs", 2790), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+ ✓ (2m 15s)
+  -     ("src/format/cost.rs", 2539), // Day 183: +133 for the cache-ratio provenance guards (denominator pinned to upstream, NaN contract, emission-point tie + near-miss).
+  +     ("src/format/cost.rs", 2790), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (198ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate green, zero warnings. Now the positive control — one atomic mutate → run → restore, with the sabotage marked NEUTERED:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (13 lines) ✓ (27.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Filter gap: a_low_reuse_session_carries_the_clause_at_the_emission_point has no "cache" in its name, so it never ran. Re-running the control over the whole module — the width of the red is the scope of my claim:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (11 lines) ✓ (52.8s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control complete. Now the second control — the first one cannot falsify the byte-identity guard (a dead branch and a correct branch both render a healthy line identically). Testing whether that guard votes at all:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (11 lines) ✓ (53.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls read. Full verification:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 18s)
+  2 tools completed in 3m 20s (1 ✓, 1 ✗)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,253 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the restore surface to understand what I'm measuring.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restore\|Restore\|Resto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_fork.rs && gr… ✓ (7ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.0s (2 ✓)
+
+Note: commands_fork.rs is not in the module-size register. Let me read the actual restore path — the task file says "conversation," but the code says "files."
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '370,500p' src/commands_f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '590,640p' src/commands_f… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.7s (2 ✓)
+
+Key correction already: /checkpoint restores files, not conversations — the task file's premise names the wrong payload. Let me see the full handler and how measurable the emission point is.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '560,600p' src/commands_f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "handle_checkpoint" src… ✓ (5ms)
+ ✓ (9ms)
+  2 tools completed in 10ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up Step 0. I know the shape now; I need the measured strings, not my reading of them. Let me check the existing test setup and then probe all three inputs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '755,800p' src/commands_f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,760p' src/commands_f… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.8s (2 ✓)
+
+Tests use tempdirs with absolute paths — no cwd moves. Now the measurement. Let me probe all three inputs and print the actual emitted strings.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (68 lines) ✓ (27.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Measured. BRANCH B — all four probes are already correct. The rival's shape does not reproduce. Let me capture the exact arm before pinning it, and remove the probe.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git checkout src/commands_fork.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --limit 1 2>&1 | h… ✓ (9ms)
+ ✓ (146ms)
+  2 tools completed in 148ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Measurement recorded; probe removed. gh returns 401, so I cannot file the save-side finding — that will be stated plainly, not as "filed". Now the exact arm text I must reproduce byte-identically:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=606 && NR<=615 {printf … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exact arm captured. The emission point today is a println! with no function returning it — and (b)'s refusal structurally cannot reach format_restore_header, so the seam is what makes the pin possible, not a style preference. Adding it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_fork.rs (3 → 30 lines)
+  + /// Compose the whole reply `/checkpoint restore <name>` prints — header, per-file
+  + /// action lines, or the refusal — as one string ending in a newline.
+  + ///
+  + /// This is the **emission point**: the text a user actually receives. It exists as a
+  + /// function rather than as a `println!` in the dispatch arm because the refusal branch
+  + /// (`Err` from [`CheckpointStore::restore`]) never reaches [`format_restore_header`] at
+  + /// all, so no test of that renderer can ever cover a missing checkpoint. Composing both
+  + /// halves here is what makes all three states assertable in one statement.
+  + ///
+  + /// Measured Day 192 (step 0 of this task) and **unchanged by it** — this is a pure
+  + /// extraction of the text the dispatch arm already printed, byte for byte:
+  + /// a real payload reports success, a missing name refuses and names itself, and a
+  + /// checkpoint holding no files says so instead of claiming a restore.
+  + fn checkpoint_restore_reply(store: &CheckpointStore, name: &str) -> String {
+  +     match store.restore(name) {
+  +         Ok(outcome) => {
+  +             let mut out = format!("{}\n", format_restore_header(name, &outcome));
+  +             for a in &outcome.actions {
+  +                 out.push_str(a);
+  +                 out.push('\n');
+  ... (10 more lines)
+ ✓ (17.4s)
+  + /// Compose the whole reply `/checkpoint restore <name>` prints — header, per-file
+  + /// action lines, or the refusal — as one string ending in a newline.
+  + ///
+  + /// This is the **emission point**: the text a user actually receives. It exists as a
+  + /// function rather than as a `println!` in the dispatch arm because the refusal branch
+  + /// (`Err` from [`CheckpointStore::restore`]) never reaches [`format_restore_header`] at
+  + /// all, so no test of that renderer can ever cover a missing checkpoint. Composing both
+  + /// halves here is what makes all three states assertable in one statement.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — definition without its consumer. Wiring the arm in the same edit:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_fork.rs (10 → 2 lines)
+  -             match store.restore(arg) {
+  -                 Ok(outcome) => {
+  -                     println!("{}", format_restore_header(arg, &outcome));
+  -                     for a in &outcome.actions {
+  -                         println!("{a}");
+  -                     }
+  -                 }
+  -                 Err(e) => println!("{RED}{e}{RESET}"),
+  -             }
+  +             print!("{}", checkpoint_restore_reply(store, arg));
+            }
+ ✓ (2m 21s)
+  -             match store.restore(arg) {
+  -                 Ok(outcome) => {
+  -                     println!("{}", format_restore_header(arg, &outcome));
+  -                     for a in &outcome.actions {
+  -                         println!("{a}");
+  -                     }
+  -                 }
+  -                 Err(e) => println!("{RED}{e}{RESET}"),
+  ... (3 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Build wiring done. Now the pin — emission-point tests, anti-vacuous first, whole-value assert_eq!:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (110 lines) ✓ (46.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 6 green. Now the positive control — two mutations, run serially, each atomic mutate→run→restore with the NEUTERED marker so tests/neutered_guards.rs enforces the restore.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (13 lines) ✓ (28.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+2 red, 2 green — I need the names, not the count. Re-running both controls serially with explicit failure names:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && run_ctl () { (22 lines) ✓ (1m 23s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1: 2 red (both claims_nothing_*), (a) and (b) green. Control 2 showed (b) FAILED — but I need its exact count, not an inference. Measuring that plus the size gate:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (39.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 2: exactly 1 red. File is 1247 lines, under the cap and unlisted — no register entry owed. But I filtered to my own module, so I have not measured whether pre-existing tests redden — and per Day 190 the width of the red bounds the claim. Measuring that now:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for ctl in 1… (16 lines) ✓ (52.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That is the discriminating control, and it corrects my claim. Control 1 reddens a pre-existing renderer test too — so that mechanism was already covered. Control 2 reddens only my new test: the (b) refusal was genuinely uncovered. Running full checks:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✗ (2m 0s)
+    │ Command timed out after 120s
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Full suite needs more than 120s. Re-running with a proper timeout:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (2m 4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green — clippy clean, every test binary passes. Now the write-up:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`commands_fork.rs\`… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No commands_fork.rs bullet exists — adding one with the measured table:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 11 lines)
+  + - `commands_fork.rs` — `/fork` create/switch/list/delete/rename and the `/checkpoint` subsystem (`CheckpointStore`, `save`/`list`/`restore`/`diff`/`delete`, `RestoreOutcome`, `format_restore_header`). **Day 192 — `/checkpoint restore` was MEASURED against a transferred bug class and found already correct; the diff is the pin, not a fix.** Transferred class: a rival fixed `/rewind` reporting success when the backup files were missing and nothing was restored — the confident-wrong-**success*… [yoyo: 942 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  +   | input | measured emission | verdict |
+  +   |---|---|---|
+  +   | (a) checkpoint exists, real payload | `Restored checkpoint 'real' (1 restored):` + `  ✓ restored <path>`; file content genuinely back to `"original"` | reports success **and the payload landed** |
+  +   | (b) name does not exist | `Err("No checkpoint named 'nope'")` → printed in red | refuses, and names what was not found |
+  +   | (c1) exists, payload empty (empty `SessionChanges`) | `Checkpoint 'empty' holds no files — nothing to restore.` (dim) | **does not** report success |
+  +   | (c2) exists, payload empty because `save` could not read the file | `Checkpoint 'unreadable' holds no files — nothing to restore.` | **does not** report success |
+  + 
+  +   **So: BRANCH B — the rival's shape does not reproduce.** `format_restore_header` already carried three states, and the empty-payload branch is dim-and-honest rather than green. **What was missing is that this correctness was UNASSERTED — luck rather than a property**, in a way the existing tests structurally could not fix: coverage sat one layer below at `store.restore`, and at the renderer over a **hand-built** `RestoreOutcome::default()`, which never proves a real empty checkpoint *produ… [yoyo: 4014 more bytes elided — diff lines are capped at 500 bytes]
+    - `commands_stash.rs` — conversation stash subsystem:
+ ✓ (1m 51s)
+  + - `commands_fork.rs` — `/fork` create/switch/list/delete/rename and the `/checkpoint` subsystem (`CheckpointStore`, `save`/`list`/`restore`/`diff`/`delete`, `RestoreOutcome`, `format_restore_header`). **Day 192 — `/checkpoint restore` was MEASURED against a transferred bug class and found already correct; the diff is the pin, not a fix.** Transferred class: a rival fixed `/rewind` reporting success when the backup files were missing and nothing was restored — the confident-wrong-**success*… [yoyo: 942 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  +   | input | measured emission | verdict |
+  +   |---|---|---|
+  +   | (a) checkpoint exists, real payload | `Restored checkpoint 'real' (1 restored):` + `  ✓ restored <path>`; file content genuinely back to `"original"` | reports success **and the payload landed** |
+  +   | (b) name does not exist | `Err("No checkpoint named 'nope'")` → printed in red | refuses, and names what was not found |
+  +   | (c1) exists, payload empty (empty `SessionChanges`) | `Checkpoint 'empty' holds no files — nothing to restore.` (dim) | **does not** report success |
+  +   | (c2) exists, payload empty because `save` could not read the file | `Checkpoint 'unreadable' holds no files — nothing to restore.` | **does not** report success |
+  ... (3 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+CLAUDE.md bullet added. Final verification — check the neighbouring bullet survived intact, then commit:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "commands_stash.rs\` — c… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Stash bullet intact (1 match), 0 NEUTERED markers. The && chain stopped on grep's empty exit — finishing the checks:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt; git diff --stat; echo… ✓ (1.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+33 tests green, 1247 lines (under the 2000 cap, unlisted). Let me confirm the size gate printed no warnings before committing — a warning means a register line is owed:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (336ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

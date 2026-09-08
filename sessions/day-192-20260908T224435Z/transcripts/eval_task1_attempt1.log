@@ -1,0 +1,73 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff… ✓ (6ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.1s (2 ✓)
+
+The diff omits CLAUDE.md, which the task explicitly listed. Let me verify that and check the implementation.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- CLAUDE.md | h…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.6s (2 ✓)
+
+Implementation looks present. Let me verify the code correctness and the register number, then check the doc requirement.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '385,485p' src/format/cos…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/format/cost.rs" tes… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough evidence for a verdict. The implementation is correct and complete in code, but CLAUDE.md — explicitly listed in the task's Files: line and given its own Bookkeeping bullet — was not touched, while user-visible output genuinely changed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- CLAUDE.md in commit? -… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: the commit contains only 2 files; CLAUDE.md is absent.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines)
+  + Verdict: FAIL
+  + Reason: The code half is correct and complete, but CLAUDE.md was not touched at all despite being named in the task's Files: line and given its own Bookkeeping bullet, while `/cost` and `/tokens` output genuinely changed for low-hit-rate sessions. `git show --stat HEAD` lists exactly two files (src/format/cost.rs, tests/module_size.rs) and `grep -c "cache_prefix_note\|LOW_CACHE_HIT_FRACTION" CLAUDE.md` returns 0 — this is the same undocumented-payment shape CLAUDE.md's own #864 entry records a… [yoyo: 77 more bytes elided — diff lines are capped at 500 bytes]
+  + Checked: intent_alignment: PASS: Read the implementation at src/format/cost.rs:388-478. `cache_prefix_note(cache_read, cache_write, hit_rate) -> Option<&'static str>` has exactly the two firing rules asked for (write>0 && read==0; read>0 && write>0 && hit_rate < LOW_CACHE_HIT_FRACTION) and `None` otherwise; `hit_rate` is passed in from the caller's existing `usage.cache_hit_rate()` binding rather than re-derived, so the upstream denominator keeps one statement; the clause is appended inside `for… [yoyo: 414 more bytes elided — diff lines are capped at 500 bytes]
+  + Checked: forgotten_touchpoints: PASS: `cache_prefix_note` is defined and consumed in the same diff (the `if let Some(note)` block inside `format_cache_stats`); `LOW_CACHE_HIT_FRACTION` is read by the function and by two tests. No new enum variants, no renames, no signature changes, so no match arms or call sites are outstanding. The pre-existing 0%-hit-rate test was strengthened to the full new string rather than weakened, and the three upstream-contract guards are untouched.
+  + Checked: doc_sync: FAIL: Behavior changed on a user-visible surface (the rendered `/cost` and `/tokens` cache line now carries an appended clause) and no documentation was updated in the same commit. `git diff HEAD~1 -- CLAUDE.md` produced 0 lines and the src/format/cost.rs bullet still describes only the three-state rate rendering with no mention of the prefix clause, the judgment-threshold status of LOW_CACHE_HIT_FRACTION, or the states-facts-never-a-cause limit.
+  + Checked: product_surface: PASS: This is a Kind: product task, so the #448 opt-in rule for evolve-kind changes does not apply. The change is additive to output only — no config default, CLI flag, wizard step or startup behavior is touched — and the healthy-session path is byte-identical, pinned by a whole-string assert_eq! near-miss guard plus an assert_eq!(.., None) for the no-caching case.
+ ✓ (1m 32s)
+
+Verdict: FAIL — on doc_sync alone.
+
+What's right (and it's most of the task):
+• cache_prefix_note implements exactly the two firing rules plus None otherwise; the boundary is strict <, so the at-threshold row is correctly silent.
+• hit_rate is passed in from the caller's existing `usage.cache_hit_rate()` binding — not re-derived — so the upstream denominator keeps one statement and Day 183's three guards stay meaningful.
+• Emitted inside `format_cache_stats`, so both /tokens and /cost inherit it with zero edits to commands_info.rs — the "two doors, one policy, one deaf" shape is avoided.
+• Clause names system prompt / tool set / TTL and says "these counters cannot tell which"; ASCII, no em dash, no plain parameter.
+• The stated limit is in the doc comment, not only the write-up.
+• The pre-existing 0% test was strengthened to the full new string, not weakened.
+• Register entry 2790 matches wc -l exactly — pasted, not hand-typed.
+• `forgotten_touchpoints` is clean: the new function and const both have consumers in this same diff; no enum variants, no renames.
+
+What fails:
+
+CLAUDE.md is absent from the commit. git show --stat HEAD lists exactly two files, and grep -c "cache_prefix_note\|LOW_CACHE_HIT_FRACTION" CLAUDE.md returns 0. The task named it in its Files: line and gave it a dedicated Bookkeeping bullet ("the rule, the threshold's status as a judgment call, and the limit").
+
+This matters more than bookkeeping here because user-visible output genuinely changed — the /cost and /tokens cache line now carries an appended clause on low-reuse sessions — while the src/format/cost.rs bullet still describes only the three-state rate rendering. That is the exact shape CLAUDE.md's own #864 entry records at length: "the docs went stale by TWO payments, and the doc half is the half with no gate… `cargo test` cannot fail for a false sentence." Both structural gates went green on this diff precisely because neither reads prose; the evaluator is the reader that catches it, so I'm catching it.
+
+The remedy is small and mechanical: extend the existing src/format/cost.rs bullet with the two rules, the None-is-byte-identical regression surface, the judgment-threshold status of LOW_CACHE_HIT_FRACTION, and the states-facts-never-a-cause limit. The code needs no change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

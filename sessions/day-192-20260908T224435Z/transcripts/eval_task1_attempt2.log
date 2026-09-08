@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '380,500p' src/format/cos… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/cost.rs && git … ✓ (15ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 35s)
+  3 tools completed in 2m 15s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/eval_task_1.md ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The evaluation is complete. The verdict file is written at session_plan/eval_task_1.md.
+
+Verdict: PASS
+
+What I verified in the committed diff:
+
+• **The pure decision half exists as specified** — `cache_prefix_note(cache_read, cache_write, hit_rate) -> Option<&'static str>` with exactly two firing rules (written-never-read; live-cache-below-threshold) and None otherwise, with a strict < on the boundary.
+• **`hit_rate is passed in, not re-derived** — format_cache_stats computes rate once from usage.cache_hit_rate()` and hands it down, so the denominator keeps its single upstream statement and the three Day-183 contract guards stay meaningful. Those three guards are present at :2192, :2235, :2245 and untouched by the diff.
+• **Emitted at the chokepoint** — the clause is appended inside format_cache_stats itself, so /tokens and /cost both inherit it; src/commands_info.rs is not in the diff.
+• **Forgotten touchpoints clean** — every new definition (`cache_prefix_note`, `LOW_CACHE_HIT_FRACTION`, the local `candidates!` macro) has its consumer in the same diff; no enum variants, no renames, signature unchanged so no caller edits were owed.
+• **The pre-existing 0% test was strengthened, not weakened** — extended to a whole-string assert_eq! on the new output rather than relaxed to tolerate it.
+• **Register number is real, not hand-typed — `wc -l src/format/cost.rs` returns exactly 2790**, matching the pasted ("src/format/cost.rs", 2790) entry.
+• **Docs synced in the same commit** — CLAUDE.md's `format/cost.rs` bullet gained the Day 192 paragraph, including an explicit supersession of the Day-183 "nothing about production behaviour changed" sentence, which is now false since the rendered line changed on two states.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
