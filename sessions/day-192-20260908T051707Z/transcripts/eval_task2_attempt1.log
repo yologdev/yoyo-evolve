@@ -1,0 +1,47 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "project_trust_grants" s… ✓ (9ms)
+ ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | tail -8 &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe_mode\|safe-mode" s… ✓ (4ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "897" CLAUDE.md | head -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (3ms)
+ ✓ (6ms)
+  6 tools completed in 12.5s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "five\|5 doors\|fifth do…  ▶ $ cd /tmp && rm -rf gsk && mkdir -p gsk/.yoyo/skills/exfiltrate && cd gsk && print… ✓ (8ms)
+ ✓ (19ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.8s (2 ✓)
+
+The code half is complete and correct; the documentation half of the task was not done at all. Writing the verdict.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 27s)
+
+Verdict: FAIL (docs-only gap — the code is correct).
+
+What's right. The security half landed properly and matches the four sibling gates:
+
+• gate_project_skills(sources, project_local, trusted) refuses only the "project"-labelled source, only when the config is project-local and --trust-project was not passed. The three other (project_local, trusted) combinations and a list carrying no project source are asserted byte-identical with whole-vec assert_eq!, and refused must be None — that's the entire regression surface, tested in the direction that matters.
+• The direction rule is written at the function, not just in the commit message, and correctly distinguishes a skill body (model-facing instruction, refused like a hook per #820) from a declarative deny pattern (sorted per Day 166).
+• project_skill_refusal_message names every skill, states "Nothing was loaded", gives both hatches, routes names through sanitize_for_display (#873) with an anti-vacuous assertion that the fixture really carries an ESC byte, and drops marker and em dashes under plain.
+• Step 2 landed: project_trust_grants gained the .yoyo/skills/ row keyed on directory existence (mirroring goal_verify), and the near-miss guard still asserts this repo's own key set yields an empty list.
+• src/cli.rs register moved 6620 → 6945, so the module-size gate can't revert the task.
+
+Touchpoints are clean. project_trust_grants grew a third parameter and *every* call site landed in this diff — the one non-test caller at src/cli.rs:2204 plus all seven test sites, including the all-grants count bumped 4 → 5. SkillSourceDir gained the derives the new assert_eq! tests require. No orphaned definitions.
+
+Why it fails. git show --stat HEAD lists exactly three files. The task's own Documentation section named two more, and both matter:
+
+1. CLAUDE.md was not touched. Its cli.rs bullet still reads "recording a directory turns all **five** on there for every later session" — now false — and the parenthetical immediately after it warns that this exact count has already gone stale once. That file is re-injected as authoritative context every session; a wrong count there is the one doc error that forecloses the search that would refute it.
+2. **`docs/src/configuration/skills.md was not touched.** It documents .yoyo/skills/` auto-discovery (line 61) with zero mention of trust or either hatch — a page now describing the opposite of a shipped security control. A user whose project skills silently stop loading has no documented explanation.
+
+This is a user-visible default change (project skills now refused unless trusted), so it isn't a style nit. The remedy is small and code-free: update the CLAUDE.md bullet to six doors with the direction rule and the --safe-mode finding, and add a short trust section to the skills page.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

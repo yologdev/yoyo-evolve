@@ -1,0 +1,401 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the defect exists before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoyo/skills" src/cli.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_discovery_sources"… ✓ (4ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+Defect confirmed on all three probes. Now let me check --safe-mode and the call site.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe_mode\|safe-mode" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2230,2300p' src/cli.rs ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "safe_mode" src/ --incl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2400,2450p' src/cli.rs ✓ (4ms)
+ ✓ (12ms)
+  4 tools completed in 6.1s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '885,975p' src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "project_trust_grants" -… ✓ (6ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "should_prompt_for_trust… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 32.5s (3 ✓)
+
+Step 0 complete — defect confirmed, with one important nuance. Let me record it and look at a sibling gate's exact shape.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1290,1360p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/yoage… ✓ (4ms)
+ ✓ (149ms)
+  2 tools completed in 150ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A2 'name = "yoagent"' Carg… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn load_dir" -A 45 … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn load_skills_from_dir… ✓ (4ms)
+  3 tools completed in 4.6s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Enough reading — time to act. Let me see the two functions I must edit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '351,420p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "project_trust_grants("… ✓ (4ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.4s (2 ✓)
+
+Now I have the full picture. Writing the gate.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (6 → 7 lines)
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+    struct SkillSourceDir {
+        dir: std::path::PathBuf,
+        label: &'static str,
+ ✓ (2m 2s)
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+    struct SkillSourceDir {
+        dir: std::path::PathBuf,
+        label: &'static str,
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (3 → 127 lines)
+        sources
+  + }
+  + 
+  + /// The project-local skill source, as [`auto_discovery_sources`] labels it.
+  + ///
+  + /// The gate keys on this label rather than on the path string, because the path
+  + /// is a display detail while the label is the *provenance* claim — and
+  + /// provenance is the whole question the trust boundary asks.
+  + const PROJECT_SKILL_LABEL: &str = "project";
+  + 
+  + /// What [`gate_project_skills`] decided: the sources still worth reading, plus
+  + /// the project-local one if it was refused.
+  + struct SkillGateOutcome {
+  +     sources: Vec<SkillSourceDir>,
+  +     refused: Option<SkillSourceDir>,
+  + }
+  + 
+  + /// The sixth door on the project-config trust boundary (#897): a project-local
+  + /// `.yoyo/skills/` directory.
+  + ///
+  ... (107 more lines)
+ ✓ (19.0s)
+        sources
+  + }
+  + 
+  + /// The project-local skill source, as [`auto_discovery_sources`] labels it.
+  + ///
+  + /// The gate keys on this label rather than on the path string, because the path
+  + /// is a display detail while the label is the *provenance* claim — and
+  + /// provenance is the whole question the trust boundary asks.
+  ... (13 more lines)
+  2 tools completed in 2m 49s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — definitions without consumers. Wiring them into auto_discover_skills now.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (4 → 26 lines)
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        let xdg = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from);
+    
+  -     for source in auto_discovery_sources(home.as_deref(), xdg.as_deref()) {
+  +     // #897, the sixth trust door. A project-local `.yoyo/skills/` is model-facing
+  +     // instruction the *repository* authored, so it is gated exactly as project
+  +     // MCP servers (#748), `permissions.allow` (#749), shell hooks (#820),
+  +     // `.yoyo/goal_verify.md` (#761) and `notify_command` are. Placement is
+  +     // load-bearing: `parse_args` runs the one-time trust prompt before it reaches
+  +     // here, so a `y` typed at that question is honoured *this run* rather than
+  +     // arriving after the refusal it was meant to lift.
+  +     let gated = gate_project_skills(
+  +         auto_discovery_sources(home.as_deref(), xdg.as_deref()),
+  +         crate::config::loaded_config_is_project_local(),
+  +         is_trust_project(),
+  +     );
+  +     if let Some(refused) = &gated.refused {
+  +         // Only speak if there was something to refuse: an absent (or empty)
+  +         // `.yoyo/skills/` is the common case and must stay silent.
+  +         let names = project_skill_names_in(&refused.dir);
+  ... (7 more lines)
+ ✓ (2m 2s)
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        let xdg = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from);
+    
+  -     for source in auto_discovery_sources(home.as_deref(), xdg.as_deref()) {
+  +     // #897, the sixth trust door. A project-local `.yoyo/skills/` is model-facing
+  +     // instruction the *repository* authored, so it is gated exactly as project
+  +     // MCP servers (#748), `permissions.allow` (#749), shell hooks (#820),
+  +     // `.yoyo/goal_verify.md` (#761) and `notify_command` are. Placement is
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (178ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✗ (2m 0s)
+    │ Command timed out after 120s
+  3 tools completed in 4m 8s (2 ✓, 1 ✗)
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy passes. Let me now do Step 2 (the trust grant) before running the suite once.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2072,2090p' src/cli.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "project_trust_grants" -… ✓ (4ms)
+  2 tools completed in 3.4s (2 ✓)
+
+Now Step 2 — the trust grant, so a repo carrying only .yoyo/skills/ actually triggers the question.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (3 → 14 lines)
+        if goal_verify_exists {
+            grants.push(".yoyo/goal_verify.md (a shell command /goal check runs)");
+  +     }
+  + 
+  +     // #897, the sixth door. Keyed on the **directory existing**, not on a
+  +     // `.yoyo.toml` key, because skills are files rather than config entries —
+  +     // the same shape `goal_verify` already uses, which is the existing precedent
+  +     // for a grant that is a file. Without this a repo carrying *only*
+  +     // `.yoyo/skills/` produced an empty grant list, so `should_prompt_for_trust`
+  +     // returned false and the user was never asked at all — gate missing *and*
+  +     // prompt unable to fire, exactly the `notify_command` gap of Day 184.
+  +     if project_skills_exist {
+  +         grants.push(".yoyo/skills/ (instructions injected into the model's context)");
+        }
+ ✓ (23.6s)
+        if goal_verify_exists {
+            grants.push(".yoyo/goal_verify.md (a shell command /goal check runs)");
+  +     }
+  + 
+  +     // #897, the sixth door. Keyed on the **directory existing**, not on a
+  +     // `.yoyo.toml` key, because skills are files rather than config entries —
+  +     // the same shape `goal_verify` already uses, which is the existing precedent
+  +     // for a grant that is a file. Without this a repo carrying *only*
+  ... (6 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (4 → 5 lines)
+    pub(crate) fn project_trust_grants(
+        config_text: &str,
+        goal_verify_exists: bool,
+  +     project_skills_exist: bool,
+    ) -> Vec<&'static str> {
+ ✓ (30.4s)
+    pub(crate) fn project_trust_grants(
+        config_text: &str,
+        goal_verify_exists: bool,
+  +     project_skills_exist: bool,
+    ) -> Vec<&'static str> {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (4 → 5 lines)
+                let grants = crate::config_paths::project_trust_grants(
+                    &raw_config_content,
+                    std::path::Path::new(".yoyo/goal_verify.md").exists(),
+  +                 std::path::Path::new(".yoyo/skills").is_dir(),
+                );
+ ✓ (14.9s)
+                let grants = crate::config_paths::project_trust_grants(
+                    &raw_config_content,
+                    std::path::Path::new(".yoyo/goal_verify.md").exists(),
+  +                 std::path::Path::new(".yoyo/skills").is_dir(),
+                );
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '944,1015p' src/config_pa… ✓ (4ms)
+  3 tools completed in 51.2s (3 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.17 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0061][0m[1m: this function takes 3 arguments but 2 arguments were supplied[0m
+   [1m[94m--> [0msrc/config_paths.rs:950:13
+    [1m[94m|[0m
+[1m[94m950[0m [1m[94m|[0m             project_trust_grants("[mcp_servers.fs]\ncommand = \"npx\"\n", false),
+    [1m[94m|[0m             [1m[91m^^^^^^^^^^^^^^^^^^^^[0m[1m[94m------------------------------------------------[0m [1m[94margument #3 of type `bool` is missing[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/config_paths.rs:397:15
+    [1m[94m|[0m
+[1m[94m397[0m [1m[94m|[0m pub(crate) fn project_trust_grants(
+    [1m[94m|[0m               [1m[92m^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m400[0m [1m[94m|[0m     project_skills_exist: bool,
+    [1m[94m|[0m     [1m[94m--------------------------[0m
+[1m[96mhelp[0m: provide the argument
+    [1m[94m|[0m
+[1m[94m950[0m [1m[94m| [0m            project_trust_grants("[mcp_servers.fs]\ncommand = \"npx\"\n", false[92m, /* bool */[0m),
+    [1m[94m|[0m                                                                                [92m++++++++++++[0m
+
+[1m[91merror[E0061][0m[1m: this function takes 3 arguments but 2 arguments were supplied[0m
+   [1m[94m--> [0msrc/config_paths.rs:955:13
+    [1m[94m|[0m
+[1m[94m955[0m [1m[94m|[0m             project_trust_grants("mcp = [\"some-server\"]\n", false),
+    [1m[94m|[0m             [1m[91m^^^^^^^^^^^^^^^^^^^^[0m[1m[94m------------------------------------[0m [1m[94margument #3 of type `bool` is missing[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/config_paths.rs:397:15
+    [1m[94m|[0m
+[1m[94m397[0m [1m[94m|[0m pub(crate) fn project_trust_grants(
+    [1m[94m|[0m               [1m[92m^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m400[0m [1m[94m|[...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Mechanical — the existing test call sites need the third argument. Let me update them and add the new rows in the same pass.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (32 → 40 lines)
+        fn test_project_trust_grants_detects_each_privilege_shape() {
+            // [mcp_servers.*] — an external process yoyo would start.
+            assert_eq!(
+  -             project_trust_grants("[mcp_servers.fs]\ncommand = \"npx\"\n", false),
+  +             project_trust_grants("[mcp_servers.fs]\ncommand = \"npx\"\n", false, false),
+                vec!["MCP servers (external processes yoyo would start)"]
+            );
+            // The other MCP shape: a top-level list.
+            assert_eq!(
+  -             project_trust_grants("mcp = [\"some-server\"]\n", false),
+  +             project_trust_grants("mcp = [\"some-server\"]\n", false, false),
+                vec!["MCP servers (external processes yoyo would start)"]
+            );
+            // Only the *granting* half of [permissions].
+            assert_eq!(
+  -             project_trust_grants("[permissions]\nallow = [\"curl *\"]\n", false),
+  +             project_trust_grants("[permissions]\nallow = [\"curl *\"]\n", false, false),
+                vec!["auto-approved bash commands (permissions.allow)"]
+            );
+            // Shell hooks, in both the dotted-key and section shapes.
+  ... (25 more lines)
+ ✓ (14.7s)
+        fn test_project_trust_grants_detects_each_privilege_shape() {
+            // [mcp_servers.*] — an external process yoyo would start.
+            assert_eq!(
+  -             project_trust_grants("[mcp_servers.fs]\ncommand = \"npx\"\n", false),
+  +             project_trust_grants("[mcp_servers.fs]\ncommand = \"npx\"\n", false, false),
+                vec!["MCP servers (external processes yoyo would start)"]
+            );
+            // The other MCP shape: a top-level list.
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (23 → 27 lines)
+            assert!(project_trust_grants(
+                "provider = \"anthropic\"\nmodel = \"claude-opus-4-6\"\nauto_watch = true\n\
+    continue_on_silence = true\nwait_for_reset = true\nquiet = true\n",
+  +             false,
+                false
+            )
+            .is_empty());
+    
+            // `permissions.deny` narrows yoyo rather than widening it — a repo may always
+            // confine yoyo further without being trusted, so it is not a grant.
+  -         assert!(project_trust_grants("[permissions]\ndeny = [\"rm *\"]\n", false).is_empty());
+  +         assert!(
+  +             project_trust_grants("[permissions]\ndeny = [\"rm *\"]\n", false, false).is_empty()
+  +         );
+    
+            // An empty config asks nothing.
+  -         assert!(project_trust_grants("", false).is_empty());
+  +         assert!(project_trust_grants("", false, false).is_empty());
+        }
+    
+  ... (10 more lines)
+ ✓ (2m 13s)
+            assert!(project_trust_grants(
+                "provider = \"anthropic\"\nmodel = \"claude-opus-4-6\"\nauto_watch = true\n\
+    continue_on_silence = true\nwait_for_reset = true\nquiet = true\n",
+  +             false,
+                false
+            )
+            .is_empty());
+    
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 44s (2 ✓)
+
+Compiles. Now the tests — the near-miss guards are the half that matters here.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn gate_project_notify_… ✓ (3ms)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The module-size gate fired, exactly as the task predicted. I'll add the tests first, then bump the register once with the final number.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (3 → 3 lines) ✓ (2m 12s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (3 → 177 lines)
+  +     // ---- #897: the sixth trust door — project-local .yoyo/skills/ ----
+  + 
+  +     /// Build a source list in the exact shape `auto_discovery_sources` returns.
+  +     fn skill_sources() -> Vec<SkillSourceDir> {
+  +         vec![
+  +             SkillSourceDir {
+  +                 dir: std::path::PathBuf::from("/xdg/yoyo/skills"),
+  +                 label: "installed",
+  +                 display: "/xdg/yoyo/skills".to_string(),
+  +                 warn_target: "/xdg/yoyo/skills".to_string(),
+  +             },
+  +             SkillSourceDir {
+  +                 dir: std::path::PathBuf::from("/home/tester/.yoyo/skills"),
+  +                 label: "global",
+  +                 display: "~/.yoyo/skills/".to_string(),
+  +                 warn_target: "/home/tester/.yoyo/skills".to_string(),
+  +             },
+  +             SkillSourceDir {
+  +                 dir: std::path::PathBuf::from(".yoyo/skills"),
+  +                 label: "project",
+  ... (157 more lines)
+ ✓ (2m 13s)
+  +     // ---- #897: the sixth trust door — project-local .yoyo/skills/ ----
+  + 
+  +     /// Build a source list in the exact shape `auto_discovery_sources` returns.
+  +     fn skill_sources() -> Vec<SkillSourceDir> {
+  +         vec![
+  +             SkillSourceDir {
+  +                 dir: std::path::PathBuf::from("/xdg/yoyo/skills"),
+  +                 label: "installed",
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.9s)
+  3 tools completed in 5m 17s (3 ✓)
+
+  ✗ Attempt 2 failed, retrying...
+  → Auto-fixing (attempt 3/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 3 — the register. Let me paste the exact line the gate prints rather than hand-typing it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (210ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/cli.rs"' tests/mod… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/cli.rs", 6620),
+  +     ("src/cli.rs", 6945),
+ ✓ (1m 28s)
+  -     ("src/cli.rs", 6620),
+  +     ("src/cli.rs", 6945),
+  3 tools completed in 1m 33s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 3)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

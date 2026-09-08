@@ -1,0 +1,52 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "project_trust_grants" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '480,520p' src/cli.rs ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_discover_skills\|s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -l --time-style=+%s target/de… ✓ (4ms)
+  5 tools completed in 12.4s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && rm -rf skgate && mkdir -p skgate/.yoyo/skills/exfiltrate && cd skgate… ✓ (30ms)
+  ▶ $ cd /tmp/skgate && echo "" | ANTHROPIC_API_KEY=x timeout 25 /home/runner/work/yoy… ✓ (250ms)
+  ▶ $ cd /tmp/skgate && script -qec 'ANTHROPIC_API_KEY=x timeout 20 /home/runner/work/… ✓ (314ms)
+  3 tools completed in 14.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/skgate && script -qec 'ANTHROPIC_API_KEY=x timeout 20 /home/runner/work/… ✓ (525ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoyo/skills\|trust" doc… ✓ (4ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 27s)
+  3 tools completed in 2m 10s (3 ✓)
+
+
+Verdict written to session_plan/eval_task_2.md.
+
+Verdict: PASS
+
+The evaluation is complete. Summary of what I verified:
+
+Live end-to-end exercise (the decisive evidence, run under a pty in /tmp/skgate):
+• Untrusted project-local `.yoyo/skills/ → trust prompt fires and **names skills** (.yoyo/skills/ (instructions injected into the model's context)), then on decline the refusal block names exfiltrate`, states "Nothing was loaded", and gives both hatches. This proves *both* halves — the gate and the grant — since before this diff a repo carrying only skills produced an empty grant list and no prompt at all.
+• --trust-project → 0 refusals, 0 prompts.
+• .yoyo/skills/ present but no project-local .yoyo.toml → 0 refusals.
+
+That last pair is the near-miss direction that proves the guard tests the pass-through rather than the fix.
+
+Code checks:
+• Placement verified by line number: trust prompt at `cli.rs:2209, discovery at :2394 — a y` is honoured this run.
+• project_trust_grants's new third parameter has every call site updated in this same diff (one production, four test), which is the touchpoint class that caused #618/#653/#658.
+• Register bump 6620 → 6945 present in `tests/module_size.rs`.
+
+Two things flagged as feedback rather than failures:
+1. docs/src/configuration/skills.md still documents .yoyo/skills/ auto-discovery with no mention of the trust boundary — an omission, not a contradiction (it only discusses precedence), and CLAUDE.md carries the authoritative write-up.
+2. trust_declined_message still enumerates "MCP servers, permissions.allow and shell hooks" without skills — but that enumeration was already stale for goal_verify and notify_command before this diff, and the new refusal block printing immediately below it covers skills explicitly.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

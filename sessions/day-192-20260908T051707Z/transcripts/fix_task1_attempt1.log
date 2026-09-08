@@ -1,0 +1,142 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by confirming the current state — what landed, what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed both failures. Let me verify the premise and inspect what landed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (10 lines) ✓ (93ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Premise holds: 4 UNEARNED rows, --test passes. Now let me inspect the pairing code that landed.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^PAIR_COULD_NOT_CHECK/,… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"… ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, no pairings file, clone shallow at 51. Now Step 2 — deepen with the tool that owns the flag, then run the pairing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 550 python3 scripts/coun… ✓ (4.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Deepen took (51 → 5599, shallow=no). Now the pairing run with --record.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 500 python3 scripts/chec… ✓ (210ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Pairing landed. Let me verify the record file and the fold-and-skip behaviour.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== FI… (8 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+4 rows, all 14 keys. Now verify the fold-and-skip (a re-run must not duplicate).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && md5sum dreams/assertion_pairings… ✓ (78ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Fold-and-skip confirmed — byte-identical file, 0 re-paired. Now the verification gates.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (131ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All gates green, no pairing output leaking into the existing path. Now the documentation half — the one the evaluator flagged. Let me locate the anchor.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "milestone section that … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Line 456 is the section's tail — and it carries a prediction this task discharges. Appending there.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '456p' CLAUDE.md | tail -… ✓ (4ms)
+  ▶ edit CLAUDE.md (1 → 17 lines)
+    no ledger row was written, `scripts/counterfactual_green.py` is unmodified, and `DREAM.md` was not edited — a milestone section that moves without data is the over-claim this whole instrument refuses.
+  + 
+  + **Day 192 — `--pair-verdicts`: the paired column, and the prediction one paragraph up is DISCHARGED rather than still pending.** **Superseded clause, recorded rather than erased:** the sentence immediately above says the column *"belongs in a separate pairing file keyed by sha, **e.g.** `dreams/assertion_pairings.jsonl`"* — that was a design note about a file that did not exist, and it is now the shipped path with 4 rows in it. The reasoning survives intact and is the reason the file is sepa… [yoyo: 312 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The mode lives in THIS file, and the reason is written at the function so nobody relocates it later:** this script *owns* the classifier (`classify_assertion_change`, `reconcile_moved_tests`, `scan_diff`), so putting the join here leaves the classification rule with exactly **one statement**. Reading the verdict ledger from here is a **data read** (`sha`, `verdict`, `splice_depth`, `day`) — and data cannot drift the way a duplicated rule does. Re-deriving the classifier inside a third joiner… [yoyo: 483 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Four pairing values, and the fold is the whole risk of the mode, because DREAM.md names only TWO cells while the classifier produces more states than that — the cells it does not name are exactly where a quiet collapse would hide.** The decision half is the pure, table-tested `classify_pairing(weakened, strengthened, moved, unknown, scan_ok)`, with precedence running in opposite directions at each step: **`PAIR_COULD_NOT_CHECK`** (`not scan_ok`) outranks everything, because there is no diff … [yoyo: 2388 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The result, dated 2026-09-08, per depth and NEVER pooled** — the two depths were read against different counterfactual trees, so a pooled count answers a question nobody asked (it appears only as a parenthetical, explicitly labelled). Deepened first with the tool that owns the flag (`--census --deepen 6000` → `TOOK: 51 -> 5599 commits reachable`, `shallow=no`): **4 rows paired, 0 refusals.** Depth **`tests`** — 2 rows: `PAIR_SIGNAL` **0**, `PAIR_INNOCENT_BY_MECHANISM` **2**, `PAIR_NO_ASS… [yoyo: 555 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Zero `PAIR_SIGNAL` — pre-registered, and it must NOT be talked up into "my greens are earned".** n=4, **every one of the four is a commit I wrote**, the ruler is mine, and the whole point of DREAM.md's current spark is that this instrument's positive signal is dominated by my own conventions. Two of the four (`eba532c2167b`, `36534110a20d`) were hand-read as `WEAKENED 0` during assessment and the mode agrees with those hand-reads exactly, which is a consistency check on the join and **not** … [yoyo: 238 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Two pre-registered outcomes, and BOTH resolved against the more interesting alternative — stated plainly because each was the easiest thing to quietly round off.** (1) The task allowed for all four landing on `PAIR_NO_ASSERTION_EVIDENCE`, which would have meant *the pre-registered rule did not fire on live data at all*. **It did not happen**: all four landed on `PAIR_INNOCENT_BY_MECHANISM`, which **is** one of DREAM.md's two named cells, so the milestone's rule fired on every row it was give… [yoyo: 561 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The single strongest fact in the column is `1b502eacb937`, and it is about the INSTRUMENT rather than about the commit: `M=3, W=0`.** That is the Day-58 agent-builder extraction — the known move case — and Day 191 built the `MOVED` verdict precisely so this column's **first public statement** would not be a false accusation against it. Without that reconciliation those three hunks would have scored `WEAKENED`, the row would have been `PAIR_SIGNAL`, and the milestone's first published cell … [yoyo: 261 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The stated limit, and it bounds the whole result: this is a TALLY over 4 rows, not a rate.** `PAIR_SIGNAL = 0` is a statement about four commits of surviving history; `LIMITS` item 2 applies undiminished — `scripts/evolve.sh` reverts a failed task with `git reset --hard`, so weakening inside a **reverted** task is invisible forever, and the sessions most likely to contain the behaviour are exactly the ones whose evidence was destroyed. **`DREAM.md` was deliberately NOT edited** — this task… [yoyo: 539 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 16s)
+    no ledger row was written, `scripts/counterfactual_green.py` is unmodified, and `DREAM.md` was not edited — a milestone section that moves without data is the over-claim this whole instrument refuses.
+  + 
+  + **Day 192 — `--pair-verdicts`: the paired column, and the prediction one paragraph up is DISCHARGED rather than still pending.** **Superseded clause, recorded rather than erased:** the sentence immediately above says the column *"belongs in a separate pairing file keyed by sha, **e.g.** `dreams/assertion_pairings.jsonl`"* — that was a design note about a file that did not exist, and it is now the shipped path with 4 rows in it. The reasoning survives intact and is the reason the file is sepa… [yoyo: 312 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The mode lives in THIS file, and the reason is written at the function so nobody relocates it later:** this script *owns* the classifier (`classify_assertion_change`, `reconcile_moved_tests`, `scan_diff`), so putting the join here leaves the classification rule with exactly **one statement**. Reading the verdict ledger from here is a **data read** (`sha`, `verdict`, `splice_depth`, `day`) — and data cannot drift the way a duplicated rule does. Re-deriving the classifier inside a third joiner… [yoyo: 483 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Four pairing values, and the fold is the whole risk of the mode, because DREAM.md names only TWO cells while the classifier produces more states than that — the cells it does not name are exactly where a quiet collapse would hide.** The decision half is the pure, table-tested `classify_pairing(weakened, strengthened, moved, unknown, scan_ok)`, with precedence running in opposite directions at each step: **`PAIR_COULD_NOT_CHECK`** (`not scan_ok`) outranks everything, because there is no diff … [yoyo: 2388 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  ... (9 more lines)
+  2 tools completed in 2m 2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+CLAUDE.md updated. Now the doc_sync check the evaluator ran, plus the positive control as one atomic mutate→run→restore.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== do… (14 lines) ✓ (164ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired correctly. Let me confirm which self-tests went red, then run the cargo gate.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -iE "FAIL" /tmp/pc.txt | he… ✓ (74ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A14 "SELF-TESTS FAILED" /t… ✓ (4ms)
+  2 tools completed in 2.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control complete: 10 classify_pairing self-tests red under sabotage, byte-identity guard green, restored to identical md5 with 0 markers. Now the cargo gate.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 16s)
+  3 tools completed in 2m 26s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

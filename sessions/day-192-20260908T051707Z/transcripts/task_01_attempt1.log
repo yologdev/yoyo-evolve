@@ -1,0 +1,276 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Step 0 — settling the premise by running, not reading.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (10 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (35ms)
+ ✓ (67ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.2s (2 ✓)
+
+Premise confirmed: 52 rows, 4 UNEARNED, `--test` passes. Note two rows carry splice_depth: None (recorded before that field existed — CLAUDE.md says those are tests-only depth). Let me read the script.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l scripts/check_assertion_we…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' scripts/check_ass… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '85,145p' scripts/check_a…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '475,700p' scripts/check_… ✓ (4ms)
+ ✓ (5ms)
+  4 tools completed in 4.7s (4 ✓)
+
+
+I'll pick up where I left off — I've settled the premise (52 rows, 4 UNEARNED, --test passes). Let me read the remaining structure I need before writing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,860p' scripts/check_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '577,610p' scripts/check_… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+Now let me capture the byte-identity baseline before any change — that's the entire regression surface.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def append_ledger" -A 2… ✓ (5ms)
+ ✓ (54ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.9s (2 ✓)
+
+I have the full picture. Now let me write the pairing mode — starting with the pure decision half and its constants.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (1 → 82 lines)
+  + # --------------------------------------------------------------------------------------
+  + # Pairing verdicts (Day 192, DREAM.md's milestone). FOUR, and none folds into another.
+  + #
+  + # WHY THE JOIN LIVES IN THIS FILE and not in a new script or in counterfactual_green.py:
+  + # this file OWNS the classifier (`classify_assertion_change`, `reconcile_moved_tests`,
+  + # `scan_diff`), so putting the join here leaves the classification rule with exactly ONE
+  + # statement. Reading the verdict ledger from here is a DATA read (`sha`, `verdict`,
+  + # `splice_depth`, `day`) -- data cannot drift the way a duplicated rule does. Re-deriving
+  + # the classifier inside a joiner script is the #835 defect this repo already paid off once
+  + # (a brace scanner copied into a second gate). Do not move this.
+  + # --------------------------------------------------------------------------------------
+  + 
+  + # The scan refused -- an unreachable ref, almost always a shallow clone's graft boundary.
+  + # In NEITHER column: no diff was obtained, so nothing was classified.
+  + PAIR_COULD_NOT_CHECK = "PAIR_COULD_NOT_CHECK"
+  + 
+  + # `WEAKENED + UNEARNED`. The signal this whole vein exists to find.
+  + PAIR_SIGNAL = "PAIR_SIGNAL"
+  + 
+  + # `STRENGTHENED + UNEARNED`. DREAM.md's innocent-by-mechanism cell: the commit's green
+  ... (62 more lines)
+ ✓ (1m 15s)
+  + # --------------------------------------------------------------------------------------
+  + # Pairing verdicts (Day 192, DREAM.md's milestone). FOUR, and none folds into another.
+  + #
+  + # WHY THE JOIN LIVES IN THIS FILE and not in a new script or in counterfactual_green.py:
+  + # this file OWNS the classifier (`classify_assertion_change`, `reconcile_moved_tests`,
+  + # `scan_diff`), so putting the join here leaves the classification rule with exactly ONE
+  + # statement. Reading the verdict ledger from here is a DATA read (`sha`, `verdict`,
+  + # `splice_depth`, `day`) -- data cannot drift the way a duplicated rule does. Re-deriving
+  ... (13 more lines)
+
+
+I'll pick up where I left off — the pure decision half landed. Now the I/O half: ledger reading, per-sha pairing, the record, and the render.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^def build_parser" scri… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the I/O half, inserted before build_parser:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (1 → 283 lines)
+  + # --------------------------------------------------------------------------------------
+  + # The pairing mode's I/O. All of it at these call sites; the decision half is
+  + # `classify_pairing` above and is pure.
+  + # --------------------------------------------------------------------------------------
+  + 
+  + 
+  + def verdict_rows(text: str, verdict: str) -> list[dict]:
+  +     """Rows of the counterfactual ledger carrying `verdict`, deduped by sha, in order.
+  + 
+  +     Pure over the ledger TEXT so it is table-testable without a file. A sha appears twice
+  +     in the live ledger today (one commit was re-read after an instrument change), and it
+  +     is one commit, so it is paired once -- first occurrence wins, since the later row was
+  +     recorded against a different instrument and re-pairing it would double-count.
+  + 
+  +     A line that does not parse is SKIPPED AND COUNTED by the caller rather than silently
+  +     dropped: a shrinking denominator inside my own meter is the defect this whole family
+  +     of checks is about.
+  +     """
+  +     seen = set()
+  +     rows = []
+  ... (263 more lines)
+ ✓ (1m 16s)
+  + # --------------------------------------------------------------------------------------
+  + # The pairing mode's I/O. All of it at these call sites; the decision half is
+  + # `classify_pairing` above and is pure.
+  + # --------------------------------------------------------------------------------------
+  + 
+  + 
+  + def verdict_rows(text: str, verdict: str) -> list[dict]:
+  +     """Rows of the counterfactual ledger carrying `verdict`, deduped by sha, in order.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I made a real error there — pair_one_sha is called twice per sha (two git invocations, and the record could disagree with the report). Fixing:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (12 → 16 lines)
+                "splice_depth": row_depth(row),
+                "verdict": row.get("verdict"),
+            }
+  -         rec.update(pair_one_sha(sha))
+  +         # Scanned ONCE. Calling `pair_one_sha` a second time for the record would be a
+  +         # second git invocation whose answer could differ from the one just reported --
+  +         # the record must be the same reading the summary describes, not a re-derivation.
+  +         scan = pair_one_sha(sha)
+  +         rec.update(scan)
+            paired.append(rec)
+            if args.record:
+  -             err = append_pairing(args.record, pairing_line(row, pair_one_sha(sha)))
+  +             err = append_pairing(args.record, pairing_line(row, scan))
+                if err:
+                    print(f"WARNING: could not record pairing for {sha[:12]}: {err}", file=sys.stderr)
+ ✓ (1m 16s)
+                "splice_depth": row_depth(row),
+                "verdict": row.get("verdict"),
+            }
+  -         rec.update(pair_one_sha(sha))
+  +         # Scanned ONCE. Calling `pair_one_sha` a second time for the record would be a
+  +         # second git invocation whose answer could differ from the one just reported --
+  +         # the record must be the same reading the summary describes, not a re-derivation.
+  +         scan = pair_one_sha(sha)
+  ... (7 more lines)
+
+
+Now the imports and the CLI surface:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '52,62p' scripts/check_as… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '52,57p' scripts/check_as… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^import \|^from " scrip… ✓ (3ms)
+  3 tools completed in 4.3s (3 ✓)
+
+
+I need json, os, and datetime added to the imports:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (6 → 9 lines)
+    import argparse
+  + import datetime
+    import difflib
+  + import json
+  + import os
+    import re
+    import subprocess
+    import sys
+ ✓ (1m 16s)
+    import argparse
+  + import datetime
+    import difflib
+  + import json
+  + import os
+    import re
+    import subprocess
+    import sys
+
+Now the CLI flags and the dispatch in main:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (4 → 27 lines)
+        parser.add_argument(
+            "--max-findings", type=int, default=40, help="cap on printed WEAKENED rows"
+  +     )
+  +     parser.add_argument(
+  +         "--pair-verdicts",
+  +         metavar="LEDGER",
+  +         help="cross this classifier with a counterfactual verdict ledger "
+  +         "(dreams/counterfactual_verdicts.jsonl): for every row carrying --verdict, scan "
+  +         "that commit's own test diff and record the pair",
+  +     )
+  +     parser.add_argument(
+  +         "--verdict",
+  +         default="UNEARNED",
+  +         metavar="NAME",
+  +         help="which counterfactual verdict to pair (default: UNEARNED, what DREAM.md "
+  +         "asks for). A parameter rather than a hardcode so a later session can pair "
+  +         "BASELINE_RED without a new flag.",
+  +     )
+  +     parser.add_argument(
+  +         "--record",
+  ... (7 more lines)
+ ✓ (1m 15s)
+        parser.add_argument(
+            "--max-findings", type=int, default=40, help="cap on printed WEAKENED rows"
+  +     )
+  +     parser.add_argument(
+  +         "--pair-verdicts",
+  +         metavar="LEDGER",
+  +         help="cross this classifier with a counterfactual verdict ledger "
+  +         "(dreams/counterfactual_verdicts.jsonl): for every row carrying --verdict, scan "
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (2 → 4 lines)
+    def _run(args):
+  +     if args.pair_verdicts:
+  +         return run_pairing(args)
+        if args.stdin:
+ ✓ (1m 15s)
+    def _run(args):
+  +     if args.pair_verdicts:
+  +         return run_pairing(args)
+        if args.stdin:
+  2 tools completed in 2m 33s (2 ✓)
+
+
+Now the self-tests. Let me add them before the failure-report block:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (6 → 164 lines)
+        # This is the entire regression surface -- every existing invocation is on this path.
+        rc_ok = main(["--from", "HEAD~1", "--to", "HEAD"])
+        check("a reachable ref still exits 0", rc_ok == 0, rc_ok)
+  + 
+  +     # -- PAIRING MODE (Day 192, DREAM.md's milestone) --------------------------------------
+  +     # The fold is the whole risk of this mode, so it is table-tested over every cell,
+  +     # including the two DREAM.md does NOT name.
+  +     pairing_table = [
+  +         # (weakened, strengthened, moved, unknown, scan_ok, expected)
+  +         (0, 0, 0, 0, False, PAIR_COULD_NOT_CHECK),
+  +         (5, 5, 5, 5, False, PAIR_COULD_NOT_CHECK),  # refusal outranks everything
+  +         (1, 0, 0, 0, True, PAIR_SIGNAL),
+  +         (1, 9, 0, 0, True, PAIR_SIGNAL),  # a weakening beside strengthenings still signals
+  +         (1, 0, 9, 0, True, PAIR_SIGNAL),  # ... and is not forgiven by a neighbouring MOVE
+  +         (0, 1, 0, 0, True, PAIR_INNOCENT_BY_MECHANISM),
+  +         (0, 3, 2, 1, True, PAIR_INNOCENT_BY_MECHANISM),
+  +         (0, 0, 0, 0, True, PAIR_NO_ASSERTION_EVIDENCE),  # no test hunks at all
+  +         (0, 0, 3, 0, True, PAIR_NO_ASSERTION_EVIDENCE),  # all MOVED: no direction evidence
+  +         (0, 0, 0, 3, True, PAIR_NO_ASSERTION_EVIDENCE),  # all UNKNOWN: ditto
+  +         (0, 0, 2, 2, True, PAIR_NO_ASSERTION_EVIDENCE),
+  ... (143 more lines)
+ ✓ (1m 15s)
+        # This is the entire regression surface -- every existing invocation is on this path.
+        rc_ok = main(["--from", "HEAD~1", "--to", "HEAD"])
+        check("a reachable ref still exits 0", rc_ok == 0, rc_ok)
+  + 
+  +     # -- PAIRING MODE (Day 192, DREAM.md's milestone) --------------------------------------
+  +     # The fold is the whole risk of this mode, so it is table-tested over every cell,
+  +     # including the two DREAM.md does NOT name.
+  +     pairing_table = [
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (67ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 19s (2 ✓)
+
+Self-tests pass. Now the near-miss guard — byte-identity of every existing invocation:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (68ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
