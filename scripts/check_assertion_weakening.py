@@ -50,7 +50,10 @@ is pinned by a self-test rather than left to reading.
 from __future__ import annotations
 
 import argparse
+import datetime
 import difflib
+import json
+import os
 import re
 import subprocess
 import sys
@@ -144,6 +147,87 @@ def could_not_check_message(ref: str, argv: list[str], stderr: str, shallow: boo
     return "\n".join(lines)
 
 # Shape names, quoted verbatim in the report so a finding can be argued with.
+# --------------------------------------------------------------------------------------
+# Pairing verdicts (Day 192, DREAM.md's milestone). FOUR, and none folds into another.
+#
+# WHY THE JOIN LIVES IN THIS FILE and not in a new script or in counterfactual_green.py:
+# this file OWNS the classifier (`classify_assertion_change`, `reconcile_moved_tests`,
+# `scan_diff`), so putting the join here leaves the classification rule with exactly ONE
+# statement. Reading the verdict ledger from here is a DATA read (`sha`, `verdict`,
+# `splice_depth`, `day`) -- data cannot drift the way a duplicated rule does. Re-deriving
+# the classifier inside a joiner script is the #835 defect this repo already paid off once
+# (a brace scanner copied into a second gate). Do not move this.
+# --------------------------------------------------------------------------------------
+
+# The scan refused -- an unreachable ref, almost always a shallow clone's graft boundary.
+# In NEITHER column: no diff was obtained, so nothing was classified.
+PAIR_COULD_NOT_CHECK = "PAIR_COULD_NOT_CHECK"
+
+# `WEAKENED + UNEARNED`. The signal this whole vein exists to find.
+PAIR_SIGNAL = "PAIR_SIGNAL"
+
+# `STRENGTHENED + UNEARNED`. DREAM.md's innocent-by-mechanism cell: the commit's green
+# came with its assertions moving in the STRICTER direction, so the counterfactual red is
+# explained by an honest change rather than by a loosened oracle.
+PAIR_INNOCENT_BY_MECHANISM = "PAIR_INNOCENT_BY_MECHANISM"
+
+# The test diff carried NO DIRECTION EVIDENCE AT ALL -- every hunk was MOVED or UNKNOWN,
+# or there were no test hunks in it.
+#
+# THIS MUST NEVER BE FOLDED INTO PAIR_INNOCENT_BY_MECHANISM. "I found no weakening" is not
+# "I found a strengthening": the first is *could not check* wearing the second's clothes,
+# and that collapse is the one this whole repo refuses -- the same refusal the pre-push
+# hook makes, the same refusal CiScan's could-not-run branch makes. Folding them would let
+# a commit with an unreadable test diff be published as evidence its green was earned.
+PAIR_NO_ASSERTION_EVIDENCE = "PAIR_NO_ASSERTION_EVIDENCE"
+
+PAIRINGS = (
+    PAIR_SIGNAL,
+    PAIR_INNOCENT_BY_MECHANISM,
+    PAIR_NO_ASSERTION_EVIDENCE,
+    PAIR_COULD_NOT_CHECK,
+)
+
+# A verdict row recorded before Day 187's `--splice-src-tests` carries no `splice_depth`
+# key at all. Such a reading was taken against the tests-only counterfactual tree by
+# construction, so that is what it is reported as -- not "unknown", which would be
+# inventing a third depth nobody ever read at.
+DEPTH_TESTS_ONLY = "tests"
+
+
+def classify_pairing(weakened, strengthened, moved, unknown, scan_ok) -> str:
+    """Join one commit's assertion-direction counts to its counterfactual verdict.
+
+    Pure, so the fold has one statement and a table test. Getting this fold wrong is the
+    whole risk of the pairing mode, because DREAM.md names only TWO cells
+    (`STRENGTHENED + UNEARNED`, `WEAKENED + UNEARNED`) while the classifier produces more
+    states than that -- and the cells it does not name are exactly where a quiet collapse
+    would hide.
+
+    PRECEDENCE, and each step has a reason running the opposite way from its neighbour:
+
+      1. `not scan_ok` -> PAIR_COULD_NOT_CHECK. A refusal outranks everything, because
+         there is no diff to have counted; reading a refusal as any verdict is the
+         "could not check" -> "checked; clean" collapse.
+      2. `weakened > 0` -> PAIR_SIGNAL. This wins over everything except a refusal: a real
+         weakening sitting beside a move must NOT be forgiven by its neighbour, the same
+         all-or-nothing rule `reconcile_moved_tests` already encodes one layer down.
+      3. `strengthened > 0` -> PAIR_INNOCENT_BY_MECHANISM.
+      4. otherwise -> PAIR_NO_ASSERTION_EVIDENCE.
+
+    `moved` and `unknown` are accepted and deliberately do NOT decide anything: they are
+    carried into the record so a reader can tell a diff that was reconciled from one that
+    was merely unreadable, without either of them being able to manufacture a verdict.
+    """
+    if not scan_ok:
+        return PAIR_COULD_NOT_CHECK
+    if weakened > 0:
+        return PAIR_SIGNAL
+    if strengthened > 0:
+        return PAIR_INNOCENT_BY_MECHANISM
+    return PAIR_NO_ASSERTION_EVIDENCE
+
+
 S_ASSERTION_DELETED = "assertion-deleted"
 S_EQ_TO_CONTAINS = "assert_eq!->contains"
 S_NEEDLE_SHRANK = "contains-needle-shrank"
@@ -761,6 +845,292 @@ def git_diff_one_commit(sha: str) -> str:
     return _git_or_refuse(argv, f"{sha}^")
 
 
+# --------------------------------------------------------------------------------------
+# The pairing mode's I/O. All of it at these call sites; the decision half is
+# `classify_pairing` above and is pure.
+# --------------------------------------------------------------------------------------
+
+
+def verdict_rows(text: str, verdict: str) -> list[dict]:
+    """Rows of the counterfactual ledger carrying `verdict`, deduped by sha, in order.
+
+    Pure over the ledger TEXT so it is table-testable without a file. A sha appears twice
+    in the live ledger today (one commit was re-read after an instrument change), and it
+    is one commit, so it is paired once -- first occurrence wins, since the later row was
+    recorded against a different instrument and re-pairing it would double-count.
+
+    A line that does not parse is SKIPPED AND COUNTED by the caller rather than silently
+    dropped: a shrinking denominator inside my own meter is the defect this whole family
+    of checks is about.
+    """
+    seen = set()
+    rows = []
+    unparseable = 0
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except (ValueError, TypeError):
+            unparseable += 1
+            continue
+        if not isinstance(row, dict):
+            unparseable += 1
+            continue
+        if row.get("verdict") != verdict:
+            continue
+        sha = row.get("sha")
+        if not isinstance(sha, str) or not sha:
+            unparseable += 1
+            continue
+        if sha in seen:
+            continue
+        seen.add(sha)
+        rows.append(row)
+    return rows, unparseable
+
+
+def row_depth(row: dict) -> str:
+    """The counterfactual depth a verdict row was read at.
+
+    A row with no `splice_depth` key predates Day 187's `--splice-src-tests` and was read
+    at tests-only depth BY CONSTRUCTION, so that is what it reports. Returning "unknown"
+    here would invent a third depth nobody ever read at.
+    """
+    depth = row.get("splice_depth")
+    if isinstance(depth, str) and depth.strip():
+        return depth.strip()
+    return DEPTH_TESTS_ONLY
+
+
+def pair_one_sha(sha: str) -> dict:
+    """Scan one commit's own diff and fold it into a pairing. Catches ONLY the refusal.
+
+    A refusal on one sha MUST NOT abort the loop: Day 191 made this script exit 3 on an
+    unreachable ref, which is right for a whole-window scan and wrong here, because the
+    ledger holds shas whose parents sit past a shallow clone's graft boundary. A row that
+    is OMITTED is invisible; a row recorded as PAIR_COULD_NOT_CHECK is a fact.
+
+    The catch stays narrow -- `GitRefUnreachable` only, never a blanket `except` -- for
+    the same reason `main` keeps it narrow: a blanket catch would swallow a real bug in
+    the classifier and publish it as a missing input.
+    """
+    try:
+        findings, rust_hunks, test_hunks = scan_diff(git_diff_one_commit(sha))
+    except GitRefUnreachable as exc:
+        return {
+            "pairing": PAIR_COULD_NOT_CHECK,
+            "weakened": 0,
+            "strengthened": 0,
+            "moved": 0,
+            "unknown": 0,
+            "rs_hunks": 0,
+            "test_hunks": 0,
+            "scan_status": "could_not_check",
+            "note": f"git could not resolve {exc.ref!r}: {exc.stderr.splitlines()[0] if exc.stderr else 'no stderr'}",
+        }
+    counts = Counter(f.verdict for f in findings)
+    return {
+        "pairing": classify_pairing(
+            counts[WEAKENED], counts[STRENGTHENED], counts[MOVED], counts[UNKNOWN], True
+        ),
+        "weakened": counts[WEAKENED],
+        "strengthened": counts[STRENGTHENED],
+        "moved": counts[MOVED],
+        "unknown": counts[UNKNOWN],
+        "rs_hunks": rust_hunks,
+        "test_hunks": test_hunks,
+        "scan_status": "ok",
+        "note": "; ".join(f"{f.verdict} {f.path}" for f in findings[:4]),
+    }
+
+
+def pairing_line(row: dict, scan: dict) -> str:
+    """One JSONL record joining a verdict row to its assertion-direction scan."""
+    rec = {
+        "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sha": row.get("sha"),
+        "day": row.get("day"),
+        "splice_depth": row_depth(row),
+        "verdict": row.get("verdict"),
+    }
+    rec.update(scan)
+    return json.dumps(rec, sort_keys=True)
+
+
+def read_pairings(path: str) -> set:
+    """Shas already paired. A missing or unreadable file skips NOTHING -- the fail-safe
+    direction, so a broken read can never silently suppress a run."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return set()
+    out = set()
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(row, dict) and isinstance(row.get("sha"), str):
+            out.add(row["sha"])
+    return out
+
+
+def append_pairing(path: str, line: str) -> str:
+    """Append ONE line and fsync it. Returns "" on success, else the error text.
+
+    Same shape as `counterfactual_green.py::append_ledger`, and for the same reason: that
+    file's own `--record` was once parsed, advertised, and only appended inside one arm --
+    a flag with a description and no consumer. Returning the error rather than raising
+    keeps a ledger failure from destroying the reading that was just taken, and an empty
+    return is the success sentinel so a writer that cannot write has to say why.
+    """
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+    except OSError as exc:
+        return str(exc)
+    return ""
+
+
+PAIRING_HONESTY = """\
+WHAT THIS PAIRING IS AND IS NOT:
+
+  Two of my own tools crossed is a BETTER KIND OF CLAIM, NOT AN ESCAPE FROM
+  SELF-REFERENCE. The ruler is mine, the commits under it are mine, and until now the
+  adjudication of every unflattering verdict was mine too. What the cross buys is that
+  the last step is a rule stated IN ADVANCE rather than a judgement call made after
+  seeing the answer. It buys nothing at all about the ruler's independence.
+
+  This is not an external oracle. Do not read it as one.
+"""
+
+
+def render_pairings(rows: list[dict], verdict: str, ledger: str, unparseable: int) -> str:
+    """Summary grouped BY DEPTH, never pooled.
+
+    DREAM.md says "reported per depth, never pooled", and the two depths mean different
+    things: a tests-only reading and a src+tests reading were taken against different
+    counterfactual trees, so a pooled count answers a question nobody asked. A pooled
+    total appears only as an explicitly-labelled parenthetical.
+    """
+    out = []
+    out.append(f"assertion-weakening x counterfactual-verdict pairing ({verdict})")
+    out.append("")
+    out.append(f"  ledger ....................... {ledger}")
+    out.append(f"  rows paired .................. {len(rows)}")
+    if unparseable:
+        out.append(f"  ledger lines unparseable ..... {unparseable}  (counted, not dropped)")
+    out.append("")
+
+    by_depth: dict = {}
+    for r in rows:
+        by_depth.setdefault(r.get("splice_depth", DEPTH_TESTS_ONLY), []).append(r)
+
+    for depth in sorted(by_depth):
+        group = by_depth[depth]
+        counts = Counter(r.get("pairing") for r in group)
+        out.append(f"  depth {depth!r} -- {len(group)} row(s):")
+        for name in PAIRINGS:
+            out.append(f"      {name} {'.' * (28 - len(name))} {counts[name]}")
+        out.append("")
+
+    pooled = Counter(r.get("pairing") for r in rows)
+    out.append(
+        "  (pooled across depths, stated only as a parenthetical because the depths are "
+        "not commensurable: "
+        + ", ".join(f"{n}={pooled[n]}" for n in PAIRINGS)
+        + ")"
+    )
+    out.append("")
+    for r in rows:
+        sha = (r.get("sha") or "")[:12]
+        out.append(
+            f"  {r.get('pairing')}  {sha}  day {r.get('day')}  depth={r.get('splice_depth')}"
+        )
+        out.append(
+            f"      W={r.get('weakened')} S={r.get('strengthened')} "
+            f"M={r.get('moved')} U={r.get('unknown')} "
+            f"rs_hunks={r.get('rs_hunks')} test_hunks={r.get('test_hunks')} "
+            f"scan={r.get('scan_status')}"
+        )
+        if r.get("note"):
+            out.append(f"      {r['note']}")
+    return "\n".join(out)
+
+
+def run_pairing(args) -> int:
+    """Read the verdict ledger, scan each matching commit, record and report the pairs."""
+    try:
+        with open(args.pair_verdicts, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError as exc:
+        print(
+            f"COULD NOT CHECK: the verdict ledger {args.pair_verdicts!r} is unreadable: {exc}\n"
+            "  This is a REFUSAL, not '0 rows to pair'.",
+            file=sys.stderr,
+        )
+        return EXIT_COULD_NOT_CHECK
+
+    ledger_rows, unparseable = verdict_rows(text, args.verdict)
+
+    # ANTI-VACUOUS, ASSERTED FIRST. A filter yielding zero rows REFUSES loudly rather than
+    # reporting a clean pairing: a scanner that finds nothing and passes is this very
+    # defect wearing the opposite sign, and it is quieter than the bug.
+    if not ledger_rows:
+        print(
+            f"COULD NOT CHECK: no {args.verdict} rows in {args.pair_verdicts!r} "
+            f"({unparseable} unparseable line(s)).\n"
+            "  This is a REFUSAL, not a clean pairing. Nothing was scanned, so it is NOT\n"
+            "  '0 weakenings among the unearned greens' -- there were no unearned greens\n"
+            "  to look at. Check the ledger and the --verdict filter.",
+            file=sys.stderr,
+        )
+        return EXIT_COULD_NOT_CHECK
+
+    already = read_pairings(args.record) if args.record else set()
+    paired = []
+    skipped = 0
+    for row in ledger_rows:
+        sha = row["sha"]
+        if sha in already:
+            skipped += 1
+            continue
+        rec = {
+            "sha": sha,
+            "day": row.get("day"),
+            "splice_depth": row_depth(row),
+            "verdict": row.get("verdict"),
+        }
+        # Scanned ONCE. Calling `pair_one_sha` a second time for the record would be a
+        # second git invocation whose answer could differ from the one just reported --
+        # the record must be the same reading the summary describes, not a re-derivation.
+        scan = pair_one_sha(sha)
+        rec.update(scan)
+        paired.append(rec)
+        if args.record:
+            err = append_pairing(args.record, pairing_line(row, scan))
+            if err:
+                print(f"WARNING: could not record pairing for {sha[:12]}: {err}", file=sys.stderr)
+
+    if skipped:
+        print(f"(--record fold: {skipped} sha(s) already paired, skipped)", file=sys.stderr)
+
+    print(render_pairings(paired, args.verdict, args.pair_verdicts, unparseable))
+    print()
+    print(PAIRING_HONESTY, file=sys.stderr)
+    print(LIMITS, file=sys.stderr)
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="check_assertion_weakening.py",
@@ -790,6 +1160,29 @@ def build_parser():
     parser.add_argument(
         "--max-findings", type=int, default=40, help="cap on printed WEAKENED rows"
     )
+    parser.add_argument(
+        "--pair-verdicts",
+        metavar="LEDGER",
+        help="cross this classifier with a counterfactual verdict ledger "
+        "(dreams/counterfactual_verdicts.jsonl): for every row carrying --verdict, scan "
+        "that commit's own test diff and record the pair",
+    )
+    parser.add_argument(
+        "--verdict",
+        default="UNEARNED",
+        metavar="NAME",
+        help="which counterfactual verdict to pair (default: UNEARNED, what DREAM.md "
+        "asks for). A parameter rather than a hardcode so a later session can pair "
+        "BASELINE_RED without a new flag.",
+    )
+    parser.add_argument(
+        "--record",
+        metavar="PATH",
+        help="append one JSONL pairing row per sha (dreams/assertion_pairings.jsonl). "
+        "A SEPARATE file, never a rewrite of the verdict ledger: that ledger is "
+        "append-only and counterfactual_green.py --resume folds it, so its existing rows "
+        "cannot be back-filled. Join on `sha` at read time.",
+    )
     return parser
 
 
@@ -813,6 +1206,8 @@ def main(argv):
 
 
 def _run(args):
+    if args.pair_verdicts:
+        return run_pairing(args)
     if args.stdin:
         text = sys.stdin.read()
         findings, rust_hunks, test_hunks = scan_diff(text)
@@ -1292,6 +1687,164 @@ def run_self_tests():
     # This is the entire regression surface -- every existing invocation is on this path.
     rc_ok = main(["--from", "HEAD~1", "--to", "HEAD"])
     check("a reachable ref still exits 0", rc_ok == 0, rc_ok)
+
+    # -- PAIRING MODE (Day 192, DREAM.md's milestone) --------------------------------------
+    # The fold is the whole risk of this mode, so it is table-tested over every cell,
+    # including the two DREAM.md does NOT name.
+    pairing_table = [
+        # (weakened, strengthened, moved, unknown, scan_ok, expected)
+        (0, 0, 0, 0, False, PAIR_COULD_NOT_CHECK),
+        (5, 5, 5, 5, False, PAIR_COULD_NOT_CHECK),  # refusal outranks everything
+        (1, 0, 0, 0, True, PAIR_SIGNAL),
+        (1, 9, 0, 0, True, PAIR_SIGNAL),  # a weakening beside strengthenings still signals
+        (1, 0, 9, 0, True, PAIR_SIGNAL),  # ... and is not forgiven by a neighbouring MOVE
+        (0, 1, 0, 0, True, PAIR_INNOCENT_BY_MECHANISM),
+        (0, 3, 2, 1, True, PAIR_INNOCENT_BY_MECHANISM),
+        (0, 0, 0, 0, True, PAIR_NO_ASSERTION_EVIDENCE),  # no test hunks at all
+        (0, 0, 3, 0, True, PAIR_NO_ASSERTION_EVIDENCE),  # all MOVED: no direction evidence
+        (0, 0, 0, 3, True, PAIR_NO_ASSERTION_EVIDENCE),  # all UNKNOWN: ditto
+        (0, 0, 2, 2, True, PAIR_NO_ASSERTION_EVIDENCE),
+    ]
+    for w, s, m, u, ok, expected in pairing_table:
+        got = classify_pairing(w, s, m, u, ok)
+        check(f"classify_pairing({w},{s},{m},{u},{ok})", got == expected, f"{got} != {expected}")
+
+    # The collapse this mode exists to refuse: "found no weakening" is NOT "found a
+    # strengthening". If these two ever become the same value, a commit whose test diff
+    # was unreadable would be published as evidence its green was earned.
+    check(
+        "NO_ASSERTION_EVIDENCE is not INNOCENT_BY_MECHANISM",
+        PAIR_NO_ASSERTION_EVIDENCE != PAIR_INNOCENT_BY_MECHANISM,
+    )
+    check(
+        "a no-evidence diff does not read as innocent",
+        classify_pairing(0, 0, 0, 0, True) != PAIR_INNOCENT_BY_MECHANISM,
+    )
+    # PAIR_COULD_NOT_CHECK is a refusal, not a fifth hunk verdict.
+    check(
+        "pairing values are disjoint from hunk verdicts",
+        not set(PAIRINGS) & {WEAKENED, STRENGTHENED, UNKNOWN, MOVED},
+    )
+
+    # Ledger reading: filter, dedupe, and count what could not be read.
+    ledger = "\n".join(
+        [
+            json.dumps({"sha": "aaa", "verdict": "UNEARNED", "day": 1, "splice_depth": "tests"}),
+            json.dumps({"sha": "bbb", "verdict": "EARNED", "day": 2}),
+            json.dumps({"sha": "aaa", "verdict": "UNEARNED", "day": 3}),  # dupe: one commit
+            json.dumps({"sha": "ccc", "verdict": "UNEARNED", "day": 4, "splice_depth": "src+tests"}),
+            "{not json",
+            json.dumps({"verdict": "UNEARNED"}),  # no sha: unkeyable
+            "",
+        ]
+    )
+    rows, unparse = verdict_rows(ledger, "UNEARNED")
+    check("verdict filter keeps only UNEARNED", [r["sha"] for r in rows] == ["aaa", "ccc"], rows)
+    check("a repeated sha is paired once", len({r["sha"] for r in rows}) == 2, rows)
+    check("unparseable lines are counted, not dropped", unparse == 2, unparse)
+    check("EARNED rows are not paired", all(r["verdict"] == "UNEARNED" for r in rows))
+
+    # A row with no `splice_depth` predates --splice-src-tests and IS tests-only depth by
+    # construction. Reporting "unknown" would invent a third depth nobody read at.
+    check("missing splice_depth reads as tests-only", row_depth({}) == DEPTH_TESTS_ONLY)
+    check("an explicit depth is carried", row_depth({"splice_depth": "src+tests"}) == "src+tests")
+    check("a blank depth falls back", row_depth({"splice_depth": "  "}) == DEPTH_TESTS_ONLY)
+
+    # ANTI-VACUOUS, driven by a FABRICATED empty ledger rather than the live file: a
+    # filter yielding zero rows must REFUSE, never report a clean pairing.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        empty = os.path.join(td, "empty.jsonl")
+        with open(empty, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"sha": "zzz", "verdict": "EARNED", "day": 9}) + "\n")
+        rc_empty = main(["--pair-verdicts", empty])
+        check("an empty filter REFUSES", rc_empty == EXIT_COULD_NOT_CHECK, rc_empty)
+        check("the refusal is not exit 0", rc_empty != 0, rc_empty)
+
+        missing = os.path.join(td, "nope.jsonl")
+        rc_missing = main(["--pair-verdicts", missing])
+        check("an unreadable ledger REFUSES", rc_missing == EXIT_COULD_NOT_CHECK, rc_missing)
+
+        # --record must ACTUALLY append, and re-running must fold and skip. This is not
+        # paranoia: counterfactual_green.py's own --record was once parsed, advertised,
+        # and appended inside one arm only -- a flag with a description and no consumer.
+        rec = os.path.join(td, "pairs.jsonl")
+        err = append_pairing(rec, json.dumps({"sha": "aaa", "pairing": PAIR_SIGNAL}))
+        check("append_pairing reports success", err == "", err)
+        check("append_pairing created the file", os.path.exists(rec))
+        with open(rec, encoding="utf-8") as fh:
+            written = [l for l in fh.read().splitlines() if l.strip()]
+        check("append_pairing wrote one line", len(written) == 1, written)
+        check("the written line parses", json.loads(written[0])["sha"] == "aaa")
+        err2 = append_pairing(rec, json.dumps({"sha": "bbb", "pairing": PAIR_SIGNAL}))
+        check("append_pairing appends, not overwrites", err2 == "" and len(open(rec).readlines()) == 2)
+        check("read_pairings folds recorded shas", read_pairings(rec) == {"aaa", "bbb"})
+        check("read_pairings on a missing file skips NOTHING", read_pairings(missing) == set())
+
+    # The record's shape, so a consumer can rely on the keys.
+    line = pairing_line(
+        {"sha": "deadbeef", "day": 58, "verdict": "UNEARNED"},
+        {
+            "pairing": PAIR_SIGNAL,
+            "weakened": 2,
+            "strengthened": 0,
+            "moved": 0,
+            "unknown": 1,
+            "rs_hunks": 5,
+            "test_hunks": 3,
+            "scan_status": "ok",
+            "note": "x",
+        },
+    )
+    parsed = json.loads(line)
+    for key in (
+        "ts",
+        "sha",
+        "day",
+        "splice_depth",
+        "verdict",
+        "pairing",
+        "weakened",
+        "strengthened",
+        "moved",
+        "unknown",
+        "rs_hunks",
+        "test_hunks",
+        "scan_status",
+        "note",
+    ):
+        check(f"pairing record carries {key!r}", key in parsed, sorted(parsed))
+    check("pairing record keeps the verdict it joined", parsed["verdict"] == "UNEARNED")
+
+    # A per-sha refusal is RECORDED, not omitted -- an omitted row is invisible, a
+    # recorded refusal is a fact. Driven with a fabricated bogus sha.
+    refused = pair_one_sha("0000000000000000000000000000000000000000")
+    check("an unreachable sha pairs as COULD_NOT_CHECK", refused["pairing"] == PAIR_COULD_NOT_CHECK)
+    check("a refused scan says so", refused["scan_status"] == "could_not_check", refused)
+    check("a refused scan counts nothing", refused["weakened"] == 0 and refused["test_hunks"] == 0)
+
+    # The render groups by depth and never pools without labelling it.
+    rendered = render_pairings(
+        [
+            {"sha": "a" * 40, "day": 1, "splice_depth": "tests", "pairing": PAIR_SIGNAL,
+             "weakened": 1, "strengthened": 0, "moved": 0, "unknown": 0, "rs_hunks": 1,
+             "test_hunks": 1, "scan_status": "ok", "note": ""},
+            {"sha": "b" * 40, "day": 2, "splice_depth": "src+tests",
+             "pairing": PAIR_NO_ASSERTION_EVIDENCE, "weakened": 0, "strengthened": 0,
+             "moved": 0, "unknown": 0, "rs_hunks": 0, "test_hunks": 0,
+             "scan_status": "ok", "note": ""},
+        ],
+        "UNEARNED",
+        "x.jsonl",
+        0,
+    )
+    check("render groups by depth", "depth 'tests'" in rendered and "depth 'src+tests'" in rendered)
+    check("render labels any pooled total", "parenthetical" in rendered, rendered)
+    check("render names every pairing value", all(n in rendered for n in PAIRINGS))
+    # The honesty clause must survive: this mode must never read as an external oracle.
+    check("honesty clause disclaims self-reference", "SELF-REFERENCE" in PAIRING_HONESTY.upper())
+    check("honesty clause denies being an oracle", "not an external oracle" in PAIRING_HONESTY)
 
     if failures:
         print(f"SELF-TESTS FAILED ({len(failures)}):", file=sys.stderr)
