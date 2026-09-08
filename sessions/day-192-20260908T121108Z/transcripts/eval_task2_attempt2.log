@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '400,470p' src/prompt_bud… ✓ (3ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cost-warn" src/cli.rs s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (7ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo && echo… ✓ (2.1s)
+  5 tools completed in 18.7s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evidence gathered. Both the flag's value-scanning (check A: warning: --cost-warn value looks like another flag: '--model' — the Day-182 gate firing live) and clean parsing (check B: --cost-warn 5 consumed, no unknown-flag warning) are confirmed against the built binary, and --help renders the <usd> placeholder.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > sessio… (9 lines) ✓ (5ms)
+
+Verdict written.
+
+PASS
+
+The three things that decided it:
+
+1. The feature was exercised, not just read. The built binary renders `--cost-warn <usd> in --help, and --cost-warn --model gpt-5 emits warning: --cost-warn value looks like another flag: '--model'` — that is the Day-182 value-scanning gate firing on the new flag, which is direct evidence FLAGS_NEEDING_VALUES membership is live rather than merely present in a const. --cost-warn 5 --print-system-prompt parses clean with no unknown-flag warning, so the value is consumed instead of falling through as a positional prompt.
+
+2. The named landmine was fixed rather than dodged. The task warned that OnceLock::set silently no-ops after any read — the TRUST_PROJECT trap. The diff converts to AtomicU64 (f64 bits) plus a separate AtomicBool for resolved, correctly because 0.0 is a legitimate resolved answer (= off) and must not read as "nobody looked". cost_threshold() keeps the lazy env fallback so any path that never reaches parse_args behaves as before. The #[serial] test asserts on→off→on with a different second value, which is what makes it a real regression guard — a test that only ever sets once passes against the broken cell.
+
+3. No dangling definitions. resolve_cost_threshold, `set_cost_threshold and cost_threshold() each have a consumer in this diff; the type change on COST_WARN_THRESHOLD left no stale get_or_init behind; and both gate-mandated register edits landed (GLOBAL_SETTERS + the two module_size.rs` line counts).
+
+One non-blocking observation for the record: git diff HEAD~1 shows only 4 files while the reviewed diff spans 6 — the cli.rs/help.rs edits sit in an earlier safety-commit within the task range. I confirmed both are present in the working tree by grep and in the live binary, so this is a harness commit-boundary artifact, not a missing half.
+
+  watch: no files changed this turn — skipping
+

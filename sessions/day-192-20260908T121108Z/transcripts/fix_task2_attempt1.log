@@ -1,0 +1,113 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the implementation before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cost_warn\|COST_WARN\|c… ✓ (4ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '340,470p' src/prompt_bud…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2120,2165p' src/cli.rs ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '455,540p' src/prompt_bud…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests\|#\[test\]\|#… ✓ (4ms)
+ ✓ (4ms)
+  6 tools completed in 6.9s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,680p' src/prompt_bud…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_cost_threshold_ta… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '540,600p' src/prompt_bud… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial" src/prompt_budg…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (6ms)
+ ✓ (213ms)
+  5 tools completed in 25.7s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (5 → 86 lines)
+            // Still says everything it says in the decorated form.
+            assert!(msg.contains("$7.25") && msg.contains("$5.00"));
+            assert!(msg.contains("1 run(s) used a model with no price"));
+  +     }
+  + 
+  +     /// The near-miss guard, and the ENTIRE regression surface of #891's flag:
+  +     /// neither `--cost-warn` nor `YOYO_COST_WARN_USD` resolves to `None` = OFF,
+  +     /// so `record_run_cost` returns before composing anything and every
+  +     /// existing user is byte-identical. Asserted on the resolved *value*, never
+  +     /// on rendered text — a `contains` on a string that was never built would
+  +     /// pass for the wrong reason.
+  +     #[test]
+  +     fn no_flag_and_no_env_is_off_which_is_every_existing_user() {
+  +         assert_eq!(resolve_cost_threshold(None, None), None);
+  +     }
+  + 
+  +     /// Both directions of the precedence rule, because a discriminator tested
+  +     /// only on the side that fires is vacuous green: the flag must beat the env
+  +     /// var *and* the env var alone must still work (it was the only door until
+  +     /// this flag landed, so silently breaking it would be a regression on the
+  ... (66 more lines)
+ ✓ (2m 4s)
+            // Still says everything it says in the decorated form.
+            assert!(msg.contains("$7.25") && msg.contains("$5.00"));
+            assert!(msg.contains("1 run(s) used a model with no price"));
+  +     }
+  + 
+  +     /// The near-miss guard, and the ENTIRE regression surface of #891's flag:
+  +     /// neither `--cost-warn` nor `YOYO_COST_WARN_USD` resolves to `None` = OFF,
+  +     /// so `record_run_cost` returns before composing anything and every
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the mandatory gate bookkeeping — GLOBAL_SETTERS first:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '124,134p' tests/global_s… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/global_state_races.rs (2 → 3 lines)
+        // src/prompt_budget.rs
+        "record_run_cost",
+  +     "set_cost_threshold",
+ ✓ (1m 17s)
+        // src/prompt_budget.rs
+        "record_run_cost",
+  +     "set_cost_threshold",
+  2 tools completed in 1m 20s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial" tests/global_st… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo cost_budge…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test global_state_r… ✓ (289ms)
+ ✓ (6.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 15.9s (3 ✓)
+
+Now the mandatory positive control — one atomic mutate→run→restore, with the sabotage marked NEUTERED so tests/neutered_guards.rs enforces the restore:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (21 lines) ✓ (29.4s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired correctly: exactly 2 red (both flag-resolution tests), while no_flag_and_no_env_is_off_which_is_every_existing_user stayed green — the direction that proves the near-miss guard tests the pass-through rather than the fix. Restore byte-identical, 0 markers left.
+
+Now the module-size register — pasting what the gate itself prints:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (11.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/cli.rs"\|"src/help… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (526ms)
+  3 tools completed in 20.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "there is no hard stop.\… ✓ (3.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "no \`--cost-warn\` flag… ✓ (2.1s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - no `--cost-warn` flag and no config key yet**, because that door needs `cli.rs` + `help.rs` + `config.rs` + `SETTABLE_KEYS` + `validate_config_value` and would turn a verified narrow change into an unverified wide one; the flag/config door stays open as named follow-up on **#891**. It also cannot see spend outside this process: the tally is per-process, so a session made of several `yoyo` invocations is several budgets, not one.
+  + no `--cost-warn` flag and no config key yet**, because that door needs `cli.rs` + `help.rs` + `config.rs` + `SETTABLE_KEYS` + `validate_config_value` and would turn a verified narrow change into an unverified wide one; the flag/config door stays open as named follow-up on **#891**. It also cannot see spend outside this process: the tally is per-process, so a session made of several `yoyo` invocations is several budgets, not one. **Superseded on Day 192 (#891, the flag half), recorded rather than… [yoyo: 4676 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (2m 14s)
+  - no `--cost-warn` flag and no config key yet**, because that door needs `cli.rs` + `help.rs` + `config.rs` + `SETTABLE_KEYS` + `validate_config_value` and would turn a verified narrow change into an unverified wide one; the flag/config door stays open as named follow-up on **#891**. It also cannot see spend outside this process: the tally is per-process, so a session made of several `yoyo` invocations is several budgets, not one.
+  + no `--cost-warn` flag and no config key yet**, because that door needs `cli.rs` + `help.rs` + `config.rs` + `SETTABLE_KEYS` + `validate_config_value` and would turn a verified narrow change into an unverified wide one; the flag/config door stays open as named follow-up on **#891**. It also cannot see spend outside this process: the tally is per-process, so a session made of several `yoyo` invocations is several budgets, not one. **Superseded on Day 192 (#891, the flag half), recorded rather than… [yoyo: 4676 more bytes elided — diff lines are capped at 500 bytes]
+  3 tools completed in 2m 47s (3 ✓)
+

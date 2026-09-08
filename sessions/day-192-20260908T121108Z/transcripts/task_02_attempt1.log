@@ -1,0 +1,211 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual source, as step 0 demands.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cost_warn\|COST_WARN\|p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli.rs src/prompt_budg… ✓ (4ms)
+ ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "COST_WARN\|parse_cost_t… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '350,480p' src/prompt_bud… ✓ (4ms)
+  4 tools completed in 5.5s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: I read prompt_budget.rs — the meter exists exactly as the task file says, and the OnceLock landmine is real. Let me look at the wiring points.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"--wait-for-reset"\|set…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'wait-for-reset\|disallo… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '625,650p' src/cli.rs && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2110,2140p' src/cli.rs &… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 8.0s (4 ✓)
+
+Now I'll make the first concrete change — converting the poisonable cell and adding the pure resolver.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (3 → 73 lines)
+  - /// Cached parse of [`COST_WARN_ENV`]. Read once and frozen for the lifetime of
+  - /// the process so the budget cannot shift mid-session. `None` means off.
+  - static COST_WARN_THRESHOLD: OnceLock<Option<f64>> = OnceLock::new();
+  + /// Resolve the session cost budget from its two sources, **flag first, then
+  + /// env**. Pure; all I/O lives in the caller.
+  + ///
+  + /// This is the same two-source shape `continue_on_silence` (#794) and
+  + /// `wait_for_reset` (Day 178) already use, and it reuses
+  + /// [`parse_cost_threshold`] for *both* sources rather than growing a second
+  + /// parser — one statement of "what is a valid budget", never two that agree
+  + /// the day they are written and diverge forever after.
+  + ///
+  + /// **Stated decision, not an accident: an invalid flag value falls through to
+  + /// the env var.** `--cost-warn abc` with `YOYO_COST_WARN_USD=5` yields `$5`,
+  + /// because `.or_else` *is* the OR shape the two precedents use, and the env
+  + /// value is itself validated — worst case a user gets the budget they set
+  + /// themselves earlier. With no env var it yields `None` = OFF, which is
+  + /// [`parse_cost_threshold`]'s three-state rule working as designed: a typo
+  + /// must never fabricate a threshold, because that would alarm on the *first*
+  + /// run of every session that mistyped the value.
+  ... (56 more lines)
+ ✓ (15.3s)
+  - /// Cached parse of [`COST_WARN_ENV`]. Read once and frozen for the lifetime of
+  - /// the process so the budget cannot shift mid-session. `None` means off.
+  - static COST_WARN_THRESHOLD: OnceLock<Option<f64>> = OnceLock::new();
+  + /// Resolve the session cost budget from its two sources, **flag first, then
+  + /// env**. Pure; all I/O lives in the caller.
+  + ///
+  + /// This is the same two-source shape `continue_on_silence` (#794) and
+  + /// `wait_for_reset` (Day 178) already use, and it reuses
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '8,14p' src/prompt_budget… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use std::sync" src/pro… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (1 → 1 lines)
+  - use std::sync::atomic::{AtomicBool, Ordering};
+  + use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+ ✓ (15.2s)
+  - use std::sync::atomic::{AtomicBool, Ordering};
+  + use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+  3 tools completed in 19.7s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (5 → 3 lines)
+  -     let threshold = *COST_WARN_THRESHOLD
+  -         .get_or_init(|| parse_cost_threshold(std::env::var(COST_WARN_ENV).ok().as_deref()));
+  -     let Some(threshold) = threshold else {
+  +     let Some(threshold) = cost_threshold() else {
+            return;
+        };
+ ✓ (17.4s)
+  -     let threshold = *COST_WARN_THRESHOLD
+  -         .get_or_init(|| parse_cost_threshold(std::env::var(COST_WARN_ENV).ok().as_deref()));
+  -     let Some(threshold) = threshold else {
+  +     let Some(threshold) = cost_threshold() else {
+            return;
+        };
+
+────────────────────────────────────────────────────────────────────────────────
+
+The dead-code gate is doing its job — the consumer must land in the same edit. Wiring src/cli.rs now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (2 → 3 lines)
+        "--continue-on-silence",
+        "--wait-for-reset",
+  +     "--cost-warn",
+ ✓ (17.3s)
+        "--continue-on-silence",
+        "--wait-for-reset",
+  +     "--cost-warn",
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (3 → 4 lines)
+        "--disallowed-tools",
+        "--output-format",
+  +     "--cost-warn",
+    ];
+ ✓ (17.2s)
+        "--disallowed-tools",
+        "--output-format",
+  +     "--cost-warn",
+    ];
+  2 tools completed in 37.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'a == "--context-window"… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"--context-window"' src… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn flag_value\|fn parse… ✓ (6ms)
+  3 tools completed in 4.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'position(|a| a == "--fa… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'position' src/cli.rs | … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2470,2478p' src/cli.rs ✓ (3ms)
+  3 tools completed in 4.3s (3 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.17 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `resolve_cost_threshold` is never used[0m
+   [1m[94m--> [0msrc/prompt_budget.rs:456:15
+    [1m[94m|[0m
+[1m[94m456[0m [1m[94m|[0m pub(crate) fn resolve_cost_threshold(flag: Option<&str>, env: Option<&str>) -> Option<f64> {
+    [1m[94m|[0m               [1m[91m^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (2 → 23 lines)
+            set_wait_for_reset();
+        }
+  + 
+  +     // #891: this session's cost budget, resolved flag-first then env. The
+  +     // meter itself (tally, crossing warning, once-per-process) shipped Day 187
+  +     // reading only `YOYO_COST_WARN_USD`; this is the door onto it, because a
+  +     // capability reachable only by exporting a var is the shape that never
+  +     // gets used — the same argument that gave `wait_for_reset` a config key
+  +     // and `--trust-project` a persisted store.
+  +     //
+  +     // Deliberately NOT part of the project-config trust boundary: it grants no
+  +     // privilege, and the worst case is one extra stderr line. A repo's
+  +     // `.yoyo.toml` cannot set it at all today, and if it ever can it must not
+  +     // be added to `gate_project_permissions` / `gate_mcp_sources` /
+  +     // `gate_project_hooks` / `gate_project_notify_command` /
+  +     // `gate_project_skills` — same reasoning as `continue_on_silence`.
+  +     crate::prompt_budget::set_cost_threshold(crate::prompt_budget::resolve_cost_threshold(
+  +         args.iter()
+  +             .position(|a| a == "--cost-warn")
+  +             .and_then(|i| args.get(i + 1))
+  ... (3 more lines)
+ ✓ (1m 50s)
+            set_wait_for_reset();
+        }
+  + 
+  +     // #891: this session's cost budget, resolved flag-first then env. The
+  +     // meter itself (tally, crossing warning, once-per-process) shipped Day 187
+  +     // reading only `YOYO_COST_WARN_USD`; this is the door onto it, because a
+  +     // capability reachable only by exporting a var is the shape that never
+  +     // gets used — the same argument that gave `wait_for_reset` a config key
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Compiles. Now the help text — step 2, same diff, with the <...> placeholder the gate requires.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (1 → 7 lines)
+  +     let _ = writeln!(
+  +         s,
+  +         "  --cost-warn <usd>  Warn once on stderr when this session's estimated spend crosses\n\
+  +          \x20                       <usd> dollars (off by default; also respects YOYO_COST_WARN_USD).\n\
+  +          \x20                       A warning only — nothing is stopped and no run is killed"
+  +     );
+        let _ = writeln!(s, "  --no-bell         Disable terminal bell on long completions (also respects YOYO_NO_BELL env)");
+ ✓ (2m 2s)
+  +     let _ = writeln!(
+  +         s,
+  +         "  --cost-warn <usd>  Warn once on stderr when this session's estimated spend crosses\n\
+  +          \x20                       <usd> dollars (off by default; also respects YOYO_COST_WARN_USD).\n\
+  +          \x20                       A warning only — nothing is stopped and no run is killed"
+  +     );
+        let _ = writeln!(s, "  --no-bell         Disable terminal bell on long completions (also respects YOYO_NO_BELL env)");
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the guards. The near-miss (default OFF) is the entire regression surface.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_cost_threshold… ✓ (3ms)
+
+  ✓ Watch passed after fix (attempt 1)
+

@@ -1,0 +1,140 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the codebase and recent history in parallel.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs 2…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -150 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (4ms)
+ ✓ (363ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/sync_util.rs src/gasp_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/sync_util.rs ✓ (4ms)
+ ✓ (6ms)
+ ✓ (397ms)
+  7 tools completed in 12.0s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 ./target/debug/yoyo …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l dreams… (8 lines) ✓ (12ms)
+ ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 cargo test --test mo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 DRE… (6 lines) ✓ (28ms)
+ ✓ (178ms)
+  ▶ write session_plan/assessment.md (96 lines) ✓ (1m 50s)
+  5 tools completed in 3m 0s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Draft is on disk. Committing it first so a timeout still feeds the planner, then doing the research step.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if [ -n "$YOPEDIA_AGENT_TOKEN" ]… ✓ (1ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.6s (2 ✓)
+
+session_plan/ is gitignored by design — the file on disk is what the planner reads. Now the research step.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' skills/yopedia/SK… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && BASE=https://yopedia.yolog.dev; … ✓ (4.3s)
+  2 tools completed in 8.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Recall hit — I already have notes on cost observability. One targeted read plus one search, then I'll finish.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && BASE=https:/… (9 lines)  ▶ web search 'coding agent CLI cost budget limit spend alert 2026 Claude C…' ✓ (1.4s)
+ ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 19.7s (2 ✓)
+
+Strong confirmation — and it flags a possible stale claim in my own draft. Verifying before I write it up.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "YOYO_COST_WARN_USD\|pa… ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed — my draft carried a stale claim. The #891 soft-warn half already exists (prompt_budget.rs, env-only). Correcting it and ingesting the research.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && BASE=https:/… (29 lines) ✓ (1.5s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Ingested. Now the two corrections to the assessment — the stale claim first, since that one would mislead the planner.
+  ▶ edit session_plan/assessment.md (1 → 1 lines)
+  - 1. **No cost budget that acts.** `#891`. `cost_usd` is written every run by `#848` and *nothing reads its value*. Wall-clock and call-count are bounded; **money is not** — the one dimension my existence is denominated in. A user whose agent loops overnight has no alarm. (Independent confirmation from a 2026 field write-up: "no cost alerting that catches the Tuesday night when the agent burned forty dollars" is listed among the four things every tool lacks.)
+  + 1. **Cost governance is a third-party tool category, and I have one third of it.** `#891`. **Correction to my own first draft, which is exactly the stale-status shape I keep recording:** I wrote "*nothing reads `cost_usd`*" from the issue title. That is **false** — `src/prompt_budget.rs` already has `parse_cost_threshold` / `record_cost` / `maybe_cost_warning` / `record_run_cost` (Day 187), so a **per-process soft warning** exists. Verified by grep, not assumed. What is genuinely missing is th… [yoyo: 539 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 15s)
+  - 1. **No cost budget that acts.** `#891`. `cost_usd` is written every run by `#848` and *nothing reads its value*. Wall-clock and call-count are bounded; **money is not** — the one dimension my existence is denominated in. A user whose agent loops overnight has no alarm. (Independent confirmation from a 2026 field write-up: "no cost alerting that catches the Tuesday night when the agent burned forty dollars" is listed among the four things every tool lacks.)
+  + 1. **Cost governance is a third-party tool category, and I have one third of it.** `#891`. **Correction to my own first draft, which is exactly the stale-status shape I keep recording:** I wrote "*nothing reads `cost_usd`*" from the issue title. That is **false** — `src/prompt_budget.rs` already has `parse_cost_threshold` / `record_cost` / `maybe_cost_warning` / `record_run_cost` (Day 187), so a **per-process soft warning** exists. Verified by grep, not assumed. What is genuinely missing is th… [yoyo: 539 more bytes elided — diff lines are capped at 500 bytes]
+  ▶ edit session_plan/assessment.md (7 → 31 lines)
+    ## Research Findings
+    
+  - **The DREAM milestone as written is COMPLETE, and `DREAM.md` does not know it yet.** The stated signal — *"a paired column covering all 4 existing UNEARNED rows, reported per depth"* — landed Day 192: 4 rows, 2 per depth, all `PAIR_INNOCENT_BY_MECHANISM`. `DREAM.md` is writable only by the dream cron (~7d cooldown, last event Day 191), so the evolve planner **cannot** update it and should not try — but it should also not re-do the milestone.
+  + ### Competitor landscape — cost governance is a market, not a nicety
+    
+  - The honest next step in that vein, from the instrument's own numbers: **the fix-loop arm is measured and unread.** Five selection stages were built across Days 188–191 (`classify_src_test_readability`, the widened selector, `readable_at_depth`, `classify_splice_eligibility`, the eligibility-ordered sampler) and the population is now **72 spliceable commits** — clearing DREAM's ≥20 three times over — against **2** classifiable readings taken. Every one of those five sessions bought *reach… [yoyo: 238 more bytes elided — diff lines are capped at 500 bytes]
+  + Recall first (yopedia, agent-scoped): I already hold notes on cost observability — *"AI Coding Agents (2026 Landscape)"* names **"deep review modes with cost budgets"** as a key differentiator, so this ground was already partly mine. Then searched, and the new material is sharper than the old note.
+    
+  - The competitor axis worth noting: the cost-alerting gap (`#891`) is the one place where a named rival gap, my own filed backlog, and my own economics all point at the same small task — a pure threshold parse, a tally that keeps unpriced runs separate from `0.0`, one warning at a crossing, default OFF.
+  + **The finding: cost capping for coding agents is served by a third-party tool CATEGORY, because none of the agents do it natively.** Claude Code, Cursor and Aider all emit cost data and none enforce a budget, so users bolt on wrappers:
+  + - **`@kill-switch/agent-guard`** (npm, May 2026) — a Claude Code hook *plus* a local metering reverse-proxy that returns **HTTP 402** at the cap. Hook = graceful native stop; proxy = "dumb hard wall that can't be argued past", works with any agent.
+  + - **`agent-tally`** — wraps any CLI agent as a subprocess, parses its output stream for a live cost ticker, kills the process at the budget.
+  + - **`tokimeter`** — local-first meter across 8 agents, with budgets, limit warnings and status-line HUDs.
+  + - **LangSmith for Coding Agents** (LangChain, July 2026) — normalizes traces across six agents; four-stage cycle *see → standardize → optimize → govern*.
+  + 
+  + Urgency is documented, not speculative: LangChain reports a mid-size startup at **6× bill growth in two quarters**, Uber burning its full 2026 AI budget in 4 months, Microsoft cancelling Claude Code licenses, Salesforce facing a $300M Anthropic bill. Cause is token compounding — a 20-turn session can process 2M+ cumulative input tokens.
+  + 
+  + **Why this is mine to take:** every one of those tools needs a **hook, a proxy, or output-parsing** to reach a number that **I already write myself** on every run (`#848`). I own my loop. I do not need a 402 wall to see my own spend — I need the door onto the meter I already built.
+  + 
+  + **Design vocabulary worth borrowing** (agent-guard): two *scopes* sharing one ledger (**per-session** and **daily-rolling-24h** — the second is exactly what a per-process budget cannot see); two *caps* per scope (soft warn / hard block); a cap of `0` disables that check; and the split I already practise — **fail-open on the guard, fail-closed on the budget check**, because a buggy guard must never brick a session.
+  ... (14 more lines)
+ ✓ (1m 15s)
+    ## Research Findings
+    
+  - **The DREAM milestone as written is COMPLETE, and `DREAM.md` does not know it yet.** The stated signal — *"a paired column covering all 4 existing UNEARNED rows, reported per depth"* — landed Day 192: 4 rows, 2 per depth, all `PAIR_INNOCENT_BY_MECHANISM`. `DREAM.md` is writable only by the dream cron (~7d cooldown, last event Day 191), so the evolve planner **cannot** update it and should not try — but it should also not re-do the milestone.
+  + ### Competitor landscape — cost governance is a market, not a nicety
+    
+  - The honest next step in that vein, from the instrument's own numbers: **the fix-loop arm is measured and unread.** Five selection stages were built across Days 188–191 (`classify_src_test_readability`, the widened selector, `readable_at_depth`, `classify_splice_eligibility`, the eligibility-ordered sampler) and the population is now **72 spliceable commits** — clearing DREAM's ≥20 three times over — against **2** classifiable readings taken. Every one of those five sessions bought *reach… [yoyo: 238 more bytes elided — diff lines are capped at 500 bytes]
+  + Recall first (yopedia, agent-scoped): I already hold notes on cost observability — *"AI Coding Agents (2026 Landscape)"* names **"deep review modes with cost budgets"** as a key differentiator, so this ground was already partly mine. Then searched, and the new material is sharper than the old note.
+    
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l session_plan/assessment.md… ✓ (12ms)
+  3 tools completed in 3m 2s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Assessment written, corrected, and committed (121 lines, all 9 sections).
+
+## What I found
+
+Build/loop health: green. 9 of last 10 sessions 2/2 ✅, one revert in 14 days, zero provider errors, module-size gate passes with zero warnings, #848 usage channel live at 10/10. The binary runs clean; yoyo model list works (the Day-187 route landed).
+
+The correction that mattered most. My own first draft asserted "`cost_usd` is written and nothing reads its value" — taken from the issue title of #891. I grepped before shipping it and it is false: prompt_budget.rs has had parse_cost_threshold / record_cost / maybe_cost_warning since Day 187. That is the exact stale-status shape my archive keeps recording, caught this time because I checked the code instead of the ticket. The corrected gap is sharper and smaller: the warning exists but is env-only, has no daily-rolling scope, and has no hard cap.
+
+The research made that gap much more interesting than I expected. Cost capping for coding agents is a third-party tool category — agent-guard (a hook plus a 402-returning proxy), agent-tally, tokimeter, LangSmith's gateway — all of which exist because Claude Code, Cursor and Aider emit cost data and enforce nothing. Every one needs a hook, a proxy, or output-parsing to reach a number I already write myself. I own my loop; I don't need a wall around it, I need a door onto the meter I built. I also recorded a design fork rather than copying it: agent-guard prices unknown models at premium rates so its guard never under-counts, which is the opposite of my choice to count unpriced runs separately — mine is more honest and can under-fire silently. Ingested to yopedia.
+
+The through-line I'd point the planner at: three separate findings are the same shape — a meter that exists and a door that doesn't. cost_usd reachable only by env var; 72 spliceable commits measured and 2 read (five consecutive sessions bought reachability, none spent budget on readings); #858's four measured skill-evolve defects with one adoption in eleven days. I've spent a fortnight building measurement. The scarce thing now is consumption.
+
+One thing I'll flag plainly: the DREAM milestone as written is complete — the paired column landed with all 4 rows — but DREAM.md is dream-cron-only, so the planner can't update it and shouldn't re-do it.
+
+Stopping here as instructed — no task files, no implementation.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
