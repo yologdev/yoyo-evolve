@@ -1087,21 +1087,71 @@ pub fn handle_undo(input: &str, history: &mut TurnHistory) -> Option<String> {
 /// Returns `Some(context)` with causality information so the agent knows
 /// that earlier conversation may reference code that no longer exists.
 fn handle_undo_last_commit() -> Option<String> {
+    handle_undo_last_commit_in(std::path::Path::new("."))
+}
+
+/// Merge a raw git `Output` into the `Result<String, String>` shape `run_git`
+/// returns, so routing through the chokepoint's raw-`Output` helper preserves
+/// this function's existing handling byte-for-byte: trimmed stdout on success,
+/// trimmed stderr on failure, and `run_git_output`'s own `git not found: …`
+/// text on a spawn failure (it already formats that string, so it is passed
+/// through rather than rebuilt).
+fn undo_result(out: Result<std::process::Output, String>) -> Result<String, String> {
+    match out {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        Ok(output) => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Run one git command for the undo path against `dir`.
+///
+/// `-C <dir>` is placed **before** the subcommand because it is a git *global*
+/// (`git revert -C` would be an entirely different flag), matching
+/// `run_git_amend_with_message_in` / `run_git_amend_no_edit_in` in this module.
+///
+/// It routes through `run_git_output` rather than `run_git_in_dir`, and that
+/// choice is a **safety** property rather than a style preference — measured,
+/// not assumed. `run_git_in_dir`'s `#[cfg(test)]` destructive guard resolves the
+/// target relative to the `dir` it is handed, so a `Path::new(".")` wrapper
+/// yields the *relative* `.`, which never equals the absolute
+/// `CARGO_MANIFEST_DIR` and so **silently stops the guard firing**.
+/// `run_git_output`'s guard resolves `-C .` against the absolute process cwd,
+/// giving `<manifest_dir>/.`, which **does** compare equal (Rust's `Path`
+/// compares by components, so a `CurDir` component is normalised away). Routing
+/// the wrapper this way therefore keeps `revert` blocked from the project root
+/// during tests, which is the whole reason the guard exists (Days 42–44).
+fn run_git_undo_in(dir: &str, args: &[&str]) -> Result<String, String> {
+    let mut argv: Vec<&str> = vec!["-C", dir];
+    argv.extend_from_slice(args);
+    undo_result(crate::git::run_git_output(&argv))
+}
+
+/// Undo the most recent git commit in `dir` (#780 — the dir-taking seam, so no
+/// test needs to move the **process-global** working directory; see
+/// `list_project_files_in` / `get_recent_git_files_in` /
+/// `run_git_amend_with_message_in` for the same shape).
+fn handle_undo_last_commit_in(root: &std::path::Path) -> Option<String> {
+    let dir = root.to_string_lossy();
+
     // 1. Get the last commit info
-    let log = run_git(&["log", "--oneline", "-1"]).unwrap_or_default();
+    let log = run_git_undo_in(&dir, &["log", "--oneline", "-1"]).unwrap_or_default();
     if log.trim().is_empty() {
         println!("{DIM}  (no commits to undo){RESET}\n");
         return None;
     }
 
     // 2. Get the files changed in that commit
-    let files = run_git(&["diff", "--name-only", "HEAD~1", "HEAD"]).unwrap_or_default();
+    let files =
+        run_git_undo_in(&dir, &["diff", "--name-only", "HEAD~1", "HEAD"]).unwrap_or_default();
 
     // 3. Show what will be undone
     println!("{DIM}  Reverting last commit: {}{RESET}", log.trim());
 
     // 4. Revert using git revert (keeps history, safer than reset)
-    let result = run_git(&["revert", "HEAD", "--no-edit"]);
+    let result = run_git_undo_in(&dir, &["revert", "HEAD", "--no-edit"]);
     match result {
         Ok(output) => {
             println!("{GREEN}  ✓ Reverted last commit{RESET}");
@@ -1820,7 +1870,6 @@ pub fn handle_git(input: &str) {
 mod tests {
     use super::*;
     use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
-    use serial_test::serial;
 
     // ── parse_diff_stat tests ───────────────────────────────────────────
 
@@ -2710,7 +2759,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn undo_last_commit_in_real_repo() {
         use std::fs;
 
@@ -2771,12 +2819,7 @@ mod tests {
             .trim()
             .to_string();
 
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(repo).unwrap();
-
-        let result = handle_undo_last_commit();
-
-        std::env::set_current_dir(&original_dir).unwrap();
+        let result = handle_undo_last_commit_in(repo);
 
         // The revert should succeed
         assert!(
