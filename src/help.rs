@@ -138,6 +138,12 @@ pub fn cli_help_text() -> String {
          \x20                       stopping at the 120s ceiling (off by default: the process sleeps,\n\
          \x20                       silently, for as long as the provider says)"
     );
+    let _ = writeln!(
+        s,
+        "  --cost-warn <usd>  Warn once on stderr when this session's estimated spend crosses\n\
+         \x20                       <usd> dollars (off by default; also respects YOYO_COST_WARN_USD).\n\
+         \x20                       A warning only — nothing is stopped and no run is killed"
+    );
     let _ = writeln!(s, "  --no-bell         Disable terminal bell on long completions (also respects YOYO_NO_BELL env)");
     let _ = writeln!(s, "  --no-notify       Disable desktop notifications on long completions (also respects YOYO_NO_NOTIFY env)");
     let _ = writeln!(

@@ -8,7 +8,7 @@
 
 use crate::format::safe_truncate;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -436,9 +436,79 @@ pub(crate) fn maybe_cost_warning(
     Some(msg)
 }
 
-/// Cached parse of [`COST_WARN_ENV`]. Read once and frozen for the lifetime of
-/// the process so the budget cannot shift mid-session. `None` means off.
-static COST_WARN_THRESHOLD: OnceLock<Option<f64>> = OnceLock::new();
+/// Resolve the session cost budget from its two sources, **flag first, then
+/// env**. Pure; all I/O lives in the caller.
+///
+/// This is the same two-source shape `continue_on_silence` (#794) and
+/// `wait_for_reset` (Day 178) already use, and it reuses
+/// [`parse_cost_threshold`] for *both* sources rather than growing a second
+/// parser — one statement of "what is a valid budget", never two that agree
+/// the day they are written and diverge forever after.
+///
+/// **Stated decision, not an accident: an invalid flag value falls through to
+/// the env var.** `--cost-warn abc` with `YOYO_COST_WARN_USD=5` yields `$5`,
+/// because `.or_else` *is* the OR shape the two precedents use, and the env
+/// value is itself validated — worst case a user gets the budget they set
+/// themselves earlier. With no env var it yields `None` = OFF, which is
+/// [`parse_cost_threshold`]'s three-state rule working as designed: a typo
+/// must never fabricate a threshold, because that would alarm on the *first*
+/// run of every session that mistyped the value.
+pub(crate) fn resolve_cost_threshold(flag: Option<&str>, env: Option<&str>) -> Option<f64> {
+    parse_cost_threshold(flag).or_else(|| parse_cost_threshold(env))
+}
+
+/// This session's cost budget, in dollars, as raw `f64` bits. `0.0` means
+/// **off**, which is unambiguous because [`parse_cost_threshold`] rejects
+/// every value that is not finite and `> 0.0`.
+///
+/// **Deliberately an atomic and not a `OnceLock`, and the reason is a bug this
+/// repo has already paid for:** `OnceLock::set` silently no-ops once the cell
+/// has been initialised by *any* reader, which is exactly the trap
+/// `TRUST_PROJECT` carried until Day 184 — every `set_trust_project()` call
+/// after the first did nothing at all. A budget resolved in `parse_args` must
+/// win over the lazy env fallback whether or not something read the cell
+/// first, so the write is unconditional.
+static COST_WARN_THRESHOLD: AtomicU64 = AtomicU64::new(0);
+
+/// Whether [`COST_WARN_THRESHOLD`] has been resolved yet. Separate from the
+/// value because `0.0` is a legitimate resolved answer (= off) and must not be
+/// mistaken for "nobody has looked".
+static COST_WARN_RESOLVED: AtomicBool = AtomicBool::new(false);
+
+/// Install this session's cost budget. `None` means off.
+///
+/// Called from exactly one site in `parse_args`, with the flag and env
+/// resolved by [`resolve_cost_threshold`]. **This flag grants no privilege** —
+/// the worst case is one extra stderr line — so it is deliberately *not* part
+/// of the project-config trust boundary (`gate_project_permissions` /
+/// `gate_mcp_sources` / `gate_project_hooks` / `gate_project_notify_command` /
+/// `gate_project_skills`), the same reasoning already written down for
+/// `continue_on_silence` and `wait_for_reset`.
+pub(crate) fn set_cost_threshold(threshold: Option<f64>) {
+    let bits = threshold.unwrap_or(0.0).to_bits();
+    COST_WARN_THRESHOLD.store(bits, Ordering::Relaxed);
+    COST_WARN_RESOLVED.store(true, Ordering::Relaxed);
+}
+
+/// This session's cost budget, resolving lazily from the env var if nothing
+/// installed one. `None` means off.
+///
+/// The lazy fallback keeps `YOYO_COST_WARN_USD` working byte-identically for
+/// any path that never reaches `parse_args` (a library caller, a test), which
+/// is the behaviour this had before the flag existed.
+fn cost_threshold() -> Option<f64> {
+    if !COST_WARN_RESOLVED.load(Ordering::Relaxed) {
+        set_cost_threshold(parse_cost_threshold(
+            std::env::var(COST_WARN_ENV).ok().as_deref(),
+        ));
+    }
+    let value = f64::from_bits(COST_WARN_THRESHOLD.load(Ordering::Relaxed));
+    if value > 0.0 {
+        Some(value)
+    } else {
+        None
+    }
+}
 
 /// This process's running spend.
 static COST_TALLY: Mutex<CostTally> = Mutex::new(CostTally {
@@ -458,9 +528,7 @@ static COST_TALLY: Mutex<CostTally> = Mutex::new(CostTally {
 /// informational (the trust prompt is the same call, for the same reason). It
 /// *is* gated on `is_plain_output()` for glyphs.
 pub(crate) fn record_run_cost(cost_usd: Option<f64>) {
-    let threshold = *COST_WARN_THRESHOLD
-        .get_or_init(|| parse_cost_threshold(std::env::var(COST_WARN_ENV).ok().as_deref()));
-    let Some(threshold) = threshold else {
+    let Some(threshold) = cost_threshold() else {
         return;
     };
 

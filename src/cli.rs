@@ -636,6 +636,7 @@ pub(crate) const KNOWN_FLAGS: &[&str] = &[
     "--screen-reader",
     "--continue-on-silence",
     "--wait-for-reset",
+    "--cost-warn",
     "--no-bell",
     "--no-notify",
     "--no-rtk",
@@ -722,6 +723,7 @@ pub(crate) const FLAGS_NEEDING_VALUES: &[&str] = &[
     "--allowed-tools",
     "--disallowed-tools",
     "--output-format",
+    "--cost-warn",
 ];
 
 /// Collect positional arguments that aren't flags, flag values, or known subcommands.
@@ -2126,6 +2128,27 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     {
         set_wait_for_reset();
     }
+
+    // #891: this session's cost budget, resolved flag-first then env. The
+    // meter itself (tally, crossing warning, once-per-process) shipped Day 187
+    // reading only `YOYO_COST_WARN_USD`; this is the door onto it, because a
+    // capability reachable only by exporting a var is the shape that never
+    // gets used — the same argument that gave `wait_for_reset` a config key
+    // and `--trust-project` a persisted store.
+    //
+    // Deliberately NOT part of the project-config trust boundary: it grants no
+    // privilege, and the worst case is one extra stderr line. A repo's
+    // `.yoyo.toml` cannot set it at all today, and if it ever can it must not
+    // be added to `gate_project_permissions` / `gate_mcp_sources` /
+    // `gate_project_hooks` / `gate_project_notify_command` /
+    // `gate_project_skills` — same reasoning as `continue_on_silence`.
+    crate::prompt_budget::set_cost_threshold(crate::prompt_budget::resolve_cost_threshold(
+        args.iter()
+            .position(|a| a == "--cost-warn")
+            .and_then(|i| args.get(i + 1))
+            .map(|s| s.as_str()),
+        std::env::var("YOYO_COST_WARN_USD").ok().as_deref(),
+    ));
 
     // [model_pricing."<id>"]: user-supplied per-model rates (issue #833).
     // A wrong cost is worse than no cost, because it is actionable-looking —
