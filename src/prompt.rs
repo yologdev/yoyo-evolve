@@ -198,6 +198,44 @@ pub struct PromptOutcome {
     pub last_api_error: Option<String>,
 }
 
+/// Day 192: the ONE statement of what a fatally-failed turn hands back.
+///
+/// Returns `(text, api_error)` — the text the dead turn already produced, and
+/// the error **unchanged**. Both prompt loops call this from every `FatalError`
+/// arm, so "does a dead turn keep its answer?" has one answer rather than three
+/// copies that agree the day they are written.
+///
+/// The error is carried verbatim and is never swallowed, reworded, reordered or
+/// downgraded: this ADDS text beside a failure, it does not soften the failure.
+/// A degraded run must stay legible **as degraded** (the commitment #895 made
+/// for `external_servers` one subsystem over).
+fn fatal_handoff(collected_text: String, error_msg: String) -> (String, Option<String>) {
+    (collected_text, Some(error_msg))
+}
+
+/// Assemble the value a caller of the two prompt loops actually receives.
+///
+/// One statement, read by both loops' single construction site, so a test can
+/// compose `into_result()` → `fatal_handoff` → this function and be asserting
+/// on the emission point rather than on a struct literal it wrote itself.
+fn build_outcome(
+    collected_text: String,
+    text_since_last_tool: String,
+    last_tool_error: Option<String>,
+    last_tool_name: Option<String>,
+    was_overflow: bool,
+    api_error: Option<String>,
+) -> PromptOutcome {
+    PromptOutcome {
+        text: collected_text,
+        text_since_last_tool,
+        last_tool_error,
+        last_tool_name,
+        was_overflow,
+        last_api_error: api_error,
+    }
+}
+
 // Extracted into `prompt_retry` module (Day 64). Callers import directly
 // from `crate::prompt_retry`.
 use crate::prompt_retry::{
@@ -1351,8 +1389,7 @@ pub async fn run_prompt_with_changes(
                         // Day 192: keep whatever the dead turn produced. The
                         // error still surfaces below — this adds text, it does
                         // not soften the failure.
-                        collected_text = fatal_text;
-                        api_error = Some(retry_err);
+                        (collected_text, api_error) = fatal_handoff(fatal_text, retry_err);
                     }
                 }
                 break;
@@ -1396,22 +1433,21 @@ pub async fn run_prompt_with_changes(
                 // Day 192: the resample path `continue`s above, so a discarded
                 // attempt's text never survives — only the terminal, gone-for-good
                 // failure carries its answer out to the caller.
-                collected_text = fatal_text;
-                api_error = Some(error_msg);
+                (collected_text, api_error) = fatal_handoff(fatal_text, error_msg);
                 break;
             }
         }
     }
 
     finish_prompt_epilogue(agent, &total_usage, session_total, model, prompt_start).await;
-    PromptOutcome {
-        text: collected_text,
+    build_outcome(
+        collected_text,
         text_since_last_tool,
         last_tool_error,
         last_tool_name,
-        was_overflow: did_overflow_compact,
-        last_api_error: api_error,
-    }
+        did_overflow_compact,
+        api_error,
+    )
 }
 
 /// Run a prompt with automatic retry on tool errors.
@@ -1716,22 +1752,21 @@ pub async fn run_prompt_with_content_and_changes(
                 // Day 192: same rule as the text path — the resample path
                 // `continue`s above, so only the terminal failure carries its
                 // already-produced answer out to the caller.
-                collected_text = fatal_text;
-                api_error = Some(error_msg);
+                (collected_text, api_error) = fatal_handoff(fatal_text, error_msg);
                 break;
             }
         }
     }
 
     finish_prompt_epilogue(agent, &total_usage, session_total, model, prompt_start).await;
-    PromptOutcome {
-        text: collected_text,
+    build_outcome(
+        collected_text,
         text_since_last_tool,
         last_tool_error,
         last_tool_name,
-        was_overflow: false,
-        last_api_error: api_error,
-    }
+        false,
+        api_error,
+    )
 }
 
 // ---------------------------------------------------------------------------
