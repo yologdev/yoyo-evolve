@@ -241,7 +241,20 @@ enum PromptResult {
     /// **surface-and-stop**: it never feeds the auto-retry path, it only makes
     /// the failure visible to the caller so a turn that accomplished nothing
     /// cannot read as a clean `Done`.
-    FatalError { error_msg: String, usage: Usage },
+    ///
+    /// `collected_text` carries whatever the turn had already produced before
+    /// it died (Day 192). #646 makes this variant surface-and-stop, so it is
+    /// never retried and the text is gone for good unless it is carried here —
+    /// a turn that wrote 2,000 words and then hit a fatal `StopReason::Error`
+    /// used to discard every one of them at the type level, before any caller
+    /// could decide. It carries the text ONLY: `text_since_last_tool` is
+    /// deliberately NOT carried, because that field feeds `should_auto_continue`'s
+    /// silence branch and a dead turn must not look continuable.
+    FatalError {
+        error_msg: String,
+        usage: Usage,
+        collected_text: String,
+    },
 }
 
 /// The one place this module starts a text prompt (#683 step 2).
@@ -959,6 +972,10 @@ impl PromptEventState {
             PromptResult::FatalError {
                 error_msg: err_msg,
                 usage: self.usage,
+                // Day 192: carry the answer the turn already produced. The
+                // error itself is unchanged — this ADDS text, it never
+                // swallows, rewords or downgrades `error_msg`.
+                collected_text: self.collected_text,
             }
         } else if let Some(err_msg) = self.retriable_error {
             PromptResult::RetriableError {
@@ -1326,16 +1343,25 @@ pub async fn run_prompt_with_changes(
                     PromptResult::FatalError {
                         error_msg: retry_err,
                         usage: retry_usage,
+                        collected_text: fatal_text,
                     } => {
                         // #646: already printed by handle_agent_end; surface for
                         // control flow without retrying.
                         accumulate_usage(&mut total_usage, &retry_usage);
+                        // Day 192: keep whatever the dead turn produced. The
+                        // error still surfaces below — this adds text, it does
+                        // not soften the failure.
+                        collected_text = fatal_text;
                         api_error = Some(retry_err);
                     }
                 }
                 break;
             }
-            PromptResult::FatalError { error_msg, usage } => {
+            PromptResult::FatalError {
+                error_msg,
+                usage,
+                collected_text: fatal_text,
+            } => {
                 // #646: surface-and-stop. The message was already shown by
                 // handle_agent_end. Re-running the identical prompt can reproduce
                 // this class of failure, so it is deliberately NOT retried — but it
@@ -1367,6 +1393,10 @@ pub async fn run_prompt_with_changes(
                     }
                     continue;
                 }
+                // Day 192: the resample path `continue`s above, so a discarded
+                // attempt's text never survives — only the terminal, gone-for-good
+                // failure carries its answer out to the caller.
+                collected_text = fatal_text;
                 api_error = Some(error_msg);
                 break;
             }
@@ -1654,7 +1684,11 @@ pub async fn run_prompt_with_content_and_changes(
                 api_error = Some(error_msg);
                 break;
             }
-            PromptResult::FatalError { error_msg, usage } => {
+            PromptResult::FatalError {
+                error_msg,
+                usage,
+                collected_text: fatal_text,
+            } => {
                 // #646: surface-and-stop — already printed by handle_agent_end,
                 // never auto-retried, but visible to the caller.
                 //
@@ -1679,6 +1713,10 @@ pub async fn run_prompt_with_content_and_changes(
                     }
                     continue;
                 }
+                // Day 192: same rule as the text path — the resample path
+                // `continue`s above, so only the terminal failure carries its
+                // already-produced answer out to the caller.
+                collected_text = fatal_text;
                 api_error = Some(error_msg);
                 break;
             }
