@@ -157,6 +157,11 @@ static CHECKPOINT_TRIGGERED: AtomicBool = AtomicBool::new(false);
 
 /// Build a JSON output object for --json mode.
 /// Used by both --prompt and piped modes to produce structured output.
+///
+/// Thin wrapper over [`build_json_output_with`]: this is the **only** read of
+/// the process-global external-server report, so tests drive the core with an
+/// explicit value and touch no global (the `context_budget_warning_with` seam,
+/// which `tests/global_state_races.rs` names as its best remedy).
 fn build_json_output(
     response: &PromptOutcome,
     model: &str,
@@ -165,6 +170,30 @@ fn build_json_output(
     session_changes: &SessionChanges,
     duration: std::time::Duration,
     num_turns: usize,
+) -> String {
+    build_json_output_with(
+        response,
+        model,
+        usage,
+        is_error,
+        session_changes,
+        duration,
+        num_turns,
+        &crate::agent_builder::external_server_report(),
+    )
+}
+
+/// The whole decision, with the external-server report passed explicitly.
+#[allow(clippy::too_many_arguments)]
+fn build_json_output_with(
+    response: &PromptOutcome,
+    model: &str,
+    usage: &Usage,
+    is_error: bool,
+    session_changes: &SessionChanges,
+    duration: std::time::Duration,
+    num_turns: usize,
+    external: &crate::agent_builder::ExternalServerReport,
 ) -> String {
     let cost_usd = estimate_cost(usage, model);
     let json_obj = serde_json::json!({
@@ -187,9 +216,7 @@ fn build_json_output(
         // the same defect one layer down. Deliberately NOT folded into
         // `is_error`: a degraded run that produced a correct answer is not an
         // error, and flipping that flag would break every script branching on it.
-        "external_servers": crate::agent_builder::external_servers_json(
-            &crate::agent_builder::external_server_report(),
-        ),
+        "external_servers": crate::agent_builder::external_servers_json(external),
     });
     serde_json::to_string(&json_obj).unwrap_or_else(|_| "{}".to_string())
 }

@@ -1043,3 +1043,136 @@ fn emit_output_records_usage_before_branching_on_the_output_mode() {
         );
     }
 }
+
+/// A minimal `PromptOutcome`/`Usage` pair for driving `build_json_output_with`.
+fn json_fixture() -> (PromptOutcome, Usage) {
+    (
+        PromptOutcome {
+            text: "ok".to_string(),
+            text_since_last_tool: String::new(),
+            last_tool_error: None,
+            last_tool_name: None,
+            was_overflow: false,
+            last_api_error: None,
+        },
+        Usage {
+            input: 1,
+            output: 1,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 2,
+        },
+    )
+}
+
+fn json_for(external: &crate::agent_builder::ExternalServerReport) -> serde_json::Value {
+    let (response, usage) = json_fixture();
+    let out = build_json_output_with(
+        &response,
+        "m",
+        &usage,
+        false,
+        &SessionChanges::new(),
+        std::time::Duration::from_millis(1234),
+        3,
+        external,
+    );
+    // Round-tripping through the parser is what pins that the string is real
+    // JSON escaped exactly once by serde_json, never hand-built with format!.
+    serde_json::from_str(&out).expect("build_json_output must emit parseable JSON")
+}
+
+/// The near-miss guard, and it is the entire regression surface: a healthy run
+/// emits every pre-existing key byte-identically and the new object is exactly
+/// the all-zero/all-empty shape. Asserted with whole-value equality rather than
+/// a `contains`, because this is every existing `--output-format json` user.
+#[test]
+fn healthy_run_json_is_byte_identical_plus_an_all_empty_external_servers() {
+    let parsed = json_for(&crate::agent_builder::ExternalServerReport::default());
+
+    // Every pre-existing key, whole-value.
+    assert_eq!(parsed["response"], serde_json::json!("ok"));
+    assert_eq!(parsed["model"], serde_json::json!("m"));
+    assert_eq!(
+        parsed["usage"],
+        serde_json::json!({
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+        })
+    );
+    assert_eq!(parsed["duration_ms"], serde_json::json!(1234));
+    assert_eq!(parsed["num_turns"], serde_json::json!(3));
+    assert_eq!(parsed["is_error"], serde_json::json!(false));
+
+    // The new object, whole-value: present on a healthy run, all-empty.
+    assert_eq!(
+        parsed["external_servers"],
+        serde_json::json!({
+            "mcp_connected": 0,
+            "mcp_failed": [],
+            "openapi_connected": 0,
+            "openapi_failed": [],
+        }),
+        "a healthy run must still carry the key, in the all-empty shape"
+    );
+}
+
+/// A degraded run names the failed server verbatim in the right array, with the
+/// right kind — an `openapi` failure must not report as `mcp`, the same rule
+/// `connections_lost_note` follows (a note that misattributes its source is
+/// worse than none). `is_error` deliberately stays false: a degraded run that
+/// produced a correct answer is not an error.
+#[test]
+fn degraded_run_names_each_failed_server_under_its_own_kind() {
+    let report = crate::agent_builder::ExternalServerReport {
+        mcp_connected: 2,
+        mcp_failed: vec!["npx -y @modelcontextprotocol/server-foo".to_string()],
+        openapi_connected: 0,
+        openapi_failed: vec!["/specs/petstore.yaml".to_string()],
+    };
+    // Anti-vacuous: the fixture must genuinely carry a failure on both axes, so
+    // a broken reader cannot pass by both sides agreeing on nothing.
+    assert!(!report.mcp_failed.is_empty() && !report.openapi_failed.is_empty());
+
+    let parsed = json_for(&report);
+    assert_eq!(
+        parsed["external_servers"],
+        serde_json::json!({
+            "mcp_connected": 2,
+            "mcp_failed": ["npx -y @modelcontextprotocol/server-foo"],
+            "openapi_connected": 0,
+            "openapi_failed": ["/specs/petstore.yaml"],
+        })
+    );
+    // Not folded into is_error: flipping that flag would break every script
+    // branching on it, and the run did produce an answer.
+    assert_eq!(
+        parsed["is_error"],
+        serde_json::json!(false),
+        "a degraded-but-successful run is not an error"
+    );
+}
+
+/// Escaping is `serde_json`'s, not `sanitize_for_display`'s (#873 is the
+/// *terminal* rule): a control byte in a server command is escaped exactly once
+/// by the serializer and survives the round trip byte-identically.
+#[test]
+fn a_control_byte_in_a_server_command_is_escaped_once_by_serde() {
+    let hostile = "npx \u{1b}[2K --spooky\nsecond line";
+    let report = crate::agent_builder::ExternalServerReport {
+        mcp_failed: vec![hostile.to_string()],
+        ..Default::default()
+    };
+    assert!(
+        hostile.bytes().any(|b| b == 0x1b),
+        "anti-vacuous: the fixture must really carry a control byte"
+    );
+    let parsed = json_for(&report);
+    assert_eq!(
+        parsed["external_servers"]["mcp_failed"][0],
+        serde_json::json!(hostile),
+        "the command must round-trip verbatim, escaped exactly once"
+    );
+}
