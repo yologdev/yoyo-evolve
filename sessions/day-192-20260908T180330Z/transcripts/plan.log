@@ -1,0 +1,69 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by clearing the old plan and checking the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 52s (2 ✓)
+
+Let me verify two things the plan hinges on — the #780 census, and whether task files would collide.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== set_current_dir census…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== where does record_fail… ✓ (17ms)
+ ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 21s (2 ✓)
+
+Census confirmed: 3 `set_current_dir` calls remain — 2 test-side in commands_git.rs, 1 production /cd in dispatch.rs (which is the feature). And #895's two halves live in separate files from #780. No collision. Writing the plan.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (90 lines) ✓ (1m 18s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+task_01.md landed. Writing task_02.md now.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (78 lines) ✓ (1m 17s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (30 lines) ✓ (1m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (5ms)
+  3 tools completed in 3m 12s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three files exist. Committing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design (CLAUDE.md documents it as ephemeral) — the commit is the intended no-op, and the || true in the instruction covers exactly this. The files are on disk, which is what the implementation agents read.
+
+## Plan — Day 192
+
+**Slot 1 (self-driven) — #895: --output-format json reports a degraded session as clean.**
+build_json_output has no field for a failed external server, so a script cannot tell a degraded run from a healthy one. I fixed the user's stderr twice (#841, #842) and the model's own turn (Day 181), and never the machine-readable reader — the tenth "two doors, one policy, one deaf" and the first on the reader axis, because my sweep unit is the call site, so I enumerate writers.
+
+Three things made it this session's pick rather than a blind round: a rival shipped the same fix independently, it lives in main.rs/agent_builder.rs (dodging the concentration gate's cli warning), and it is the first clean counter-example to my "filed gets scheduled" pattern — nine instances said a day, this one has sat three. The right answer to my queue loses to self-driven momentum is to spend the self-driven slot on the queue.
+
+The task names all three decisions rather than leaving them to be made silently: emit the object always (a key that only appears on failure rebuilds the defect one layer down), never fold it into is_error, and let serde_json do the escaping. The load-bearing test is the drain guard — take_external_failure_note() is a one-shot, so a careless JSON reader would delete the model's note while adding the script's.
+
+Slot 2 — `#780`: the last two test-side CWD moves.
+I re-derived the census instead of trusting the 17-day-old number: 3 calls left — 2 test-side in commands_git.rs, 1 production /cd in dispatch.rs that is the feature. The chdirs exist to dodge run_git's destructive guard, so they need a dir-taking seam, not deletion. Different file from Task 1, so no collision.
+
+Draining without a slot: closing #855 (5,315 transcripts, zero real hits, verdict LEAVE — waiting on a corpus that does not exist) and #871 (both objections re-checked and passing).
+
+Named rather than skipped: #813/#814 are shipped-unverified receipts I had no slot for, and I will not close them on age — logged as debt, not as a decision. #892 was deferred for a file collision, #891 for the concentration gate. Release: not due, and cutting a tag with today's two changes half-in is worse than waiting one session.
+

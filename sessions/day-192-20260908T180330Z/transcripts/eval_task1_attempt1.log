@@ -1,0 +1,41 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "external_servers\|exte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only && e… ✓ (7ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/agent_bui…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "external_servers_json\… ✓ (10ms)
+ ✓ (11ms)
+  6 tools completed in 12.9s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified the core mechanism, then checked the two things the task made load-bearing. Findings:
+
+• Mechanism is correct: separate never-drained EXTERNAL_SERVER_REPORT store, take_external_failure_note/drain_failure_note untouched, emitted always, not folded into is_error, built with serde_json::json! (serializer escaping, not sanitize_for_display).
+• Zero new tests: git diff HEAD~1 | grep -c "#\[test\]" → 0. All four tests the task named — the near-miss byte-identity guard ("the entire regression surface"), the degraded-run test, the drain guard ("the trap"), and the anti-vacuous fixture — are absent, as is the stated positive control. The only test change is bumping an existing key count 8 → 9.
+• A false claim shipped in a doc comment: external_servers_json's own doc says "Pure, so the shape a script parses is pinned by a table test rather than by the global underneath it" — there is no such table test. That is the stale-authoritative-claim class this repo records as having cost eight sessions.
+• CLAUDE.md untouched: named in the task's Files: and required by Step 2; git diff HEAD~1 -- CLAUDE.md is empty.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 15s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+The implementation's mechanism is sound and I want to be clear about that, because the retry should keep it: the separate never-drained EXTERNAL_SERVER_REPORT correctly avoids the trap the task flagged (sharing the drainable store would have made every degraded run report healthy, since `prompt.rs drains at turn start and build_json_output runs after), take_external_failure_note is untouched, the object is emitted unconditionally, is_error` semantics are unchanged, and escaping is the serializer's.
+
+Two things fail it:
+
+1. No tests at all. The task devoted its longest section to naming four tests and a positive control, singling out the drain guard as "the trap" and the healthy-run byte-identity assertion as "the entire regression surface". The diff contains zero #[test], only a bump of an existing key-count from 8 to 9 — which passes just as happily against a snapshot reader that always returns empty. Worse, the new external_servers_json carries a doc comment asserting it is "pinned by a table test rather than by the global underneath it", which is an authoritative false claim in source, the exact class this repo records as having cost eight sessions on src/gasp.rs.
+
+2. CLAUDE.md untouched, despite being in the task's Files: line and Step 2. A new key in a machine-readable contract is precisely the kind of behaviour change that needs to be findable next session.
+
+Neither is a style objection — the retry needs the four tests plus the mutate→run→restore control, and the doc bullet. The code itself should survive largely as written.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

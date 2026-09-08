@@ -1,0 +1,42 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "env::set_current_dir("…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_current_dir" src/ … ✓ (11ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Still moving the CWD" C…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--… ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,200p' src/git.rs ✓ (3ms)
+  5 tools completed in 31.0s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Code equivalence confirmed — undo_result reproduces run_git's exact shape (trimmed stdout on success, trimmed stderr on failure, git not found: … on spawn error). The code half is faithful. Writing the verdict.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 28s)
+
+Verdict written to session_plan/eval_task_2.md.
+
+FAIL — on doc_sync only.
+
+What is genuinely good here (and I want this on the record, because the re-land should not re-litigate it):
+
+• The seam is the precedent shape exactly: handle_undo_last_commit_in(root) + a Path::new(".") wrapper, so production call sites are unchanged.
+• `-C <dir>` sits before the subcommand — the git-global rule the task flagged as silently breakable.
+• `undo_result reproduces run_git's output handling byte-for-byte (verified against src/git.rs:161-178: trimmed stdout on success, trimmed stderr on failure, and run_git_output already formats git not found: {e}`, so it is passed through rather than rebuilt).
+• The doc comment on run_git_undo_in is the best part of the diff: it explains measured why run_git_output and not run_git_in_dir — the latter's guard resolves against the relative ., which never equals CARGO_MANIFEST_DIR, so the wrapper would have silently stopped the destructive guard firing. That is precisely the Days 42–44 hazard, caught rather than walked into.
+• Census re-derived and correct: env::set_current_dir( now returns exactly one call, src/dispatch.rs:1417 (/cd), untouched as instructed. Test-side 2 → 0, total 3 → 1.
+• `#[serial]` and its import removed together — no false record of which tests are dangerous.
+
+Why it still fails. git show --stat HEAD lists only src/commands_git.rs plus two .yoyo/ ledger files. CLAUDE.md was in the task's Files: and Step 3 mandated the update, with the reason spelled out. The consequence is not cosmetic: line 373 now asserts "Still moving the CWD: 2 test-side lines in `commands_git.rs` … **3** calls of the original 22", which this diff makes false, in the file re-injected as authoritative context every session. That is the exact class CLAUDE.md itself records twice under "a status word ages differently from a diagnosis", and the Day-191 finding that the doc half is the half with no gate — cargo test cannot fail for a false sentence, which is why both gates went green on a diff whose docs were absent.
+
+Secondary, and worth a line in the re-land: Step 0 permits adapting when the premise is wrong, but requires saying so. The task file said "amend path"; the actual chdir pair was in undo_last_commit_in_real_repo. That correction currently exists nowhere.
+
+The fix is one edit to the commands_file.rs bullet — update the census to 0 test-side, 1 call (`/cd`), and note that the amend path never held a chdir. No code should change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

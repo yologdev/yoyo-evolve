@@ -1,0 +1,138 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the code to understand what landed and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '250,380p' src/agent_buil… ✓ (4ms)
+  3 tools completed in 5.8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---L… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '318,362p' src/agent_buil… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:300..370 ✓ (1ms)
+  3 tools completed in 6.0s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs:155..200 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== record_failed_server s… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "record_failed_server\|f… ✓ (5ms)
+  3 tools completed in 32.0s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (10 → 39 lines)
+  + ///
+  + /// Thin wrapper over [`build_json_output_with`]: this is the **only** read of
+  + /// the process-global external-server report, so tests drive the core with an
+  + /// explicit value and touch no global (the `context_budget_warning_with` seam,
+  + /// which `tests/global_state_races.rs` names as its best remedy).
+    fn build_json_output(
+  +     response: &PromptOutcome,
+  +     model: &str,
+  +     usage: &Usage,
+  +     is_error: bool,
+  +     session_changes: &SessionChanges,
+  +     duration: std::time::Duration,
+  +     num_turns: usize,
+  + ) -> String {
+  +     build_json_output_with(
+  +         response,
+  +         model,
+  +         usage,
+  +         is_error,
+  +         session_changes,
+  ... (19 more lines)
+ ✓ (15.6s)
+  + ///
+  + /// Thin wrapper over [`build_json_output_with`]: this is the **only** read of
+  + /// the process-global external-server report, so tests drive the core with an
+  + /// explicit value and touch no global (the `context_budget_warning_with` seam,
+  + /// which `tests/global_state_races.rs` names as its best remedy).
+    fn build_json_output(
+  +     response: &PromptOutcome,
+  +     model: &str,
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — now wire the parameter into the body (definition and consumer in one edit):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (3 → 1 lines)
+  -         "external_servers": crate::agent_builder::external_servers_json(
+  -             &crate::agent_builder::external_server_report(),
+  -         ),
+  +         "external_servers": crate::agent_builder::external_servers_json(external),
+ ✓ (2m 0s)
+  -         "external_servers": crate::agent_builder::external_servers_json(
+  -             &crate::agent_builder::external_server_report(),
+  -         ),
+  +         "external_servers": crate::agent_builder::external_servers_json(external),
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '405,435p' src/main_tests… ✓ (3ms)
+  2 tools completed in 2m 4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/main_tests.rs && ec… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/m… (136 lines) ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/agent_builder.rs ✓ (2ms)
+  3 tools completed in 30.6s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -n -1 s… (86 lines) ✓ (10.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo external_s… ✓ (25.5s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (2 → 2 lines)
+  - /// Pure, so the shape a script parses is pinned by a table test rather than by
+  - /// the global underneath it.
+  + /// Pure, so the shape a script parses is pinned by `external_servers_json_table`
+  + /// rather than by the global underneath it.
+ ✓ (2m 0s)
+  - /// Pure, so the shape a script parses is pinned by a table test rather than by
+  - /// the global underneath it.
+  + /// Pure, so the shape a script parses is pinned by `external_servers_json_table`
+  + /// rather than by the global underneath it.
+  3 tools completed in 2m 48s (3 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5532 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::effective_disallowed_tools_pairs_shared_state_with_sub_agent ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::external_servers_json_table ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::reading_the_json_report_does_not_drain_the_model_facing_note ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_age...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (189ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/agent_builder.rs",… ✓ (451ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `main_tests.rs`' CLA… ✓ (4ms)
+  3 tools completed in 11.9s (3 ✓)
+

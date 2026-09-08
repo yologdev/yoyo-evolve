@@ -1,0 +1,217 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code before writing anything — the task file says the reading wins.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_current_dir" src/ …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir" src/co… ✓ (3ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+Census confirms the task file: 24 matching lines, 3 actual calls, 2 test-side in commands_git.rs. Now let me read the region.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2680,2900p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial" src/commands_gi… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.4s (2 ✓)
+
+**Measured deviation from the task file, and it's the step-0 case: the two chdirs are NOT in the amend path.** They're in `undo_last_commit_in_real_repo`, exercising `handle_undo_last_commit()`. Let me read that production function.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_undo_last_com…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "handle_undo_last_commi… ✓ (3ms)
+ ✓ (7ms)
+  2 tools completed in 8ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: I'd confirmed the census (3 calls total, 2 test-side in commands_git.rs) and found the step-0 deviation — the chdirs are in undo_last_commit_in_real_repo exercising handle_undo_last_commit(), not the amend path the task file predicted. Let me read that production function.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1085,1180p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1000,1020p' src/commands… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.1s (2 ✓)
+
+Now I have the shape: handle_undo_last_commit() makes 4 run_git calls with no -C, one of them revert — destructive, so the guard fires from the project root. That's why the chdir exists. Let me check the chokepoint helpers before choosing one.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn run_git\|pub(cra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,200p' src/git.rs ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,255p' src/git.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '45,60p' src/git.rs ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 3.7s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything I need is established. Two measured deviations from the task file, both step-0 cases:
+
+1. The chdirs are in the undo path, not the amend path — undo_last_commit_in_real_repo → handle_undo_last_commit().
+2. `run_git_in_dir` is the right helper, not `run_git_output` — both run_git and run_git_in_dir do stdout.trim() / stderr.trim() / `"git not found: {e}" identically, so run_git_in_dir preserves behaviour byte-for-byte while run_git_output` would force me to re-implement the trim by hand.
+
+Let me read the exact test body and the function's call sites.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2708,2716p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1818,1828p' src/commands… ✓ (5ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 28.2s (2 ✓)
+
+This settles the deviation completely: the amend path already has its dir-taking seam (run_git_amend_with_message_in / run_git_amend_no_edit_in, landed Day 190 by #864). That's literally the step-0 case the task file named — "the production function already has a seam, say so and adapt." The undo path is the unseamed one, and it's where both chdirs live.
+
+Let me read the local seam idiom and settle one safety question empirically rather than by reasoning.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1290,1360p' src/commands…  ▶ $ cd /tmp && cat > pathprobe.rs <<'EOF' (11 lines) ✓ (4ms)
+ ✓ (112ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.8s (2 ✓)
+
+Measured, and it reverses my earlier reasoning — the task file was right about `run_git_output`, for a reason I had not identified. Path compares by components, so:
+
+• `run_git_in_dir(Path::new("."), &["revert",…])` → guard resolves target relative to `dir` itself = the *relative* `.`, which never equals the absolute manifest dir. Guard silently stops firing.
+• `run_git_output(&["-C", ".", "revert",…]) → guard resolves -C . against the *absolute process cwd* = /repo/.`, which does equal manifest dir. Guard still fires.
+
+So run_git_in_dir would have quietly weakened a safety guard. run_git_output with an explicit -C is both the local idiom (the sibling amend seams) and the safe one. Writing the seam now.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (16 → 66 lines)
+    fn handle_undo_last_commit() -> Option<String> {
+  +     handle_undo_last_commit_in(std::path::Path::new("."))
+  + }
+  + 
+  + /// Merge a raw git `Output` into the `Result<String, String>` shape `run_git`
+  + /// returns, so routing through the chokepoint's raw-`Output` helper preserves
+  + /// this function's existing handling byte-for-byte: trimmed stdout on success,
+  + /// trimmed stderr on failure, and `run_git_output`'s own `git not found: …`
+  + /// text on a spawn failure (it already formats that string, so it is passed
+  + /// through rather than rebuilt).
+  + fn undo_result(out: Result<std::process::Output, String>) -> Result<String, String> {
+  +     match out {
+  +         Ok(output) if output.status.success() => {
+  +             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+  +         }
+  +         Ok(output) => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+  +         Err(e) => Err(e),
+  +     }
+  + }
+  + 
+  ... (49 more lines)
+ ✓ (2m 11s)
+    fn handle_undo_last_commit() -> Option<String> {
+  +     handle_undo_last_commit_in(std::path::Path::new("."))
+  + }
+  + 
+  + /// Merge a raw git `Output` into the `Result<String, String>` shape `run_git`
+  + /// returns, so routing through the chokepoint's raw-`Output` helper preserves
+  + /// this function's existing handling byte-for-byte: trimmed stdout on success,
+  + /// trimmed stderr on failure, and `run_git_output`'s own `git not found: …`
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Production seam landed. Now the test conversion — removing both chdirs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1080,1100p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir\|serial… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_git.rs (6 → 1 lines)
+  -         let original_dir = std::env::current_dir().unwrap();
+  -         std::env::set_current_dir(repo).unwrap();
+  - 
+  -         let result = handle_undo_last_commit();
+  - 
+  -         std::env::set_current_dir(&original_dir).unwrap();
+  +         let result = handle_undo_last_commit_in(repo);
+ ✓ (2m 11s)
+  -         let original_dir = std::env::current_dir().unwrap();
+  -         std::env::set_current_dir(repo).unwrap();
+  - 
+  -         let result = handle_undo_last_commit();
+  - 
+  -         std::env::set_current_dir(&original_dir).unwrap();
+  +         let result = handle_undo_last_commit_in(repo);
+  ▶ edit src/commands_git.rs (3 → 2 lines)
+        #[test]
+  -     #[serial]
+        fn undo_last_commit_in_real_repo() {
+ ✓ (16.2s)
+        #[test]
+  -     #[serial]
+        fn undo_last_commit_in_real_repo() {
+  4 tools completed in 2m 36s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The compiler just proved the point empirically: #[serial] on that one test was the file's only user of the import. Dropping it, exactly as the task file conditions.
+  ▶ edit src/commands_git.rs (2 → 1 lines)
+        use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+  -     use serial_test::serial;
+ ✓ (2m 11s)
+        use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+  -     use serial_test::serial;
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 16s (2 ✓)
+
+Clippy clean. Now the test itself plus the two gates the task file names.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo undo_last_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test global_state_r… ✓ (322ms)
+ ✓ (5.6s)
+  2 tools completed in 5.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Test green, race gate green (12 passed), module-size gate prints a non-fatal warning with the exact line to paste. Now the positive control — one atomic mutate→run→restore, with the sabotage marked so tests/neutered_guards.rs enforces the restore.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (19 lines) ✓ (25.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired exactly as designed — and the receipt is precise: SAFETY: run_git_output() called with destructive command 'revert' from project root. That proves both that the seam is what routes revert away from the project root, and that the guard is genuinely still live on this path (my measured concern about run_git_in_dir silently weakening it). Let me verify the restore properly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && diff -q /tmp/cg.bak src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== CENSUS: matching lines… ✓ (15ms)
+ ✓ (25.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 30.4s (2 ✓)
+
+Census re-derived and it's exactly the predicted outcome: **matching lines 24 → 22, actual calls 3 → 1, test-side calls 2 → 0**, the survivor being `/cd` (the feature, out of scope). Now the register line the gate printed.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/commands_git.rs"' …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (3ms)
+ ✓ (10.2s)
+  2 tools completed in 10.2s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/commands_git.rs
+

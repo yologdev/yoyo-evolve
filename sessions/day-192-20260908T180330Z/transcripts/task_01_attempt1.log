@@ -1,0 +1,216 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two key sites to verify the task's claims before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,230p' src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '250,300p' src/agent_buil… ✓ (6ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.2s (2 ✓)
+
+Both halves confirmed. Now the sharpest trap — the drain — and whether the counts are reachable at the call site.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "take_external_failure_n…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_json_output\|mcp_… ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn drain_failure_note\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1005,1100p' src/main.rs ✓ (3ms)
+ ✓ (4ms)
+  4 tools completed in 4.0s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me re-orient — check whether I already made changes before continuing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---L…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '340,375p' src/agent_buil… ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.1s (2 ✓)
+
+Clean tree — nothing written yet. Step 0 confirmed three of four claims. But the drain is sharper than the task file describes — let me check the ordering, because that decides whether a snapshot reader works at all.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1150,1175p' src/prompt.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '225,250p' src/main.rs ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 23.8s (2 ✓)
+
+Step 0 has falsified the task file's remedy — and in the mirror direction from what it warned about. The ordering:
+
+• `prompt.rs:1162 calls take_external_failure_note()` → drains the store, at the start of the prompt.
+• `emit_output → build_json_output` runs after the prompt completes.
+
+So a non-draining snapshot at JSON time returns empty — the field would report every degraded run as healthy. That is the exact defect being fixed, shipped silently. Let me confirm the call order and check the #842 guard I must not break.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_prompt_with_changes…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "every_rebuild_arm_reset… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, and Step 0 is complete. The task file's remedy is falsified — the trap is the mirror of what it described. Let me see the end of connect_external_servers so I can record the connected counts without tripping the #842 guard.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=370 && NR<=380' src/age…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "" src/agent_builder.rs … ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 27.8s (2 ✓)
+
+Everything verified. Now I'll write the fix — and it's not the task file's design, because Step 0 falsified it. Adding the pure core and the never-drained store:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '297,312p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "record_failed_server\|r… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=284 && NR<=296 {printf … ✓ (4ms)
+  3 tools completed in 8.8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tree still clean. Step 0 is complete and conclusive — time to stop reading and write. Adding the never-drained store plus the pure core:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (6 → 83 lines)
+        crate::sync_util::lock_or_recover(&FAILED_EXTERNAL_SERVERS).push(FailedServer {
+            kind,
+            id: id.to_string(),
+  +     });
+  +     // Also record into the NEVER-DRAINED report (#895). This is one write site
+  +     // on purpose: two stores written from two places agree the day they are
+  +     // written and diverge forever after.
+  +     let mut report = crate::sync_util::lock_or_recover(&EXTERNAL_SERVER_REPORT);
+  +     match kind {
+  +         "openapi" => report.openapi_failed.push(id.to_string()),
+  +         _ => report.mcp_failed.push(id.to_string()),
+  +     }
+  + }
+  + 
+  + /// What connected and what did not, for the machine-readable surface (#895).
+  + ///
+  + /// This is a **separate, never-drained** record of the same events
+  + /// [`FAILED_EXTERNAL_SERVERS`] carries, and the duplication is load-bearing
+  + /// rather than sloppy. That store is a **one-shot**: `take_external_failure_note`
+  + /// drains it so the model's turn-prepend cannot re-fire, and it is drained at
+  ... (62 more lines)
+ ✓ (16.0s)
+        crate::sync_util::lock_or_recover(&FAILED_EXTERNAL_SERVERS).push(FailedServer {
+            kind,
+            id: id.to_string(),
+  +     });
+  +     // Also record into the NEVER-DRAINED report (#895). This is one write site
+  +     // on purpose: two stores written from two places agree the day they are
+  +     // written and diverge forever after.
+  +     let mut report = crate::sync_util::lock_or_recover(&EXTERNAL_SERVER_REPORT);
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the "definition without its consumer" failure my own rules warn about. Wiring all three consumers now — the call site at the end of connect_external_servers, and the JSON field:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (2 → 3 lines)
+  +     record_external_connected(mcp_count, openapi_count);
+        (agent, mcp_count, openapi_count)
+    }
+ ✓ (13.5s)
+  +     record_external_connected(mcp_count, openapi_count);
+        (agent, mcp_count, openapi_count)
+    }
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The counts are u32, not usize. Matching the real type rather than converting:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (27ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Types fixed. Now the third consumer — the JSON field itself:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (3 → 12 lines)
+            "is_error": is_error,
+            "session": session_changes.to_json_summary(),
+  +         // #895: a script must be able to tell a DEGRADED run from a healthy one.
+  +         // Emitted always, never only on failure — a key that appears only when
+  +         // something broke forces every consumer to handle two shapes, which is
+  +         // the same defect one layer down. Deliberately NOT folded into
+  +         // `is_error`: a degraded run that produced a correct answer is not an
+  +         // error, and flipping that flag would break every script branching on it.
+  +         "external_servers": crate::agent_builder::external_servers_json(
+  +             &crate::agent_builder::external_server_report(),
+  +         ),
+        });
+ ✓ (1m 47s)
+            "is_error": is_error,
+            "session": session_changes.to_json_summary(),
+  +         // #895: a script must be able to tell a DEGRADED run from a healthy one.
+  +         // Emitted always, never only on failure — a key that appears only when
+  +         // something broke forces every consumer to handle two shapes, which is
+  +         // the same defect one layer down. Deliberately NOT folded into
+  +         // `is_error`: a degraded run that produced a correct answer is not an
+  +         // error, and flipping that flag would break every script branching on it.
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(err… ✓ (1m 5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '405,445p' src/main_tests… ✓ (3ms)
+  3 tools completed in 2m 58s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+A pre-existing completeness test pins the exact key count at 8. That's a legitimate assertion whose subject grew — I'll update the count and add the new key's assertion, keeping it strictly stronger (exact count preserved, one more contains):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '445,455p' src/main_tests… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main_tests.rs (8 → 8 lines)
+  -     // Exactly 8 top-level keys
+  +     // Exactly 9 top-level keys (8 original + `external_servers`, #895).
+        assert_eq!(
+            obj.len(),
+  -         8,
+  -         "expected 8 top-level keys, got {:?}",
+  +         9,
+  +         "expected 9 top-level keys, got {:?}",
+            obj.keys().collect::<Vec<_>>()
+        );
+        assert!(obj.contains_key("response"));
+ ✓ (1m 57s)
+  -     // Exactly 8 top-level keys
+  +     // Exactly 9 top-level keys (8 original + `external_servers`, #895).
+        assert_eq!(
+            obj.len(),
+  -         8,
+  -         "expected 8 top-level keys, got {:?}",
+  +         9,
+  +         "expected 9 top-level keys, got {:?}",
+  ... (3 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main_tests.rs (1 → 2 lines)
+        assert!(obj.contains_key("num_turns"));
+  +     assert!(obj.contains_key("external_servers"));
+ ✓ (1m 56s)
+        assert!(obj.contains_key("num_turns"));
+  +     assert!(obj.contains_key("external_servers"));
+  3 tools completed in 4m 1s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

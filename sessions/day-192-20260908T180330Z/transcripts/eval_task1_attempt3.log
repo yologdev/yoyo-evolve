@@ -1,0 +1,51 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '250,300p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD~1 2>/dev/nu… ✓ (5ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs && gr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (3ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 … (7 lines) ✓ (8.1s)
+  5 tools completed in 25.5s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 ./target/debug/yoyo … ✓ (3.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "output_format\|OutputFo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "json_output" src/main.r… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "json_output" src/cli.rs… ✓ (4ms)
+  4 tools completed in 13.4s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 … (7 lines) ✓ (2.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 ./target/debug/yoyo … ✓ (3.0s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (8 lines) ✓ (1m 15s)
+  3 tools completed in 1m 48s (3 ✓)
+
+
+Verdict written to session_plan/eval_task_1.md. Work complete.
+
+Verdict: PASS
+
+What I verified:
+
+1. **Ran the actual feature** — ./target/debug/yoyo -p "say ok" --json emits:
+   ```json
+   {"cost_usd":...,"duration_ms":2184,"external_servers":{"mcp_connected":0,"mcp_failed":[],"openapi_connected":0,"openapi_failed":[]},"is_error":false,...}
+   ```
+   The new object is present on a healthy run in the all-empty shape, is_error stays false, and all 8 pre-existing keys are intact.
+
+2. **The drain trap was avoided correctly** — a separate `EXTERNAL_SERVER_REPORT` static, written from the single `record_failed_server` site, read by a cloning `external_server_report(). take_external_failure_note / drain_failure_note / external_tool_failure_note` are untouched, and there's a test that reads the report then asserts the model note still drains.
+
+3. **No dangling definitions** — I traced every new item to a consumer inside the same diff: `ExternalServerReport` → parameter of `build_json_output_with`; `record_external_connected → called at the end of connect_external_servers; external_server_report() → main.rs:182; external_servers_json` → `main.rs:219`. The pre-existing 8-key completeness test was updated to 9 in the same commit, and the module-size register at 3791 matches `wc -l` exactly.
+
+4. **Docs updated in-commit** — CLAUDE.md's `main.rs` bullet carries the shape, the emit-always reason, the `is_error` decision, the serde-escaping rule, the positive-control result and the stated limit.
+
+One piece of cleanup feedback that did not affect the verdict: while exercising the feature I found --output-format json does not actually select the JSON envelope — config.json_output is set only by the legacy --json flag (src/cli.rs:1125), so --output-format json sets output_format and emit_output still takes the text branch. That's pre-existing and outside this diff, but since the task title and CLAUDE.md both name the feature --output-format json, it's worth filing separately.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
