@@ -288,6 +288,83 @@ pub(crate) fn record_failed_server(kind: &'static str, id: &str) {
         kind,
         id: id.to_string(),
     });
+    // Also record into the NEVER-DRAINED report (#895). This is one write site
+    // on purpose: two stores written from two places agree the day they are
+    // written and diverge forever after.
+    let mut report = crate::sync_util::lock_or_recover(&EXTERNAL_SERVER_REPORT);
+    match kind {
+        "openapi" => report.openapi_failed.push(id.to_string()),
+        _ => report.mcp_failed.push(id.to_string()),
+    }
+}
+
+/// What connected and what did not, for the machine-readable surface (#895).
+///
+/// This is a **separate, never-drained** record of the same events
+/// [`FAILED_EXTERNAL_SERVERS`] carries, and the duplication is load-bearing
+/// rather than sloppy. That store is a **one-shot**: `take_external_failure_note`
+/// drains it so the model's turn-prepend cannot re-fire, and it is drained at
+/// the *start* of the prompt (`prompt.rs`), while `build_json_output` runs
+/// *after* the prompt finishes. A reader that shared the drainable store would
+/// therefore find it already empty and report **every degraded run as healthy** —
+/// the exact defect #895 exists to fix, shipped silently.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ExternalServerReport {
+    pub(crate) mcp_connected: u32,
+    pub(crate) mcp_failed: Vec<String>,
+    pub(crate) openapi_connected: u32,
+    pub(crate) openapi_failed: Vec<String>,
+}
+
+/// The session's external-server outcome. Never drained; read as a snapshot.
+static EXTERNAL_SERVER_REPORT: std::sync::Mutex<ExternalServerReport> =
+    std::sync::Mutex::new(ExternalServerReport {
+        mcp_connected: 0,
+        mcp_failed: Vec::new(),
+        openapi_connected: 0,
+        openapi_failed: Vec::new(),
+    });
+
+/// Record how many external servers actually connected.
+///
+/// Called once, at the end of `connect_external_servers`, which is the only
+/// place both numbers are known. Deliberately separate from the failure sites
+/// so it cannot change what `mcp_count`/`openapi_count` mean (#842).
+pub(crate) fn record_external_connected(mcp: u32, openapi: u32) {
+    let mut report = crate::sync_util::lock_or_recover(&EXTERNAL_SERVER_REPORT);
+    report.mcp_connected = mcp;
+    report.openapi_connected = openapi;
+}
+
+/// Snapshot the external-server report **without draining it**.
+///
+/// The one global read. Cloning rather than taking is what keeps this reader
+/// from stealing the model-facing note out of the sibling store.
+pub(crate) fn external_server_report() -> ExternalServerReport {
+    crate::sync_util::lock_or_recover(&EXTERNAL_SERVER_REPORT).clone()
+}
+
+/// Render the report as the `external_servers` object of `--output-format json`.
+///
+/// Pure, so the shape a script parses is pinned by a table test rather than by
+/// the global underneath it.
+///
+/// **Emitted always, not only on failure.** The whole defect is that a script
+/// cannot distinguish a degraded run from a healthy one; a key that appears
+/// only when something failed forces every consumer to handle two shapes, which
+/// is the same defect one layer down. Adding a key is the additive direction —
+/// every pre-existing key of `build_json_output` stays byte-identical.
+///
+/// Escaping is **`serde_json`'s**, never `sanitize_for_display`'s: that is the
+/// *terminal* rule (#873), and a server command carrying a control byte must be
+/// escaped exactly once, by the serializer.
+pub(crate) fn external_servers_json(report: &ExternalServerReport) -> serde_json::Value {
+    serde_json::json!({
+        "mcp_connected": report.mcp_connected,
+        "mcp_failed": report.mcp_failed,
+        "openapi_connected": report.openapi_connected,
+        "openapi_failed": report.openapi_failed,
+    })
 }
 
 /// Compose the model-facing note for servers that failed to connect.
@@ -586,6 +663,7 @@ pub(crate) async fn connect_external_servers(
         }
     }
 
+    record_external_connected(mcp_count, openapi_count);
     (agent, mcp_count, openapi_count)
 }
 

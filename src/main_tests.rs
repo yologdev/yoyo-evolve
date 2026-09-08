@@ -431,11 +431,11 @@ fn test_build_json_output_structure_completeness() {
     let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
     let obj = parsed.as_object().unwrap();
 
-    // Exactly 8 top-level keys
+    // Exactly 9 top-level keys (8 original + `external_servers`, #895).
     assert_eq!(
         obj.len(),
-        8,
-        "expected 8 top-level keys, got {:?}",
+        9,
+        "expected 9 top-level keys, got {:?}",
         obj.keys().collect::<Vec<_>>()
     );
     assert!(obj.contains_key("response"));
@@ -446,6 +446,7 @@ fn test_build_json_output_structure_completeness() {
     assert!(obj.contains_key("session"));
     assert!(obj.contains_key("duration_ms"));
     assert!(obj.contains_key("num_turns"));
+    assert!(obj.contains_key("external_servers"));
 
     // usage sub-object has exactly 4 keys
     let usage_obj = parsed["usage"].as_object().unwrap();

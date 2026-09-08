@@ -181,6 +181,15 @@ fn build_json_output(
         "num_turns": num_turns,
         "is_error": is_error,
         "session": session_changes.to_json_summary(),
+        // #895: a script must be able to tell a DEGRADED run from a healthy one.
+        // Emitted always, never only on failure — a key that appears only when
+        // something broke forces every consumer to handle two shapes, which is
+        // the same defect one layer down. Deliberately NOT folded into
+        // `is_error`: a degraded run that produced a correct answer is not an
+        // error, and flipping that flag would break every script branching on it.
+        "external_servers": crate::agent_builder::external_servers_json(
+            &crate::agent_builder::external_server_report(),
+        ),
     });
     serde_json::to_string(&json_obj).unwrap_or_else(|_| "{}".to_string())
 }
