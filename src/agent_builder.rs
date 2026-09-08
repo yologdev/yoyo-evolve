@@ -3762,10 +3762,7 @@ session will fail on the first turn with 'Tool names must be unique'."
         // broken reader cannot pass by both sides agreeing on nothing.
         let snapshot = external_server_report();
         assert!(
-            snapshot
-                .mcp_failed
-                .iter()
-                .any(|c| c == "server-drainguard"),
+            snapshot.mcp_failed.iter().any(|c| c == "server-drainguard"),
             "the snapshot must see the failure it is being asked about: {snapshot:?}"
         );
 
