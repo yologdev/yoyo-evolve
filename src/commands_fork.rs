@@ -446,6 +446,77 @@ fn checkpoint_restore_reply(store: &CheckpointStore, name: &str) -> String {
     }
 }
 
+/// What a `save` actually captured — the counts come from the branch taken while
+/// reading, never from re-counting the stored map afterwards (shape is not provenance).
+///
+/// This exists because `save` used to return `()`, so a file the user asked to
+/// snapshot that could not be read was dropped in silence and the printed count was
+/// technically honest about what was *stored* while never saying *one file you asked
+/// for could not be read*.
+#[derive(Default, Debug)]
+pub struct SaveOutcome {
+    /// Files whose contents were read and are in the checkpoint.
+    pub saved: usize,
+    /// Paths that were requested and could not be read, in the order requested.
+    /// These are **not** in the checkpoint.
+    pub skipped: Vec<String>,
+}
+
+/// Compose the whole reply `/checkpoint save <name>` prints. Pure — no I/O, so all
+/// three states are testable at the emission point rather than one layer below.
+///
+/// Three states, and the third is deliberately not folded into the second:
+///  1. nothing skipped — **byte-identical** to the pre-#898 line, which is every
+///     existing user and the entire regression surface;
+///  2. some skipped — the same line plus every skipped path named verbatim (a user
+///     cannot act on a path they cannot see) and the plain claim that they are not in
+///     the checkpoint;
+///  3. everything skipped — its own sentence saying the checkpoint is EMPTY and that a
+///     later `restore` will report *nothing to restore* **for this reason**. That is the
+///     sentence which un-blinds the restore branch: `format_restore_header`'s honest
+///     "holds no files" refusal cannot tell *you captured nothing* from *everything you
+///     asked for failed to read*, and only the save end can.
+///
+/// STATED LIMIT: this makes an unreadable file **legible**, it does not make it
+/// **readable**. The file is still not in the checkpoint, nothing retries, and a later
+/// `restore` still cannot produce it. It also says nothing about a file that read
+/// *successfully* but was captured at the wrong moment.
+fn checkpoint_save_reply(name: &str, outcome: &SaveOutcome) -> String {
+    let n = outcome.skipped.len();
+    // Paths are repo-authored strings landing in a terminal, so they are escaped
+    // (#873). A length cap is not sanitization.
+    let listed: String = outcome
+        .skipped
+        .iter()
+        .map(|p| format!("    - {}\n", crate::cli::sanitize_for_display(p)))
+        .collect();
+    let files = if n == 1 { "file" } else { "files" };
+
+    if n == 0 {
+        // State 1: byte-identical to the pre-#898 output.
+        return format!(
+            "{GREEN}Checkpoint '{name}' saved ({} files).{RESET}\n",
+            outcome.saved
+        );
+    }
+    if outcome.saved == 0 {
+        // State 3: the checkpoint is empty *because* the reads failed.
+        return format!(
+            "{YELLOW}Checkpoint '{name}' is EMPTY: all {n} requested {files} could not be read \
+             and {} NOT in it:{RESET}\n{listed}{DIM}Restoring it will report \"nothing to \
+             restore\" for this reason, not because nothing was captured.{RESET}\n",
+            if n == 1 { "is" } else { "are" }
+        );
+    }
+    // State 2: a partial capture, with the loss named.
+    format!(
+        "{GREEN}Checkpoint '{name}' saved ({} files).{RESET}\n{YELLOW}  {n} requested {files} \
+         could not be read and {} NOT in the checkpoint:{RESET}\n{listed}",
+        outcome.saved,
+        if n == 1 { "is" } else { "are" }
+    )
+}
+
 impl CheckpointStore {
     /// Create a new empty store.
     pub fn new() -> Self {
@@ -455,12 +526,21 @@ impl CheckpointStore {
     }
 
     /// Save a named checkpoint by reading current file contents from `changes`.
-    pub fn save(&mut self, name: &str, changes: &SessionChanges) {
+    ///
+    /// Returns what was actually captured. A requested file that cannot be read is
+    /// **reported, not refused** — the checkpoint really was written, so an `Err` here
+    /// would be a different and wrong claim.
+    pub fn save(&mut self, name: &str, changes: &SessionChanges) -> SaveOutcome {
         let snapshot = changes.snapshot();
         let mut files = HashMap::new();
+        let mut outcome = SaveOutcome::default();
         for fc in &snapshot {
-            if let Ok(content) = std::fs::read_to_string(&fc.path) {
-                files.insert(fc.path.clone(), content);
+            match std::fs::read_to_string(&fc.path) {
+                Ok(content) => {
+                    files.insert(fc.path.clone(), content);
+                    outcome.saved += 1;
+                }
+                Err(_) => outcome.skipped.push(fc.path.clone()),
             }
         }
         self.checkpoints.insert(
@@ -471,6 +551,7 @@ impl CheckpointStore {
                 files,
             },
         );
+        outcome
     }
 
     /// Restore files to their state at the named checkpoint.
@@ -664,13 +745,8 @@ pub fn handle_checkpoint(input: &str, store: &mut CheckpointStore, changes: &Ses
                 );
                 return;
             }
-            store.save(arg, changes);
-            let count = store
-                .checkpoints
-                .get(arg)
-                .map(|cp| cp.files.len())
-                .unwrap_or(0);
-            println!("{GREEN}Checkpoint '{arg}' saved ({count} files).{RESET}");
+            let outcome = store.save(arg, changes);
+            print!("{}", checkpoint_save_reply(arg, &outcome));
         }
         // Bare name: treat as save
         name => {
@@ -678,13 +754,8 @@ pub fn handle_checkpoint(input: &str, store: &mut CheckpointStore, changes: &Ses
                 println!("{}", checkpoint_unknown_message(name));
                 return;
             }
-            store.save(name, changes);
-            let count = store
-                .checkpoints
-                .get(name)
-                .map(|cp| cp.files.len())
-                .unwrap_or(0);
-            println!("{GREEN}Checkpoint '{name}' saved ({count} files).{RESET}");
+            let outcome = store.save(name, changes);
+            print!("{}", checkpoint_save_reply(name, &outcome));
         }
     }
 }
@@ -1242,6 +1313,125 @@ mod checkpoint_restore_emission_tests {
         assert_eq!(
             checkpoint_restore_reply(&store, "unreadable"),
             format!("{DIM}Checkpoint 'unreadable' holds no files — nothing to restore.{RESET}\n")
+        );
+    }
+
+    // ---- #898: `save` reports what it could not read -------------------------
+    //
+    // The unreadable fixtures are a **deleted path** and a **directory where a file is
+    // expected** — never `chmod 000`, because CI can run as root, where a 000 file is
+    // still readable and the test would silently stop testing anything.
+
+    /// A path that `read_to_string` really fails on, so the fixtures below cannot pass
+    /// by having both sides agree on nothing.
+    fn assert_unreadable(p: &std::path::Path) {
+        assert!(
+            std::fs::read_to_string(p).is_err(),
+            "fixture must be genuinely unreadable, or this test is vacuous: {}",
+            p.display()
+        );
+    }
+
+    /// NEAR-MISS GUARD, and the entire regression surface: when every requested file
+    /// reads cleanly the reply is **byte-identical** to the string the pre-#898 code
+    /// printed. Whole-value `assert_eq!`, never a `contains`.
+    #[test]
+    fn checkpoint_save_reply_is_byte_identical_when_nothing_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        let b = dir.path().join("b.txt");
+        std::fs::write(&a, "one").unwrap();
+        std::fs::write(&b, "two").unwrap();
+        let changes = SessionChanges::new();
+        changes.record(a.to_str().unwrap(), ChangeKind::Write);
+        changes.record(b.to_str().unwrap(), ChangeKind::Write);
+
+        let mut store = CheckpointStore::new();
+        let outcome = store.save("clean", &changes);
+
+        assert_eq!(outcome.saved, 2);
+        assert!(outcome.skipped.is_empty());
+        // Captured from the pre-change code: println!("{GREEN}Checkpoint '{arg}' saved
+        // ({count} files).{RESET}")
+        assert_eq!(
+            checkpoint_save_reply("clean", &outcome),
+            format!("{GREEN}Checkpoint 'clean' saved (2 files).{RESET}\n")
+        );
+    }
+
+    /// State 2: a partial capture names every path it lost and says plainly they are
+    /// not in the checkpoint.
+    #[test]
+    fn checkpoint_save_reply_names_a_file_it_could_not_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let good = dir.path().join("good.txt");
+        let gone = dir.path().join("gone.txt");
+        std::fs::write(&good, "kept").unwrap();
+        std::fs::write(&gone, "x").unwrap();
+        let changes = SessionChanges::new();
+        changes.record(good.to_str().unwrap(), ChangeKind::Write);
+        changes.record(gone.to_str().unwrap(), ChangeKind::Write);
+        std::fs::remove_file(&gone).unwrap();
+        assert_unreadable(&gone); // anti-vacuous, asserted before the claim
+
+        let mut store = CheckpointStore::new();
+        let outcome = store.save("partial", &changes);
+
+        assert_eq!(outcome.saved, 1, "the readable file must still be captured");
+        assert_eq!(outcome.skipped, vec![gone.to_str().unwrap().to_string()]);
+
+        let reply = checkpoint_save_reply("partial", &outcome);
+        assert!(
+            reply.contains(gone.to_str().unwrap()),
+            "a user cannot act on a path they cannot see: {reply}"
+        );
+        assert!(
+            reply.contains("NOT in the checkpoint"),
+            "the loss must be stated, not implied: {reply}"
+        );
+        assert!(
+            reply.contains("saved (1 files)"),
+            "the existing line survives beside the new clause: {reply}"
+        );
+    }
+
+    /// State 3: everything requested failed to read, so the checkpoint is empty
+    /// **because of that** — and the reply says so, which is what un-blinds
+    /// `format_restore_header`'s otherwise indistinguishable "holds no files".
+    #[test]
+    fn checkpoint_save_reply_says_the_checkpoint_is_empty_because_reads_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        // A directory where a file is expected: read_to_string returns Err as root too.
+        let as_dir = dir.path().join("i_am_a_dir");
+        std::fs::create_dir(&as_dir).unwrap();
+        assert_unreadable(&as_dir); // anti-vacuous, asserted first
+        let changes = SessionChanges::new();
+        changes.record(as_dir.to_str().unwrap(), ChangeKind::Write);
+
+        let mut store = CheckpointStore::new();
+        let outcome = store.save("all-failed", &changes);
+
+        assert_eq!(outcome.saved, 0);
+        assert_eq!(outcome.skipped.len(), 1);
+
+        let reply = checkpoint_save_reply("all-failed", &outcome);
+        assert!(
+            reply.contains("EMPTY") && reply.contains("could not be read"),
+            "state 3 must name the cause: {reply}"
+        );
+        assert!(
+            reply.contains("nothing to restore"),
+            "it must forward-reference the restore branch it un-blinds: {reply}"
+        );
+        assert!(
+            reply.contains(as_dir.to_str().unwrap()),
+            "the path must still be named: {reply}"
+        );
+        // And it must NOT read as an ordinary "you captured nothing" save.
+        assert_ne!(
+            reply,
+            format!("{GREEN}Checkpoint 'all-failed' saved (0 files).{RESET}\n"),
+            "state 3 must not be indistinguishable from an ordinary empty save"
         );
     }
 }
