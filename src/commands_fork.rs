@@ -7,20 +7,11 @@
 
 use crate::format::*;
 use crate::session::SessionChanges;
+use crate::sync_util::{rw_read_or_recover, rw_write_or_recover};
 
 use std::collections::HashMap;
 use std::sync::RwLock;
 use yoagent::agent::Agent;
-
-/// Acquire a read-guard, recovering from a poisoned RwLock instead of panicking.
-fn rw_read_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
-    lock.read().unwrap_or_else(|e| e.into_inner())
-}
-
-/// Acquire a write-guard, recovering from a poisoned RwLock instead of panicking.
-fn rw_write_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
-    lock.write().unwrap_or_else(|e| e.into_inner())
-}
 
 // ---------------------------------------------------------------------------
 // Conversation branching — /fork

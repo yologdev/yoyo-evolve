@@ -2,19 +2,10 @@
 //! `/stash drop`. Like `git stash` but for your conversation.
 
 use crate::format::*;
+use crate::sync_util::{rw_read_or_recover, rw_write_or_recover};
 
 use std::sync::RwLock;
 use yoagent::agent::Agent;
-
-/// Acquire a read-guard, recovering from a poisoned RwLock instead of panicking.
-fn rw_read_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
-    lock.read().unwrap_or_else(|e| e.into_inner())
-}
-
-/// Acquire a write-guard, recovering from a poisoned RwLock instead of panicking.
-fn rw_write_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
-    lock.write().unwrap_or_else(|e| e.into_inner())
-}
 
 /// A single stash entry holding a serialized conversation snapshot.
 struct StashEntry {
