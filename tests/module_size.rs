@@ -155,7 +155,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // boundary — `gate_project_notify_command` + `project_notify_refusal_message`
     // and their table tests. A project-local `notify_command` is arbitrary shell
     // (`sh -c`), so it is executable code by the same test #820 applied to hooks.
-    ("src/cli.rs", 6968), // Day 192: +23 for #891's `--cost-warn` flag door.
+    ("src/cli.rs", 6975), // Day 193: +7 for #891's `cost_warn_usd` config rung.
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
@@ -236,7 +236,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // side, matching unescaping (and a lone-quote panic fix) on the read side,
     // plus the round-trip tests that pin writer and reader as one promise.
     // Day 174: +256 absorbed since Day 166.
-    ("src/config.rs", 3927), // Day 186: +158 for the chained-command allow guard and its tests.
+    ("src/config.rs", 3970), // Day 193: +43 for #891's `cost_warn_usd` reader, key and validator.
     // Day 165: 2307 -> 2296. Not a shrink I made this session — the entry was
     // stale-high, and branch 3 (below-ceiling is fatal) is what finally said so.
     // Day 184: 2321 -> 2337 (+16). NOT this task's diff — `git diff src/dispatch.rs`
