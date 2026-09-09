@@ -1869,6 +1869,242 @@ def render_module_sizes(spec: ModuleGateSpec, risk: ModuleRisk) -> str:
     return "\n".join(lines)
 
 
+# --- Counterfactual pairing coverage (DREAM milestone reader) ---
+
+VERDICT_LEDGER_REL_PATH = "dreams/counterfactual_verdicts.jsonl"
+PAIRING_LEDGER_REL_PATH = "dreams/assertion_pairings.jsonl"
+
+UNEARNED_VERDICT = "UNEARNED"
+PAIR_SIGNAL_VALUE = "PAIR_SIGNAL"
+
+# `check_assertion_weakening.py --pair-verdicts` is the producer; this is its
+# reader. The remedy is printed verbatim when coverage is incomplete, because a
+# reader surface that states a problem without its pasteable fix is half a signal.
+PAIRING_REMEDY = (
+    "python3 scripts/check_assertion_weakening.py --pair-verdicts "
+    f"{VERDICT_LEDGER_REL_PATH} --record {PAIRING_LEDGER_REL_PATH}"
+)
+
+PAIRING_OK = "pairing-ok"
+PAIRING_NO_UNEARNED = "pairing-no-unearned"
+PAIRING_COULD_NOT_CHECK = "pairing-could-not-check"
+
+# A verdict row with no `splice_depth` key predates Day 187's
+# `--splice-src-tests` and was read at tests-only depth BY CONSTRUCTION.
+# Returning "unknown" here would invent a third depth nobody ever read at.
+#
+# This is a DELIBERATE second copy of `check_assertion_weakening.py::row_depth`,
+# for the same reason `TASK_COMMIT_RE` is a second copy of that file's: sharing
+# would mean importing across two hand-run scripts with different lifecycles for
+# one three-line rule. It is data-shaped, not policy-shaped.
+PAIRING_DEPTH_TESTS_ONLY = "tests"
+
+
+def _verdict_depth(row: dict) -> str:
+    depth = row.get("splice_depth")
+    if isinstance(depth, str) and depth.strip():
+        return depth.strip()
+    return PAIRING_DEPTH_TESTS_ONLY
+
+
+@dataclass
+class PairingCoverage:
+    """Five numbers that are NEVER summed with each other.
+
+    `unparseable` is counted and reported rather than silently dropped: a
+    shrinking denominator inside my own meter is the defect this whole family
+    of checks is about (`UngradedScan.unparseable_excluded` is the precedent).
+
+    `pairings_orphaned` — a pairing row whose sha is not an UNEARNED verdict —
+    is zero today and is kept because it is the direction that says the two
+    files DISAGREE, which no coverage fraction can express.
+    """
+
+    state: str = PAIRING_OK
+    unearned: int = 0
+    paired: int = 0
+    unpaired: int = 0
+    pairings_orphaned: int = 0
+    unparseable: int = 0
+    signal: int = 0
+    # depth -> (unearned, paired). Per depth, NEVER pooled: DREAM.md is
+    # explicit, and the two depths were measured against different
+    # counterfactual trees, so a pooled count answers a question nobody asked.
+    by_depth: dict = field(default_factory=dict)
+
+
+def classify_pairing_coverage(
+    verdict_text: str | None, pairing_text: str | None
+) -> PairingCoverage:
+    """Is every UNEARNED counterfactual verdict paired with an assertion scan?
+
+    Pure over the ledger TEXT so it is table-testable without a file, matching
+    `verdict_rows`'s discipline in the producer.
+
+    Three rules, each with its own self-test row:
+
+      1. `verdict_text is None` (missing/unreadable ledger) -> COULD_NOT_CHECK.
+         Never "0 unpaired": "could not check" must never read as "checked;
+         clean", the same refusal `CiScan`'s could-not-run branch and the
+         pre-push hook already make.
+      2. Unparseable non-blank lines in EITHER file are counted and reported.
+      3. ANTI-VACUOUS, checked FIRST among the data branches: zero UNEARNED
+         rows is its OWN state, never healthy coverage. With no rows there is
+         nothing to be covered, and a scanner that finds nothing and reports a
+         clean bill is this defect wearing the opposite sign — quieter than
+         the bug.
+
+    A sha appearing twice in the verdict ledger is one commit, so it is counted
+    once; first occurrence wins, exactly as the producer does.
+
+    `pairing_text is None` is NOT a refusal: a fresh clone that has never run
+    the pairing mode genuinely has zero pairings, and `0 of N` is the signal
+    this reader exists to raise.
+    """
+    if verdict_text is None:
+        return PairingCoverage(state=PAIRING_COULD_NOT_CHECK)
+
+    unparseable = 0
+
+    def _rows(text: str | None):
+        nonlocal unparseable
+        for line in (text or "").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except (ValueError, TypeError):
+                unparseable += 1
+                continue
+            if isinstance(row, dict):
+                yield row
+            else:
+                unparseable += 1
+
+    unearned: dict = {}
+    for row in _rows(verdict_text):
+        if row.get("verdict") != UNEARNED_VERDICT:
+            continue
+        sha = row.get("sha")
+        if not isinstance(sha, str) or not sha.strip():
+            continue
+        unearned.setdefault(sha.strip(), _verdict_depth(row))
+
+    paired_shas: dict = {}
+    for row in _rows(pairing_text):
+        sha = row.get("sha")
+        if not isinstance(sha, str) or not sha.strip():
+            continue
+        paired_shas.setdefault(sha.strip(), row.get("pairing"))
+
+    if not unearned:
+        return PairingCoverage(
+            state=PAIRING_NO_UNEARNED,
+            pairings_orphaned=len(paired_shas),
+            unparseable=unparseable,
+        )
+
+    by_depth: dict = {}
+    paired = 0
+    signal = 0
+    for sha, depth in unearned.items():
+        seen_u, seen_p = by_depth.get(depth, (0, 0))
+        hit = sha in paired_shas
+        if hit:
+            paired += 1
+            if paired_shas[sha] == PAIR_SIGNAL_VALUE:
+                signal += 1
+        by_depth[depth] = (seen_u + 1, seen_p + (1 if hit else 0))
+
+    return PairingCoverage(
+        state=PAIRING_OK,
+        unearned=len(unearned),
+        paired=paired,
+        unpaired=len(unearned) - paired,
+        pairings_orphaned=sum(1 for s in paired_shas if s not in unearned),
+        unparseable=unparseable,
+        signal=signal,
+        by_depth=by_depth,
+    )
+
+
+def collect_pairing_coverage(root: Path) -> PairingCoverage:
+    """I/O half, at ONE call site. Two `open()` calls, nothing else.
+
+    Shells NOTHING — no `cargo`, no `gh`, no network (#832: a nested cargo
+    rebuilds over the shared `target/debug/yoyo` uplift path and reddened CI
+    for three sessions).
+
+    A MISSING pairing ledger reads as empty text, not as a refusal: never
+    having run the pairing mode is genuinely zero coverage, which is the
+    signal. A missing VERDICT ledger is a refusal, because with no verdicts
+    read there is nothing to say about coverage either way.
+    """
+    try:
+        verdict_text = (root / VERDICT_LEDGER_REL_PATH).read_text(errors="replace")
+    except OSError as e:
+        warn(f"could not read {VERDICT_LEDGER_REL_PATH}: {e}")
+        return PairingCoverage(state=PAIRING_COULD_NOT_CHECK)
+    try:
+        pairing_text = (root / PAIRING_LEDGER_REL_PATH).read_text(errors="replace")
+    except FileNotFoundError:
+        pairing_text = ""
+    except OSError as e:
+        warn(f"could not read {PAIRING_LEDGER_REL_PATH}: {e}")
+        return PairingCoverage(state=PAIRING_COULD_NOT_CHECK)
+    return classify_pairing_coverage(verdict_text, pairing_text)
+
+
+def render_pairing_coverage(cov: PairingCoverage) -> str:
+    """At most 2 lines, header included — the epistemic block renders LAST and
+    absorbs all truncation pressure (Day 142), so this must not crowd it.
+
+    Prints one short line even when coverage is COMPLETE, following
+    `render_usage_coverage`'s precedent rather than `render_module_sizes`':
+    the whole point is that the milestone's status is asked out loud every
+    session instead of asked nowhere at all. A producer that stops with no
+    consumer that notices is how a cost figure sat frozen for 102 days.
+
+    THE STATED LIMIT IS IN THE RENDERED TEXT, not only here: this reports
+    whether the pairing was RUN, never whether a verdict is RIGHT. A row
+    paired by a classifier I wrote, over a commit I wrote, is still
+    self-referential — DREAM.md says so in its own milestone text. And it is
+    a READER, not a gate: nothing fails or reverts when it says 3 of 4.
+    """
+    if cov.state == PAIRING_COULD_NOT_CHECK:
+        return (
+            f"## Counterfactual pairing: not checked — could not read "
+            f"{VERDICT_LEDGER_REL_PATH}. This is NOT 'coverage is complete'."
+        )
+    junk = f" {cov.unparseable} unparseable line(s)." if cov.unparseable else ""
+    if cov.state == PAIRING_NO_UNEARNED:
+        return (
+            f"## Counterfactual pairing: nothing to cover — 0 UNEARNED verdicts "
+            f"recorded, so coverage is undefined, not complete.{junk}"
+        )
+    depths = ", ".join(
+        f"{d} {p}/{u}" for d, (u, p) in sorted(cov.by_depth.items())
+    )
+    orphans = (
+        f" {cov.pairings_orphaned} pairing(s) match no UNEARNED verdict."
+        if cov.pairings_orphaned
+        else ""
+    )
+    if cov.unpaired:
+        return (
+            f"## Counterfactual pairing\n"
+            f"{cov.paired} of {cov.unearned} UNEARNED rows paired, {cov.signal} "
+            f"PAIR_SIGNAL ({depths}). {cov.unpaired} unpaired — run: "
+            f"{PAIRING_REMEDY}{orphans}{junk}"
+        )
+    return (
+        f"## Counterfactual pairing\n"
+        f"{cov.paired} of {cov.unearned} UNEARNED rows paired, {cov.signal} "
+        f"PAIR_SIGNAL ({depths}). Says pairing RAN, never that a verdict is "
+        f"RIGHT.{orphans}{junk}"
+    )
+
+
 # --- Epistemic blind spots (from `yoyo risk epistemic`, fail-soft) ---
 
 # 3, not 5: the section renders last and absorbs all truncation pressure —
@@ -2249,6 +2485,22 @@ def main() -> int:
     module_unknown = bool(s) and (module_risk.scanned == 0 or not module_spec.ok)
     if s:
         sections.append(s)
+    # DREAM milestone reader: is every UNEARNED counterfactual verdict paired
+    # with an assertion-direction scan? `--pair-verdicts` is a HAND-RUN mode,
+    # so without this nothing in the loop notices when a new UNEARNED row
+    # lands unpaired — a producer that stops with no consumer that notices is
+    # exactly how the dashboard's cost figure sat frozen for 102 days.
+    #
+    # Same rule as `ci_unknown` / `provider_unknown` / `usage_unknown` /
+    # `module_unknown` above: a "could not check" line is honest but is not
+    # trajectory DATA, so it must not suppress the global "(no trajectory data
+    # yet)" state below. The anti-vacuous "nothing to cover" state is a
+    # refusal too — 0 UNEARNED rows means coverage is undefined, not complete.
+    pairing_cov = collect_pairing_coverage(Path.cwd())
+    s = render_pairing_coverage(pairing_cov)
+    pairing_unknown = bool(s) and pairing_cov.state != PAIRING_OK
+    if s:
+        sections.append(s)
     # Always rendered when any signal exists (it has its own honest fallback
     # line) so the planner sees the epistemic view even when it's starving.
     # Skipped only when there is no trajectory data at all AND no epistemic
@@ -2260,6 +2512,7 @@ def main() -> int:
         - (1 if provider_unknown else 0)
         - (1 if usage_unknown else 0)
         - (1 if module_unknown else 0)
+        - (1 if pairing_unknown else 0)
     )
     if data_sections or epistemic_entries or epistemic_never:
         sections.append(render_epistemic(epistemic_entries, epistemic_never))
@@ -4524,6 +4777,136 @@ src/commands_config.rs
     assert_true(
         "render: the unparseable-gate refusal also refuses to read as 'checked; clean'",
         "NOT 'no modules at risk'" in unparsed,
+    )
+
+    print("\n=== classify_pairing_coverage / render_pairing_coverage self-tests ===\n")
+
+    def _v(sha, verdict="UNEARNED", depth=None):
+        row = {"sha": sha, "verdict": verdict}
+        if depth is not None:
+            row["splice_depth"] = depth
+        return json.dumps(row)
+
+    def _p(sha, pairing="PAIR_INNOCENT_BY_MECHANISM"):
+        return json.dumps({"sha": sha, "pairing": pairing})
+
+    # ANTI-VACUOUS, asserted FIRST: a ledger with zero UNEARNED rows is its own
+    # state, never healthy coverage. A scanner that finds nothing and reports a
+    # clean bill is this defect wearing the opposite sign — quieter than the bug.
+    vacuous = classify_pairing_coverage(_v("aaa", verdict="EARNED"), "")
+    assert_true(
+        "anti-vacuous: zero UNEARNED rows is its OWN state, not healthy coverage",
+        vacuous.state == PAIRING_NO_UNEARNED and vacuous.unearned == 0,
+    )
+    assert_true(
+        "anti-vacuous: the render says coverage is UNDEFINED, not complete",
+        "nothing to cover" in render_pairing_coverage(vacuous)
+        and "not complete" in render_pairing_coverage(vacuous),
+    )
+
+    # A missing/unreadable VERDICT ledger is a refusal, never "0 unpaired":
+    # "could not check" must never read as "checked; clean".
+    refused = classify_pairing_coverage(None, _p("aaa"))
+    assert_true(
+        "could-not-check: a missing verdict ledger refuses",
+        refused.state == PAIRING_COULD_NOT_CHECK,
+    )
+    assert_true(
+        "could-not-check: the render refuses to read as 'coverage is complete'",
+        "not checked" in render_pairing_coverage(refused)
+        and "NOT 'coverage is complete'" in render_pairing_coverage(refused),
+    )
+
+    # Full coverage — the live shape today: 4 UNEARNED, 4 paired, 0 PAIR_SIGNAL,
+    # split across two depths. A row with NO `splice_depth` key is tests-only
+    # BY CONSTRUCTION (it predates --splice-src-tests), never "unknown".
+    full_v = "\n".join(
+        [_v("s1"), _v("s2"), _v("s3", depth="src+tests"), _v("s4", depth="src+tests")]
+    )
+    full_p = "\n".join([_p("s1"), _p("s2"), _p("s3"), _p("s4")])
+    full = classify_pairing_coverage(full_v, full_p)
+    assert_true(
+        "full coverage: 4 of 4 paired, 0 unpaired, 0 PAIR_SIGNAL",
+        full.state == PAIRING_OK
+        and (full.unearned, full.paired, full.unpaired, full.signal) == (4, 4, 0, 0),
+    )
+    assert_true(
+        "depth split is PER DEPTH and never pooled (a missing key means tests-only)",
+        full.by_depth == {"tests": (2, 2), "src+tests": (2, 2)},
+    )
+    rendered_full = render_pairing_coverage(full)
+    assert_true(
+        "render: full coverage still speaks, and names both depths",
+        "4 of 4 UNEARNED rows paired" in rendered_full
+        and "tests 2/2" in rendered_full
+        and "src+tests 2/2" in rendered_full,
+    )
+    assert_true(
+        "render: the STATED LIMIT is in the rendered text, not only in a comment",
+        "RAN, never that a verdict is\nRIGHT" in rendered_full
+        or "RAN, never that a verdict is RIGHT" in rendered_full.replace("\n", " "),
+    )
+    assert_true(
+        "render: at most 2 lines, header included (the epistemic block renders LAST)",
+        len(rendered_full.splitlines()) <= 2,
+    )
+
+    # Partial coverage names the count AND the pasteable remedy verbatim.
+    partial = classify_pairing_coverage(full_v, _p("s1"))
+    assert_true(
+        "partial coverage: 1 of 4 paired, 3 unpaired",
+        (partial.paired, partial.unpaired) == (1, 3),
+    )
+    rendered_partial = render_pairing_coverage(partial)
+    assert_true(
+        "render: an unpaired row names the count and the remedy VERBATIM",
+        "3 unpaired" in rendered_partial and PAIRING_REMEDY in rendered_partial,
+    )
+    assert_true(
+        "render: the partial line also holds the 2-line ceiling",
+        len(rendered_partial.splitlines()) <= 2,
+    )
+
+    # PAIR_SIGNAL — the cell this whole vein exists to find — is counted, and
+    # only for shas that are actually UNEARNED verdicts.
+    signalled = classify_pairing_coverage(full_v, "\n".join([_p("s1", "PAIR_SIGNAL"), _p("s2")]))
+    assert_true(
+        "PAIR_SIGNAL is counted separately from paired",
+        (signalled.paired, signalled.signal) == (2, 1),
+    )
+
+    # Unparseable lines are COUNTED and REPORTED, never silently dropped — a
+    # shrinking denominator inside my own meter is the defect this vein is about.
+    junky = classify_pairing_coverage(full_v + "\n{not json\n", full_p + "\n{{{\n")
+    assert_true(
+        "unparseable lines in EITHER file are counted, not dropped",
+        junky.unparseable == 2 and junky.unearned == 4,
+    )
+    assert_true(
+        "render: unparseable lines are reported out loud",
+        "unparseable" in render_pairing_coverage(junky),
+    )
+
+    # The direction that says the two files DISAGREE.
+    orphaned = classify_pairing_coverage(_v("s1"), "\n".join([_p("s1"), _p("zzz")]))
+    assert_true(
+        "a pairing whose sha is not an UNEARNED verdict is counted as orphaned",
+        orphaned.pairings_orphaned == 1 and orphaned.paired == 1,
+    )
+
+    # A sha recorded twice is ONE commit (the live ledger has one), counted once.
+    duped = classify_pairing_coverage("\n".join([_v("s1"), _v("s1")]), _p("s1"))
+    assert_true(
+        "a sha appearing twice is one commit, counted once",
+        (duped.unearned, duped.paired) == (1, 1),
+    )
+
+    # A MISSING pairing ledger is genuinely zero coverage, NOT a refusal: never
+    # having run the pairing mode is the signal, not an inability to look.
+    never_run = classify_pairing_coverage(full_v, None)
+    assert_true(
+        "a missing PAIRING ledger reads as 0 coverage, not as could-not-check",
+        never_run.state == PAIRING_OK and (never_run.paired, never_run.unpaired) == (0, 4),
     )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
