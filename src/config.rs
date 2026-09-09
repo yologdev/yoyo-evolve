@@ -936,6 +936,26 @@ pub fn parse_notify_command_from_config(
         .map(|v| v.to_string())
 }
 
+/// Read `cost_warn_usd` from the config map as **raw text**, unjudged (#891).
+///
+/// **Deliberately returns the value's text rather than a parsed number**, so
+/// [`crate::prompt_budget::parse_cost_threshold`] stays the *one* statement of
+/// what a valid threshold is. Its three-state OFF rule — absent, empty,
+/// whitespace-only, unparseable, `<= 0.0`, or non-finite (`nan`/`inf`) →
+/// `None`, meaning **off, never "budget zero"** — was chosen so a typo'd value
+/// cannot alarm on the first run of every session. A second parser here would
+/// agree the day it is written and diverge forever after (the
+/// `significant_braces` precedent).
+///
+/// Both `cost_warn_usd = 5.0` and `cost_warn_usd = 5` reach the caller as
+/// text, as does a quoted value; a value the shared parser rejects is simply
+/// OFF, which is the safe direction.
+pub fn parse_cost_warn_from_config(
+    config: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    config.get("cost_warn_usd").map(|v| v.to_string())
+}
+
 /// A user-supplied price for one model, in USD per million tokens.
 ///
 /// Both halves are mandatory: a price with only one side is not a price, so
@@ -1141,6 +1161,10 @@ pub const SETTABLE_KEYS: &[(&str, &str)] = &[
         "notify_command",
         "command to run when a long prompt finishes (empty = disabled)",
     ),
+    (
+        "cost_warn_usd",
+        "warn once when session cost crosses this many US dollars (empty = disabled)",
+    ),
     ("quiet", "suppress informational output (true/false)"),
     ("no_color", "disable colored output (true/false)"),
 ];
@@ -1269,6 +1293,25 @@ pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
             // Any string is a valid command; an empty string clears the setting
             // (disabling the feature). The command is entirely user-supplied.
             Ok(value.to_string())
+        }
+        "cost_warn_usd" => {
+            // An empty string clears the setting, exactly as `notify_command`
+            // does. Everything else is judged by the ONE statement of what a
+            // valid threshold is — `parse_cost_threshold` — never a second
+            // parser here (#891). Note the deliberate asymmetry with
+            // `parse_cost_warn_from_config`: the config *reader* is permissive
+            // (junk → OFF, the safe direction, so a typo cannot alarm on every
+            // run), while this door *refuses*, because a human is standing at
+            // it and can be told.
+            if value.trim().is_empty() {
+                return Ok(String::new());
+            }
+            match crate::prompt_budget::parse_cost_threshold(Some(value)) {
+                Some(n) => Ok(format!("{n}")),
+                None => Err(format!(
+                    "invalid cost_warn_usd value '{value}' — use a positive number of US dollars, e.g. 5.0"
+                )),
+            }
         }
         "quiet" => {
             let lower = value.to_ascii_lowercase();
