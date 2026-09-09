@@ -261,6 +261,26 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "  --read-only-subagents  Sub-agents lose write_file/edit_file/rename_symbol, so a"
+    );
+    let _ = writeln!(
+        s,
+        "                    dispatched agent can explore but not edit. Session-wide, not"
+    );
+    let _ = writeln!(
+        s,
+        "                    per-dispatch. A NARROWING, not a sandbox — bash remains, so a"
+    );
+    let _ = writeln!(
+        s,
+        "                    child can still write through it; add bash to --disallowed-tools"
+    );
+    let _ = writeln!(
+        s,
+        "                    to close that too (this unions with your own list, never replaces)"
+    );
+    let _ = writeln!(
+        s,
         "  --trust-project   Start MCP servers declared by a project-local .yoyo.toml"
     );
     let _ = writeln!(

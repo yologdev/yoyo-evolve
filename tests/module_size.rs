@@ -155,7 +155,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // boundary — `gate_project_notify_command` + `project_notify_refusal_message`
     // and their table tests. A project-local `notify_command` is arbitrary shell
     // (`sh -c`), so it is executable code by the same test #820 applied to hooks.
-    ("src/cli.rs", 6975), // Day 193: +7 for #891's `cost_warn_usd` config rung.
+    ("src/cli.rs", 6997), // Day 193: +22 for #881 slice 1's `--read-only-subagents`.
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
@@ -308,7 +308,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // than smuggled: this file is now grandfathered, so branch 2/3's ±100 drift
     // band applies to it from here on. The better fix is a split; owed, not done.
     ("src/git.rs", 2031),
-    ("src/help.rs", 2765), // Day 192: +6 documenting #891's `--cost-warn <usd>`.
+    ("src/help.rs", 2785), // Day 193: +20 documenting #881 slice 1's flag and its limit.
     // Day 161 (#662 half 1): +9 lines — run_prompt_auto_retry now breaks out of
     // the retry loop (with one dim stderr line) on deterministic tool refusals
     // instead of burning MAX_AUTO_RETRIES on an identical answer.
@@ -394,7 +394,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 174: 3290 -> 3299. Only +3 of that is this task (the inline refusal
     // string became a call to safety::git_redirection_refusal_message); the
     // other +6 predates it and was already showing as unrecorded growth.
-    ("src/tools.rs", 4037),
+    ("src/tools.rs", 4221), // Day 193: +184 for #881 slice 1's read-only child seam + guards.
     // Day 163 (#726): -58 lines — emerging-risk annotation removed from
     // build_watch_fix_prompt, with its own test; see #724.
     ("src/watch.rs", 4418),

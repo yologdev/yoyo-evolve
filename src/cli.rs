@@ -113,6 +113,22 @@ pub fn is_restricted() -> bool {
     RESTRICTED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Whether `--read-only-subagents` (#881 slice 1) was passed. Read at exactly
+/// one site, `tools::build_sub_agent_tool_at_depth`, where it selects which
+/// disallow list the child's tool set is composed from.
+static READ_ONLY_SUBAGENTS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Record that `--read-only-subagents` was passed. One call site, in `parse_args`.
+pub fn set_read_only_subagents(enabled: bool) {
+    READ_ONLY_SUBAGENTS.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Was `--read-only-subagents` passed this run?
+pub fn is_read_only_subagents() -> bool {
+    READ_ONLY_SUBAGENTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Enable the opt-in project-config trust (`--trust-project`).
 pub fn set_trust_project() {
     set_trust_project_to(true);
@@ -663,6 +679,7 @@ pub(crate) const KNOWN_FLAGS: &[&str] = &[
     "--lite",
     "--safe-mode",
     "--restricted",
+    "--read-only-subagents",
     "--trust-project",
     "--trust-project-always",
     "--help",
@@ -2527,6 +2544,11 @@ directory ({e}); this run is trusted, later runs will not be."
     // decision taken against the CLI-only list could append cwd on top of a
     // non-empty config list and widen the user.
     set_restricted(restricted);
+    // #881 slice 1 — opt-in, default OFF. With the flag absent the child's
+    // disallow list is unchanged and its tool set is byte-identical, which is
+    // every existing user and the whole regression surface. One `set_*` call
+    // site; the single read lives in `tools::build_sub_agent_tool_at_depth`.
+    set_read_only_subagents(args.iter().any(|a| a == "--read-only-subagents"));
     if restricted {
         let cwd = std::env::current_dir().ok();
         let effects = restricted_mode_effects(&dir_restrictions.allow, cwd.as_deref());

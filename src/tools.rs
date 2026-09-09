@@ -1378,6 +1378,52 @@ fn sub_agent_fallback_key(
 /// `retain`, so a `sub_agent` entry in a disallow list filters nothing at
 /// either level. Making it bite is a separate decision at a separate seam,
 /// not a silent side effect of this move.
+///
+/// The write-class file tools a `--read-only-subagents` child loses (#881
+/// slice 1). These are exactly the three `ReadModeGuardTool` already refuses in
+/// `/read` mode, so "read-only" means the same thing on both surfaces rather
+/// than two enumerations of one idea drifting apart.
+///
+/// **`bash` is deliberately NOT here, and a later reader must not "fix" it in.**
+/// The rivals this follows (Claude Code's Explore, Cursor's explore) deny
+/// *Write and Edit*, and `bash` is the tool a discovery agent actually works
+/// with — `rg`, `ls`, `git log`, `cat`. Removing it would not harden the
+/// confinement so much as make the mode useless for the one job it exists for.
+/// The honest consequence, stated here and in the help text rather than
+/// implied: **this is a NARROWING, not a sandbox** — a read-only child can
+/// still write through `bash`. A caller who wants that closed adds `bash` to
+/// their own `--disallowed-tools`, which unions with this list rather than
+/// being replaced by it.
+pub(crate) const READ_ONLY_CHILD_REMOVED_TOOLS: &[&str] =
+    &["write_file", "edit_file", "rename_symbol"];
+
+/// Fold `READ_ONLY_CHILD_REMOVED_TOOLS` into whatever disallow list the caller
+/// already has, deduped.
+///
+/// **Union, never replacement, and that is the safety property rather than a
+/// nicety.** A user who already passed `--disallowed-tools read_file` keeps
+/// that entry, so this can only ever *narrow* what a child may do and can never
+/// widen a fence the caller is already living inside. Same asymmetry
+/// `cli::restricted_disallowed_tools` encodes for `--restricted` (Day 188), and
+/// the same one `gate_project_permissions` encodes for project config: refuse
+/// the granting direction, keep the narrowing one verbatim.
+///
+/// Pure by construction — the `--read-only-subagents` global is read by the
+/// thin wrapper at the single call site, never here, so the decision is
+/// table-testable without touching a process-wide switch (the
+/// `apply_effort_hint` / `apply_effort_hint_with` split, which
+/// `tests/global_state_races.rs` names as its *best* remedy).
+pub(crate) fn read_only_child_disallowed(base: &[String]) -> Vec<String> {
+    let mut tools = base.to_vec();
+    for name in READ_ONLY_CHILD_REMOVED_TOOLS {
+        let name = (*name).to_string();
+        if !tools.contains(&name) {
+            tools.push(name);
+        }
+    }
+    tools
+}
+
 fn sub_agent_child_tools(
     restrictions: &DirectoryRestrictions,
     disallowed: &[String],
@@ -1449,7 +1495,16 @@ fn build_sub_agent_tool_at_depth(
     // lite sub-agent's child now loses whatever lite disallows. That is
     // deliberate and it is the safe direction: it can only ever NARROW what a
     // child may do, never widen it, and it matches what the parent itself got.
-    let mut child_tools = sub_agent_child_tools(&config.dir_restrictions, &config.disallowed_tools);
+    // #881 slice 1: with `--read-only-subagents` the child additionally loses
+    // the write-class file tools. This is the ONLY global read — the decision
+    // itself is the pure, table-tested `read_only_child_disallowed`, so a test
+    // can drive it without touching a process-wide switch.
+    let child_disallowed = if crate::cli::is_read_only_subagents() {
+        read_only_child_disallowed(&config.disallowed_tools)
+    } else {
+        config.disallowed_tools.clone()
+    };
+    let mut child_tools = sub_agent_child_tools(&config.dir_restrictions, &child_disallowed);
 
     // Allow exactly one more level of nesting, bounded by MAX_SUB_AGENT_DEPTH.
     // The nested tool shares the SAME store (not a fresh one) so artifacts set
@@ -3869,6 +3924,135 @@ mod tests {
             child_tool_names(&["no_such_tool".to_string()]),
             CHILD_TOOLS_TODAY
         );
+    }
+
+    /// #881 slice 1 — the pure table. Every rule the union has, in one place,
+    /// including the two that would silently break a caller: a write-class name
+    /// the caller ALREADY listed must not be duplicated, and an unrelated name
+    /// the caller listed must survive.
+    #[test]
+    fn read_only_child_disallowed_table() {
+        let s = |v: &[&str]| -> Vec<String> { v.iter().map(|x| (*x).to_string()).collect() };
+
+        // Empty base: exactly the three write-class names, in order.
+        assert_eq!(
+            read_only_child_disallowed(&[]),
+            s(READ_ONLY_CHILD_REMOVED_TOOLS)
+        );
+
+        // Base already containing a write-class name: no duplicate. A dup is
+        // harmless to the filter but means the list is not a set, and the next
+        // reader would have to wonder which one wins.
+        let out = read_only_child_disallowed(&s(&["edit_file"]));
+        assert_eq!(out.iter().filter(|n| *n == "edit_file").count(), 1);
+        for name in READ_ONLY_CHILD_REMOVED_TOOLS {
+            assert!(
+                out.iter().any(|n| n == name),
+                "{name} missing from {out:?} when the base already listed a sibling"
+            );
+        }
+
+        // Base with an unrelated name: BOTH present. This is the union rule --
+        // the caller's own entry is kept, never replaced.
+        let out = read_only_child_disallowed(&s(&["web_search"]));
+        assert!(
+            out.iter().any(|n| n == "web_search"),
+            "the caller's own disallow entry was dropped: {out:?}"
+        );
+        assert!(out.iter().any(|n| n == "write_file"));
+    }
+
+    /// #881 slice 1 — the NEAR-MISS GUARD, and the half that matters, driven
+    /// through the REAL seam rather than the list one layer above it.
+    ///
+    /// A read-only child must lose the three write-class tools and keep
+    /// everything else. `bash` in particular is asserted present on purpose:
+    /// it is the tool a discovery agent works with, and its survival is the
+    /// stated limit -- this is a narrowing, not a sandbox.
+    #[test]
+    fn a_read_only_child_loses_the_write_tools_and_keeps_every_reader() {
+        let names = child_tool_names(&read_only_child_disallowed(&[]));
+
+        // ANTI-VACUOUS, asserted FIRST: a composition that returns nothing
+        // satisfies every "tool X is absent" assertion below trivially.
+        assert!(
+            !names.is_empty(),
+            "the read-only child got NO tools at all -- a filter that empties \
+             the set passes every absence check vacuously"
+        );
+
+        for gone in READ_ONLY_CHILD_REMOVED_TOOLS {
+            assert!(
+                !names.iter().any(|n| n == gone),
+                "`{gone}` is write-class and still reached a read-only child: {names:?}"
+            );
+        }
+
+        // The other direction, and the one a discriminator tested only where it
+        // fires would miss: the readers must ALL survive, `bash` included.
+        for kept in ["read_file", "search", "list_files", "bash"] {
+            assert!(
+                names.iter().any(|n| n == kept),
+                "`{kept}` is not write-class and was removed anyway: {names:?}"
+            );
+        }
+
+        // Whole-vector, not a `contains` sweep: exactly the survivors of
+        // CHILD_TOOLS_TODAY, in order, so a reordering or an extra tool fails.
+        let survivors: Vec<&str> = CHILD_TOOLS_TODAY
+            .iter()
+            .copied()
+            .filter(|n| !READ_ONLY_CHILD_REMOVED_TOOLS.contains(n))
+            .collect();
+        assert_eq!(names, survivors);
+    }
+
+    /// #881 slice 1 — DEFAULT OFF is byte-identical, and that is every existing
+    /// user. With the flag absent the call site passes `config.disallowed_tools`
+    /// untouched, so the child set is exactly what it was before this landed.
+    ///
+    /// Asserted with a whole-vector `assert_eq!` against the recorded set rather
+    /// than a `contains`, with the anti-vacuous half first so a broken seam
+    /// cannot pass by having both sides agree on nothing.
+    #[test]
+    fn read_only_off_leaves_the_child_tool_set_byte_identical() {
+        let names = child_tool_names(&[]);
+
+        // ANTI-VACUOUS: the un-narrowed set really does carry a write tool, so
+        // the comparison below is discriminating rather than agreeing on empty.
+        assert!(
+            names.iter().any(|n| n == "write_file"),
+            "the default child set has no write_file -- this test cannot tell \
+             the read-only path from the ordinary one: {names:?}"
+        );
+
+        assert_eq!(
+            names, CHILD_TOOLS_TODAY,
+            "the DEFAULT child tool set moved -- #881 was supposed to be opt-in"
+        );
+    }
+
+    /// #881 slice 1 — UNION, NEVER REPLACEMENT. A caller who already narrowed
+    /// their child keeps that narrowing. Replacing the list would *widen* what
+    /// a child may do, which is the one direction a confinement flag must never
+    /// move, and it would do so silently.
+    #[test]
+    fn a_read_only_child_keeps_the_callers_own_disallow_entry() {
+        let caller = vec!["read_file".to_string()];
+        let names = child_tool_names(&read_only_child_disallowed(&caller));
+
+        assert!(
+            !names.iter().any(|n| n == "read_file"),
+            "the caller's own --disallowed-tools entry was REPLACED by the \
+             read-only list rather than unioned with it: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n == "write_file"),
+            "the read-only list did not apply on top of the caller's: {names:?}"
+        );
+        // And the pass-through half: everything neither list named survives.
+        assert!(names.iter().any(|n| n == "bash"));
+        assert!(names.iter().any(|n| n == "search"));
     }
 
     /// #887 slice 2 — the WIRING guard: `build_sub_agent_tool_at_depth` hands
