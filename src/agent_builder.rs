@@ -527,7 +527,17 @@ pub(crate) async fn connect_external_servers(
                 eprintln!("{GREEN}  ✓ mcp: {command} connected{RESET}");
             }
             Err(e) => {
-                eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_cmd}': {e}{RESET}");
+                // #899: both interpolated values are escaped before they reach
+                // the terminal, exactly as the pre-flight twin ~300 lines above
+                // does (#873). `mcp_cmd` is authored by a project-local
+                // `.yoyo.toml` and `e` by a spawned server process — different
+                // provenance, same terminal, and neither is obviously
+                // control-byte free. `record_failed_server` below deliberately
+                // still receives the RAW id: that is the model-facing note, a
+                // different audience with its own rules.
+                let shown_cmd = crate::cli::sanitize_for_display(mcp_cmd);
+                let e = crate::cli::sanitize_for_display(&e.to_string());
+                eprintln!("{RED}  ✗ mcp: failed to connect to '{shown_cmd}': {e}{RESET}");
                 // Second audience: the stderr line above reaches the *user*, who
                 // has usually scrolled past it. The model is handed an absence,
                 // and an absence reads as "this capability does not exist".
@@ -600,10 +610,12 @@ pub(crate) async fn connect_external_servers(
                 eprintln!("{GREEN}  ✓ mcp: {} connected{RESET}", server_cfg.name);
             }
             Err(e) => {
-                eprintln!(
-                    "{RED}  ✗ mcp: failed to connect to '{}': {e}{RESET}",
-                    server_cfg.name
-                );
+                // #899: same escaping as the --mcp loop above, one statement of
+                // the rule per loop. `record_failed_server` below still gets
+                // the raw name/command — that is the model-facing note.
+                let shown_name = crate::cli::sanitize_for_display(&server_cfg.name);
+                let e = crate::cli::sanitize_for_display(&e.to_string());
+                eprintln!("{RED}  ✗ mcp: failed to connect to '{shown_name}': {e}{RESET}");
                 // Same second audience as the --mcp loop above, one statement
                 // of the rule per loop. The *resolved command* is what a user
                 // can act on, so record it beside the friendly name.
@@ -638,7 +650,12 @@ pub(crate) async fn connect_external_servers(
                 eprintln!("{GREEN}  ✓ openapi: {spec_path} loaded{RESET}");
             }
             Err(e) => {
-                eprintln!("{RED}  ✗ openapi: failed to load '{spec_path}': {e}{RESET}");
+                // #899: same escaping as both MCP loops above. `spec_path` comes
+                // from a project-local config and `e` from the OpenAPI loader;
+                // `record_failed_server` below still gets the raw path.
+                let shown_spec = crate::cli::sanitize_for_display(spec_path);
+                let e = crate::cli::sanitize_for_display(&e.to_string());
+                eprintln!("{RED}  ✗ openapi: failed to load '{shown_spec}': {e}{RESET}");
                 // Second audience, and the kind is carried: an OpenAPI failure
                 // must not report as `mcp` — a note that misattributes the
                 // source is worse than none.
@@ -3392,6 +3409,109 @@ session will fail on the first turn with 'Tool names must be unique'."
             1,
             "the OpenAPI loop must report its load error"
         );
+    }
+
+    /// #899: the three connect-failure lines escape BOTH values they
+    /// interpolate, exactly as their pre-flight twin 300 lines above does
+    /// (#873). A project-local `.yoyo.toml` authors the server id and a
+    /// spawned process authors the error, and both land in the user's
+    /// terminal — a control byte in either repaints the lines *around* the
+    /// failure, including the RED failure line itself.
+    ///
+    /// STATED LIMIT, the same one its sibling states about itself: this proves
+    /// the call is **positioned**, never that a user saw an escaped byte.
+    /// `connect_external_servers` is `async` and spawns real processes, so no
+    /// test drives these arms. `sanitize_for_display` owns its own tests
+    /// (escaping, byte-identical pass-through, multi-byte safety); this does
+    /// not duplicate them.
+    #[test]
+    fn every_connect_failure_arm_escapes_the_values_it_interpolates() {
+        let src = include_str!("agent_builder.rs");
+        // Needles assembled at runtime so this test cannot match its own source.
+        let sanitize = format!("{}{}", "sanitize_", "for_display(");
+        let err_shadow = format!("let e = crate::cli::{sanitize}");
+        let mcp_fail = ["mcp: failed to", "connect to"].join(" ");
+        let oa_fail = ["openapi: failed to", "load"].join(" ");
+
+        // Same bounds as the sibling guard: the claim is only about this
+        // function's connect loops.
+        let start_marker = format!("async fn connect{}external{}servers(", "_", "_");
+        let start = src.find(&start_marker).expect("function must exist");
+        let end_marker = format!("fn insert{}client{}headers(", "_", "_");
+        let end = src[start..]
+            .find(&end_marker)
+            .expect("following function must exist")
+            + start;
+        let body = &src[start..end];
+
+        // ANTI-VACUOUS, asserted FIRST: a slice that found nothing, or that
+        // found a body without the three failure lines, satisfies every
+        // "expected N" assertion below by having nothing to count — this
+        // guard's own subject wearing the opposite sign.
+        assert!(
+            body.len() > 1000,
+            "sliced an empty/tiny body — the markers moved, so this guard checked nothing"
+        );
+        assert_eq!(
+            body.matches(&mcp_fail).count(),
+            2,
+            "slice must genuinely hold both MCP connect-failure lines"
+        );
+        assert_eq!(
+            body.matches(&oa_fail).count(),
+            1,
+            "slice must genuinely hold the OpenAPI load-failure line"
+        );
+
+        // Direction 1: the sanitized form is PRESENT. Two values per arm
+        // (the server id and the error) across three arms.
+        assert_eq!(
+            body.matches(&sanitize).count(),
+            6,
+            "expected both interpolated values escaped in all three connect-failure arms \
+             (2 values x 3 arms); a missing call means one arm still prints raw"
+        );
+        assert_eq!(
+            body.matches(&err_shadow).count(),
+            3,
+            "each connect-failure arm must escape the error it was handed"
+        );
+
+        // Direction 2: the RAW form is GONE from those same lines. A guard
+        // asserting only direction 1 passes on a line carrying both, which is
+        // how a half-applied edit reads as done (#893's receipt).
+        //
+        // Scoped to the failure lines themselves, never the whole body: the
+        // DIM "skipping" line in the collision-guard path above also
+        // interpolates a raw id, and it is deliberately out of #899's scope —
+        // a body-wide needle would conflate the two and fail on work this task
+        // never claimed to do.
+        let failure_lines: Vec<&str> = body
+            .lines()
+            .filter(|l| l.contains(&mcp_fail) || l.contains(&oa_fail))
+            .collect();
+        assert_eq!(
+            failure_lines.len(),
+            3,
+            "expected exactly the three connect-failure lines, got {failure_lines:#?}"
+        );
+        let raw_forms = [
+            format!("{}{}", "{mcp_cmd", "}"),
+            format!("{}{}", "{spec_path", "}"),
+            format!("'{}'", "{}"),
+        ];
+        for line in &failure_lines {
+            assert!(
+                line.contains(&format!("{}{}", "{shown_", "")),
+                "failure line still prints an unescaped id: {line}"
+            );
+            for raw in &raw_forms {
+                assert!(
+                    !line.contains(raw.as_str()),
+                    "failure line still interpolates the raw {raw}: {line}"
+                );
+            }
+        }
     }
 
     #[test]
