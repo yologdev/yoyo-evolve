@@ -3002,6 +3002,129 @@ def read_module_size_register(root: str):
         return None
 
 
+LOCKFILE_TRACKED = "lockfile-tracked"
+LOCKFILE_ABSENT = "lockfile-absent"
+LOCKFILE_UNKNOWN = "lockfile-unknown"
+
+
+def classify_parent_lockfile(lockfile_present):
+    """Did this commit's PARENT track a `Cargo.lock`? Pure: the lookup is injected.
+
+    Day 193. Returns `LOCKFILE_TRACKED` / `LOCKFILE_ABSENT` / `LOCKFILE_UNKNOWN`.
+
+    WHY THIS PREDICTS A VOID, and the mechanism was already written down before the
+    predictor was (Day 187's lesson, *the tree is re-resolved at read time*): a commit
+    records source, not the resolution of its inputs. `Cargo.lock` was gitignored in this
+    repo until `0577bfe7` (2026-08-24), so checking out a parent from before that commit
+    re-resolves the whole dependency graph against TODAY's yoagent. The old sonnet-5
+    preset-pricing test then asserts the old price, the BASELINE goes red, and the
+    comparison is correctly void -- ~3 minutes of cargo that bought nothing.
+
+    VALIDATED 2 OF 2 ON DAY 193'S OWN READINGS, and one of those two was spent against
+    the predictor rather than saved by it, which is the receipt that makes it worth
+    trusting: `cdbcc2504c03`'s parent tracks `Cargo.lock` -> read -> EARNED;
+    `c844913bf3be`'s parent does not -> predicted BASELINE_RED -> came back BASELINE_RED,
+    on exactly the `format::cost::tests::test_estimate_cost_sonnet_5_preset` failure Day
+    192 had already named.
+
+    THREE STATES, NEVER FOLDED. *The lockfile was absent* and *I could not tell* are
+    different facts with different consequences: folding UNKNOWN into ABSENT would let a
+    broken git call silently deprioritise a perfectly readable commit, and folding it into
+    TRACKED would spend cargo on a guess. A failed lookup is not evidence of absence.
+
+    THE STATED LIMIT, and it belongs here rather than only in the write-up: a tracked
+    `Cargo.lock` is NOT a promise of a green baseline. It removes ONE known, measured,
+    systematic cause of `BASELINE_RED`; a commit can still fail its own suite for any
+    other reason, and this classifier says nothing about those.
+    """
+    if lockfile_present is True:
+        return LOCKFILE_TRACKED
+    if lockfile_present is False:
+        return LOCKFILE_ABSENT
+    return LOCKFILE_UNKNOWN
+
+
+def commit_parent_lockfile(root: str, sha: str) -> str:
+    """The I/O half: does `<sha>^` track a `Cargo.lock`? Day 193.
+
+    One `git ls-tree --name-only <sha>^ -- Cargo.lock` through the existing `run_cmd` --
+    no cargo, no worktree, no checkout. Non-empty stdout means the parent tracked the
+    lockfile.
+
+    EVERY FAILURE IS `None`, WHICH THE CLASSIFIER READS AS UNKNOWN: a non-zero exit, an
+    unreachable parent (a root commit, or a shallow-clone boundary -- this clone
+    re-shallows every session), or any exception. A failed lookup must never masquerade as
+    a measured absence.
+    """
+    try:
+        rc, out = run_cmd(
+            ["git", "-C", root, "ls-tree", "--name-only", f"{sha}^", "--", "Cargo.lock"],
+            timeout=60,
+        )
+    except Exception:
+        return classify_parent_lockfile(None)
+    if rc != 0:
+        return classify_parent_lockfile(None)
+    return classify_parent_lockfile(bool(out.strip()))
+
+
+def order_by_parent_lockfile(rows, lockfile_of):
+    """Reorder candidates so commits with a TRACKED parent lockfile run first. Pure.
+
+    Returns `(ordered, counts)`. Day 193 -- the SAMPLING half, never the reachability
+    half. Follows `order_by_shape_tier` and `order_src_test_only_by_eligibility` rather
+    than inventing a shape.
+
+    WHY THIS EXISTS, measured rather than assumed. Day 193's reading session validated the
+    predictor 2 of 2 (see `classify_parent_lockfile`) and then measured the population:
+    over the unread fix-loop candidates it says roughly TWO THIRDS SKIP. That is two of
+    every three ~3-minute cargo pairs spent on a near-certain void -- and readings are the
+    binding constraint, since one pair is ~3 minutes and a single bash call is capped at
+    600s, so a reading session lands 2 readings and stops.
+
+    AND THE PREDICTOR WAS PROSE IN A WRITE-UP. Nothing consumed it. That is my own "a
+    capability is real only where something consumes it" rule landing on a measurement I
+    took the same day -- the same shape as `classify_splice_eligibility` sitting unread by
+    the selector from Day 190 until Day 191. This is that consumer.
+
+    PREFERENCE, NEVER EXCLUSION, and never a drop. All rows stay in the queue: the skipped
+    ones cost nothing to keep, the ledger wants them recorded, and filtering them out
+    would make it permanently incomplete while making an unfalsifiable claim about what
+    was skipped -- the same reasoning both sibling orderers already encode. Order is
+    STABLE WITHIN A GROUP, so the only thing that changes is grouping.
+
+    `LOCKFILE_UNKNOWN` SORTS WITH THE SKIP GROUP, deliberately. An unknown must never be
+    promoted into the comfortable bucket (Day 144), and HERE THE COMFORTABLE BUCKET IS THE
+    ONE THAT MAKES A READING LOOK WORTH TAKING -- i.e. the one that spends ~3 minutes of
+    cargo on a guess. A state nobody enumerated is counted as UNKNOWN and sorted the same
+    conservative way.
+
+    THE STATED LIMIT: this changes what is SAMPLED. It does not make any commit more
+    answerable, it does not grow the reachable denominator by one, the classifiable count
+    does not move, and it does not close #870.
+    """
+    counts = {
+        LOCKFILE_TRACKED: 0,
+        LOCKFILE_ABSENT: 0,
+        LOCKFILE_UNKNOWN: 0,
+    }
+    keep = []
+    rest = []
+    for row in rows or ():
+        state = lockfile_of(row.sha)
+        if state in counts:
+            counts[state] += 1
+        else:
+            # An unenumerated answer is an UNKNOWN, not a fourth group: it is counted,
+            # never dropped, and it sorts with the skips.
+            counts[LOCKFILE_UNKNOWN] += 1
+        if state == LOCKFILE_TRACKED:
+            keep.append(row)
+        else:
+            rest.append(row)
+    return keep + rest, counts
+
+
 def order_src_test_only_by_eligibility(rows, eligibility_of):
     """Reorder src-test-only rows so SPLICEABLE ones run first. Pure: resolver injected.
 
@@ -3428,6 +3551,20 @@ def main(argv):
         todo, tier_counts = order_by_shape_tier(
             todo, lambda sha: commit_test_diff_shape(root, sha)
         )
+        # Day 193: the lockfile preference, applied WITHIN the signal-bearing tier.
+        # Placement is the whole design and it is deliberately narrow. Applying it to the
+        # merged list would make it the PRIMARY key and reorder across tiers, which would
+        # (a) falsify the `tiers: ... run in that order` claim printed below and (b) break
+        # `merge_src_test_only`'s boundary, which slices `ordered[:signal_bearing]`.
+        # Confined to the head, it changes only the order of the commits that BOTH cost a
+        # ~3-minute cargo pair AND can produce a classification -- which is exactly the
+        # spend this exists to protect. One `git ls-tree` per signal-bearing candidate; no
+        # cargo, no worktree, no checkout.
+        _sig_n = tier_counts["signal_bearing"]
+        _sig_head, lock_counts = order_by_parent_lockfile(
+            todo[:_sig_n], lambda sha: commit_parent_lockfile(root, sha)
+        )
+        todo = _sig_head + todo[_sig_n:]
         # #870, Day 189: the SECOND consumer of `classify_src_test_readability`. DEFAULT
         # OFF, so with the flag absent `src_only` is empty and `merge_src_test_only`
         # returns a list equal to `todo` -- byte-identical selection for every reading
@@ -3480,6 +3617,27 @@ def main(argv):
                 "tiers: NO signal-bearing candidates remain for this population. Every "
                 "reading below is answerable from the diff and CANNOT move the "
                 "classifiable count — the reachable denominator is exhausted here."
+            )
+        # Day 193: a silent reordering is invisible. Reported in the shape `tiers:` uses,
+        # and NEVER summed into behavioural, signal-bearing or the src-test-only total --
+        # this is a split OF the signal-bearing tier, not a fourth population.
+        _keep = lock_counts[LOCKFILE_TRACKED]
+        _skip = lock_counts[LOCKFILE_ABSENT] + lock_counts[LOCKFILE_UNKNOWN]
+        print(
+            f"lockfile: of {_sig_n} signal-bearing candidate(s), {_keep} have a parent "
+            f"tracking Cargo.lock (KEEP — the baseline can resolve) and {_skip} do not "
+            f"({lock_counts[LOCKFILE_ABSENT]} absent, {lock_counts[LOCKFILE_UNKNOWN]} "
+            "unknown, both SKIP) — run in that order, none dropped. A tracked lockfile "
+            "is NOT a promise of a green baseline; it removes one measured cause."
+        )
+        # ANTI-VACUOUS: a selector that finds nothing and says nothing is this defect
+        # wearing the opposite sign, and it is quieter than the bug.
+        if _sig_n and _keep == 0:
+            print(
+                "lockfile: ZERO signal-bearing candidates have a tracked parent "
+                "lockfile. Every reading below is a near-certain BASELINE_RED — this "
+                "arm's cheap readings are exhausted, and that is the state talking, "
+                "not a clean bill."
             )
         if args.include_src_test_commits:
             # COUNTED SEPARATELY AND NEVER SUMMED into behavioural or signal-bearing.
@@ -5475,6 +5633,78 @@ def run_self_tests():
           [r.sha for r in src_test_only_candidates(
               _three, POP_PLAIN, set(), _readable)] == ["n1", "n2", "n3"],
           [r.sha for r in src_test_only_candidates(_three, POP_PLAIN, set(), _readable)])
+
+    # ---- Day 193: order_by_parent_lockfile — the SAMPLING half -----------------------
+    _lk_rows = [_row("k1"), _row("s1"), _row("k2"), _row("u1")]
+    _lk = {"k1": LOCKFILE_TRACKED, "s1": LOCKFILE_ABSENT,
+           "k2": LOCKFILE_TRACKED, "u1": LOCKFILE_UNKNOWN}
+
+    # 1. ANTI-VACUOUS, ASSERTED FIRST: an all-ABSENT input returns ALL of them. A
+    # selector that finds nothing and returns nothing is this defect wearing the opposite
+    # sign, and it is quieter than the bug.
+    _all_abs, _aa_counts = order_by_parent_lockfile(
+        _lk_rows, lambda _s: LOCKFILE_ABSENT)
+    check("lockfile: an all-ABSENT input returns ALL rows (anti-vacuous)",
+          [r.sha for r in _all_abs] == ["k1", "s1", "k2", "u1"]
+          and _aa_counts[LOCKFILE_ABSENT] == 4,
+          ([r.sha for r in _all_abs], _aa_counts))
+
+    # 2. THE NEAR-MISS GUARD AND THE ENTIRE REGRESSION SURFACE: every row TRACKED is
+    # BYTE-IDENTICAL, asserted with a full list ==, never a membership check. This is the
+    # direction that proves the guard tests the pass-through rather than the fix.
+    _all_trk, _at_counts = order_by_parent_lockfile(
+        _lk_rows, lambda _s: LOCKFILE_TRACKED)
+    check("lockfile: an all-TRACKED input is byte-identical (near-miss guard)",
+          _all_trk == _lk_rows and _at_counts[LOCKFILE_TRACKED] == 4,
+          ([r.sha for r in _all_trk], _at_counts))
+
+    # 3. PERMUTATION INVARIANT: same elements, same count, nothing lost. The cheapest
+    # possible regression guard, and it fails loudly the moment a group is dropped.
+    _mixed, _m_counts = order_by_parent_lockfile(_lk_rows, lambda s: _lk[s])
+    check("lockfile: the output is a permutation — nothing dropped",
+          sorted(r.sha for r in _mixed) == ["k1", "k2", "s1", "u1"]
+          and len(_mixed) == len(_lk_rows),
+          [r.sha for r in _mixed])
+    check("lockfile: TRACKED first, order STABLE within each group",
+          [r.sha for r in _mixed] == ["k1", "k2", "s1", "u1"],
+          [r.sha for r in _mixed])
+    check("lockfile: the split is counted and never summed",
+          _m_counts == {LOCKFILE_TRACKED: 2, LOCKFILE_ABSENT: 1, LOCKFILE_UNKNOWN: 1},
+          _m_counts)
+
+    # 4. UNKNOWN SORTS WITH THE SKIPS, in its own row. An unknown must never be promoted
+    # into the comfortable bucket (Day 144) — and here the comfortable bucket is the one
+    # that makes a reading look worth taking, i.e. spends ~3 minutes of cargo on a guess.
+    # A state nobody enumerated is counted as UNKNOWN and refused the same way.
+    for _state, _why in ((LOCKFILE_UNKNOWN, "an unknown is never promoted"),
+                         ("SOMETHING_NOBODY_ENUMERATED", "an unenumerated answer refuses")):
+        _u_ord, _u_counts = order_by_parent_lockfile(
+            [_row("a"), _row("b")], lambda _s, _v=_state: _v)
+        check(f"lockfile: {_state} sorts with the SKIPs ({_why})",
+              _u_counts[LOCKFILE_TRACKED] == 0
+              and _u_counts[LOCKFILE_UNKNOWN] == 2
+              and [r.sha for r in _u_ord] == ["a", "b"],
+              _u_counts)
+
+    # 5. COMPOSITION: ordering happens BEFORE --max-runs, or bounding first would slice
+    # the newest-first list and the preference could never fire. Pinned rather than
+    # assumed, because that ordering is the whole point of the wiring.
+    _picked, _ = order_by_parent_lockfile(_lk_rows, lambda s: _lk[s])
+    check("lockfile: ordering BEFORE --max-runs — a bound of 1 picks a TRACKED row",
+          [r.sha for r in _picked[:1]] == ["k1"],
+          [r.sha for r in _picked[:1]])
+    check("lockfile: an empty candidate list is empty, not an error",
+          order_by_parent_lockfile([], lambda _s: LOCKFILE_TRACKED) == ([], {
+              LOCKFILE_TRACKED: 0, LOCKFILE_ABSENT: 0, LOCKFILE_UNKNOWN: 0}),
+          order_by_parent_lockfile([], lambda _s: LOCKFILE_TRACKED))
+
+    # The pure classifier's three states, never folded. *The lockfile was absent* and *I
+    # could not tell* are different facts with different consequences.
+    for _in, _want in ((True, LOCKFILE_TRACKED), (False, LOCKFILE_ABSENT),
+                       (None, LOCKFILE_UNKNOWN)):
+        check(f"lockfile: classify_parent_lockfile({_in!r}) -> {_want}",
+              classify_parent_lockfile(_in) == _want,
+              classify_parent_lockfile(_in))
 
     # ---- #870, Day 191: order_src_test_only_by_eligibility — the SAMPLING half ---------
     # Day 190 burned FOUR consecutive fix-loop readings on four COULD_NOT_CHECKs, every
