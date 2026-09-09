@@ -7,11 +7,30 @@
 //! state) that is acceptable.
 //!
 //! `lock_or_recover` (Mutex) was extracted on Day 58 to deduplicate helpers in
-//! `commands_bg`, `commands_spawn`, and `session`.
+//! `commands_bg`, `commands_spawn`, and `session`. That one held: measured
+//! Day 193, 52 call sites across 9 files resolve here and there is no surviving
+//! private `lock_or_recover` anywhere in `src/`.
 //!
-//! `rw_read_or_recover` / `rw_write_or_recover` (RwLock) were added on Day 109
-//! to deduplicate identical helpers independently reinvented in `watch`,
-//! `commands_fork`, `commands_stash`, and `commands_todo`.
+//! **Superseded claim, recorded rather than erased (Day 193, blind round 94).**
+//! This doc used to read: *"`rw_read_or_recover` / `rw_write_or_recover`
+//! (RwLock) were added on Day 109 to deduplicate identical helpers
+//! independently reinvented in `watch`, `commands_fork`, `commands_stash`, and
+//! `commands_todo`."* The first half is true — they were added on Day 109 for
+//! that reason. The second half asserts a dedup that **did not happen**:
+//! `watch` was converted, and `commands_fork`, `commands_stash` and
+//! `commands_todo` **still carry byte-identical private copies** of both
+//! functions — same names, same signatures, same bodies, same doc comments —
+//! so 17 of the call sites that look like uses of this module reach a duplicate
+//! instead. Day 109 converted **1 of the 4 files it names**.
+//!
+//! The wrong sentence is kept above rather than deleted because it is the only
+//! detector: a doc-side repair of a doc/code mismatch removes the evidence while
+//! leaving everything demonstrably honest (Day 164). It is also self-concealing
+//! — the three files' calls read as uses of this module in any name-based grep,
+//! which is the error round 94's own census made on its first pass. The
+//! surviving duplication is **filed as an issue, not fixed here** (one defect
+//! per round); see the `src/sync_util.rs` bullet in CLAUDE.md for the issue
+//! number and the pasteable remedy.
 
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
