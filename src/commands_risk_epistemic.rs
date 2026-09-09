@@ -1745,4 +1745,79 @@ mod tests {
             );
         }
     }
+    /// Blind round 95 (day 193) — the `score > 0.0` gate silently DROPS a file
+    /// whose signals and discounts cancel exactly, and the cancellation is
+    /// reachable rather than theoretical.
+    ///
+    /// `stale_weight(STALE_SNAPSHOT_GAP)` returns *exactly* `W_STALE` (0.5) by
+    /// construction — that is the documented backward-compatibility anchor —
+    /// and `W_VISITED_UNGRADED` is *exactly* `-0.5`. So a file that is stale at
+    /// precisely the threshold and was named by one ungraded round sums to
+    /// exactly `0.0`, fails `score > 0.0`, and vanishes from the ranking
+    /// entirely rather than sorting last.
+    ///
+    /// **This pins observed behaviour; it does not endorse it.** Whether such a
+    /// file *should* vanish or should rank last is a design question about the
+    /// ranking that steers my own planner, filed rather than decided here. What
+    /// the test buys is that the knife-edge stops being invisible: it exists
+    /// only because two independently-chosen judgment thresholds happen to be
+    /// exact negatives of each other, nothing anywhere named that coincidence,
+    /// and a future edit to either const moves the edge with no failing test.
+    #[test]
+    fn exact_zero_cancellation_drops_a_file_from_the_ranking_entirely() {
+        // Anti-vacuous, asserted FIRST: the coincidence is real and exact.
+        // Without these two rows the fixture below could pass by arithmetic
+        // that never actually reaches zero.
+        assert_eq!(
+            stale_weight(STALE_SNAPSHOT_GAP),
+            W_STALE,
+            "stale_weight must return exactly W_STALE at the threshold"
+        );
+        assert_eq!(
+            W_STALE + W_VISITED_UNGRADED,
+            0.0,
+            "the two judgment thresholds are exact negatives — this is the coincidence"
+        );
+
+        // src/knife.rs: seen once at index 0, five snapshots ago exactly.
+        let mut snapshots = vec![snap(100, &["src/knife.rs"], &[])];
+        for d in 101..106 {
+            snapshots.push(snap(d, &["src/other.rs"], &[]));
+        }
+        // Graded BEFORE it was last seen: kills W_NEVER_GRADED (so the score is
+        // not 2.0+) while leaving `graded_since` false (so staleness still
+        // fires). That combination is what makes the edge reachable at all.
+        let events = vec![graded(99, &["src/knife.rs"])];
+        let visits = vec![ExperimentVisit {
+            path: "src/knife.rs".to_string(),
+            day: 150,
+            state: StudyState::VisitedUngraded,
+        }];
+
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &visits);
+        assert!(
+            !ranking.iter().any(|e| e.path == "src/knife.rs"),
+            "exact-zero score is dropped by `score > 0.0`, got: {:?}",
+            ranking
+                .iter()
+                .map(|e| (&e.path, e.score))
+                .collect::<Vec<_>>()
+        );
+
+        // Near-miss guard, and it is the half that matters: ONE snapshot
+        // staler and the same file — same grade, same visit — reappears. That
+        // is what proves the drop is the knife-edge and not the visit discount
+        // suppressing the file in general.
+        snapshots.push(snap(106, &["src/other.rs"], &[]));
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &visits);
+        let entry = ranking
+            .iter()
+            .find(|e| e.path == "src/knife.rs")
+            .expect("one snapshot past the edge, the file ranks again");
+        assert!(
+            entry.score > 0.0 && entry.score < 0.1,
+            "just past the edge the score is barely positive, got {}",
+            entry.score
+        );
+    }
 }
