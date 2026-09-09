@@ -182,7 +182,10 @@ pub fn load_project_context_from(dir: &std::path::Path) -> Option<String> {
                     context.push_str(&format!("--- From {name} ---\n"));
                 }
                 context.push_str(content);
-                found.push(*name);
+                // Byte count captured at the point of contribution — the length
+                // of the string that actually reached the prompt, never
+                // `fs::metadata` (see `project_instruction_note`).
+                found.push((*name, content.len()));
             }
         }
     }
@@ -258,8 +261,22 @@ pub fn load_project_context_from(dir: &std::path::Path) -> Option<String> {
         None
     } else {
         if !is_quiet() {
-            for name in &found {
+            for (name, _) in &found {
                 eprintln!("{DIM}  context: {name}{RESET}");
+            }
+            // Disclose the provenance of the instruction files, once per
+            // process. Inside the existing `!is_quiet()` block, so `--quiet`
+            // silences it — which is also why yoyo's own evolve loop gains no
+            // noise: `cli.rs` auto-enables quiet whenever stdin and stdout are
+            // both non-terminal, i.e. every piped harness process.
+            if !found.is_empty()
+                && !INSTRUCTION_NOTE_ANNOUNCED.swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
+                if let Some(note) =
+                    project_instruction_note(&found, crate::format::is_plain_output())
+                {
+                    eprintln!("{DIM}{note}{RESET}");
+                }
             }
             if conventions_injected {
                 eprintln!("{DIM}  context: {project_type} conventions{RESET}");
@@ -279,6 +296,57 @@ pub fn load_project_context_from(dir: &std::path::Path) -> Option<String> {
         }
         Some(context)
     }
+}
+
+/// Whether we've already disclosed the project-authored instruction files.
+///
+/// The loader is called once per process today, but a per-call line would spam
+/// if that ever changed — cheap insurance, same shape as `RTK_ANNOUNCED`.
+static INSTRUCTION_NOTE_ANNOUNCED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Disclose which project-authored instruction files steered this session.
+///
+/// `loaded` is `(filename, bytes actually contributed)`. Returns `None` for an
+/// empty slice — every project without an instruction file, and the entire
+/// regression surface of this disclosure.
+///
+/// **The byte count is measured at the point of contribution, never from
+/// `fs::metadata`.** If the loader ever truncates or trims, metadata would
+/// overstate what actually reached the prompt — assert the payload, not the
+/// container (Day 149). A number that lies here is worse than no number.
+///
+/// `--safe-mode` is named as the hatch because it was *verified* to skip the
+/// whole project-context load (`src/cli.rs:2443-2449`), not because it sounds
+/// like it should. Naming a hatch that does not work is a confident wrong
+/// claim, which is worse than none (#710).
+///
+/// **This is disclosure, not a gate.** Every byte still reaches the model
+/// exactly as before; the only change is that a human watching an interactive
+/// session is told it happened. See #902 for the gate's four design questions
+/// and for why the naive version would silently break yoyo's own evolve loop.
+pub(crate) fn project_instruction_note(loaded: &[(&str, usize)], plain: bool) -> Option<String> {
+    if loaded.is_empty() {
+        return None;
+    }
+    let files = loaded
+        .iter()
+        .map(|(name, bytes)| format!("{name} ({bytes} bytes)"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(if plain {
+        format!(
+            "project-authored instructions loaded: {files}. \
+             This text is written by the repository, not by you, and steers this session. \
+             Use --safe-mode to skip it."
+        )
+    } else {
+        format!(
+            "⚠ project-authored instructions loaded — {files} — \
+             written by the repository, not by you, and steering this session \
+             (--safe-mode skips it)"
+        )
+    })
 }
 
 /// List which project context files exist and their sizes.
@@ -1039,5 +1107,113 @@ mod tests {
         assert!(ctx.contains("Primary instructions"));
         assert!(ctx.contains("Agent instructions"));
         assert!(ctx.contains("Cursor rules"));
+    }
+
+    // ---- Project-authored instruction disclosure (Day 193, #902) ----
+    //
+    // These pin the disclosure only. The gate does NOT exist: every byte of a
+    // hostile CLAUDE.md still reaches the model exactly as before. See #902.
+
+    #[test]
+    fn instruction_note_names_every_file_with_the_bytes_it_contributed() {
+        // Anti-vacuous FIRST: the fixture must carry non-zero byte counts, or a
+        // broken measurement passes by both sides agreeing on zero.
+        let loaded = [("CLAUDE.md", 251_384usize), ("AGENTS.md", 42usize)];
+        assert!(
+            loaded.iter().all(|(_, bytes)| *bytes > 0),
+            "fixture must carry real byte counts, or this test cannot discriminate"
+        );
+
+        let note = project_instruction_note(&loaded, false)
+            .expect("two loaded instruction files must produce a note");
+
+        // Each file named, with the bytes it actually contributed.
+        assert!(
+            note.contains("CLAUDE.md (251384 bytes)"),
+            "note must name each file and its contributed bytes: got {note}"
+        );
+        assert!(
+            note.contains("AGENTS.md (42 bytes)"),
+            "note must name each file and its contributed bytes: got {note}"
+        );
+        // The provenance claim is the whole point: repo-authored, steering.
+        assert!(
+            note.contains("repository"),
+            "note must say the text is repo-authored: got {note}"
+        );
+        assert!(
+            note.contains("session"),
+            "note must say it steers this session: got {note}"
+        );
+        // The hatch is named only because step 2(b) VERIFIED it works
+        // (src/cli.rs:2443-2449 skips the whole project-context load).
+        assert!(
+            note.contains("--safe-mode"),
+            "note must name the verified hatch: got {note}"
+        );
+    }
+
+    #[test]
+    fn no_instruction_file_means_no_note_at_all() {
+        // The entire regression surface: every project without an instruction
+        // file. Asserted with assert_eq! on None, never a `contains`.
+        assert_eq!(project_instruction_note(&[], false), None);
+        assert_eq!(project_instruction_note(&[], true), None);
+    }
+
+    #[test]
+    fn instruction_note_is_glyph_free_and_em_dash_free_under_plain_output() {
+        let loaded = [("CLAUDE.md", 12usize)];
+
+        let fancy = project_instruction_note(&loaded, false).expect("non-plain note");
+        // Reverse anti-vacuous: the non-plain form must really carry BOTH the
+        // marker and an em dash, or the plain assertions below pass by accident.
+        assert!(
+            fancy.contains('⚠'),
+            "non-plain form must carry the marker, or the plain test is vacuous: got {fancy}"
+        );
+        assert!(
+            fancy.contains('—'),
+            "non-plain form must carry an em dash, or the plain test is vacuous: got {fancy}"
+        );
+
+        let plain = project_instruction_note(&loaded, true).expect("plain note");
+        assert!(!plain.contains('⚠'), "plain form carried a glyph: {plain}");
+        assert!(
+            !plain.contains('—'),
+            "plain form carried an em dash: {plain}"
+        );
+        // Still informative in plain mode — the byte count is the useful half.
+        assert!(
+            plain.contains("CLAUDE.md (12 bytes)"),
+            "plain form must still name the file and bytes: got {plain}"
+        );
+    }
+
+    #[test]
+    fn the_note_never_leaks_into_the_context_the_model_receives() {
+        // This change alters what is PRINTED, never what is LOADED. The note
+        // goes to stderr; the returned context must be free of it.
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("CLAUDE.md"), "Primary instructions here").unwrap();
+
+        let ctx = load_project_context_from(dir.path())
+            .expect("a project with CLAUDE.md must yield context");
+
+        // Anti-vacuous: the file's content really did reach the context, so the
+        // absence assertions below are about the note and not about a no-op.
+        assert!(
+            ctx.contains("Primary instructions here"),
+            "fixture content must reach the context: got {ctx}"
+        );
+        // The disclosure's distinctive wording must NOT be in the prompt.
+        assert!(
+            !ctx.contains("project-authored instructions loaded"),
+            "the disclosure leaked into the model-facing context: got {ctx}"
+        );
+        assert!(
+            !ctx.contains("--safe-mode"),
+            "the disclosure leaked into the model-facing context: got {ctx}"
+        );
     }
 }
