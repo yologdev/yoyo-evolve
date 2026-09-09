@@ -1,0 +1,145 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the work and the two specific omissions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_trust_project_to\|s… ✓ (3ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.3s (2 ✓)
+
+Two omissions. Let me look at the exact context for both.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '80,140p' tests/global_st…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/tools.rs | … ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_read_only_subagents…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3925,4060p' src/tools.rs ✓ (4ms)
+ ✓ (8ms)
+  4 tools completed in 9.5s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the first omission — the global setter register.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/global_state_races.rs (2 → 3 lines)
+        "set_trust_project_to",
+        "set_restricted",
+  +     "set_read_only_subagents",
+ ✓ (1m 16s)
+        "set_trust_project_to",
+        "set_restricted",
+  +     "set_read_only_subagents",
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test global_state_r… ✓ (5.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 28s (2 ✓)
+
+Gate passes. Now the positive control — I need to measure the width, not assume it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/pub(crate) fn read_only… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive control, as one atomic mutate→run→restore with the NEUTERED marker:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tools… (14 lines) ✓ (148ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Empty output — the filter or build may have failed silently. Let me redo it capturing everything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib tools::tests 2>… ✓ (113ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Wrong target — it's a binary crate. Redoing the control properly:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tools… (13 lines) ✓ (1m 42s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control measured: exactly 3 red, byte-empty restore, 0 markers. Now the CLAUDE.md bullet — let me find the anchor.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "3973 → 4037" CLAUDE.md …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && git diff --stat && … ✓ (4ms)
+ ✓ (10.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.6s (2 ✓)
+
+cargo fmt was a no-op and the size gate prints zero warnings — no register edit owed. Now the CLAUDE.md bullet:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '271p' CLAUDE.md | tail -… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - `src/tools.rs`'s register entry moved **3973 → 4037**, pasted from what the gate itself printed rather than hand-typed.
+  + `src/tools.rs`'s register entry moved **3973 → 4037**, pasted from what the gate itself printed rather than hand-typed. **Day 193 (#881 slice 1) — `--read-only-subagents`, and the whole change is ONE WIDER ARGUMENT because the seam already existed.** Externally confirmed by two rivals: Claude Code ships **Explore** as a built-in sub-agent *"denied access to Write and Edit tools"*, and Cursor ships `explore` stating outright it was designed from conversations where **context-window limits wer… [yoyo: 4474 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 57s)
+  - `src/tools.rs`'s register entry moved **3973 → 4037**, pasted from what the gate itself printed rather than hand-typed.
+  + `src/tools.rs`'s register entry moved **3973 → 4037**, pasted from what the gate itself printed rather than hand-typed. **Day 193 (#881 slice 1) — `--read-only-subagents`, and the whole change is ONE WIDER ARGUMENT because the seam already existed.** Externally confirmed by two rivals: Claude Code ships **Explore** as a built-in sub-agent *"denied access to Write and Edit tools"*, and Cursor ships `explore` stating outright it was designed from conversations where **context-window limits wer… [yoyo: 4474 more bytes elided — diff lines are capped at 500 bytes]
+  2 tools completed in 2m 23s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both omissions are fixed. Now the full verification:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 17s)
+  3 tools completed in 2m 30s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green — 5561 passed, 0 failed. Let me verify the final diff state and guard against re-sweeping the harness file:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== STATUS ===" && git sta… ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the two flagged files, no harness file swept in. Final verification of both fixes:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== 1. GLOBAL_SETTERS ==="… ✓ (19ms)
+
+Both evaluator failures are fixed. Summary of what I did:
+
+## 1. `forgotten_touchpoints` — the missing global-setter registration
+
+Added set_read_only_subagents to GLOBAL_SETTERS in tests/global_state_races.rs, placed next to its sibling set_restricted in the src/cli.rs block. Verified by running the gate: 12/12 pass, including every_named_setter_still_exists, which ties the hand-written list to reality — so a later rename of that setter now fails that test instead of silently un-covering every site the name guarded.
+
+No REGISTERED_GLOBAL_RACES debt entry was owed: grep confirms no test calls the setter directly (its only callers are parse_args and the census scan), so the gate's branch-1 fatal case does not fire.
+
+## 2. `doc_sync` — the missing CLAUDE.md bullet
+
+Appended to the tools.rs bullet, covering every element the task named: the reused Day-189 seam (one wider argument, not a new mechanism), the union-not-replacement rule with the restricted_disallowed_tools precedent, why bash is deliberately excluded, the default-off whole-vector regression surface, the GLOBAL_SETTERS registration and why (#884's death), and the stated limit — session-wide, not per-dispatch; `bash` remains so it is a narrowing, not a sandbox; #881 stays open on the per-dispatch half.
+
+## The positive-control width — measured, not assumed
+
+The evaluator noted step 4's width was recorded nowhere. I ran it rather than reconstructing it, as one atomic mutate→run→restore with the sabotage marked NEUTERED:
+
+• **Exactly 3 red**: `read_only_child_disallowed_table`, `a_read_only_child_loses_the_write_tools_and_keeps_every_reader`, `a_read_only_child_keeps_the_callers_own_disallow_entry` — 5558 passed, no pre-existing test moved, so the claim is exactly as wide as the three new guards.
+• Restored to a byte-empty

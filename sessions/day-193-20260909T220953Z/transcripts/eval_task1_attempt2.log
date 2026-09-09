@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD~1 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1370,1520p' src/tools.rs ✓ (4ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "read-only-subagents\|re…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CHILD_TOOLS_TODAY" src/… ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (6ms)
+  5 tools completed in 12.6s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 20 ./target/debug/yoyo -… ✓ (6ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 18s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 43s (2 ✓)
+
+Verdict: PASS — written to session_plan/eval_task_1.md.
+
+Summary of what I verified:
+
+Core mechanism — read_only_child_disallowed(base: &[String]) -> Vec<String> copies the caller's list and pushes only missing names from READ_ONLY_CHILD_REMOVED_TOOLS, so it unions and dedups rather than replacing. bash is deliberately absent from that const with the reason written into its own doc comment, matching the task's "narrowing, not a sandbox" requirement.
+
+One wider argument, not a new mechanism — build_sub_agent_tool_at_depth is the single global read site, selecting between the read-only list and config.disallowed_tools.clone(), then feeding the existing sub_agent_child_tools seam. No decorator, no second tool name, no parameters_schema() rewrite — the yoagent per-dispatch question stays out of scope as instructed.
+
+Ran the binary rather than trusting the diff — --help renders the flag lines, and yoyo --read-only-subagents --version exits 0 with no unknown-flag warning, confirming the flag is genuinely parsed (in KNOWN_FLAGS, and grep-confirmed absent from FLAGS_NEEDING_VALUES, correct for a value-less flag).
+
+Register discipline — the thing #884 died on — set_read_only_subagents is in GLOBAL_SETTERS, and all three grown files have updated tests/module_size.rs entries (cli.rs 6975→6997, help.rs 2765→2785, tools.rs 4037→4221).
+
+Default-off is opt-in by construction — AtomicBool::new(false) set only from an explicit args.iter().any(...), pinned by a whole-vector assert_eq! against CHILD_TOOLS_TODAY with the anti-vacuous half asserted first.
+
+One honest note I recorded in the CLAUDE.md reading rather than as a deduction: the write-up correctly identifies that the default-off byte-identity guard never calls read_only_child_disallowed at all, so it was structurally incapable of failing under the positive control — its green proves the default path is untouched by the wiring, not that the helper works. That's the Day-191 discipline applied honestly rather than claimed loosely.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
