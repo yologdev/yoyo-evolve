@@ -1,0 +1,89 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking what I actually did this session before commenting on anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --format='%H %s' -6 ✓ (3ms)
+ ✓ (50ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 3d878abf~1 0993dc4c -- …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sanitize_for_display" s… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '530,545p;610,625p;650,66…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (3ms)
+ ✓ (345ms)
+  6 tools completed in 11.4s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up the issue-response phase. #899 is verified fixed. Let me check the remaining candidates before deciding.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 738 --repo yologde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -c 900 … (9 lines) ✓ (22ms)
+ ✓ (873ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.4s (2 ✓)
+
+Round 94's prediction was already mirrored on #738 this session — so that issue is done (one comment per round, and it's posted). Let me verify the build and the #899 guard before I claim anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn every_connect_failur…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo connect_fa… ✓ (3ms)
+ ✓ (299ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.1s (2 ✓)
+
+Both guards pass, and round 94's prediction mirror is already posted. Now the one issue this session actually closed.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (24 lines) ✓ (770ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Comment posted. Now closing it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue close 899 --repo yologd… ✓ (950ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#899 closed. Let me verify the final state of everything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (122ms)
+ ✓ (347ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.7s (2 ✓)
+
+Everything is settled. Tree is clean, build passes, and the issue queue reflects reality.
+
+## What I did
+
+Closed #899 — the one issue this session actually resolved.
+
+The defect was the tightest instance of "two doors, one policy, one deaf" in the repo: connect_external_servers has a pre-flight path that routed both its strings through sanitize_for_display (since #873) and three connect arms, 300 lines below in the same function, that interpolated raw. Same terminal, same provenance argument, already made and already won one branch over.
+
+All three arms now escape both values — the server id and the error — because they have different origins (a project-local .yoyo.toml vs. a spawned server process) and neither is obviously safe. record_failed_server still gets the raw value at each arm, with a comment saying why: that's the model-facing note, a different audience, and escaping there would put \x1b-shaped noise into a prompt.
+
+Two things I'm glad I checked rather than assumed:
+
+• **The issue's remedy claim was correct** — `sanitize_for_display` really was already `pub(crate)` and already called from this file. That's the first of five consecutive tasks whose stated remedy survived step 0. A defect claim is self-checking; a remedy claim has no consumer that can fail until someone applies it.
+• **The surviving green tests are weaker evidence than they look.** The positive control reddened exactly my test. But the Day-192 sibling *preserved* `{e}` under my mutation, so it was structurally incapable of failing — a different property, not proof of pass-through — and connections_lost_note_table's assert_eq!(…, None) rows assert absence, which a dead branch satisfies identically. Boundary pins, not guards. Reading the green is as informative as reading the red.
+
+## What I deliberately did not comment on
+
+#892, #891, #886, #881, #879, #870, #869, #858 — I did no work on any of them this session. Each has real remaining scope, and each already carries the write-up from the session that last moved it. A "still open, still on my list" comment adds nothing a human can act on, so silence is the honest choice.
+
+#738 already has this session's comment: blind round 94's prediction for src/sync_util.rs, mirrored there before the first read. That's the whole point of that issue — the harness reverts a failed task with git reset --hard, so a prediction commit isn't durable evidence, and rebuilding a prediction after seeing the answer is forgery.
+
+Round 94's finding — this file's own module doc claimed a Day-109 dedup covering four files when it converted one, with the three surviving copies name-identical to the shared function so any call-site grep counts them as wins — is filed as #900 rather than left in prose. That's the correction I could make honestly in-round: one false sentence fixed, six duplicate definitions and their missing gate handed to the queue that actually schedules things.
+
+  watch: no files changed this turn — skipping
+

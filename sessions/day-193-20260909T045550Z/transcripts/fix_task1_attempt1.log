@@ -1,0 +1,109 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the documentation gap. Let me first check the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---S…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Recorded and FILED rath… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.4s (2 ✓)
+
+Code landed; only CLAUDE.md is missing. Let me read the actual implementation so the write-up is accurate rather than inferred.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/agent_build…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "agent_builder" tests/mo… ✓ (2ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '525,545p;608,625p;648,66…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3414,3516p' src/agent_bu… ✓ (4ms)
+ ✓ (4ms)
+  4 tools completed in 4.0s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All information gathered. Before writing the docs I need a truthful positive-control receipt — I must not document a control I didn't run. Let me run it now as one atomic mutate→run→restore.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent… (18 lines) ✓ (21.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control gives a truthful receipt: exactly 1 test red (mine, left: 4, right: 6), both siblings green, byte-empty diff, 0 markers. Now the docs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (2 → 2 lines)
+  - **The stated limit on the whole task: this changes no behaviour at all.** No production line moved, no user-visible output differs by one byte, and a server that failed still stays failed — what it buys is that the cause can no longer be dropped silently by the next edit to these arms.
+  + **The stated limit on the whole task: this changes no behaviour at all.** No production line moved, no user-visible output differs by one byte, and a server that failed still stays failed — what it buys is that the cause can no longer be dropped silently by the next edit to these arms. **Day 193 (#899) — the three connect-failure lines now escape both values, and the clause immediately above is superseded, recorded rather than erased.** *"Recorded and FILED rather than fixed (#899)"* and *"t… [yoyo: 5631 more bytes elided — diff lines are capped at 500 bytes]
+    - `banner.rs`
+ ✓ (1m 33s)
+  - **The stated limit on the whole task: this changes no behaviour at all.** No production line moved, no user-visible output differs by one byte, and a server that failed still stays failed — what it buys is that the cause can no longer be dropped silently by the next edit to these arms.
+  + **The stated limit on the whole task: this changes no behaviour at all.** No production line moved, no user-visible output differs by one byte, and a server that failed still stays failed — what it buys is that the cause can no longer be dropped silently by the next edit to these arms. **Day 193 (#899) — the three connect-failure lines now escape both values, and the clause immediately above is superseded, recorded rather than erased.** *"Recorded and FILED rather than fixed (#899)"* and *"t… [yoyo: 5631 more bytes elided — diff lines are capped at 500 bytes]
+    - `banner.rs`
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && git diff --stat && … ✓ (1.2s)
+  2 tools completed in 1m 37s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+CLAUDE.md is the only remaining change and cargo fmt left it untouched. Running the full verification.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (297ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (58.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 4s (2 ✓)
+
+All green (5553 + all integration binaries, 0 failed). Verifying the doc claims a reader could check are actually true:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== stale clause PRESERVED…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== sanitize call count in… ✓ (5ms)
+ ✓ (7ms)
+  2 tools completed in 8ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All verified. Done.
+
+## What was missing and what I did
+
+The evaluator's doc_sync: FAIL was correct and was the only gap: the code, the two-direction guard and the register move had all landed, but CLAUDE.md was never touched — leaving a false authoritative claim in the file re-injected as context every session.
+
+Before writing the docs I ran the positive control, rather than documenting one I hadn't performed. As one atomic mutate→run→restore, sabotage marked NEUTERED:
+
+• Reverting the OpenAPI arm to its raw form → exactly 1 test red (mine), receipt left: 4, right: 6 on the sanitize-call count.
+• `every_connect_failure_arm_reports_the_error_it_was_handed and connections_lost_note_table` stayed green.
+• Restored to a byte-empty git diff, 0 markers left.
+
+Reading the width of that red (Day 190): no pre-existing test moved, so the write-up says this **ENTRY was uncovered**, not "the mechanism was unguarded".
+
+Reading the surviving green (Day 191) — and it is narrower than "two guards held the pass-through": the Day-192 sibling counts `{e}, and my mutation *preserved* {e}, so it was **structurally incapable of failing** under this control — a different property, not evidence of pass-through. connections_lost_note_table's assert_eq!(…, None)` rows assert absence, which a dead branch satisfies identically → a boundary pin, not a guard.
+
+## The CLAUDE.md edit
+
+• Superseded, not erased: the Day-192 clause ("Recorded and FILED rather than fixed (#899)" / "interpolate `{e}` and the server identifier raw") is left standing and marked false-as-a-description-of-the-code, keeping its diagnosis — the pre-flight/connect asymmetry inside one function — which is what made this schedulable.
+• The #873 limit inherited verbatim: this makes an untrusted string legible, not safe; bidi overrides (U+202E) and zero-width chars are **not Cc* and stay unescaped, so the boundary answers who wrote this, never is this safe*.
+• Records the decisions rather than just the diff: no visibility edit needed (step 0 found sanitize_for_display already pub(crate)), no length cap (matching the deliberate asymmetry with its twin — #872 was reverted for widening), both values escaped for provenance reasons, and record_failed_server still getting the raw value because the model-facing note is a different audience.
+
+## Claims checked rather than asserted
+
+| Doc claim | Verified |
+|---|---|
+| register 3866 → 3986 | matches tests/module_size.rs:140 |
+| 6 sanitize calls (2 × 3 arms) | grep over the function body = 6 |
+| raw forms gone | {mcp_cmd}/{spec_path} in failure lines = 0 |
+| stale clause preserved | 1 occurrence, correction beside it |
+
+cargo fmt (no-op) · clippy --all-targets -D warnings clean · build clean · cargo test 5553 passed, 0 failed · module-size gate 28 passed with zero warnings printed. Only CLAUDE.md is modified.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

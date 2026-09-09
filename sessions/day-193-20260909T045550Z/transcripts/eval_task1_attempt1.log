@@ -1,0 +1,40 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 520,560p src/agent_builde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD && echo "==… ✓ (7ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "==… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "Recorded and FILED rath… ✓ (3ms)
+  4 tools completed in 15.7s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (58.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written.
+
+FAIL — on docs only; the code is right.
+
+What's correct (verified by reading the arms, not just the diff):
+• All three Err arms at src/agent_builder.rs:530/610/650 escape both values — identifier (mcp_cmd, server_cfg.name, spec_path) and e — through crate::cli::sanitize_for_display.
+• Wording, {RED}/{RESET} and the ✗ glyph are byte-identical; only the interpolated values changed.
+• No length cap added, correctly preserving the deliberate asymmetry with the pre-flight twin (and avoiding #872's revert shape).
+• record_failed_server still receives the raw value, with a comment stating why — that's the model-facing note, a different audience. Good call; sanitizing it would have degraded the second door.
+• The new guard is well-built: runtime-assembled needles, anti-vacuous assertions first, and both directions pinned (6 sanitize calls present and the raw {mcp_cmd}/{spec_path}/'{}' forms gone from those three lines) — which is exactly the #893 half-applied-edit trap the task named.
+• Register moved 3866 → 3986, matching the file.
+
+Why it fails: `git show --stat HEAD lists only src/agent_builder.rs, tests/module_size.rs and two .yoyo/ ledger files. **CLAUDE.md was never touched**, despite being named in Files:` and having a dedicated ## Docs section. The bullet still says:
+
+│ Recorded and FILED rather than fixed (#899) … the three connect-failure lines interpolate {e} and the server identifier **raw**
+
+Both clauses are now false as descriptions of the code, sitting in the one file re-injected as authoritative context every session. Neither the superseded-not-erased correction nor the inherited #873 limit (legible, not safe — bidi/zero-width aren't Cc) was written.
+
+This is the exact shape CLAUDE.md already records twice: cargo test cannot fail for a false sentence, and the #864 write-up went stale for two consecutive sessions the same way. The remedy is small — one bullet edit — and the diff is otherwise ready to re-land.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

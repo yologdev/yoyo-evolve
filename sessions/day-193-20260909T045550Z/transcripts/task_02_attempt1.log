@@ -1,0 +1,153 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by writing predictions before reading the file. Let me first confirm the round number is unused and gather only the permitted evidence.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== ro… (17 lines) ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== the one ledger hit ===… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (18 lines) ✓ (21ms)
+  3 tools completed in 16.7s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== gi… (15 lines) ✓ (28ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, round 94 unused, and I have not opened src/sync_util.rs. Step 1: predictions, written blind. First let me ground one premise — the enforcement landscape (not the target, not its callers):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== gate files (enforcemen… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== is there a gate enforc… ✓ (5ms)
+  2 tools completed in 9.7s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Context reset again — let me move fast. Predictions now, blind, then mirror, then read.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (110 lines) ✓ (59ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Predictions written. Now mirror to #738 before the first read — a revert erases the local commit; GitHub is the only store it cannot rewrite:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/r… (32 lines) ✓ (780ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Mirrored. Now step 3 — read the file whole (132 lines):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/sync_util.rs ✓ (0ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Read whole — 132 lines, no `scope_limit` claimed. Now the census (step 4), which is the deliverable:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (58 lines) ✓ (123ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The census is rich. Let me verify the sharpest hit before claiming it — three files show the helper's body re-inlined:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in commands_fork commands_… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+**Confirmed, and it is a real finding.** `sync_util.rs`'s module doc claims Day 109 deduplicated helpers in four files — three still carry byte-identical private copies. My census matched by name, not resolved path (tests/orphan_modules.rs's own stated limit, one layer up). Re-measuring honestly:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== who actually IMPORTS s… ✓ (17ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything measured. Let me pin the exact bypass classification, then land the round:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (40 lines) ✓ (116ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Full honest census in hand. **One defect per round — I'll fix the false doc claim (zero-risk, highest leverage) and file** the duplication. First the doc, recording the superseded claim rather than erasing it (Day 164: a doc-side repair deletes the only detector):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/sync_util.rs (6 → 25 lines)
+    //! `lock_or_recover` (Mutex) was extracted on Day 58 to deduplicate helpers in
+  - //! `commands_bg`, `commands_spawn`, and `session`.
+  + //! `commands_bg`, `commands_spawn`, and `session`. That one held: measured
+  + //! Day 193, 52 call sites across 9 files resolve here and there is no surviving
+  + //! private `lock_or_recover` anywhere in `src/`.
+    //!
+  - //! `rw_read_or_recover` / `rw_write_or_recover` (RwLock) were added on Day 109
+  - //! to deduplicate identical helpers independently reinvented in `watch`,
+  - //! `commands_fork`, `commands_stash`, and `commands_todo`.
+  + //! **Superseded claim, recorded rather than erased (Day 193, blind round 94).**
+  + //! This doc used to read: *"`rw_read_or_recover` / `rw_write_or_recover`
+  + //! (RwLock) were added on Day 109 to deduplicate identical helpers
+  + //! independently reinvented in `watch`, `commands_fork`, `commands_stash`, and
+  + //! `commands_todo`."* The first half is true — they were added on Day 109 for
+  + //! that reason. The second half asserts a dedup that **did not happen**:
+  + //! `watch` was converted, and `commands_fork`, `commands_stash` and
+  + //! `commands_todo` **still carry byte-identical private copies** of both
+  + //! functions — same names, same signatures, same bodies, same doc comments —
+  + //! so 17 of the call sites that look like uses of this module reach a duplicate
+  + //! instead. Day 109 converted **1 of the 4 files it names**.
+  ... (9 more lines)
+ ✓ (1m 35s)
+    //! `lock_or_recover` (Mutex) was extracted on Day 58 to deduplicate helpers in
+  - //! `commands_bg`, `commands_spawn`, and `session`.
+  + //! `commands_bg`, `commands_spawn`, and `session`. That one held: measured
+  + //! Day 193, 52 call sites across 9 files resolve here and there is no surviving
+  + //! private `lock_or_recover` anywhere in `src/`.
+    //!
+  - //! `rw_read_or_recover` / `rw_write_or_recover` (RwLock) were added on Day 109
+  - //! to deduplicate identical helpers independently reinvented in `watch`,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now file the duplication with a pasteable remedy — scheduler surface, not prose (measured nine times):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/d… (50 lines) ✓ (1.3s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Filed as #900. Now the mandatory experiment_result line — tests/blind_round_grades.rs is fatal without it:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (110 lines) ✓ (169ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both ledger lines landed and the gate passes. Now the CLAUDE.md bullet:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `sync_util.rs` — shared synchronisation helpers: `lock_or_recover` for poisoned `Mutex` recovery (deduplicated Day 58)
+  + - `sync_util.rs` — shared synchronisation helpers: `lock_or_recover` (Mutex, Day 58), `rw_read_or_recover` / `rw_write_or_recover` (RwLock, Day 109), each `x.lock()/read()/write().unwrap_or_else(|e| e.into_inner())`. **Day 193 (blind round 94) — the #1 dark room by BOTH meters at once, and the first genuinely WHOLE-FILE round in weeks.** It was never forecast (0 predictions ever, unranked in `yoyo risk epistemic`) *and* never studied — `grep sync_util dreams/experiments.jsonl` returned exa… [yoyo: 6030 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 10s)
+  - - `sync_util.rs` — shared synchronisation helpers: `lock_or_recover` for poisoned `Mutex` recovery (deduplicated Day 58)
+  + - `sync_util.rs` — shared synchronisation helpers: `lock_or_recover` (Mutex, Day 58), `rw_read_or_recover` / `rw_write_or_recover` (RwLock, Day 109), each `x.lock()/read()/write().unwrap_or_else(|e| e.into_inner())`. **Day 193 (blind round 94) — the #1 dark room by BOTH meters at once, and the first genuinely WHOLE-FILE round in weeks.** It was never forecast (0 predictions ever, unranked in `yoyo risk epistemic`) *and* never studied — `grep sync_util dreams/experiments.jsonl` returned exa… [yoyo: 6030 more bytes elided — diff lines are capped at 500 bytes]
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.4s)
+  2 tools completed in 1m 15s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

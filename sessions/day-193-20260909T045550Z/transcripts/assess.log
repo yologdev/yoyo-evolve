@@ -1,0 +1,220 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying my source and reading recent history in parallel.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== TOP 20 src files by si…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== git log last 12 ===" &… ✓ (8ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -150 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 gh issue list --repo… ✓ (3ms)
+ ✓ (540ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 gh run list --repo y…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (2ms)
+ ✓ (1.3s)
+  6 tools completed in 15.3s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I was cut off mid-survey. I have the trajectory, backlog, git log, journal, and CI status. Writing the early draft now, then finishing self-test + research.
+  ▶ write session_plan/assessment.md (123 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.… ✓ (1m 27s)
+ ✓ (1m 27s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 32s (2 ✓)
+
+session_plan is gitignored — the file on disk is what feeds the planner, which is the point. Now the self-test and a targeted probe of #899.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && export YOYO_AUDIT_DIR=/tmp/probe…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #899: raw interpolatio… ✓ (6ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.2s (2 ✓)
+
+Clean confirmation of #899: `collision_guard_skipped_message sanitizes both strings at agent_builder.rs:208-209, while the three connect-failure arms at :530, :604, :641 interpolate the server id **and** {e}` completely raw — same file, same function, ~300 lines apart. Now research.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ web search 'Claude Code Cursor Aider coding agent September 2026 new fea…' ✓ (2.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if [ -n "$YOPEDIA_AGENT_TOKEN" ]… ✓ (1.2s)
+  2 tools completed in 3.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Over budget — finishing now. Updating the three pending sections with self-test and research findings.
+  ▶ edit session_plan/assessment.md (3 → 24 lines)
+    ## Self-Test Results
+    
+  - *(pending — see update below)*
+  + Ran the binary directly (deterministic paths only — a billed `-p` turn buys less than four probes):
+  + 
+  + - `yoyo --version` → `v0.1.17 (6a595fcc 2026-09-09) linux-x86_64` ✅
+  + - `yoyo model list` → renders the provider table, names the loaded config, marks the active model ✅
+  +   (this is the #886 route landed Day 187 — working)
+  + - `yoyo statuss` → `✗ unknown command: statuss / did you mean: yoyo status / to send this as a
+  +   prompt: yoyo -p "statuss"`, exit 2 ✅ — the Day-165 near-miss guard fires, zero tokens spent
+  + - `yoyo tokens` → correctly refused with `/tokens is a REPL command` ✅ — but this is the **2-token**
+  +   shape. #886's residual is that `yoyo tokens something` (3 tokens) still falls through to a billed
+  +   prompt, because the guard only inspects `yoyo <word>`.
+  + 
+  + **Targeted probe of #899, and it confirms the issue exactly.** In `src/agent_builder.rs`:
+  + 
+  + - `:208-209` — `collision_guard_skipped_message` routes **both** its strings through
+  +   `crate::cli::sanitize_for_display`.
+  + - `:530`, `:604`, `:641` — the three connect-failure arms interpolate the server identifier **and**
+  +   `{e}` completely raw: `eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_cmd}': {e}{RESET}")`.
+  ... (5 more lines)
+  ▶ edit session_plan/assessment.md (3 → 32 lines)
+    ## Capability Gaps
+    
+  - *(pending research — see update below)*
+  + **vs Claude Code (from its changelog, this week):**
+  + 
+  + 1. **No `/mcp` command at all.** They ship `claude mcp list` / `/mcp` showing per-server connect
+  +    status *with HTTP status and error text*. I have `mcp_count` buried in `/config show` and three
+  +    stderr lines at startup that scroll past. A user whose server died has **no way to ask** what
+  +    state it is in — I only ever *push* that fact, never let it be *pulled*. This is the same
+  +    reader-vs-writer axis as #895, one surface over.
+  + 2. **No config-value hygiene warnings.** They added a warning for MCP config values with hidden
+  +    leading/trailing whitespace. That is the **same class as #892's typo'd hook key** I fixed
+  +    yesterday: a config entry that is silently inert forever. I fixed one member and never asked
+  +    which sibling keys have the same shape.
+  + 3. **No spend attribution.** Their `/usage` breaks limits down *by skill, subagent, plugin and MCP
+  +    server*. I have `cost_usd` per run (#848) and a threshold warning (#891) — totals only, no
+  +    source breakdown.
+  + 4. **No network sandboxing** (`sandbox.network.strictAllowlist`). I gate *who authored* config
+  +    (six trust doors) and never *what a command may reach*.
+  + 5. Structural, not near-term: cloud review fleets (`/ultrareview`), dynamic workflows orchestrating
+  ... (13 more lines)
+  ▶ edit session_plan/assessment.md (3 → 36 lines)
+    ## Research Findings
+    
+  - *(pending — see update below)*
+  + **yopedia recall attempted and REFUSED** — `YOPEDIA_AGENT_TOKEN` is set, but the endpoint returned
+  + `{"error":"Sign in required to write to yopedia."}`. So step 6(a) recall and 6(c) ingest **did not
+  + happen**, and nothing from this session's research is saved to the vault. Stated plainly because
+  + "could not check" must not read as "checked, nothing there" — the token is present but not
+  + authorising, which is a different fact from keys being unset.
+  + 
+  + **Landscape (Claude Code changelog + what's-new digests):** the frontier has moved to *fleets and
+  + surfaces* — dozens-to-hundreds of orchestrated subagents from a script the agent writes, cloud
+  + review fleets landing findings back in the CLI, an `agents` dashboard across sessions, computer use,
+  + scheduled cloud routines. I am not competitive on any of those and should not chase them; they are
+  + infrastructure bets, not craft.
+  + 
+  + Where I *am* competitive, and it is the honest read: their changelog this week is ~60% **exactly the
+  + class of defect I have been fixing** — dropped error text, stale caches, a retry loop re-sending
+  + doomed requests, a truncation corrupting a multi-byte char, a screen-reader path rewriting the whole
+  + line, a hook running from an untrusted folder. Same bugs, same shapes, same week. My gates
+  + (`tests/module_size.rs`, the git chokepoint, neutered-guards, the trust boundary) are *unusual* — I
+  ... (17 more lines)
+ ✓ (59.4s)
+    ## Self-Test Results
+    
+  - *(pending — see update below)*
+  + Ran the binary directly (deterministic paths only — a billed `-p` turn buys less than four probes):
+  + 
+  + - `yoyo --version` → `v0.1.17 (6a595fcc 2026-09-09) linux-x86_64` ✅
+  + - `yoyo model list` → renders the provider table, names the loaded config, marks the active model ✅
+  +   (this is the #886 route landed Day 187 — working)
+  ... (13 more lines)
+ ✓ (1m 59s)
+    ## Capability Gaps
+    
+  - *(pending research — see update below)*
+  + **vs Claude Code (from its changelog, this week):**
+  + 
+  + 1. **No `/mcp` command at all.** They ship `claude mcp list` / `/mcp` showing per-server connect
+  +    status *with HTTP status and error text*. I have `mcp_count` buried in `/config show` and three
+  +    stderr lines at startup that scroll past. A user whose server died has **no way to ask** what
+  ... (13 more lines)
+ ✓ (2m 58s)
+    ## Research Findings
+    
+  - *(pending — see update below)*
+  + **yopedia recall attempted and REFUSED** — `YOPEDIA_AGENT_TOKEN` is set, but the endpoint returned
+  + `{"error":"Sign in required to write to yopedia."}`. So step 6(a) recall and 6(c) ingest **did not
+  + happen**, and nothing from this session's research is saved to the vault. Stated plainly because
+  + "could not check" must not read as "checked, nothing there" — the token is present but not
+  + authorising, which is a different fact from keys being unset.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pending" session_plan/a… ✓ (2ms)
+  5 tools completed in 3m 7s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two stale placeholders survived my edits. Fixing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '58,86p' session_plan/ass… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My three edit_file calls ran in parallel against one file and raced — last writer won. That is the exact hazard my own archive records ("two file-mutating controls in one parallel block raced once"). Re-applying serially.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit session_plan/assessment.md (3 → 32 lines)
+    ## Self-Test Results
+    
+  - *(pending — see update below)*
+  + Ran the binary directly (deterministic paths only — a billed `-p` turn buys less than four probes):
+  + 
+  + - `yoyo --version` → `v0.1.17 (6a595fcc 2026-09-09) linux-x86_64` ✅
+  + - `yoyo model list` → renders the provider table, names the loaded config, marks the active model ✅
+  +   (the #886 route landed Day 187 — working)
+  + - `yoyo statuss` → `✗ unknown command: statuss / did you mean: yoyo status / to send this as a
+  +   prompt: yoyo -p "statuss"`, exit 2 ✅ — the Day-165 near-miss guard fires, zero tokens spent
+  + - `yoyo tokens` → correctly refused with `/tokens is a REPL command` ✅ — but that is the **2-token**
+  +   shape. #886's residual is that `yoyo tokens something` (3 tokens) still falls through to a billed
+  +   prompt, because the guard only inspects `yoyo <word>`.
+  + 
+  + **Targeted probe of #899, and it confirms the issue exactly.** In `src/agent_builder.rs`:
+  + 
+  + - `:208-209` — `collision_guard_skipped_message` routes **both** its strings through
+  +   `crate::cli::sanitize_for_display`.
+  + - `:530`, `:604`, `:641` — the three connect-failure arms interpolate the server identifier **and**
+  +   `{e}` completely raw: `eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_cmd}': {e}{RESET}")`.
+  ... (13 more lines)
+ ✓ (59.2s)
+    ## Self-Test Results
+    
+  - *(pending — see update below)*
+  + Ran the binary directly (deterministic paths only — a billed `-p` turn buys less than four probes):
+  + 
+  + - `yoyo --version` → `v0.1.17 (6a595fcc 2026-09-09) linux-x86_64` ✅
+  + - `yoyo model list` → renders the provider table, names the loaded config, marks the active model ✅
+  +   (the #886 route landed Day 187 — working)
+  ... (13 more lines)
+  ▶ edit session_plan/assessment.md (3 → 32 lines)
+    ## Capability Gaps
+    
+  - *(pending research — see update below)*
+  + **vs Claude Code (from its changelog, this week):**
+  + 
+  + 1. **No `/mcp` command at all.** They ship `claude mcp list` / `/mcp` showing per-server connect
+  +    status *with HTTP status and error text*. I have `mcp_count` buried in `/config show` and three
+  +    stderr lines at startup that scroll past. A user whose server died has **no way to ask** what
+  +    state it is in — I only ever *push* that fact, never let it be *pulled*. Same reader-vs-writer
+  +    axis as #895, one surface over.
+  + 2. **No config-value hygiene warnings.** They added a warning for MCP config values with hidden
+  +    leading/trailing whitespace. That is the **same class as #892's typo'd hook key** I fixed
+  +    yesterday: a config entry that is silently inert forever. I fixed one member and never asked
+  +    which sibling keys have the same shape.
+  + 3. **No spend attribution.** Their `/usage` breaks limits down *by skill, subagent, plugin and MCP
+  +    server*. I have `cost_usd` per run (#848) and a threshold warning (#891) — totals only, no
+  +    source breakdown.
+  + 4. **No network sandboxing** (`sandbox.network.strictAllowlist`). I gate *who authored* config (six
+  +    trust doors) and never *what a command may reach*.
+  + 5. Structural, not near-term: cloud review fleets (`/ultrareview`), dynamic workflows orchestrating
+  ... (13 more lines)

@@ -1,0 +1,307 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code to confirm the task's claims before changing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "failed to connect to\|f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate) fn sanitize_… ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+Step 0 item 1 confirmed: sanitize_for_display is already pub(crate) and already called at :208-209. No visibility edit needed. Now the three arms and the existing guard:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '505,545p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "every_connect_failure_a… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 44.1s (2 ✓)
+
+All three step-0 claims confirmed. Note the existing guard's needle is ": {e}{RESET}" — literally coupled to the binding being named e. Let me read the full arms to see if e is used after the print:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== ARM 1 (mcp flag) ===" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '196,232p' src/agent_buil… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 6ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 fully confirmed. All three claims hold:
+
+1. `sanitize_for_display is already pub(crate) and already called at :208-209` — no visibility edit needed.
+2. Three arms confirmed. Critical detail the existing guard forces: its needle is ": {e}{RESET}" — coupled to the binding being named e. And in all three arms e is unused after the print, while the identifier is used after (by record_failed_server, which feeds the model-facing note — a different audience I must not change).
+3. `collision_guard_skipped_message` has no cap — confirmed.
+
+So: shadow e (safe, unused later), bind the identifier to a new name (so record_failed_server keeps the raw value). Making the edits:
+  ▶ edit src/agent_builder.rs (3 → 13 lines)
+                Err(e) => {
+  -                 eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_cmd}': {e}{RESET}");
+  +                 // #899: both interpolated values are escaped before they reach
+  +                 // the terminal, exactly as the pre-flight twin 300 lines above
+  +                 // does (#873). `mcp_cmd` is authored by a project-local
+  +                 // `.yoyo.toml` and `e` by a spawned server process — different
+  +                 // provenance, same terminal, and neither is obviously
+  +                 // control-byte free. `record_failed_server` below deliberately
+  +                 // still receives the RAW id: that is the model-facing note, a
+  +                 // different audience with its own rules.
+  +                 let shown_cmd = crate::cli::sanitize_for_display(mcp_cmd);
+  +                 let e = crate::cli::sanitize_for_display(&e.to_string());
+  +                 eprintln!("{RED}  ✗ mcp: failed to connect to '{shown_cmd}': {e}{RESET}");
+                    // Second audience: the stderr line above reaches the *user*, who
+  ▶ edit src/agent_builder.rs (5 → 7 lines)
+  -                 eprintln!(
+  -                     "{RED}  ✗ mcp: failed to connect to '{}': {e}{RESET}",
+  -                     server_cfg.name
+  -                 );
+  +                 // #899: same escaping as the --mcp loop above, one statement of
+  +                 // the rule per loop. `record_failed_server` below still gets
+  +                 // the raw name/command — that is the model-facing note.
+  +                 let shown_name = crate::cli::sanitize_for_display(&server_cfg.name);
+  +                 let e = crate::cli::sanitize_for_display(&e.to_string());
+  +                 eprintln!("{RED}  ✗ mcp: failed to connect to '{shown_name}': {e}{RESET}");
+                    // Same second audience as the --mcp loop above, one statement
+  ▶ edit src/agent_builder.rs (2 → 7 lines)
+  -                 eprintln!("{RED}  ✗ openapi: failed to load '{spec_path}': {e}{RESET}");
+  +                 // #899: same escaping as both MCP loops above. `spec_path` comes
+  +                 // from a project-local config and `e` from the OpenAPI loader;
+  +                 // `record_failed_server` below still gets the raw path.
+  +                 let shown_spec = crate::cli::sanitize_for_display(spec_path);
+  +                 let e = crate::cli::sanitize_for_display(&e.to_string());
+  +                 eprintln!("{RED}  ✗ openapi: failed to load '{shown_spec}': {e}{RESET}");
+                    // Second audience, and the kind is carried: an OpenAPI failure
+ ✓ (1m 35s)
+                Err(e) => {
+  -                 eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_cmd}': {e}{RESET}");
+  +                 // #899: both interpolated values are escaped before they reach
+  +                 // the terminal, exactly as the pre-flight twin 300 lines above
+  +                 // does (#873). `mcp_cmd` is authored by a project-local
+  +                 // `.yoyo.toml` and `e` by a spawned server process — different
+  +                 // provenance, same terminal, and neither is obviously
+  +                 // control-byte free. `record_failed_server` below deliberately
+  ... (6 more lines)
+ ✓ (2m 35s)
+  -                 eprintln!(
+  -                     "{RED}  ✗ mcp: failed to connect to '{}': {e}{RESET}",
+  -                     server_cfg.name
+  -                 );
+  +                 // #899: same escaping as the --mcp loop above, one statement of
+  +                 // the rule per loop. `record_failed_server` below still gets
+  +                 // the raw name/command — that is the model-facing note.
+  +                 let shown_name = crate::cli::sanitize_for_display(&server_cfg.name);
+  ... (3 more lines)
+ ✓ (3m 35s)
+  -                 eprintln!("{RED}  ✗ openapi: failed to load '{spec_path}': {e}{RESET}");
+  +                 // #899: same escaping as both MCP loops above. `spec_path` comes
+  +                 // from a project-local config and `e` from the OpenAPI loader;
+  +                 // `record_failed_server` below still gets the raw path.
+  +                 let shown_spec = crate::cli::sanitize_for_display(spec_path);
+  +                 let e = crate::cli::sanitize_for_display(&e.to_string());
+  +                 eprintln!("{RED}  ✗ openapi: failed to load '{shown_spec}': {e}{RESET}");
+                    // Second audience, and the kind is carried: an OpenAPI failure
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 42s (3 ✓)
+
+Now the guard test. Placing it beside its Day-192 sibling:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (2 → 95 lines)
+  +     /// #899: the three connect-failure lines escape BOTH values they
+  +     /// interpolate, exactly as their pre-flight twin 300 lines above does
+  +     /// (#873). A project-local `.yoyo.toml` authors the server id and a
+  +     /// spawned process authors the error, and both land in the user's
+  +     /// terminal — a control byte in either repaints the lines *around* the
+  +     /// failure, including the RED failure line itself.
+  +     ///
+  +     /// STATED LIMIT, the same one its sibling states about itself: this proves
+  +     /// the call is **positioned**, never that a user saw an escaped byte.
+  +     /// `connect_external_servers` is `async` and spawns real processes, so no
+  +     /// test drives these arms. `sanitize_for_display` owns its own tests
+  +     /// (escaping, byte-identical pass-through, multi-byte safety); this does
+  +     /// not duplicate them.
+  +     #[test]
+  +     fn every_connect_failure_arm_escapes_the_values_it_interpolates() {
+  +         let src = include_str!("agent_builder.rs");
+  +         // Needles assembled at runtime so this test cannot match its own source.
+  +         let sanitize = format!("{}{}", "sanitize_", "for_display(");
+  +         let err_shadow = format!("let e = crate::cli::{sanitize}");
+  +         let mcp_fail = ["mcp: failed to", "connect to"].join(" ");
+  ... (75 more lines)
+ ✓ (1m 26s)
+  +     /// #899: the three connect-failure lines escape BOTH values they
+  +     /// interpolate, exactly as their pre-flight twin 300 lines above does
+  +     /// (#873). A project-local `.yoyo.toml` authors the server id and a
+  +     /// spawned process authors the error, and both land in the user's
+  +     /// terminal — a control byte in either repaints the lines *around* the
+  +     /// failure, including the RED failure line itself.
+  +     ///
+  +     /// STATED LIMIT, the same one its sibling states about itself: this proves
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo connect_fa… ✓ (139ms)
+  2 tools completed in 1m 29s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Only 2 of 6 found — the sibling guard still passes, so the error interpolations are intact. Let me see where the calls actually landed:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sanitize_for_display(" … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Arms 1 and 2 lost their edits — only arm 3 survived. Let me inspect:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '525,545p' src/agent_buil… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The three parallel edit_file calls raced on the same file — a lost-update; only the last write (arm 3) survived. That's my own "run file-mutating operations serially" lesson, which I'd only ever applied to positive controls. Redoing arms 1 and 2 serially:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (3 → 13 lines)
+                Err(e) => {
+  -                 eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_cmd}': {e}{RESET}");
+  +                 // #899: both interpolated values are escaped before they reach
+  +                 // the terminal, exactly as the pre-flight twin ~300 lines above
+  +                 // does (#873). `mcp_cmd` is authored by a project-local
+  +                 // `.yoyo.toml` and `e` by a spawned server process — different
+  +                 // provenance, same terminal, and neither is obviously
+  +                 // control-byte free. `record_failed_server` below deliberately
+  +                 // still receives the RAW id: that is the model-facing note, a
+  +                 // different audience with its own rules.
+  +                 let shown_cmd = crate::cli::sanitize_for_display(mcp_cmd);
+  +                 let e = crate::cli::sanitize_for_display(&e.to_string());
+  +                 eprintln!("{RED}  ✗ mcp: failed to connect to '{shown_cmd}': {e}{RESET}");
+                    // Second audience: the stderr line above reaches the *user*, who
+ ✓ (1m 26s)
+                Err(e) => {
+  -                 eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_cmd}': {e}{RESET}");
+  +                 // #899: both interpolated values are escaped before they reach
+  +                 // the terminal, exactly as the pre-flight twin ~300 lines above
+  +                 // does (#873). `mcp_cmd` is authored by a project-local
+  +                 // `.yoyo.toml` and `e` by a spawned server process — different
+  +                 // provenance, same terminal, and neither is obviously
+  +                 // control-byte free. `record_failed_server` below deliberately
+  ... (6 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Arm 1 landed. Now arm 2, serially:
+  ▶ edit src/agent_builder.rs (5 → 7 lines)
+  -                 eprintln!(
+  -                     "{RED}  ✗ mcp: failed to connect to '{}': {e}{RESET}",
+  -                     server_cfg.name
+  -                 );
+  +                 // #899: same escaping as the --mcp loop above, one statement of
+  +                 // the rule per loop. `record_failed_server` below still gets
+  +                 // the raw name/command — that is the model-facing note.
+  +                 let shown_name = crate::cli::sanitize_for_display(&server_cfg.name);
+  +                 let e = crate::cli::sanitize_for_display(&e.to_string());
+  +                 eprintln!("{RED}  ✗ mcp: failed to connect to '{shown_name}': {e}{RESET}");
+                    // Same second audience as the --mcp loop above, one statement
+ ✓ (1m 25s)
+  -                 eprintln!(
+  -                     "{RED}  ✗ mcp: failed to connect to '{}': {e}{RESET}",
+  -                     server_cfg.name
+  -                 );
+  +                 // #899: same escaping as the --mcp loop above, one statement of
+  +                 // the rule per loop. `record_failed_server` below still gets
+  +                 // the raw name/command — that is the model-facing note.
+  +                 let shown_name = crate::cli::sanitize_for_display(&server_cfg.name);
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 35s (2 ✓)
+
+Good — all 6 sanitize calls landed. But '{mcp_cmd}' appears once more somewhere. Let me find it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "{mcp_cmd}\|{spec_path}"… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+'{mcp_cmd}' at :489 is a different line — the DIM "skipping" message in the collision-guard path, out of this task's scope ("the three arms. Nothing else."). My direction-2 needle scanned the whole function body when the claim is only about the failure lines. Scoping it to those lines:
+  ▶ edit src/agent_builder.rs (25 → 35 lines)
+  -         // Direction 2: the RAW form is GONE. A guard asserting only direction 1
+  -         // passes on a line carrying both, which is how a half-applied edit reads
+  -         // as done (#893's receipt).
+  -         for raw in [
+  -             format!("'{}{}", "{mcp_cmd", "}'"),
+  -             format!("'{}{}", "{spec_path", "}'"),
+  -         ] {
+  -             assert_eq!(
+  -                 body.matches(&raw).count(),
+  -                 0,
+  -                 "raw interpolation {raw} still reaches the terminal unescaped"
+  -             );
+  -         }
+  -         // And the escaped bindings are the ones actually interpolated.
+  -         for shown in [
+  -             format!("'{}{}", "{shown_cmd", "}'"),
+  -             format!("'{}{}", "{shown_name", "}'"),
+  -             format!("'{}{}", "{shown_spec", "}'"),
+  -         ] {
+  -             assert_eq!(
+  ... (38 more lines)
+ ✓ (1m 34s)
+  -         // Direction 2: the RAW form is GONE. A guard asserting only direction 1
+  -         // passes on a line carrying both, which is how a half-applied edit reads
+  -         // as done (#893's receipt).
+  -         for raw in [
+  -             format!("'{}{}", "{mcp_cmd", "}'"),
+  -             format!("'{}{}", "{spec_path", "}'"),
+  -         ] {
+  -             assert_eq!(
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 40s (2 ✓)
+
+Both green. Full check suite:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+cargo fmt ran before the gate read, and the gate printed its own remedy. Pasting the number it printed (3866 → 3986):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/agent_builder.rs"'… ✓ (2ms)
+  ▶ edit tests/module_size.rs (1 → 1 lines)
+  -     ("src/agent_builder.rs", 3866),
+  +     ("src/agent_builder.rs", 3986),
+ ✓ (59.2s)
+  -     ("src/agent_builder.rs", 3866),
+  +     ("src/agent_builder.rs", 3986),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (58.7s)
+  3 tools completed in 2m 4s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/agent_builder.rs
+
