@@ -1,0 +1,56 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '500,545p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '575,660p' src/agent_buil… ✓ (4ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.2s (2 ✓)
+
+The step-0 falsification is confirmed — all three Err arms already print {e} in RED. Let me verify the guard's counts and the register number.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs && gr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/async fn connect_external_… ✓ (3ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.7s (2 ✓)
+
+All counts verified: file is 3866 lines (register correctly updated 3791 → 3866, matching the gate), slice resolves 453→672, and the guard's assertions (3 / 2 / 1) match reality exactly.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "NEUTERED\|DO NOT COMMI… ✓ (12ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All checks complete. Verified: no sabotage markers remain, working tree clean, register number matches the real file length exactly.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (53.6s)
+
+Verdict: PASS
+
+The key judgment call here was whether "the task asked for connect_failure_note and no such function exists" is a failure. It is not — the task file's own step 0 says explicitly: *"If the error is already reported somewhere on that path, stop and write down what you found instead — a hole I name without checking is a hole I may have invented."*
+
+I verified the falsification directly rather than trusting the write-up. Reading `src/agent_builder.rs:453-672, all three connect Err` arms print the error first, in RED, naming the server:
+• ✗ mcp: failed to connect to '{mcp_cmd}': {e}
+• the server_cfg.name twin in the [mcp_servers.*] loop
+• ✗ openapi: failed to load '{spec_path}': {e}
+
+So connections_lost_note was never the whole failure report — it is the count, sitting below a line that already carries the cause. Building the planned function would have added a second, redundant error line.
+
+What landed instead is defensible and correctly scoped:
+• The guard's three assertions match reality exactly (: {e}{RESET} = 3, MCP = 2, OpenAPI = 1), verified by independent count over the same slice.
+• Distribution is pinned rather than a bare total, so dropping {e} from the OpenAPI arm and duplicating an MCP one still fails.
+• Anti-vacuous assertion is first, needles assembled at runtime, slice bounds resolve.
+• The register moved 3791 → 3866 and wc -l returns exactly 3866 — a real pasted number, not hand-typed (#884's failure mode avoided).
+• every_rebuild_arm_resets_the_counter_it_invalidated was correctly not extended to count connect_failure_note( sites, since that would assert a symbol that does not exist.
+
+No production line moved, so there is no product surface to be opt-in about. The CLAUDE.md paragraph records the superseded claim, the enumeration (five Err arms, zero discard their error), the positive control's width, and the honest limit that this changes no behaviour at all.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

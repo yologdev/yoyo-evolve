@@ -1,0 +1,179 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the three Err arms to verify the defect before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "connections_lost_note\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn connect_external_ser… ✓ (2ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:440..680 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 32.2s (3 ✓)
+
+Reading the three Err arms — the task's step 0 says stop if the error is already reported. It is: lines 530, 603–606, and 641 each interpolate {e}. Let me verify precisely and check the adjacent question.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== the three connect-fail…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '250,300p' src/agent_buil… ✓ (2ms)
+ ✓ (5ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 falsified the task's premise. All three Err arms already interpolate {e} — the error is the first thing printed, in RED. Per the task's own instruction ("stop and write down what you found instead") this is Branch B. Let me check my tree state and the existing source guard I'll mirror.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "every_rebuild_arm_reset… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 39.1s (2 ✓)
+
+Premise falsified. This is Branch B — the task's own step 0 says record it. Per the skill rules I add the smallest real verification instead: the property the task feared was missing is true today by luck, and nothing enforces it. Let me measure the exact counts first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Counts confirmed: 3 error-interpolating failure lines (2 mcp + 1 openapi), and {e} appears exactly 3 times in the slice. The error is reported at every arm. Adding the guard that makes this enforced rather than incidental:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (2 → 77 lines)
+  +     /// Every connect-failure arm must interpolate the error it was handed.
+  +     ///
+  +     /// **This guard exists because the task that produced it was FALSIFIED.**
+  +     /// Day 192 planned a `connect_failure_note` on the premise that
+  +     /// `connect_external_servers` "drops the error on the floor" and reports
+  +     /// only the count and the kind. Step 0 measured the opposite: all three
+  +     /// `Err` arms print `{e}` as the *first* thing they emit, in RED, naming
+  +     /// the server. There was no hole. So this is not that fix — it is the
+  +     /// guard that keeps the property true, which nothing did before.
+  +     ///
+  +     /// Worth having because those three arms are the most-edited lines in this
+  +     /// file: four consecutive sessions have added something beside `{e}`
+  +     /// (#841's honest skip message, #842's counter reset, Day 181's
+  +     /// model-facing note, #895's machine-readable report). Every one of them
+  +     /// left the error intact; the next could as easily replace it, and the
+  +     /// resulting defect is *exactly* the one the task described. A property
+  +     /// that survives four edits by luck is not an invariant until something
+  +     /// fails when it stops holding.
+  +     ///
+  +     /// The distribution is pinned, not just the total: two MCP loops and one
+  ... (57 more lines)
+ ✓ (1m 28s)
+  +     /// Every connect-failure arm must interpolate the error it was handed.
+  +     ///
+  +     /// **This guard exists because the task that produced it was FALSIFIED.**
+  +     /// Day 192 planned a `connect_failure_note` on the premise that
+  +     /// `connect_external_servers` "drops the error on the floor" and reports
+  +     /// only the count and the kind. Step 0 measured the opposite: all three
+  +     /// `Err` arms print `{e}` as the *first* thing they emit, in RED, naming
+  +     /// the server. There was no hole. So this is not that fix — it is the
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Guard added. Now running the checks:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo every_conn…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (181ms)
+ ✓ (193ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 13.7s (3 ✓)
+
+Green. Now the positive control — one atomic mutate→run→restore, with the sabotage marked so tests/neutered_guards.rs enforces the restore:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent… (15 lines) ✓ (20.8s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control clean: exactly 1 test reddened (mine, with the verbatim receipt), both pre-existing guards stayed green, restored to 0 markers. Now cargo fmt before reading the size gate:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test m…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sanitize_for_display" s… ✓ (2ms)
+ ✓ (9.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.2s (2 ✓)
+
+Gate printed its own remedy. Pasting it verbatim (not hand-typed), and confirming the adjacent finding:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,215p' src/agent_buil… ✓ (2ms)
+ ✓ (379ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+Register pasted, gate silent. Full suite plus filing the adjacent finding:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 g… (15 lines) ✓ (1.2s)
+ ✓ (1m 25s)
+  2 tools completed in 1m 25s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green: 5549 passed, 0 failed. Adjacent finding filed as #899. Now the write-up — recording the falsification rather than a fix that was never needed:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (2 → 2 lines)
+  - **`docs/src/usage/piped-mode.md` was deliberately left alone, checked rather than assumed:** it documents `--output-format json` but enumerates none of the individual keys, so adding one field there would have meant opening a new section, which this task declined.
+  + **`docs/src/usage/piped-mode.md` was deliberately left alone, checked rather than assumed:** it documents `--output-format json` but enumerates none of the individual keys, so adding one field there would have meant opening a new section, which this task declined. **Day 192 — a planned fix was FALSIFIED by its own step 0, and what landed is the guard that keeps the property true.** The task claimed `connect_external_servers` "drops the error on the floor": that `connections_lost_note(kind, los… [yoyo: 4965 more bytes elided — diff lines are capped at 500 bytes]
+    - `banner.rs` — startup banner, welcome text, git status summary display (extracted from `cli.rs`)
+ ✗ (3ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Wrong bullet — that ending belongs to main.rs. Let me find the actual end of the agent_builder.rs bullet:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `banner.rs`' CLAUDE.… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `agent_builder.rs`' … ✓ (13ms)
+  2 tools completed in 3.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Found it — the agent_builder.rs bullet is line 250. Appending the falsification record to its end:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Full mechanism, the `None`-on-empty regression guard and the out-of-scope list are in the MCP gotchas section.
+  + Full mechanism, the `None`-on-empty regression guard and the out-of-scope list are in the MCP gotchas section. **Day 192 — a planned fix was FALSIFIED by its own step 0, and what landed is the guard that keeps the property true.** The task claimed `connect_external_servers` "drops the error on the floor": that `connections_lost_note(kind, lost, plain)` takes the count and the kind and never the error, so a user learns *how many* connections were lost and *which kind* and never *why*. **Measure… [yoyo: 4787 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (53.4s)
+  - Full mechanism, the `None`-on-empty regression guard and the out-of-scope list are in the MCP gotchas section.
+  + Full mechanism, the `None`-on-empty regression guard and the out-of-scope list are in the MCP gotchas section. **Day 192 — a planned fix was FALSIFIED by its own step 0, and what landed is the guard that keeps the property true.** The task claimed `connect_external_servers` "drops the error on the floor": that `connections_lost_note(kind, lost, plain)` takes the count and the kind and never the error, so a user learns *how many* connections were lost and *which kind* and never *why*. **Measure… [yoyo: 4787 more bytes elided — diff lines are capped at 500 bytes]
+
+Now the final verification sweep before committing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1.3s)
+ ✓ (53.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 55.8s (2 ✓)
+
+All four checks green. Final diff check, then commit:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "--- mar… ✓ (165ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
