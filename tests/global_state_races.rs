@@ -96,6 +96,7 @@ const GLOBAL_SETTERS: &[&str] = &[
     "set_trust_project",
     "set_trust_project_to",
     "set_restricted",
+    "set_read_only_subagents",
     // src/cli_config.rs
     "enable_auto_edit",
     "set_effective_context_tokens",
