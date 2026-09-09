@@ -1,0 +1,352 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code to understand the exact shapes I need to follow.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_notify_command_fr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "resolve_cost_threshold\… ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '850,960p' src/config.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '340,430p' src/prompt_bud… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2125,2160p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SETTABLE_KEYS" -A 40 sr… ✓ (4ms)
+ ✓ (4ms)
+  6 tools completed in 7.4s (6 ✓)
+
+
+I'll continue by reading validate_config_value to see the arm shapes I need to follow.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1240,1300p' src/config.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn validate_config_valu… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_config_content… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn load_config_file\|fn… ✓ (4ms)
+  4 tools completed in 12.4s (4 ✓)
+
+
+I'll check how parse_config_file stores values, then write the tests and code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1685,1720p' src/config.r… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have everything. Writing the reader in src/config.rs first:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (1 → 21 lines)
+  + /// Read `cost_warn_usd` from the config map as **raw text**, unjudged (#891).
+  + ///
+  + /// **Deliberately returns the value's text rather than a parsed number**, so
+  + /// [`crate::prompt_budget::parse_cost_threshold`] stays the *one* statement of
+  + /// what a valid threshold is. Its three-state OFF rule — absent, empty,
+  + /// whitespace-only, unparseable, `<= 0.0`, or non-finite (`nan`/`inf`) →
+  + /// `None`, meaning **off, never "budget zero"** — was chosen so a typo'd value
+  + /// cannot alarm on the first run of every session. A second parser here would
+  + /// agree the day it is written and diverge forever after (the
+  + /// `significant_braces` precedent).
+  + ///
+  + /// Both `cost_warn_usd = 5.0` and `cost_warn_usd = 5` reach the caller as
+  + /// text, as does a quoted value; a value the shared parser rejects is simply
+  + /// OFF, which is the safe direction.
+  + pub fn parse_cost_warn_from_config(
+  +     config: &std::collections::HashMap<String, String>,
+  + ) -> Option<String> {
+  +     config.get("cost_warn_usd").map(|v| v.to_string())
+  + }
+  + 
+  ... (1 more lines)
+ ✓ (15.8s)
+  + /// Read `cost_warn_usd` from the config map as **raw text**, unjudged (#891).
+  + ///
+  + /// **Deliberately returns the value's text rather than a parsed number**, so
+  + /// [`crate::prompt_budget::parse_cost_threshold`] stays the *one* statement of
+  + /// what a valid threshold is. Its three-state OFF rule — absent, empty,
+  + /// whitespace-only, unparseable, `<= 0.0`, or non-finite (`nan`/`inf`) →
+  + /// `None`, meaning **off, never "budget zero"** — was chosen so a typo'd value
+  + /// cannot alarm on the first run of every session. A second parser here would
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The no-dead-code rule firing immediately — landing the consumers now. SETTABLE_KEYS and its validate_config_value arm:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (4 → 8 lines)
+        (
+            "notify_command",
+            "command to run when a long prompt finishes (empty = disabled)",
+  +     ),
+  +     (
+  +         "cost_warn_usd",
+  +         "warn once when session cost crosses this many US dollars (empty = disabled)",
+        ),
+ ✓ (16.2s)
+        (
+            "notify_command",
+            "command to run when a long prompt finishes (empty = disabled)",
+  +     ),
+  +     (
+  +         "cost_warn_usd",
+  +         "warn once when session cost crosses this many US dollars (empty = disabled)",
+        ),
+
+
+I'll add the validate_config_value arm, then the real consumer in cli.rs.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (5 → 24 lines)
+                // Any string is a valid command; an empty string clears the setting
+                // (disabling the feature). The command is entirely user-supplied.
+                Ok(value.to_string())
+  +         }
+  +         "cost_warn_usd" => {
+  +             // An empty string clears the setting, exactly as `notify_command`
+  +             // does. Everything else is judged by the ONE statement of what a
+  +             // valid threshold is — `parse_cost_threshold` — never a second
+  +             // parser here (#891). Note the deliberate asymmetry with
+  +             // `parse_cost_warn_from_config`: the config *reader* is permissive
+  +             // (junk → OFF, the safe direction, so a typo cannot alarm on every
+  +             // run), while this door *refuses*, because a human is standing at
+  +             // it and can be told.
+  +             if value.trim().is_empty() {
+  +                 return Ok(String::new());
+  +             }
+  +             match crate::prompt_budget::parse_cost_threshold(Some(value)) {
+  +                 Some(n) => Ok(format!("{n}")),
+  +                 None => Err(format!(
+  +                     "invalid cost_warn_usd value '{value}' — use a positive number of US dollars, e.g. 5.0"
+  ... (3 more lines)
+ ✓ (16.2s)
+                // Any string is a valid command; an empty string clears the setting
+                // (disabling the feature). The command is entirely user-supplied.
+                Ok(value.to_string())
+  +         }
+  +         "cost_warn_usd" => {
+  +             // An empty string clears the setting, exactly as `notify_command`
+  +             // does. Everything else is judged by the ONE statement of what a
+  +             // valid threshold is — `parse_cost_threshold` — never a second
+  ... (13 more lines)
+
+Now the third rung in resolve_cost_threshold and its call site — the real consumer:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,460p' src/prompt_bud… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '436,443p' src/prompt_bud… ✓ (3ms)
+  2 tools completed in 2.0s (2 ✓)
+
+
+I'll read the full doc comment so I can rewrite it accurately.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs:439..457 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (20 → 34 lines)
+  - /// Resolve the session cost budget from its two sources, **flag first, then
+  - /// env**. Pure; all I/O lives in the caller.
+  + /// Resolve the session cost budget from its three sources: **flag, then env,
+  + /// then config file** (#891). Pure; all I/O lives in the caller.
+    ///
+  - /// This is the same two-source shape `continue_on_silence` (#794) and
+  - /// `wait_for_reset` (Day 178) already use, and it reuses
+  - /// [`parse_cost_threshold`] for *both* sources rather than growing a second
+  - /// parser — one statement of "what is a valid budget", never two that agree
+  - /// the day they are written and diverge forever after.
+  + /// **It is a PRECEDENCE CHAIN, not an OR, and that is the one place this
+  + /// deviates from its two precedents.** `continue_on_silence` (#794) and
+  + /// `wait_for_reset` (Day 178) OR their sources together, which is the whole
+  + /// rule for a *boolean* — either door being open opens it. This is a *value*,
+  + /// so two sources cannot be merged and one has to win. The order is by how
+  + /// specific the intent is: the flag was typed for **this invocation**, the env
+  + /// var for **this shell**, and the config file is the **persistent default** a
+  + /// user wrote down once so they would not have to retype either.
+    ///
+  - /// **Stated decision, not an accident: an invalid flag value falls through to
+  ... (31 more lines)
+ ✓ (13.8s)
+  - /// Resolve the session cost budget from its two sources, **flag first, then
+  - /// env**. Pure; all I/O lives in the caller.
+  + /// Resolve the session cost budget from its three sources: **flag, then env,
+  + /// then config file** (#891). Pure; all I/O lives in the caller.
+    ///
+  - /// This is the same two-source shape `continue_on_silence` (#794) and
+  - /// `wait_for_reset` (Day 178) already use, and it reuses
+  - /// [`parse_cost_threshold`] for *both* sources rather than growing a second
+  ... (13 more lines)
+  2 tools completed in 28.2s (2 ✓)
+
+Now the call site — the real consumer:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:2132..2154 ✓ (1ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The comment at line 2141 says "a repo's .yoyo.toml cannot set it at all today" — that goes stale with this change, so I'll correct it in the same edit:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (20 → 27 lines)
+  -     // #891: this session's cost budget, resolved flag-first then env. The
+  +     // #891: this session's cost budget, resolved flag → env → config file. The
+        // meter itself (tally, crossing warning, once-per-process) shipped Day 187
+  -     // reading only `YOYO_COST_WARN_USD`; this is the door onto it, because a
+  -     // capability reachable only by exporting a var is the shape that never
+  -     // gets used — the same argument that gave `wait_for_reset` a config key
+  -     // and `--trust-project` a persisted store.
+  +     // reading only `YOYO_COST_WARN_USD`; the flag landed Day 192, and this is
+  +     // the third and last door, because a capability reachable only by retyping
+  +     // a flag or exporting a var every session is the shape that trains people
+  +     // to alias it away — the same argument that gave `wait_for_reset` a config
+  +     // key and `--trust-project` a persisted store.
+  +     //
+  +     // It is a PRECEDENCE CHAIN, not an OR (see `resolve_cost_threshold`):
+  +     // `continue_on_silence` and `wait_for_reset` OR their sources because they
+  +     // are booleans, and this is a value, so one source has to win.
+        //
+        // Deliberately NOT part of the project-config trust boundary: it grants no
+        // privilege, and the worst case is one extra stderr line. A repo's
+  -     // `.yoyo.toml` cannot set it at all today, and if it ever can it must not
+  ... (16 more lines)
+ ✓ (13.5s)
+  -     // #891: this session's cost budget, resolved flag-first then env. The
+  +     // #891: this session's cost budget, resolved flag → env → config file. The
+        // meter itself (tally, crossing warning, once-per-process) shipped Day 187
+  -     // reading only `YOYO_COST_WARN_USD`; this is the door onto it, because a
+  -     // capability reachable only by exporting a var is the shape that never
+  -     // gets used — the same argument that gave `wait_for_reset` a config key
+  -     // and `--trust-project` a persisted store.
+  +     // reading only `YOYO_COST_WARN_USD`; the flag landed Day 192, and this is
+  ... (13 more lines)
+
+Production code is wired. Now the existing tests need the third argument — let me see them all so I extend rather than weaken them:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs:680..730 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now updating the three existing tests — extending them with the config rung rather than merely satisfying the signature:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (46 → 67 lines)
+  -     /// The near-miss guard, and the ENTIRE regression surface of #891's flag:
+  -     /// neither `--cost-warn` nor `YOYO_COST_WARN_USD` resolves to `None` = OFF,
+  -     /// so `record_run_cost` returns before composing anything and every
+  -     /// existing user is byte-identical. Asserted on the resolved *value*, never
+  -     /// on rendered text — a `contains` on a string that was never built would
+  -     /// pass for the wrong reason.
+  +     /// The near-miss guard, and the ENTIRE regression surface of #891: no
+  +     /// `--cost-warn`, no `YOYO_COST_WARN_USD` and no `cost_warn_usd` key
+  +     /// resolves to `None` = OFF, so `record_run_cost` returns before composing
+  +     /// anything and every existing user is byte-identical. Asserted on the
+  +     /// resolved *value*, never on rendered text — a `contains` on a string that
+  +     /// was never built would pass for the wrong reason.
+        #[test]
+  -     fn no_flag_and_no_env_is_off_which_is_every_existing_user() {
+  -         assert_eq!(resolve_cost_threshold(None, None), None);
+  +     fn no_flag_and_no_env_and_no_config_is_off_which_is_every_existing_user() {
+  +         assert_eq!(resolve_cost_threshold(None, None, None), None);
+        }
+    
+  -     /// Both directions of the precedence rule, because a discriminator tested
+  ... (72 more lines)
+ ✓ (13.7s)
+  -     /// The near-miss guard, and the ENTIRE regression surface of #891's flag:
+  -     /// neither `--cost-warn` nor `YOYO_COST_WARN_USD` resolves to `None` = OFF,
+  -     /// so `record_run_cost` returns before composing anything and every
+  -     /// existing user is byte-identical. Asserted on the resolved *value*, never
+  -     /// on rendered text — a `contains` on a string that was never built would
+  -     /// pass for the wrong reason.
+  +     /// The near-miss guard, and the ENTIRE regression surface of #891: no
+  +     /// `--cost-warn`, no `YOYO_COST_WARN_USD` and no `cost_warn_usd` key
+  ... (13 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.17 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0061][0m[1m: this function takes 3 arguments but 2 arguments were supplied[0m
+   [1m[94m--> [0msrc/prompt_budget.rs:759:20
+    [1m[94m|[0m
+[1m[94m759[0m [1m[94m|[0m         assert_eq!(resolve_cost_threshold(Some("abc"), Some("5")), Some(5.0));
+    [1m[94m|[0m                    [1m[91m^^^^^^^^^^^^^^^^^^^^^^[0m[1m[94m------------------------[0m [1m[94margument #3 of type `std::option::Option<&str>` is missing[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/prompt_budget.rs:464:15
+    [1m[94m|[0m
+[1m[94m464[0m [1m[94m|[0m pub(crate) fn resolve_cost_threshold(
+    [1m[94m|[0m               [1m[92m^^^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m467[0m [1m[94m|[0m     config: Option<&str>,
+    [1m[94m|[0m     [1m[94m--------------------[0m
+[1m[96mhelp[0m: provide the argument
+    [1m[94m|[0m
+[1m[94m759[0m [1m[94m| [0m        assert_eq!(resolve_cost_threshold(Some("abc"), Some("5")[92m, /* std::option::Option<&str> */[0m), Some(5.0));
+    [1m[94m|[0m                                                                 [92m+++++++++++++++++++++++++++++++++[0m
+
+[1mFor more information about this error, try `rustc --explain E0061`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One remaining call site — the fall-through row. Extending it to cover the new rung:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (7 → 14 lines)
+            // Observed behaviour, pinned rather than left untested: an *unusable*
+  -         // flag is not "a flag was given", it is OFF, so `.or_else` falls
+  -         // through to the env var. That is the conservative direction — the
+  +         // value is not "a source was given", it is OFF, so `.or_else` falls
+  +         // through to the next rung. That is the conservative direction — the
+            // alternative would let one typo silently disable a budget the user had
+  -         // already exported.
+  -         assert_eq!(resolve_cost_threshold(Some("abc"), Some("5")), Some(5.0));
+  +         // already exported or written down.
+  +         assert_eq!(
+  +             resolve_cost_threshold(Some("abc"), Some("5"), None),
+  +             Some(5.0)
+  +         );
+  +         assert_eq!(
+  +             resolve_cost_threshold(Some("abc"), Some("junk"), Some("5")),
+  +             Some(5.0)
+  +         );
+        }
+ ✓ (2m 2s)
+            // Observed behaviour, pinned rather than left untested: an *unusable*
+  -         // flag is not "a flag was given", it is OFF, so `.or_else` falls
+  -         // through to the env var. That is the conservative direction — the
+  +         // value is not "a source was given", it is OFF, so `.or_else` falls
+  +         // through to the next rung. That is the conservative direction — the
+            // alternative would let one typo silently disable a budget the user had
+  -         // already exported.
+  -         assert_eq!(resolve_cost_threshold(Some("abc"), Some("5")), Some(5.0));
+  ... (10 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Auto-check passed. Now adding the config rung to the unusable-value loop:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (7 → 13 lines)
+                    resolve_cost_threshold(None, Some(raw), None),
+                    None,
+                    "expected OFF for env {:?}",
+  +                 raw
+  +             );
+  +             assert_eq!(
+  +                 resolve_cost_threshold(None, None, Some(raw)),
+  +                 None,
+  +                 "expected OFF for config {:?}",
+                    raw
+                );
+            }
+ ✓ (2m 1s)
+                    resolve_cost_threshold(None, Some(raw), None),
+                    None,
+                    "expected OFF for env {:?}",
+  +                 raw
+  +             );
+  +             assert_eq!(
+  +                 resolve_cost_threshold(None, None, Some(raw)),
+  +                 None,
+  ... (4 more lines)
+
+Now the reader's own tests in src/config.rs, beside the notify_command ones:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2890,2925p' src/config.r… ✓ (3ms)
+
+  ✓ Watch passed after fix (attempt 1)
+
