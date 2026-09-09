@@ -1,0 +1,49 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,200p' src/context.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PROJECT_CONTEXT_FILES" … ✓ (6ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2440,2460p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "found" src/context.rs |… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 30 gh issue view 902 --r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>&1 | … ✓ (5ms)
+ ✓ (400ms)
+  6 tools completed in 16.2s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && rm -rf notecheck && mkdir -p notecheck/with notecheck/without && cd n… ✓ (30ms)
+  ▶ $ cd /tmp/notecheck/with && timeout 60 script -qec "/home/runner/work/yoyo-evolve/… ✓ (72ms)
+  ▶ $ cd /tmp/notecheck/with && echo "=== --safe-mode ==="; timeout 60 script -qec "/h… ✓ (49ms)
+  3 tools completed in 17.2s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified end-to-end. Writing the verdict.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 16s)
+
+Verdict: PASS — written to session_plan/eval_task_1.md.
+
+Summary of what I actually verified (not just read):
+
+Ran the feature under a pty (script -qec), since the note sits inside !is_quiet() and quiet auto-enables when stdin/stdout are both non-terminal:
+• with CLAUDE.md → `⚠ project-authored instructions loaded — CLAUDE.md (13 bytes) — written by the repository, not by you, and steering this session (--safe-mode skips it)`
+• without any instruction file → nothing (the regression surface holds)
+• `--safe-mode` → **0** occurrences, so the hatch the note names genuinely works — this was the task's explicit "don't make a confident wrong claim" (#710) risk, and source at cli.rs:2442-2448 (if !safe_mode { load_project_context() }) agrees with the runtime result
+• `--screen-reader` → glyph-free, em-dash-free, still names the file and byte count
+
+Byte count is genuinely the payload, not the container: the fixture file is 14 bytes on disk and the note reports 13 — the post-trim() length that actually reached the prompt. That is the Day-149 rule holding under observation rather than by assertion.
+
+Step 1 landed first: gh issue view 902 returns the exact required title with the agent-self label.
+
+**forgotten_touchpoints** got the closest look, given #618/#653/#658: `found` changed type from `Vec<&str>` to `Vec<(&str, usize)>`, and all five use sites are updated inside this diff (three is_empty() checks, the destructuring loop, the new call). The new fn and the new static both have their consumer at the single load site.
+
+One cleanup note, not a fail: the diff carries an appended .yoyo/risk_validations.jsonl line, which is harness-written ledger bookkeeping rather than scratch debris.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

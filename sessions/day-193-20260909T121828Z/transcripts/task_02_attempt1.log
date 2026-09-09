@@ -1,0 +1,119 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the shape of an existing gate and the current state of the code I'm gating.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls tests/ && echo "---GREP---" &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/sync_util.rs ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.4s (2 ✓)
+
+Confirmed: grep -rn lock_or_recover tests/ returns zero. Let me read the closest sibling gate's shape and measure the real population before writing anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l tests/git_chokepoint.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== de… (5 lines) ✓ (5ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.6s (2 ✓)
+
+The raw grep shows more than the expected 5 — I need the precise census with the real truncation rule. Let me measure rather than assume.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (33 lines) ✓ (301ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census confirmed: 3 definitions (all in the chokepoint itself) and 5 inlined bodies outside it — matching round 94's count exactly. commands_run.rs×3 and format/mod.rs×1 correctly dropped out as test-region. Now the exact sites with enclosing fns:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (23 lines) ✓ (31ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Register measured at exactly 5, matching round 94. Now writing the gate:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/tests/lock_recovery_chokepoint.rs (607 lines) ✓ (1m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test l… ✓ (1.8s)
+  2 tools completed in 1m 23s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate passes, and the census printed on a passing run — confirming the raw-stderr handle works where eprintln! would have been discarded. Now the full check suite:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (279ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy clean. Now the four positive controls — serially, each as one atomic mutate→run→restore with the sabotage marked NEUTERED:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/banne… (4 lines) ✓ (10.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 was falsified — it passed when it should have failed. Appending to end-of-file landed the fabricated fn inside banner.rs's test region, so the truncation correctly skipped it. That is the gate working, but it is not a control. Re-running it with the plant in the production region:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && L=$(grep -n … (5 lines) ✓ (10.4s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 fires correctly with the full pasteable remedy, restored byte-empty. Controls 2–4, run sequentially:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && G=tests/lock… (22 lines) ✓ (10.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 2 fired; control 3's edit didn't apply cleanly (no mutation, so no signal). Redoing it with a robust mutation, plus control 4:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && G=tests/lock… (24 lines) ✓ (950ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four controls fire correctly, each restored byte-empty with 0 markers. Full suite:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 58s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "FAIL… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 > /tmp/t.log; gr… ✓ (1m 32s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 40s (1 ✓, 1 ✗)
+
+All green — 5801 passed, 0 failed, and the eleventh gate's census now prints alongside its ten siblings. Now the CLAUDE.md bullet:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^\*\*Mutation testing" … ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (27 lines) ✓ (37ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Inserted cleanly between the tenth gate and the mutation-testing section. Final verification and commit:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt --… (4 lines) ✓ (1.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (37ms)
+  2 tools completed in 4.9s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

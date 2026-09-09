@@ -1,0 +1,200 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by filing the follow-up issue (step 1), since a filing survives a revert and a note in a file does not.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "YOYO.md\|CLAUDE.md\|AGE…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "safe_mode\|safe-mode" … ✓ (3ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "load_project_context" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/context.rs ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2435,2470p src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,240p src/context.rs ✓ (3ms)
+ ✓ (4ms)
+  6 tools completed in 11.5s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have both measurements. Let me record them precisely — the task file said five files; the real enumeration has six.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 240,300p src/context.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn rtk_announcement" -A… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.7s (2 ✓)
+
+Both measurements are in hand. Now step 1 — file the follow-up before touching code, since a filing survives git reset --hard.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/i… (70 lines) ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Filed as #902. Now step 3 — the pure decision half, plus tests.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (2 → 53 lines)
+  + /// Whether we've already disclosed the project-authored instruction files.
+  + ///
+  + /// The loader is called once per process today, but a per-call line would spam
+  + /// if that ever changed — cheap insurance, same shape as `RTK_ANNOUNCED`.
+  + static INSTRUCTION_NOTE_ANNOUNCED: std::sync::atomic::AtomicBool =
+  +     std::sync::atomic::AtomicBool::new(false);
+  + 
+  + /// Disclose which project-authored instruction files steered this session.
+  + ///
+  + /// `loaded` is `(filename, bytes actually contributed)`. Returns `None` for an
+  + /// empty slice — every project without an instruction file, and the entire
+  + /// regression surface of this disclosure.
+  + ///
+  + /// **The byte count is measured at the point of contribution, never from
+  + /// `fs::metadata`.** If the loader ever truncates or trims, metadata would
+  + /// overstate what actually reached the prompt — assert the payload, not the
+  + /// container (Day 149). A number that lies here is worse than no number.
+  + ///
+  + /// `--safe-mode` is named as the hatch because it was *verified* to skip the
+  + /// whole project-context load (`src/cli.rs:2443-2449`), not because it sounds
+  ... (33 more lines)
+ ✓ (16.8s)
+  + /// Whether we've already disclosed the project-authored instruction files.
+  + ///
+  + /// The loader is called once per process today, but a per-call line would spam
+  + /// if that ever changed — cheap insurance, same shape as `RTK_ANNOUNCED`.
+  + static INSTRUCTION_NOTE_ANNOUNCED: std::sync::atomic::AtomicBool =
+  +     std::sync::atomic::AtomicBool::new(false);
+  + 
+  + /// Disclose which project-authored instruction files steered this session.
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate fired exactly as documented — a definition without its consumer. Let me wire it now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "found" src/context.rs |… ✓ (3ms)
+  ▶ edit src/context.rs (2 → 5 lines)
+                    context.push_str(content);
+  -                 found.push(*name);
+  +                 // Byte count captured at the point of contribution — the length
+  +                 // of the string that actually reached the prompt, never
+  +                 // `fs::metadata` (see `project_instruction_note`).
+  +                 found.push((*name, content.len()));
+ ✓ (14.3s)
+                    context.push_str(content);
+  -                 found.push(*name);
+  +                 // Byte count captured at the point of contribution — the length
+  +                 // of the string that actually reached the prompt, never
+  +                 // `fs::metadata` (see `project_instruction_note`).
+  +                 found.push((*name, content.len()));
+  ▶ edit src/context.rs (3 → 17 lines)
+  -             for name in &found {
+  +             for (name, _) in &found {
+                    eprintln!("{DIM}  context: {name}{RESET}");
+  +             }
+  +             // Disclose the provenance of the instruction files, once per
+  +             // process. Inside the existing `!is_quiet()` block, so `--quiet`
+  +             // silences it — which is also why yoyo's own evolve loop gains no
+  +             // noise: `cli.rs` auto-enables quiet whenever stdin and stdout are
+  +             // both non-terminal, i.e. every piped harness process.
+  +             if !found.is_empty()
+  +                 && !INSTRUCTION_NOTE_ANNOUNCED.swap(true, std::sync::atomic::Ordering::Relaxed)
+  +             {
+  +                 if let Some(note) =
+  +                     project_instruction_note(&found, crate::format::is_plain_output())
+  +                 {
+  +                     eprintln!("{DIM}{note}{RESET}");
+  +                 }
+                }
+ ✓ (2m 0s)
+  -             for name in &found {
+  +             for (name, _) in &found {
+                    eprintln!("{DIM}  context: {name}{RESET}");
+  +             }
+  +             // Disclose the provenance of the instruction files, once per
+  +             // process. Inside the existing `!is_quiet()` block, so `--quiet`
+  +             // silences it — which is also why yoyo's own evolve loop gains no
+  +             // noise: `cli.rs` auto-enables quiet whenever stdin and stdout are
+  ... (10 more lines)
+  3 tools completed in 2m 26s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Auto-check passed. Now the tests — at the emission point, both directions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^}" src/context.rs | ta… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1100,1111p src/context.rs ✓ (3ms)
+  ▶ edit src/context.rs (6 → 111 lines)
+            assert!(ctx.contains("Primary instructions"));
+            assert!(ctx.contains("Agent instructions"));
+            assert!(ctx.contains("Cursor rules"));
+  +     }
+  + 
+  +     // ---- Project-authored instruction disclosure (Day 193, #902) ----
+  +     //
+  +     // These pin the disclosure only. The gate does NOT exist: every byte of a
+  +     // hostile CLAUDE.md still reaches the model exactly as before. See #902.
+  + 
+  +     #[test]
+  +     fn instruction_note_names_every_file_with_the_bytes_it_contributed() {
+  +         // Anti-vacuous FIRST: the fixture must carry non-zero byte counts, or a
+  +         // broken measurement passes by both sides agreeing on zero.
+  +         let loaded = [("CLAUDE.md", 251_384usize), ("AGENTS.md", 42usize)];
+  +         assert!(
+  +             loaded.iter().all(|(_, bytes)| *bytes > 0),
+  +             "fixture must carry real byte counts, or this test cannot discriminate"
+  +         );
+  + 
+  ... (90 more lines)
+ ✓ (1m 59s)
+            assert!(ctx.contains("Primary instructions"));
+            assert!(ctx.contains("Agent instructions"));
+            assert!(ctx.contains("Cursor rules"));
+  +     }
+  + 
+  +     // ---- Project-authored instruction disclosure (Day 193, #902) ----
+  +     //
+  +     // These pin the disclosure only. The gate does NOT exist: every byte of a
+  ... (13 more lines)
+  3 tools completed in 2m 24s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo context:: … ✓ (274ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+30 passing. Now the positive control — one atomic mutate→run→restore, with the sabotage marked NEUTERED so tests/neutered_guards.rs enforces the restore.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/conte… (19 lines) ✓ (51.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control clean. Now the full gate.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (27.3s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 41s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (189ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 0s (2 ✓)
+
+5557 tests pass, module-size gate prints zero warnings (1219 lines, un-listed) — so no register line is owed. Now step 4 — CLAUDE.md.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`context.rs\`" CLAU… ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/context.rs
+
