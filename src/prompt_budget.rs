@@ -436,25 +436,39 @@ pub(crate) fn maybe_cost_warning(
     Some(msg)
 }
 
-/// Resolve the session cost budget from its two sources, **flag first, then
-/// env**. Pure; all I/O lives in the caller.
+/// Resolve the session cost budget from its three sources: **flag, then env,
+/// then config file** (#891). Pure; all I/O lives in the caller.
 ///
-/// This is the same two-source shape `continue_on_silence` (#794) and
-/// `wait_for_reset` (Day 178) already use, and it reuses
-/// [`parse_cost_threshold`] for *both* sources rather than growing a second
-/// parser — one statement of "what is a valid budget", never two that agree
-/// the day they are written and diverge forever after.
+/// **It is a PRECEDENCE CHAIN, not an OR, and that is the one place this
+/// deviates from its two precedents.** `continue_on_silence` (#794) and
+/// `wait_for_reset` (Day 178) OR their sources together, which is the whole
+/// rule for a *boolean* — either door being open opens it. This is a *value*,
+/// so two sources cannot be merged and one has to win. The order is by how
+/// specific the intent is: the flag was typed for **this invocation**, the env
+/// var for **this shell**, and the config file is the **persistent default** a
+/// user wrote down once so they would not have to retype either.
 ///
-/// **Stated decision, not an accident: an invalid flag value falls through to
-/// the env var.** `--cost-warn abc` with `YOYO_COST_WARN_USD=5` yields `$5`,
-/// because `.or_else` *is* the OR shape the two precedents use, and the env
-/// value is itself validated — worst case a user gets the budget they set
-/// themselves earlier. With no env var it yields `None` = OFF, which is
-/// [`parse_cost_threshold`]'s three-state rule working as designed: a typo
-/// must never fabricate a threshold, because that would alarm on the *first*
-/// run of every session that mistyped the value.
-pub(crate) fn resolve_cost_threshold(flag: Option<&str>, env: Option<&str>) -> Option<f64> {
-    parse_cost_threshold(flag).or_else(|| parse_cost_threshold(env))
+/// It reuses [`parse_cost_threshold`] for *all three* sources rather than
+/// growing a second parser — one statement of "what is a valid budget", never
+/// two that agree the day they are written and diverge forever after.
+///
+/// **Stated decision, not an accident: an invalid value falls through to the
+/// next rung.** `--cost-warn abc` with `YOYO_COST_WARN_USD=5` yields `$5`, and
+/// a junk env var with `cost_warn_usd = 5.0` in the config yields `$5`,
+/// because an *unusable* value is not "a source was given", it is OFF. That is
+/// the conservative direction: the alternative lets one typo silently disable
+/// a budget the user had already written down. With nothing usable anywhere it
+/// yields `None` = OFF, which is [`parse_cost_threshold`]'s three-state rule
+/// working as designed — a typo must never fabricate a threshold, because that
+/// would alarm on the *first* run of every session that mistyped the value.
+pub(crate) fn resolve_cost_threshold(
+    flag: Option<&str>,
+    env: Option<&str>,
+    config: Option<&str>,
+) -> Option<f64> {
+    parse_cost_threshold(flag)
+        .or_else(|| parse_cost_threshold(env))
+        .or_else(|| parse_cost_threshold(config))
 }
 
 /// This session's cost budget, in dollars, as raw `f64` bits. `0.0` means
@@ -667,61 +681,95 @@ mod cost_budget_tests {
         assert!(msg.contains("1 run(s) used a model with no price"));
     }
 
-    /// The near-miss guard, and the ENTIRE regression surface of #891's flag:
-    /// neither `--cost-warn` nor `YOYO_COST_WARN_USD` resolves to `None` = OFF,
-    /// so `record_run_cost` returns before composing anything and every
-    /// existing user is byte-identical. Asserted on the resolved *value*, never
-    /// on rendered text — a `contains` on a string that was never built would
-    /// pass for the wrong reason.
+    /// The near-miss guard, and the ENTIRE regression surface of #891: no
+    /// `--cost-warn`, no `YOYO_COST_WARN_USD` and no `cost_warn_usd` key
+    /// resolves to `None` = OFF, so `record_run_cost` returns before composing
+    /// anything and every existing user is byte-identical. Asserted on the
+    /// resolved *value*, never on rendered text — a `contains` on a string that
+    /// was never built would pass for the wrong reason.
     #[test]
-    fn no_flag_and_no_env_is_off_which_is_every_existing_user() {
-        assert_eq!(resolve_cost_threshold(None, None), None);
+    fn no_flag_and_no_env_and_no_config_is_off_which_is_every_existing_user() {
+        assert_eq!(resolve_cost_threshold(None, None, None), None);
     }
 
-    /// Both directions of the precedence rule, because a discriminator tested
-    /// only on the side that fires is vacuous green: the flag must beat the env
-    /// var *and* the env var alone must still work (it was the only door until
-    /// this flag landed, so silently breaking it would be a regression on the
-    /// one existing user of the feature).
+    /// Every rung of the precedence chain, in both directions, because a
+    /// discriminator tested only on the side that fires is vacuous green. Each
+    /// source is pinned **alone** (so a rung that silently stopped being read
+    /// fails here) and against its neighbours with **distinct** values (so a
+    /// resolver reading the wrong source cannot pass by two of them agreeing).
+    ///
+    /// The env-alone and flag-alone rows are regression guards for the two
+    /// doors that already shipped; the config-alone row is the door this task
+    /// opens.
     #[test]
-    fn the_flag_beats_the_env_var_and_the_env_var_alone_still_works() {
-        // Flag alone.
-        assert_eq!(resolve_cost_threshold(Some("5"), None), Some(5.0));
-        // Env alone — the pre-#891 door, unchanged.
-        assert_eq!(resolve_cost_threshold(None, Some("7.5")), Some(7.5));
-        // Both: the flag wins. Distinct values, so a resolver that read the
-        // wrong source cannot pass by the two agreeing.
-        assert_eq!(resolve_cost_threshold(Some("5"), Some("7.5")), Some(5.0));
+    fn each_source_works_alone_and_the_chain_runs_flag_then_env_then_config() {
+        // Each rung alone.
+        assert_eq!(resolve_cost_threshold(Some("5"), None, None), Some(5.0));
+        assert_eq!(resolve_cost_threshold(None, Some("7.5"), None), Some(7.5));
+        assert_eq!(resolve_cost_threshold(None, None, Some("9.25")), Some(9.25));
+
+        // Pairs: the earlier rung wins.
+        assert_eq!(
+            resolve_cost_threshold(Some("5"), Some("7.5"), None),
+            Some(5.0)
+        );
+        assert_eq!(
+            resolve_cost_threshold(None, Some("7.5"), Some("9.25")),
+            Some(7.5)
+        );
+        assert_eq!(
+            resolve_cost_threshold(Some("5"), None, Some("9.25")),
+            Some(5.0)
+        );
+
+        // All three, all distinct: the flag wins.
+        assert_eq!(
+            resolve_cost_threshold(Some("5"), Some("7.5"), Some("9.25")),
+            Some(5.0)
+        );
     }
 
-    /// Every unusable shape is OFF on **both** sources, through the one
+    /// Every unusable shape is OFF on **all three** sources, through the one
     /// existing parser rather than a second one. Fabricating a threshold out of
     /// nonsense would alarm on the *first* run of every session that mistyped
     /// the value — failing noisily at exactly the users who are already
     /// confused.
     #[test]
-    fn resolve_cost_threshold_refuses_every_unusable_value_on_both_sources() {
+    fn resolve_cost_threshold_refuses_every_unusable_value_on_every_source() {
         for raw in ["", "   ", "abc", "0", "0.0", "-1", "nan", "inf"] {
             assert_eq!(
-                resolve_cost_threshold(Some(raw), None),
+                resolve_cost_threshold(Some(raw), None, None),
                 None,
                 "expected OFF for flag {:?}",
                 raw
             );
             assert_eq!(
-                resolve_cost_threshold(None, Some(raw)),
+                resolve_cost_threshold(None, Some(raw), None),
                 None,
                 "expected OFF for env {:?}",
+                raw
+            );
+            assert_eq!(
+                resolve_cost_threshold(None, None, Some(raw)),
+                None,
+                "expected OFF for config {:?}",
                 raw
             );
         }
 
         // Observed behaviour, pinned rather than left untested: an *unusable*
-        // flag is not "a flag was given", it is OFF, so `.or_else` falls
-        // through to the env var. That is the conservative direction — the
+        // value is not "a source was given", it is OFF, so `.or_else` falls
+        // through to the next rung. That is the conservative direction — the
         // alternative would let one typo silently disable a budget the user had
-        // already exported.
-        assert_eq!(resolve_cost_threshold(Some("abc"), Some("5")), Some(5.0));
+        // already exported or written down.
+        assert_eq!(
+            resolve_cost_threshold(Some("abc"), Some("5"), None),
+            Some(5.0)
+        );
+        assert_eq!(
+            resolve_cost_threshold(Some("abc"), Some("junk"), Some("5")),
+            Some(5.0)
+        );
     }
 
     /// Regression guard for the landmine #891's task file named: the threshold

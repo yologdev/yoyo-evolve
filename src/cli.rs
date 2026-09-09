@@ -2129,25 +2129,32 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         set_wait_for_reset();
     }
 
-    // #891: this session's cost budget, resolved flag-first then env. The
+    // #891: this session's cost budget, resolved flag → env → config file. The
     // meter itself (tally, crossing warning, once-per-process) shipped Day 187
-    // reading only `YOYO_COST_WARN_USD`; this is the door onto it, because a
-    // capability reachable only by exporting a var is the shape that never
-    // gets used — the same argument that gave `wait_for_reset` a config key
-    // and `--trust-project` a persisted store.
+    // reading only `YOYO_COST_WARN_USD`; the flag landed Day 192, and this is
+    // the third and last door, because a capability reachable only by retyping
+    // a flag or exporting a var every session is the shape that trains people
+    // to alias it away — the same argument that gave `wait_for_reset` a config
+    // key and `--trust-project` a persisted store.
+    //
+    // It is a PRECEDENCE CHAIN, not an OR (see `resolve_cost_threshold`):
+    // `continue_on_silence` and `wait_for_reset` OR their sources because they
+    // are booleans, and this is a value, so one source has to win.
     //
     // Deliberately NOT part of the project-config trust boundary: it grants no
     // privilege, and the worst case is one extra stderr line. A repo's
-    // `.yoyo.toml` cannot set it at all today, and if it ever can it must not
-    // be added to `gate_project_permissions` / `gate_mcp_sources` /
-    // `gate_project_hooks` / `gate_project_notify_command` /
-    // `gate_project_skills` — same reasoning as `continue_on_silence`.
+    // `.yoyo.toml` *can* now set it, and it still must not be added to
+    // `gate_project_permissions` / `gate_mcp_sources` / `gate_project_hooks` /
+    // `gate_project_notify_command` / `gate_project_skills` — same reasoning as
+    // `continue_on_silence`, which a project config has been able to set since
+    // Day 172 for exactly the same reason.
     crate::prompt_budget::set_cost_threshold(crate::prompt_budget::resolve_cost_threshold(
         args.iter()
             .position(|a| a == "--cost-warn")
             .and_then(|i| args.get(i + 1))
             .map(|s| s.as_str()),
         std::env::var("YOYO_COST_WARN_USD").ok().as_deref(),
+        crate::config::parse_cost_warn_from_config(&file_config).as_deref(),
     ));
 
     // [model_pricing."<id>"]: user-supplied per-model rates (issue #833).
