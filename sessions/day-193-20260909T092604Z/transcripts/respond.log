@@ -1,0 +1,84 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll go through these one at a time. Only #900 was touched this session — the rest need honest silence or nothing.
+
+Let me first verify what actually landed for #900.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -6 && echo "--… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== private defs remaining… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== diff stat ===" && git … ✓ (18ms)
+  3 tools completed in 7.6s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified: the import swap landed clean — 6 private definitions gone, one statement left in sync_util.rs, 9 files routing through it, and zero test edits in the diff.
+
+Before I close #900, its "Deliberately not in scope" section names the durable fix — the gate. If I close #900 without filing that, it survives only in CLAUDE.md, which is a reader surface, not a scheduler surface. Let me file it first so I can reference it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "lock_or_recover" tests… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No gate — confirmed, grep lock_or_recover tests/ returns zero. Filing it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (67 lines) ✓ (760ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Filed as #901. Now closing #900 with the honest write-up:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (42 lines) ✓ (2.6s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#900 is closed and #901 filed. Now the remaining nine issues — the honest answer for every one of them is silence, but let me verify that rather than assume it, since two of them look superficially close to what I did today.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== what Task 1 actually t… ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed — Task 1 added 383 lines to scripts/extract_trajectory.py only, and touched `counterfactual_green.py` **zero** times. That was the one that could have tempted me: #870 is about the counterfactual instrument and I built a counterfactual-*adjacent* reader today. But #870's subject is the fix-loop **scope wall** (`#[cfg(test)]` buried inside `src/`), and what I built reports **pairing coverage** of `UNEARNED` rows. Adjacent, not the same. That's a comment I'd have regretted.
+
+Final state check:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain | head &&… ✓ (375ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tree is clean, and everything I touched is settled. Done.
+
+## What I did
+
+#900 — fixed, commented, closed. The RwLock dedup that Day 109 claimed for four files and delivered for one. Six byte-identical private copies deleted, one statement left in sync_util.rs, files routing through it 6 → 9. Pure import swap — call sites needed no edit, and the diff contains no assertion, no #[test], no fn test_: 5553 tests passed unedited, which is the near-miss guard the issue asked for.
+
+Two things from that work are worth naming because they cut against me:
+
+• **Step 0 confirmed the issue rather than falsifying it.** Four consecutive register payments in this repo have found their stated reason *wrong* on reading, so I diffed all six copies before deleting anything. Byte-identical bodies — but the doc comments had drifted. Exactly what the duplication argument predicts, and it happened to land somewhere harmless this time. That's luck being removed, not a reassurance.
+• **The positive control you'd expect me to lead with didn't vote. Neutering `sync_util::rw_read_or_recover` reddens exactly one test — in `sync_util` itself — and zero** in the three converted files, because none of them has a poisoning test at all. They were structurally incapable of failing under it. I nearly wrote that up as if it proved the conversion. What actually carries the claim is the second control: with the duplicates gone, deleting the import must break compilation, and it does in all three (11/6/3 diagnostics).
+
+#901 — filed. #900 named the gate as out of scope, and closing #900 would have left it living only in CLAUDE.md, which is a reader surface. This was repair #3 of one class with no grader between them (Day 58 Mutex, Day 109 RwLock-partial, today) — my own stopping rule says the next diff must be an instrument, not a fourth fix. grep -rn lock_or_recover tests/ returns zero.
+
+## What I stayed silent on
+
+#892, #891, #886, #881, #879, #870, #869, #858, #738 — no comment. I did no work on any of them this session, and several have real progress from *previous* sessions that previous sessions already reported. Re-reporting it today would be noise wearing a status update's clothes.
+
+The one I had to actually check rather than assume was #870. I shipped a counterfactual-adjacent reader today, so it looked related — but the diff touches counterfactual_green.py zero times. #870 is about the fix-loop scope wall; mine reports pairing coverage. Adjacent, not the same. That's the comment I'd have regretted, and the grep is what stopped me writing it.
+
+Build passing, tree clean.
+
+  watch: no files changed this turn — skipping
+

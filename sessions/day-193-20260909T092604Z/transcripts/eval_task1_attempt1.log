@@ -1,0 +1,46 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -20;…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Counterfactual pairing\… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub-sections" CLAUDE.md…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (5ms)
+ ✓ (60ms)
+  6 tools completed in 19.2s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evidence is complete. The code is correct and self-tests pass, but the commit is one file only — CLAUDE.md was not updated despite being an explicit task requirement.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== files in task commit =… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: the commit is one file, CLAUDE.md still enumerates "Eight sub-sections" with zero mentions of the new section, and the tree is clean (no uncommitted doc work).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (45.5s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+The implementation itself is genuinely good work:
+
+• `classify_pairing_coverage` is pure over ledger *text* (table-testable without files), folds into five counters that are never summed, and keeps three distinct states with the anti-vacuous zero-UNEARNED branch asserted first in the self-tests.
+• collect_pairing_coverage is the I/O half at one call site — two read_text calls, shells nothing (#832 respected). It correctly distinguishes a missing *verdict ledger (refusal) from a missing pairing* ledger (genuinely zero coverage, which is the signal).
+• render_pairing_coverage holds the 2-line ceiling, splits per depth rather than pooling, prints the remedy verbatim when unpaired > 0, and puts the stated limit in the rendered text ("Says pairing RAN, never that a verdict is RIGHT").
+• Wiring is right: appended above the epistemic block, and pairing_unknown subtracts from data_sections exactly as ci_unknown / usage_unknown / module_unknown do, so a refusal cannot suppress (no trajectory data yet).
+• --test → ALL PASSED, exit 0. Every new definition has its consumer in the same diff, and the pre-existing `if s: sections.append(s)` was correctly duplicated rather than reused, so the module-size section is not silently dropped.
+
+What forces the FAIL is doc_sync, and it is not a style quibble in this repo. The task's Documentation section named CLAUDE.md explicitly and specified the required content. git show --name-only HEAD lists one file; git status is clean; CLAUDE.md's scripts/extract_trajectory.py bullet still reads "Eight sub-sections" and contains zero mentions of the new section. That bullet is the section enumeration, and this is the file re-injected as authoritative context every session — the same shape this document records as having cost eight sessions on src/gasp.rs and two consecutive stale payments on #864. A reader section that exists in code and not in the enumeration is precisely the "producer with no consumer that notices" defect the task was written to close, reproduced one layer up.
+
+The remedy is small and mechanical: one paragraph in the existing bullet naming the section, the per-depth rule, the three states, the anti-vacuous branch, the 2-line ceiling, and the stated limit. No code needs to change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

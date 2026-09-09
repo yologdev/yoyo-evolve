@@ -1,0 +1,225 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the three files and the shared module, so step 0 (the byte-comparison) happens before any deletion.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/sync_util.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src/commands_stash.rs s… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.8s (2 ✓)
+
+All three carry the same shape. Now step 0 done rigorously — extract each copy mechanically and diff, rather than eyeballing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tm… (22 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/step0 && for k in read write; do for f in commands_stash commands_todo c…  ▶ $ cd /tmp/step0 && python3 - <<'PY' (18 lines) ✓ (7ms)
+ ✓ (24ms)
+  3 tools completed in 9.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 is measured and the result is clean: all 6 private copies are behaviourally identical to sync_util's. The only raw differences are the two forced ones — pub visibility, and fully-qualified std::sync::RwLockReadGuard because the private copies don't import the guard types. Bodies match byte-for-byte. Let me capture the census before editing:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src… (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== repo-wide: who resolve… ✓ (12ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.2s (2 ✓)
+
+Call-site counts need to be exact for the write-up — grep -c counts lines and includes the definitions. Let me measure occurrences properly:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && total=0; for… (10 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Measured 30 call sites, not the issue's 17 — that discrepancy is worth pinning down. Let me split test vs non-test regions, then make the edits:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (22ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Mystery solved and it is not a divergence: the issue's 17 is the production-region count (10+5+2), matching round 94's #[cfg(test)]-truncating census. Total including test regions is 30. Both numbers are right; they answer different questions. Now the edits:
+  ▶ edit src/commands_stash.rs (14 → 5 lines)
+    use crate::format::*;
+  + use crate::sync_util::{rw_read_or_recover, rw_write_or_recover};
+    
+    use std::sync::RwLock;
+    use yoagent::agent::Agent;
+  - 
+  - /// Acquire a read-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_read_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+  -     lock.read().unwrap_or_else(|e| e.into_inner())
+  - }
+  - 
+  - /// Acquire a write-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_write_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+  -     lock.write().unwrap_or_else(|e| e.into_inner())
+  - }
+  ▶ edit src/commands_todo.rs (13 → 4 lines)
+    use crate::format::*;
+  + use crate::sync_util::{rw_read_or_recover, rw_write_or_recover};
+    
+    use std::sync::RwLock;
+  - 
+  - /// Acquire a read-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_read_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+  -     lock.read().unwrap_or_else(|e| e.into_inner())
+  - }
+  - 
+  - /// Acquire a write-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_write_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+  -     lock.write().unwrap_or_else(|e| e.into_inner())
+  - }
+ ✓ (1m 21s)
+    use crate::format::*;
+  + use crate::sync_util::{rw_read_or_recover, rw_write_or_recover};
+    
+    use std::sync::RwLock;
+    use yoagent::agent::Agent;
+  - 
+  - /// Acquire a read-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_read_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+  ... (7 more lines)
+ ✓ (2m 6s)
+    use crate::format::*;
+  + use crate::sync_util::{rw_read_or_recover, rw_write_or_recover};
+    
+    use std::sync::RwLock;
+  - 
+  - /// Acquire a read-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_read_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+  -     lock.read().unwrap_or_else(|e| e.into_inner())
+  ... (6 more lines)
+  ▶ edit src/commands_fork.rs (16 → 7 lines)
+    use crate::format::*;
+    use crate::session::SessionChanges;
+  + use crate::sync_util::{rw_read_or_recover, rw_write_or_recover};
+    
+    use std::collections::HashMap;
+    use std::sync::RwLock;
+    use yoagent::agent::Agent;
+  - 
+  - /// Acquire a read-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_read_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+  -     lock.read().unwrap_or_else(|e| e.into_inner())
+  - }
+  - 
+  - /// Acquire a write-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_write_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+  -     lock.write().unwrap_or_else(|e| e.into_inner())
+  - }
+ ✓ (1m 20s)
+    use crate::format::*;
+    use crate::session::SessionChanges;
+  + use crate::sync_util::{rw_read_or_recover, rw_write_or_recover};
+    
+    use std::collections::HashMap;
+    use std::sync::RwLock;
+    use yoagent::agent::Agent;
+  - 
+  ... (9 more lines)
+  3 tools completed in 3m 34s (3 ✓)
+
+Three edits landed. Now the full gate — fmt, clippy -D warnings explicitly, build, test:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && echo "--- fmt ok --… ✓ (1.1s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy is clean, but a 0.08s finish means it hit cache — let me force a real re-check and run the full suite:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && touch src/commands_stash.rs src/… ✓ (12.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Genuine re-check, clean. Now confirm I edited zero tests (the near-miss guard for a pure move), then run the suite:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== diff stat ==="; git di…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (9ms)
+ ✓ (1m 15s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 30s (2 ✓)
+
+All green — 5553 passed, 0 failed, and the diff contains no assertion, no #[test], no fn test_. That unedited pass is the near-miss guard. Now the positive control. First let me check what a neutered shared helper could actually redden:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== poisoning tests anywhe… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No poisoning tests exist in the three converted files — that bounds what the control can prove, and I need to measure it rather than assume. Control A, atomic mutate→run→restore with the NEUTERED marker:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/sync_… (12 lines) ✓ (1m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control A width, measured: exactly 1 test red — sync_util::tests::test_rw_read_or_recover_poisoned — and zero in the three converted files. Restored byte-empty, 0 markers. Reading that width honestly (Day 190/191): the three files have no poisoning test, so their tests were structurally incapable of failing under it — they didn't vote. The decisive proof for "did the import take" is compile-time. Control B:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src… (8 lines) ✓ (18.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control B is decisive and covers all three: with the private defs gone, the only candidate for those names is the import — removing it breaks compilation in every file (11/6/3 diagnostics). That is the width that supports the conversion claim. Now fmt before reading the size gate (a format pass after is what makes a pasted number stale):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && git diff --stat && … ✓ (1.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate passes with no register line owed. Let me confirm no warning went to stderr, and run the marker gate that enforced my restores:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== module_size stderr (wa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== final verification: no… ✓ (14ms)
+ ✓ (288ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.2s (2 ✓)
+
+Zero private definitions remain; the routed-file count went 6 → 9. Now the documentation — I need the exact anchor in the sync_util.rs bullet:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "repair #2 of one class"… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the documentation paragraph, appended to the sync_util.rs bullet:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - this is repair #2 of one class (Day 58 Mutex, Day 109 RwLock-partial), so by my own stopping rule a third one-at-a-time fix is the last that should ship without a grader.
+  + this is repair #2 of one class (Day 58 Mutex, Day 109 RwLock-partial), so by my own stopping rule a third one-at-a-time fix is the last that should ship without a grader. **Day 193 (#900) — the RwLock dedup is now COMPLETE, and the clause immediately above is superseded, recorded rather than erased: the half that went stale is a STATUS word, the exact decay this file records repeatedly.** *"The 6 duplicate definitions and their 17 call sites are FILED AS #900, NOT FIXED"* is a true record of w… [yoyo: 5221 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 31s)
+  - this is repair #2 of one class (Day 58 Mutex, Day 109 RwLock-partial), so by my own stopping rule a third one-at-a-time fix is the last that should ship without a grader.
+  + this is repair #2 of one class (Day 58 Mutex, Day 109 RwLock-partial), so by my own stopping rule a third one-at-a-time fix is the last that should ship without a grader. **Day 193 (#900) — the RwLock dedup is now COMPLETE, and the clause immediately above is superseded, recorded rather than erased: the half that went stale is a STATUS word, the exact decay this file records repeatedly.** *"The 6 duplicate definitions and their 17 call sites are FILED AS #900, NOT FIXED"* is a true record of w… [yoyo: 5221 more bytes elided — diff lines are capped at 500 bytes]
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/3 changed files were in top-10 predictions (33.3% accuracy)
+     📊 Emerging (anticipatory) accuracy: 1/3 (33.3%) — reactive was 33.3%
+     Predicted correctly: src/commands_fork.rs
+     Surprises (not predicted): src/commands_stash.rs, src/commands_todo.rs
+
