@@ -1032,3 +1032,113 @@ mod partial_study_tests {
         assert!(!header.contains(FULL_STUDY_PHRASE), "{header}");
     }
 }
+
+/// Entry-condition guards for [`crate::commands_risk_epistemic::compute_epistemic_ranking`]
+/// (day 194, #903).
+///
+/// The gate is `positive_signal > 0.0`, not `score > 0.0`: the POSITIVE
+/// signals decide *whether* a file is on the list, the FULL score (positives
+/// plus study discounts) decides *where* within its tier. These two tests pin
+/// the direction that must NOT move — a discount still cannot add a file —
+/// while the inverted knife-edge test in the parent pins the direction that
+/// did.
+#[cfg(test)]
+mod entry_condition_tests {
+    use crate::commands_risk_epistemic::*;
+    use crate::commands_risk_snapshots::{GradedEvent, ParsedSnapshot};
+
+    fn snap(day: u64, predicted: &[&str]) -> ParsedSnapshot {
+        ParsedSnapshot {
+            day,
+            git_hash: format!("hash{day}"),
+            ts: format!("2026-08-{:02}T00:00:00Z", (day % 28) + 1),
+            predicted: predicted.iter().map(|s| s.to_string()).collect(),
+            emerging: Vec::new(),
+        }
+    }
+
+    fn graded(day: u64, paths: &[&str]) -> GradedEvent {
+        GradedEvent {
+            day,
+            paths: paths.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// **The entire regression surface, and it is asserted first.** A file with
+    /// ZERO positive signals — graded, and seen in the latest snapshot so
+    /// staleness never fires — stays OFF the ranking. That is every ordinary
+    /// file in the repo, and it is the direction that would flood the list if
+    /// the gate were widened wrongly.
+    ///
+    /// The `src/blind.rs` companion is **anti-vacuous and load-bearing**: it
+    /// has a real positive signal (never graded) and must be present in the
+    /// same ranking, so this test cannot pass by a broken gate admitting
+    /// nothing at all. Without it the absence assertion below is satisfied
+    /// identically by working code and by a gate that rejects everything.
+    #[test]
+    fn a_file_with_no_positive_signal_is_still_excluded() {
+        let snapshots = vec![
+            snap(100, &["src/quiet.rs", "src/blind.rs"]),
+            snap(101, &["src/quiet.rs", "src/blind.rs"]),
+        ];
+        // quiet.rs graded at/after its last sighting: no never-graded weight,
+        // and seen in the final snapshot so `snapshots_ago` is 0.
+        let events = vec![graded(101, &["src/quiet.rs"])];
+
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
+
+        assert!(
+            ranking.iter().any(|e| e.path == "src/blind.rs"),
+            "anti-vacuous: a file WITH positive signal must rank, or the \
+             absence assertion below proves nothing; got: {:?}",
+            ranking.iter().map(|e| &e.path).collect::<Vec<_>>()
+        );
+        assert!(
+            !ranking.iter().any(|e| e.path == "src/quiet.rs"),
+            "zero positive signal must stay off the list; got: {:?}",
+            ranking
+                .iter()
+                .map(|e| (&e.path, e.score))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// **Day 179's property, re-asserted because this is the side that must not
+    /// move.** A study discount alone can never PUT a file on the ranking: the
+    /// discounts are negative, so a file whose only entry in the scoring loop
+    /// is a study visit still has zero positive signal and is still absent.
+    ///
+    /// This is deliberate rather than incidental — being studied is not
+    /// evidence of blindness, it is the opposite. A discriminator tested only
+    /// on the side that fires is vacuous green, so the same anti-vacuous
+    /// companion runs here.
+    #[test]
+    fn a_study_discount_alone_still_cannot_add_a_file() {
+        let snapshots = vec![
+            snap(100, &["src/quiet.rs", "src/blind.rs"]),
+            snap(101, &["src/quiet.rs", "src/blind.rs"]),
+        ];
+        let events = vec![graded(101, &["src/quiet.rs"])];
+        let visits = vec![ExperimentVisit {
+            path: "src/quiet.rs".to_string(),
+            day: 150,
+            state: StudyState::VisitedUngraded,
+        }];
+
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &visits);
+
+        assert!(
+            ranking.iter().any(|e| e.path == "src/blind.rs"),
+            "anti-vacuous: a file WITH positive signal must rank; got: {:?}",
+            ranking.iter().map(|e| &e.path).collect::<Vec<_>>()
+        );
+        assert!(
+            !ranking.iter().any(|e| e.path == "src/quiet.rs"),
+            "a negative discount must never earn a place on the list; got: {:?}",
+            ranking
+                .iter()
+                .map(|e| (&e.path, e.score))
+                .collect::<Vec<_>>()
+        );
+    }
+}

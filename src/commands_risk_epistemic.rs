@@ -567,6 +567,17 @@ pub(crate) fn compute_epistemic_ranking(
     let mut entries: Vec<EpistemicEntry> = Vec::new();
     for (path, s) in &stats {
         let mut score = 0.0;
+        // The ENTRY condition is the sum of the POSITIVE signals only; `score`
+        // (positives plus the study discounts) is the ORDERING value. They are
+        // deliberately two numbers rather than one — see the gate below.
+        //
+        // Which constants sit on which side, verified by reading them rather
+        // than by name (Day 194): positive = `W_NEVER_GRADED` (2.0) and
+        // `stale_weight(..)` (in [`W_STALE`, `W_STALE_MAX`], both positive);
+        // discounts = `W_RECENTLY_STUDIED` (-1.0), `W_VISITED_UNGRADED` (-0.5),
+        // `W_PARTIALLY_STUDIED` (-0.75). A fourth signal added later belongs in
+        // whichever family its SIGN puts it in, not whichever its name suggests.
+        let mut positive_signal = 0.0;
         let mut reasons = Vec::new();
 
         let appearances = s.predicted_count + s.emerging_count;
@@ -574,6 +585,7 @@ pub(crate) fn compute_epistemic_ranking(
 
         if graded_day.is_none() {
             score += W_NEVER_GRADED;
+            positive_signal += W_NEVER_GRADED;
             reasons.push(format!("predicted {appearances}×, never graded"));
         }
 
@@ -584,6 +596,7 @@ pub(crate) fn compute_epistemic_ranking(
             // with a graded event since is not stale), but *how* stale now
             // depends on how long it has been unobserved.
             score += stale_weight(snapshots_ago);
+            positive_signal += stale_weight(snapshots_ago);
             reasons.push(format!(
                 "last seen {snapshots_ago} snapshots ago, no graded event since"
             ));
@@ -626,7 +639,34 @@ pub(crate) fn compute_epistemic_ranking(
             }
         }
 
-        if score > 0.0 {
+        // Gate on the POSITIVE signals; order by the FULL score. Do NOT
+        // "simplify" this back to `score > 0.0` (Day 194, #903).
+        //
+        // Two properties, running in opposite directions, and the single
+        // comparison could only ever hold one of them:
+        //
+        // 1. PRESERVED — a study discount alone can never PUT a file on the
+        //    list. The discounts are negative, so a file with no positive
+        //    signal still fails this gate. That is Day 179's recorded property
+        //    and it is deliberate: being studied is not evidence of blindness.
+        //
+        // 2. FIXED — a study discount can no longer REMOVE a file that a
+        //    positive signal had already earned a place for. `score > 0.0`
+        //    could, because two judgment thresholds chosen months apart are
+        //    exact negatives: `stale_weight(STALE_SNAPSHOT_GAP)` is exactly
+        //    `W_STALE` (0.5, the backward-compatibility anchor) and
+        //    `W_VISITED_UNGRADED` is exactly -0.5, so a file stale at
+        //    precisely the threshold and named by one ungraded round summed to
+        //    exactly 0.0 and VANISHED — one snapshot staler it scored 0.029
+        //    and reappeared. Nobody made that judgment; it fell out of the
+        //    constants coinciding.
+        //
+        // This contradicted the design intent already recorded for
+        // `StudyTier` (Day 169): the TIER does the steering and the weight
+        // only orders WITHIN a group, precisely because a negative weight
+        // could not steer a top-N selector. A fourth filter on the weight sum
+        // could silently delete a file the tier ordering would have ranked.
+        if positive_signal > 0.0 {
             entries.push(EpistemicEntry {
                 path: path.clone(),
                 score,
@@ -1745,26 +1785,33 @@ mod tests {
             );
         }
     }
-    /// Blind round 95 (day 193) — the `score > 0.0` gate silently DROPS a file
-    /// whose signals and discounts cancel exactly, and the cancellation is
-    /// reachable rather than theoretical.
+    /// A file whose positive signals and study discounts cancel exactly RANKS
+    /// LAST — it is no longer deleted from the ranking (day 194, #903).
     ///
     /// `stale_weight(STALE_SNAPSHOT_GAP)` returns *exactly* `W_STALE` (0.5) by
     /// construction — that is the documented backward-compatibility anchor —
     /// and `W_VISITED_UNGRADED` is *exactly* `-0.5`. So a file that is stale at
     /// precisely the threshold and was named by one ungraded round sums to
-    /// exactly `0.0`, fails `score > 0.0`, and vanishes from the ranking
-    /// entirely rather than sorting last.
+    /// exactly `0.0`. It still has a REAL positive signal (staleness fired), so
+    /// it belongs on the list; the discount now only orders it, never removes
+    /// it.
     ///
-    /// **This pins observed behaviour; it does not endorse it.** Whether such a
-    /// file *should* vanish or should rank last is a design question about the
-    /// ranking that steers my own planner, filed rather than decided here. What
-    /// the test buys is that the knife-edge stops being invisible: it exists
-    /// only because two independently-chosen judgment thresholds happen to be
-    /// exact negatives of each other, nothing anywhere named that coincidence,
-    /// and a future edit to either const moves the edge with no failing test.
+    /// **Superseded behaviour, recorded rather than erased.** Blind round 95
+    /// (day 193) measured this fixture VANISHING, and this test pinned that as
+    /// observed behaviour while explicitly declining to endorse it: the gate
+    /// was `score > 0.0`, so the exact-zero sum failed it. Day 194 made the
+    /// call the round deferred — gate on the POSITIVE signals, order by the
+    /// FULL score — so the assertion below is inverted rather than deleted (a
+    /// fixture pinning a known-wrong output that outlives its fix converts a
+    /// defect into a green invariant, Day 148).
+    ///
+    /// The two anti-vacuous rows are kept verbatim, because the coincidence
+    /// they pin is what made the edge reachable at all: it exists only because
+    /// two independently-chosen judgment thresholds happen to be exact
+    /// negatives of each other, and a future edit to either const moves the
+    /// edge with no failing test.
     #[test]
-    fn exact_zero_cancellation_drops_a_file_from_the_ranking_entirely() {
+    fn exact_zero_cancellation_ranks_last_rather_than_vanishing() {
         // Anti-vacuous, asserted FIRST: the coincidence is real and exact.
         // Without these two rows the fixture below could pass by arithmetic
         // that never actually reaches zero.
@@ -1795,13 +1842,22 @@ mod tests {
         }];
 
         let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &visits);
-        assert!(
-            !ranking.iter().any(|e| e.path == "src/knife.rs"),
-            "exact-zero score is dropped by `score > 0.0`, got: {:?}",
-            ranking
-                .iter()
-                .map(|e| (&e.path, e.score))
-                .collect::<Vec<_>>()
+        let entry = ranking
+            .iter()
+            .find(|e| e.path == "src/knife.rs")
+            .unwrap_or_else(|| {
+                panic!(
+                    "exact-zero score must RANK, not vanish — staleness fired, so the \
+                     positive signal is real; got: {:?}",
+                    ranking
+                        .iter()
+                        .map(|e| (&e.path, e.score))
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(
+            entry.score, 0.0,
+            "the fixture is the knife-edge itself: the discount cancels the signal exactly"
         );
 
         // Near-miss guard, and it is the half that matters: ONE snapshot
