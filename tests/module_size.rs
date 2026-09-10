@@ -155,7 +155,12 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // boundary — `gate_project_notify_command` + `project_notify_refusal_message`
     // and their table tests. A project-local `notify_command` is arbitrary shell
     // (`sh -c`), so it is executable code by the same test #820 applied to hooks.
-    ("src/cli.rs", 6997), // Day 193: +22 for #881 slice 1's `--read-only-subagents`.
+    // Day 194: +25 paying PRE-EXISTING drift from `fa50023e` (Day 193's config
+    // whitespace warning), which left the register unpaid because +25 sits inside
+    // REGISTER_DRIFT_GRACE_LINES and so only warned on the stderr of a *passing*
+    // test. That is Day-174's eight-day silence verbatim: the loop's only consumer
+    // of `cargo test` reads the exit code. Number pasted from what the gate printed.
+    ("src/cli.rs", 7022), // Day 194: paid pre-existing drift; see above.
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
