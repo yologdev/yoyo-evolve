@@ -721,6 +721,155 @@ pub fn parse_mcp_servers_from_config(content: &str) -> Vec<McpServerConfig> {
     servers
 }
 
+/// Which end of a config value carries invisible whitespace padding.
+///
+/// `None` means the value is clean — `raw == raw.trim()` — which is every value in
+/// essentially every config and is the entire regression surface of the warning built
+/// on top of this.
+///
+/// A value that is *entirely* whitespace reports `Both`, which is honest rather than a
+/// special case: it is padded at the leading end and at the trailing end. An **empty**
+/// value is `None` — it carries no padding, it carries nothing, and those are different
+/// facts that must not collapse into one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PaddingEnd {
+    Leading,
+    Trailing,
+    Both,
+}
+
+impl PaddingEnd {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            PaddingEnd::Leading => "leading",
+            PaddingEnd::Trailing => "trailing",
+            PaddingEnd::Both => "leading and trailing",
+        }
+    }
+}
+
+/// Classify the invisible whitespace padding on a raw config value.
+///
+/// The whole rule is `raw != raw.trim()`. Nothing here trims, rewrites or repairs the
+/// value — see `config_whitespace_warning` for why that is deliberate.
+pub(crate) fn padding_end(raw: &str) -> Option<PaddingEnd> {
+    let trimmed = raw.trim();
+    if trimmed == raw {
+        return None;
+    }
+    let lead =
+        !raw.starts_with(trimmed) || trimmed.is_empty() && raw.starts_with(char::is_whitespace);
+    let trail = !raw.ends_with(trimmed) || trimmed.is_empty() && raw.ends_with(char::is_whitespace);
+    match (lead, trail) {
+        (true, true) => Some(PaddingEnd::Both),
+        (true, false) => Some(PaddingEnd::Leading),
+        (false, true) => Some(PaddingEnd::Trailing),
+        // Unreachable in practice: `trimmed != raw` means at least one end differs.
+        (false, false) => Some(PaddingEnd::Both),
+    }
+}
+
+/// Collect MCP config values that carry invisible leading or trailing whitespace.
+///
+/// **Why this exists (measured Day 193, in a tempdir, through the real parsers).** A
+/// quoted TOML value preserves its inner padding all the way to the resolved value:
+/// `strip_quotes` trims *outside* the quotes and then strips them, so
+/// `command = "npx "` resolves to `"npx "` and the spawn silently fails with no error,
+/// no output, and no way for a user to tell it from a server that started and did
+/// nothing. An **unquoted** `command = npx ` is trimmed away by that same `trim()`, so
+/// the safe-looking idiom — quote your values — is the one that keeps the invisible
+/// byte. Same class as #892's unreachable hook key: accepted vocabulary, no validation.
+///
+/// **No third parser.** This is pure over the values the two existing MCP parsers
+/// already produced (`parse_toml_array` for `mcp = [...]`, `parse_mcp_servers_from_config`
+/// for `[mcp_servers.*]`), so "what is an MCP value" has exactly one statement per door
+/// and this cannot drift from either. Returns `(key label, raw value)` pairs in config
+/// order; an empty vec means every value is clean.
+///
+/// Scope is **MCP values only**. `parse_toml_array` is shared with `[permissions]` and
+/// `[directories]`, so detection deliberately does not live inside it — a warning there
+/// would fire on glob patterns this task never measured.
+pub(crate) fn whitespace_padded_config_values(
+    config_servers: &[String],
+    server_configs: &[McpServerConfig],
+) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (i, raw) in config_servers.iter().enumerate() {
+        if padding_end(raw).is_some() {
+            out.push((format!("mcp[{i}]"), raw.clone()));
+        }
+    }
+    for cfg in server_configs {
+        if padding_end(&cfg.command).is_some() {
+            out.push((
+                format!("mcp_servers.{}.command", cfg.name),
+                cfg.command.clone(),
+            ));
+        }
+        for (i, raw) in cfg.args.iter().enumerate() {
+            if padding_end(raw).is_some() {
+                out.push((format!("mcp_servers.{}.args[{i}]", cfg.name), raw.clone()));
+            }
+        }
+        for (k, raw) in &cfg.env {
+            if padding_end(raw).is_some() {
+                out.push((format!("mcp_servers.{}.env.{k}", cfg.name), raw.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// Compose the one-block stderr warning for whitespace-padded MCP config values.
+///
+/// **It WARNS. It never mutates and never refuses, and both halves of that are
+/// deliberate.** Trimming would change what every existing config resolves to, and a
+/// value that legitimately carries a space would silently change meaning — a silent
+/// *fix* is the same class as the silent *failure* being reported. Refusing would break
+/// configs that work today, which is the reason #892 chose warn over refuse and it
+/// applies here verbatim. So the wording is an observation, not an accusation: a warning
+/// that cries wolf is how a reader learns to paste past a gate.
+///
+/// `None` for an empty slice — every user whose config is clean, which is the entire
+/// regression surface. Values are rendered through `cli::sanitize_for_display` (#873),
+/// since this string is repo-authored and lands in a terminal; a space still renders as
+/// a space, so the padding is also made legible by naming the end and the byte counts
+/// rather than by inventing a second escaping vocabulary.
+pub(crate) fn config_whitespace_warning(
+    padded: &[(String, String)],
+    plain: bool,
+) -> Option<String> {
+    if padded.is_empty() {
+        return None;
+    }
+    let marker = if plain { "warning:" } else { "⚠" };
+    let mut msg = format!(
+        "{} {} MCP config value(s) carry invisible whitespace:",
+        marker,
+        padded.len()
+    );
+    for (key, raw) in padded {
+        let end = padding_end(raw).map(PaddingEnd::label).unwrap_or("unknown");
+        msg.push_str(&format!(
+            "\n    {} = \"{}\"  ({} whitespace; {} bytes, {} after trimming)",
+            key,
+            crate::cli::sanitize_for_display(raw),
+            end,
+            raw.len(),
+            raw.trim().len()
+        ));
+    }
+    let sep = if plain { ". " } else { " — " };
+    msg.push_str(&format!(
+        "\n  Nothing was changed{}the value is used exactly as written, so a server may fail to start for a reason that is invisible in the file.",
+        sep
+    ));
+    msg.push_str(
+        "\n  A quoted TOML value keeps its padding; an unquoted one does not. Remove the space inside the quotes if it was not intended.",
+    );
+    Some(msg)
+}
+
 /// Strip surrounding quotes from a TOML string value.
 fn strip_quotes(s: &str) -> String {
     let s = s.trim();
@@ -3966,5 +4115,122 @@ mod allow_chain_tests {
                 "expected no chain: {pat} / {cmd}"
             );
         }
+    }
+
+    // ---- whitespace-padded MCP config values (Day 193) ----
+
+    fn srv(name: &str, command: &str, args: &[&str]) -> McpServerConfig {
+        McpServerConfig {
+            name: name.to_string(),
+            command: command.to_string(),
+            args: args.iter().map(|a| a.to_string()).collect(),
+            env: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn padded_mcp_values_are_detected_and_named_at_both_doors() {
+        // ANTI-VACUOUS FIRST: the fixtures genuinely differ from their trimmed form, so
+        // a transcription slip cannot make this pass by agreeing with itself.
+        let trail = "npx -y server-trail ";
+        let lead = " npx -y server-lead";
+        assert_ne!(trail, trail.trim(), "fixture must really carry padding");
+        assert_ne!(lead, lead.trim(), "fixture must really carry padding");
+
+        let padded = whitespace_padded_config_values(
+            &[
+                "npx -y server-clean".to_string(),
+                trail.to_string(),
+                lead.to_string(),
+            ],
+            &[
+                srv("quoted", "npx ", &["-y", "pkg "]),
+                srv("clean", "npx", &["-y", "pkg"]),
+            ],
+        );
+        let keys: Vec<&str> = padded.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "mcp[1]",
+                "mcp[2]",
+                "mcp_servers.quoted.command",
+                "mcp_servers.quoted.args[1]",
+            ],
+            "every padded value must be named by key, and no clean value may be"
+        );
+        // The raw value is carried verbatim — never trimmed, never repaired.
+        assert_eq!(padded[0].1, trail);
+
+        let msg = config_whitespace_warning(&padded, false).expect("padded values must warn");
+        for k in &keys {
+            assert!(msg.contains(k), "warning must name {k}: {msg}");
+        }
+        assert!(msg.contains("trailing whitespace"), "{msg}");
+        assert!(msg.contains("leading whitespace"), "{msg}");
+        assert!(
+            msg.contains("Nothing was changed"),
+            "the warning must say outright that it did not mutate the value: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_clean_config_warns_nothing_which_is_every_existing_user() {
+        // NEAR-MISS GUARD. This is the entire regression surface.
+        let padded = whitespace_padded_config_values(
+            &["npx -y server".to_string(), "uvx thing".to_string()],
+            &[srv("clean", "npx", &["-y", "pkg"])],
+        );
+        assert_eq!(padded, Vec::new());
+        assert_eq!(config_whitespace_warning(&padded, false), None);
+        assert_eq!(config_whitespace_warning(&padded, true), None);
+    }
+
+    #[test]
+    fn padding_end_keeps_each_shape_a_separate_fact() {
+        assert_eq!(padding_end("npx"), None);
+        assert_eq!(padding_end("a b"), None, "inner space is not padding");
+        assert_eq!(padding_end(" npx"), Some(PaddingEnd::Leading));
+        assert_eq!(padding_end("npx "), Some(PaddingEnd::Trailing));
+        assert_eq!(padding_end(" npx "), Some(PaddingEnd::Both));
+        assert_eq!(padding_end("\tnpx\n"), Some(PaddingEnd::Both));
+        // Entirely whitespace is padded at BOTH ends — honest, not a special case.
+        assert_eq!(padding_end("   "), Some(PaddingEnd::Both));
+        // An EMPTY value carries no padding. It carries nothing. Different facts.
+        assert_eq!(padding_end(""), None);
+    }
+
+    #[test]
+    fn whitespace_warning_is_glyph_free_and_em_dash_free_under_plain_output() {
+        let padded = whitespace_padded_config_values(&["npx ".to_string()], &[]);
+        let fancy = config_whitespace_warning(&padded, false).expect("must warn");
+        // REVERSE anti-vacuous: the non-plain form really does carry both, so the
+        // assertion below discriminates rather than passing by accident.
+        assert!(fancy.contains('⚠'), "non-plain form must carry the marker");
+        assert!(fancy.contains('—'), "non-plain form must carry the em dash");
+
+        let plain = config_whitespace_warning(&padded, true).expect("must warn");
+        assert!(
+            !plain.contains('⚠'),
+            "plain form must carry no marker: {plain}"
+        );
+        assert!(
+            !plain.contains('—'),
+            "plain form must carry no em dash: {plain}"
+        );
+        assert!(plain.contains("warning:"), "{plain}");
+    }
+
+    #[test]
+    fn a_padded_env_value_is_named_too() {
+        let cfg = McpServerConfig {
+            name: "s".to_string(),
+            command: "npx".to_string(),
+            args: Vec::new(),
+            env: vec![("TOKEN".to_string(), "abc ".to_string())],
+        };
+        let padded = whitespace_padded_config_values(&[], &[cfg]);
+        assert_eq!(padded.len(), 1);
+        assert_eq!(padded[0].0, "mcp_servers.s.env.TOKEN");
     }
 }

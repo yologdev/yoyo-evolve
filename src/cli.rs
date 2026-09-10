@@ -2022,6 +2022,31 @@ fn parse_mcp_and_openapi_config(
     // Parse structured [mcp_servers.*] sections from config file
     let config_server_configs = parse_mcp_servers_from_config(raw_config_content);
 
+    // ONE emission point for the whitespace warning, covering BOTH MCP doors: both
+    // `config_servers` (`mcp = [...]`) and `config_server_configs` (`[mcp_servers.*]`)
+    // are in hand here, and this is the only production site where that is true. The
+    // detection deliberately does NOT live inside `parse_toml_array`, which is shared
+    // with [permissions] and [directories] — a warning there would fire on glob
+    // patterns this task never measured. Emitting at one of the two doors and not the
+    // other is the "two doors, one policy, one deaf" shape this repo has shipped nine
+    // times.
+    //
+    // This is NOT part of the project-config trust boundary (gate_mcp_sources below,
+    // gate_project_permissions, gate_project_hooks, gate_project_skills) and must not
+    // be added to it: it grants no privilege — the worst case is one extra stderr line
+    // — the same reasoning already recorded for `continue_on_silence` and
+    // `wait_for_reset`. It runs BEFORE the gate on purpose, because a padded value is
+    // worth naming whether or not the server is subsequently refused.
+    if !crate::format::is_quiet() {
+        let padded =
+            crate::config::whitespace_padded_config_values(&config_servers, &config_server_configs);
+        if let Some(msg) =
+            crate::config::config_whitespace_warning(&padded, crate::format::is_plain_output())
+        {
+            eprintln!("{msg}");
+        }
+    }
+
     let gated = gate_mcp_sources(
         cli_servers,
         config_servers,
