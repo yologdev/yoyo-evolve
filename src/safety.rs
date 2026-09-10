@@ -4423,3 +4423,135 @@ mod autolink_path_tests {
         assert_eq!(unwrap("🐙/[a.md](http://a.md)"), "🐙/a.md");
     }
 }
+
+#[cfg(test)]
+mod substitution_prefix_guards {
+    //! Day 194: a command substitution hidden inside an assignment prefix
+    //! (`REPORTTIME=$(touch /tmp/x) ls`) — a transferred class, measured
+    //! before it was pinned, and the mechanism that catches it is **not** the
+    //! one Day 182 recorded.
+    //!
+    //! Measured 2026-09-10 by driving the real `detect_write_command` (and
+    //! `analyze_bash_command` for the near-miss side): every substitution
+    //! shape below is already caught and every read-only shape is already
+    //! clean, so this module is a **guard** and changes no production line.
+    //!
+    //! **The mechanism is the SEGMENT SPLIT, not the `=`-skip.**
+    //! `detect_write_command` splits on `(`, `)` and a backtick *before* it
+    //! looks for a command word, so a substitution body becomes its own
+    //! segment and the write verb inside it is found there. The `=`-token skip
+    //! that makes Day 182's literal case (`FOO=1 touch a`) safe is not what
+    //! saves this one: the prefix token `REPORTTIME=$` is skipped for carrying
+    //! `=`, but the verb sits in the *next segment* either way. Day 182's
+    //! finding is superseded in **scope** rather than wrong — it was measured
+    //! on literal values and reads as though it covered substitutions too.
+    //!
+    //! Why pin a property that already passes: **nothing enforced it.** That
+    //! module uses literal values only (`FOO=1 tee`, `A=1 B=2 git push`), and
+    //! no fixture anywhere combined an assignment prefix with a substitution —
+    //! so a future edit narrowing the split (dropping `(` to stop
+    //! over-splitting is a plausible-sounding cleanup) would reopen a
+    //! `/read`-mode bypass with **zero tests going red**, and `/read` mode's
+    //! whole promise is mechanical enforcement at the tool layer.
+    //!
+    //! **Stated limits.** (1) This pins **one shape at one call site**; it is
+    //! not a claim that `detect_write_command` is sound against every
+    //! option-injection or quoting trick. (2) It is a **token/segment rule,
+    //! not a shell**: a command word reached through a variable (`$CMD
+    //! commit`), a shell alias, or an operator produced by expansion is
+    //! invisible to it. (3) It changes **no production behaviour** — what it
+    //! buys is that the next edit to the segment split cannot silently reopen
+    //! a `/read`-mode bypass.
+
+    use super::*;
+
+    /// The heart of it, and the assertion is `prefixed == its unprefixed
+    /// twin` rather than `is_some()` (the Day-183 `COMMAND_SEPARATORS`
+    /// precedent). That is strictly stronger: it fails both when a prefix
+    /// **hides** a write and when a prefix **invents** one.
+    #[test]
+    fn a_substitution_inside_an_assignment_prefix_never_hides_the_write() {
+        let pairs: [(&str, &str); 4] = [
+            // The rival changelog's own variable names.
+            ("REPORTTIME=$(touch /tmp/x) ls", "touch /tmp/x"),
+            ("REPORTMEMORY=$(touch /tmp/x) ls", "touch /tmp/x"),
+            // Backtick substitution: the older spelling of the same thing.
+            ("DIRSTACKSIZE=`touch /tmp/z` ls", "touch /tmp/z"),
+            // A git subcommand write (#838's path) inside the substitution.
+            ("FOO=$(git commit -m x) ls", "git commit -m x"),
+        ];
+        for (prefixed, twin) in pairs {
+            // Anti-vacuous, asserted FIRST: the fixture must genuinely carry a
+            // substitution, and the twin must genuinely be a write — or both
+            // sides could agree on `None` and the row would prove nothing.
+            assert!(
+                prefixed.contains("$(") || prefixed.contains('`'),
+                "fixture carries no command substitution: {prefixed:?}"
+            );
+            assert!(
+                detect_write_command(twin).is_some(),
+                "twin is not a write, so the row cannot discriminate: {twin:?}"
+            );
+            assert_eq!(
+                detect_write_command(prefixed),
+                detect_write_command(twin),
+                "a substitution prefix changed the write verdict: \
+                 {prefixed:?} vs {twin:?}"
+            );
+        }
+    }
+
+    /// A literal prefix and a substitution prefix in the same command. The
+    /// verdict is asserted to *name a write* rather than to equal one specific
+    /// twin: the segment split scans left to right, so the substitution body
+    /// is reached before `git push` and it is `touch` that gets reported.
+    /// Both are writes, and either is a correct refusal.
+    #[test]
+    fn a_literal_and_a_substitution_prefix_together_still_name_a_write() {
+        let cmd = "A=1 B=$(touch /tmp/x) git push";
+        assert!(
+            cmd.contains("$("),
+            "fixture carries no command substitution: {cmd:?}"
+        );
+        let verdict =
+            detect_write_command(cmd).expect("a write behind two prefixes was not detected");
+        assert!(
+            verdict.contains("writes"),
+            "verdict does not name a write: {verdict:?}"
+        );
+    }
+
+    /// Near-miss guards, and they are the half that matters: `/read` mode is
+    /// useless if it blocks reading the repo, and this file's whole history is
+    /// discriminators pointed at the wrong input. Asserted on **both**
+    /// classifiers the `ReadModeGuardTool` Bash arm consults.
+    #[test]
+    fn a_substitution_whose_body_is_a_read_is_still_not_a_write() {
+        for cmd in [
+            // No prefix at all — the baseline.
+            "cargo test",
+            // Day 182's literal prefix, still clean.
+            "FOO=1 cargo test",
+            // The shape this module is about, with a *read* in the body: the
+            // segment split must not manufacture a write out of it.
+            "REPORTTIME=$(date) cargo test",
+            "DIRSTACKSIZE=`date` cargo test",
+            // A quoted substitution: `strip_quoted_regions` must still hold,
+            // so the body is never scanned as a command at all.
+            "echo \"FOO=$(touch x)\"",
+            "git status",
+            "FOO=1 git status",
+        ] {
+            assert_eq!(
+                detect_write_command(cmd),
+                None,
+                "read-only command was refused as a write: {cmd:?}"
+            );
+            assert_eq!(
+                analyze_bash_command(cmd),
+                None,
+                "read-only command was refused as destructive: {cmd:?}"
+            );
+        }
+    }
+}
