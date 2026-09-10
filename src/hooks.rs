@@ -545,6 +545,54 @@ fn unknown_hook_tool_warning(tool_pattern: &str, known: &[&str], plain: bool) ->
     Some(msg)
 }
 
+/// Pure: warn when a `hooks.*` key names a phase but no tool, so it can never
+/// fire (#892's third arm).
+///
+/// `rest` is the key with its `hooks.` prefix already stripped — exactly what
+/// `parse_hooks_from_config`'s phase split reads. A key of `hooks.pre` matches
+/// neither `pre.` nor `post.`, falls to a bare `continue`, and used to emit
+/// nothing at all. That is the quietest failure in this file: the hook never
+/// fires, prints nothing, and a user cannot tell it from a hook that ran and
+/// did nothing.
+///
+/// WARN, never refuse. Refusing would break a config that starts a session
+/// today, which is the same call the unreachable-tool-name arm above made and
+/// it applies verbatim here.
+///
+/// Deliberately NARROW, and the reason is the cry-wolf direction rather than
+/// tidiness: it fires only when the phase is spelled correctly (`pre` /
+/// `post`) and the tool segment is missing, which is unambiguous. An
+/// unrecognised segment — `hooks.preflight`, or some future non-hook
+/// `hooks.timeout` — reaches the same `continue` and stays **silent**, because
+/// this cannot tell a typo'd phase from a config key it does not know about,
+/// and a warning that cries wolf on a legitimate config is how a reader learns
+/// to paste past a gate (the same reason `tests/doc_version_claims.rs` refuses
+/// a blanket wording scan).
+///
+/// STATED LIMIT: this makes a malformed key AUDIBLE, it does not make it WORK.
+/// The hook still never fires, the warning drops nothing and retries nothing,
+/// and a *well-formed* key that names the wrong tool passes in complete silence
+/// — `hooks.pre.read_file` written when `write_file` was meant is invisible
+/// here. Presence of a vocabulary match is mechanically checkable; intent is
+/// not, which is the same limit `tests/blind_round_grades.rs` states about
+/// grades. `hooks.pre.` (a trailing dot, so an *empty* tool segment) reaches a
+/// different `continue` one branch down and is likewise out of scope.
+///
+/// Glyph-free under `plain` (marker **and** em dash).
+fn malformed_hook_key_warning(rest: &str, plain: bool) -> Option<String> {
+    if rest != "pre" && rest != "post" {
+        return None;
+    }
+
+    let marker = if plain { "warning:" } else { "⚠" };
+    let joiner = if plain { ";" } else { " —" };
+    Some(format!(
+        "{marker} hook key `hooks.{rest}` has no tool segment, so it names no \
+         tool and can never fire{joiner} write `hooks.{rest}.<tool> = \"...\"` \
+         instead, e.g. `hooks.{rest}.bash`."
+    ))
+}
+
 /// Parse shell hook definitions from a config HashMap.
 ///
 /// Expected key format: `hooks.pre.<tool>` or `hooks.post.<tool>`
@@ -571,6 +619,19 @@ pub fn parse_hooks_from_config(config: &HashMap<String, String>) -> Vec<ShellHoo
         } else if let Some(tool) = rest.strip_prefix("post.") {
             (HookPhase::Post, tool)
         } else {
+            // #892's third arm: a key with no tool segment (`hooks.pre = "..."`)
+            // matches neither prefix and used to fall to this bare `continue` in
+            // complete silence. Say so. WARN, never refuse — see the function's
+            // doc comment for why, and for why an unrecognised phase stays
+            // quiet. Same shape as the unreachable-tool-name warning below: a
+            // pure decision, with the two global reads at this call site.
+            if let Some(warning) =
+                malformed_hook_key_warning(rest, crate::format::is_plain_output())
+            {
+                if !crate::format::is_quiet() {
+                    eprintln!("{warning}");
+                }
+            }
             continue; // Invalid format, skip
         };
 
@@ -1710,6 +1771,169 @@ mod tests {
                 "nearest_builtin({pattern:?})"
             );
         }
+    }
+
+    // --- #892 defect 3: a malformed hook key is now audible ------------------
+
+    /// ANTI-VACUOUS, and asserted FIRST: a warner that fires on nothing and one
+    /// that fires on everything are the same bug wearing opposite signs, so
+    /// pin that a genuinely malformed key really does warn and a genuinely
+    /// valid one really does not, before asserting any silence below.
+    #[test]
+    fn malformed_hook_key_warning_is_anti_vacuous() {
+        assert!(
+            malformed_hook_key_warning("pre", false).is_some(),
+            "`hooks.pre` names no tool and must warn, or this guard can never fire"
+        );
+        assert!(
+            malformed_hook_key_warning("post", false).is_some(),
+            "`hooks.post` names no tool and must warn"
+        );
+        assert!(
+            malformed_hook_key_warning("pre.bash", false).is_none(),
+            "a well-formed key must not warn, or every silence below is vacuous"
+        );
+    }
+
+    /// NEAR-MISS GUARD, and the entire regression surface: every key shape that
+    /// parses today must stay silent, for BOTH `plain` values. A discriminator
+    /// tested only on the side that fires is vacuous green, and over-firing
+    /// here would print a warning on a working config every session.
+    ///
+    /// The shapes are derived from the real builtin list rather than
+    /// hand-typed, so a new builtin is covered without editing this test.
+    #[test]
+    fn malformed_hook_key_warning_is_silent_for_every_key_that_parses() {
+        let known = crate::agent_builder::BUILTIN_TOOL_NAMES;
+        assert!(
+            !known.is_empty(),
+            "empty builtin list would make this vacuous"
+        );
+
+        for plain in [false, true] {
+            for phase in ["pre", "post"] {
+                // The wildcard, and every real builtin, under both phases.
+                for tool in std::iter::once(&"*").chain(known.iter()) {
+                    let rest = format!("{phase}.{tool}");
+                    assert_eq!(
+                        malformed_hook_key_warning(&rest, plain),
+                        None,
+                        "`hooks.{rest}` parses today and must never warn"
+                    );
+                }
+                // The unknown-tool case is Day 192's warning to own, not this
+                // one — it has a tool segment, so it is a different question.
+                let rest = format!("{phase}.github_create_issue");
+                assert_eq!(
+                    malformed_hook_key_warning(&rest, plain),
+                    None,
+                    "`hooks.{rest}` has a tool segment; the unknown-tool arm owns it"
+                );
+            }
+            // An unrecognised phase reaches the same `continue` and stays
+            // SILENT on purpose: indistinguishable from a future non-hook
+            // `hooks.*` config key, so warning would cry wolf.
+            for rest in ["preflight", "", "timeout", "posts", "Pre"] {
+                assert_eq!(
+                    malformed_hook_key_warning(rest, plain),
+                    None,
+                    "`hooks.{rest}` names no known phase and must stay silent"
+                );
+            }
+        }
+    }
+
+    /// The wording is the load-bearing half: an observation, never an
+    /// accusation. It must name the offending key, state the consequence, and
+    /// name the shape that actually works — a warning a reader cannot act on
+    /// teaches them to paste past it.
+    #[test]
+    fn malformed_hook_key_warning_names_the_key_and_the_shape_that_works() {
+        for phase in ["pre", "post"] {
+            let msg = malformed_hook_key_warning(phase, false).expect("must warn");
+            assert!(
+                msg.contains(&format!("`hooks.{phase}`")),
+                "must name the offending key: {msg}"
+            );
+            assert!(
+                msg.contains("no tool segment"),
+                "must say what is wrong: {msg}"
+            );
+            assert!(
+                msg.contains("can never fire"),
+                "must name the consequence: {msg}"
+            );
+            assert!(
+                msg.contains(&format!("`hooks.{phase}.<tool>")),
+                "must name the shape that works: {msg}"
+            );
+            assert!(
+                msg.contains(&format!("`hooks.{phase}.bash`")),
+                "must give a concrete example: {msg}"
+            );
+        }
+    }
+
+    /// Glyph-free under plain output — marker AND em dash, since asserting only
+    /// the marker is the half an assertion has caught before. The REVERSE
+    /// anti-vacuous check is what makes those two assertions discriminate
+    /// rather than pass by accident.
+    #[test]
+    fn malformed_hook_key_warning_is_glyph_free_when_plain() {
+        let plain = malformed_hook_key_warning("pre", true).expect("must warn");
+        assert!(!plain.contains('⚠'), "no marker glyph in plain: {plain}");
+        assert!(!plain.contains('—'), "no em dash in plain: {plain}");
+
+        let fancy = malformed_hook_key_warning("pre", false).expect("must warn");
+        assert!(
+            fancy.contains('⚠') && fancy.contains('—'),
+            "the non-plain form must carry both, or the assertions above are vacuous: {fancy}"
+        );
+    }
+
+    /// The two #892 warnings must not collide: they answer different questions
+    /// and carry different remedies, so neither may wear the other's name.
+    ///
+    /// A malformed key has no tool pattern at all, so it can never reach
+    /// `unknown_hook_tool_warning` — the `continue` fires first. What is
+    /// asserted here is the structural half: the two sentences are distinct and
+    /// each names only its own remedy.
+    #[test]
+    fn the_two_hook_warnings_are_distinct_sentences_with_distinct_remedies() {
+        let known = crate::agent_builder::BUILTIN_TOOL_NAMES;
+        let malformed = malformed_hook_key_warning("pre", false).expect("must warn");
+        let unknown_tool = unknown_hook_tool_warning("write", known, false).expect("must warn");
+
+        assert_ne!(malformed, unknown_tool, "the two warnings must differ");
+        assert!(
+            malformed.contains("no tool segment") && !malformed.contains("MCP"),
+            "the malformed-key warning must not borrow the MCP remedy: {malformed}"
+        );
+        assert!(
+            unknown_tool.contains("MCP") && !unknown_tool.contains("no tool segment"),
+            "the unknown-tool warning must not borrow the missing-segment remedy: {unknown_tool}"
+        );
+    }
+
+    /// BEHAVIOUR is unchanged, which is the other half of the regression
+    /// surface: the warning is advisory and drops nothing, so a malformed key
+    /// still yields no hook and every valid key beside it still parses.
+    #[test]
+    fn a_malformed_key_still_yields_no_hook_and_does_not_eat_its_neighbours() {
+        let mut config = HashMap::new();
+        config.insert("hooks.pre".to_string(), "echo malformed".to_string());
+        config.insert("hooks.post".to_string(), "echo malformed too".to_string());
+        config.insert("hooks.pre.bash".to_string(), "echo valid".to_string());
+
+        let hooks = parse_hooks_from_config(&config);
+
+        assert_eq!(
+            hooks.len(),
+            1,
+            "the two malformed keys must yield no hook, and must not drop the valid one"
+        );
+        assert_eq!(hooks[0].name, "pre:bash");
+        assert_eq!(hooks[0].command, "echo valid");
     }
 
     // --- #892 defect 2: a timed-out hook is reaped ---------------------------
