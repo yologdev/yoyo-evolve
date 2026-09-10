@@ -1,0 +1,60 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.2s (2 ✓)
+
+The commit touches only src/context.rs and a risk ledger — the task's Files: line and ## Docs section both name CLAUDE.md. Let me verify.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -20;…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "init_fixture_repo" src/… ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.5s (2 ✓)
+
+Confirmed CLAUDE.md untouched. Two focused checks: does the old separator convention have other consumers, and does CLAUDE.md now carry a stale claim about this function?
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== other consumers of the…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== CLAUDE.md claim about … ✓ (7ms)
+ ✓ (15ms)
+  2 tools completed in 15ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evidence is complete. Writing the verdict.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 21s)
+
+Verdict: FAIL (written to session_plan/eval_task_1.md)
+
+The implementation itself is good work — I verified it end-to-end rather than just reading the diff:
+
+What's right:
+• The seam split is exactly as specified: pure wrap_project_instruction(path, content, boundary) + thin instruction_boundary() reading a OnceLock nonce once at the single call site.
+• The anti-forgery requirement is met (per-process pid+nanos nonce, with the code comment correctly claiming unguessable, not cryptographic and explaining the threat model), and the collision case is handled out loud instead of passing silently.
+• The wording rule is enforced by a test that bans untrusted/ignore this/disregard/do not follow — the load-bearing part.
+• The near-miss guard uses a whole-value assert_eq!, anti-vacuous assertions come first, and the superseded test was inverted rather than deleted.
+• **Live proof it works:** this session's own context opens with `[PROJECT-INSTRUCTIONS-<nonce>-BEGIN CLAUDE.md]` and the provenance sentence. The feature isn't just tested, it's running.
+
+Why it fails anyway:
+git show --stat HEAD lists only src/context.rs and a risk ledger. CLAUDE.md — named in the task's Files: line, with a dedicated ## Docs section enumerating what to write — has zero mentions of wrap_project_instruction, instruction_boundary, or PROJECT-INSTRUCTIONS.
+
+That's not a missing-nicety fail. The model-facing prompt format changed for every user with any of the six instruction files, and the existing context.rs bullet now states:
+
+│  Every byte of a hostile CLAUDE.md still reaches the model exactly as before, load_project_context's return value is unchanged
+
+The first clause is still true; the second is now false, and it sits in the one file re-injected as authoritative context every session. This repo's own #864 entry documents this exact shape — docs going stale across payments because cargo test cannot fail for a false sentence, with the evaluator named as one of the only readers that catches it. Catching it is the job here.
+
+The fix is small: update the context.rs bullet with what is wrapped, the anti-forgery reasoning, why "ignore this" was rejected, the near-miss guard, the positive control's red and green, and the stated limit — and mark the "return value is unchanged" clause superseded rather than erasing it.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,198 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by measuring the current state — reading how load_project_context_from frames these files today.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PROJECT_CONTEXT_FILES" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/context.rs ✓ (3ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+Zero gate references confirmed. Now the actual reading site:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,230p' src/context.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '330,400p' src/context.rs ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.5s (2 ✓)
+
+Step 0 measured. The framing is partial and forgeable:
+
+• **First file: no label at all** — content goes in raw. That's the common case (a repo with only CLAUDE.md).
+• **Subsequent* files: `--- From {name} ---` — names the file, says nothing about who authored it*, and is trivially forgeable.
+
+Let me capture a verbatim baseline before touching anything:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "load_project_context_fr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "instruction_boundary\|… ✓ (5ms)
+ ✓ (15ms)
+  2 tools completed in 16ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '118,130p' scripts/evolve… ✓ (3ms)
+ ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.5s (2 ✓)
+
+Clean tree, step 0 measured. Current framing captured verbatim:
+
+• **First file: no marker at all. Subsequent: `--- From {name} ---\n` — a fixed** string, forgeable, and naming only the file, never the author.
+• Harness precedent at scripts/evolve.sh:123: [BOUNDARY-<urandom hex>-BEGIN].
+
+Let me capture the pre-change baseline for the near-miss guard:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,960p' src/context.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,650p' src/context.rs… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.9s (2 ✓)
+
+init_fixture_repo exists at :470. Let me capture the pre-change baseline with a probe:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '470,500p' src/context.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn fixture_commit_file"… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Budget is tight — acting now. First, capture the pre-change baseline with a temporary probe test:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (21 lines) ✓ (25.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Baseline is fully deterministic. Now revert the probe and write the real change:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git checkout -- src/context.rs &… ✓ (7ms)
+  ▶ edit src/context.rs (16 → 91 lines)
+  + /// Per-process boundary token for project-instruction provenance blocks.
+  + ///
+  + /// **Why a nonce rather than a fixed marker:** a fixed string is forgeable — a
+  + /// hostile `CLAUDE.md` writes the closing token and then impersonates the
+  + /// operator, which is *worse* than no marker at all because it manufactures an
+  + /// authority frame that does not exist today. `scripts/evolve.sh:123` already
+  + /// solved exactly this for untrusted issue text with a per-session nonce; this
+  + /// is the same policy one door over.
+  + ///
+  + /// **This is unguessable, not cryptographic, and the distinction is deliberate:**
+  + /// the instruction file is written to disk *before* this process starts, so its
+  + /// author cannot observe a value derived from this process. pid plus a
+  + /// nanosecond clock is sufficient for that threat model. It would not be
+  + /// sufficient against an attacker who can read this process's memory or run
+  + /// concurrently with it — but such an attacker has strictly better options than
+  + /// forging a prompt marker.
+  + fn instruction_boundary() -> &'static str {
+  +     static BOUNDARY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+  +     BOUNDARY.get_or_init(|| {
+  +         let pid = u128::from(std::process::id());
+  ... (77 more lines)
+ ✓ (1m 51s)
+  + /// Per-process boundary token for project-instruction provenance blocks.
+  + ///
+  + /// **Why a nonce rather than a fixed marker:** a fixed string is forgeable — a
+  + /// hostile `CLAUDE.md` writes the closing token and then impersonates the
+  + /// operator, which is *worse* than no marker at all because it manufactures an
+  + /// authority frame that does not exist today. `scripts/evolve.sh:123` already
+  + /// solved exactly this for untrusted issue text with a per-session nonce; this
+  + /// is the same policy one door over.
+  ... (13 more lines)
+  2 tools completed in 2m 13s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo context:: … ✓ (279ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Output is exactly as designed. One pre-existing test pinned the old separator — let me read it and strengthen rather than weaken it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1140,1185p' src/context.… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+This is the Day-148 shape exactly: !ctx.contains("--- From YOYO.md ---") was pinning the defect — the first file getting no provenance marker — as a green invariant. Inverting it rather than deleting:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (42 → 134 lines)
+        #[test]
+  -     fn test_multiple_context_files_get_separators() {
+  -         // When multiple instruction files exist, secondary files should have
+  -         // a "--- From <file> ---" separator for model clarity.
+  +     fn every_context_file_including_the_first_carries_a_provenance_block() {
+  +         // Superseded test, inverted rather than deleted (Day 148: a fixture row
+  +         // asserting a known-wrong output converts a defect into a green
+  +         // invariant). This was `test_multiple_context_files_get_separators`,
+  +         // and it asserted `!ctx.contains("--- From YOYO.md ---")` — i.e. it
+  +         // pinned "the FIRST file gets no marker at all" as correct behaviour.
+  +         // That was the defect: the common case is a repo with exactly one
+  +         // instruction file, so the single most likely file to be loaded was the
+  +         // one guaranteed to arrive unlabelled.
+            use std::process::Command;
+            let dir = tempfile::TempDir::new().unwrap();
+            std::fs::write(dir.path().join("YOYO.md"), "Primary instructions").unwrap();
+  ···
+                .output()
+                .ok();
+    
+  ... (122 more lines)
+ ✓ (1m 52s)
+        #[test]
+  -     fn test_multiple_context_files_get_separators() {
+  -         // When multiple instruction files exist, secondary files should have
+  -         // a "--- From <file> ---" separator for model clarity.
+  +     fn every_context_file_including_the_first_carries_a_provenance_block() {
+  +         // Superseded test, inverted rather than deleted (Day 148: a fixture row
+  +         // asserting a known-wrong output converts a defect into a green
+  +         // invariant). This was `test_multiple_context_files_get_separators`,
+  ... (13 more lines)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo context:: … ✓ (292ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo a_project_… ✓ (176ms)
+  2 tools completed in 2.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Trailing newline — my probe's eprintln! masked it. One-character fix:
+  ▶ edit src/context.rs (2 → 2 lines)
+  -              ## Git Status\n\nBranch: main\nUncommitted changes: 1 file",
+  +              ## Git Status\n\nBranch: main\nUncommitted changes: 1 file\n",
+                "no instruction file means the returned context must not move by one byte"
+ ✓ (2m 0s)
+  -              ## Git Status\n\nBranch: main\nUncommitted changes: 1 file",
+  +              ## Git Status\n\nBranch: main\nUncommitted changes: 1 file\n",
+                "no instruction file means the returned context must not move by one byte"
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✗ (2m 0s)
+    │ Command timed out after 120s
+  2 tools completed in 4m 2s (1 ✓, 1 ✗)
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo context:: … ✓ (632ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 34 context tests green. Full suite:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (323ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/context.rs
+

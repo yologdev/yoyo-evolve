@@ -1,0 +1,97 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task requirements.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.2s (2 ✓)
+
+The diff shown touches only 2 files. The task explicitly requires a CLAUDE.md update with the measurement. Let me check.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff a31f974a..HEAD --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff a31f974a..HEAD -- CLAUD… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.7s (2 ✓)
+
+CLAUDE.md is entirely absent, though it was named in the task's Files: line and the Docs section. Let me verify the substance of the test first.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptResult::ContextOv…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1315,1360p' src/prompt.r… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've confirmed the core measurement. Let me verify the second arm and check what eval-fix 1 changed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1713,1740p' src/prompt.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 70af4bd9..aa828d2f --st… ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 29.7s (2 ✓)
+
+Substance verified. The measurement is correct: 2 arms at :1322 (restore→compact→retry once) and :1713 (break, no retry) — exactly as the test asserts, and the 12-space arm_end anchoring correctly targets the outer match arm. But CLAUDE.md was never touched in either commit (first pass: prompt_retry.rs only; eval-fix 1: added the register bump).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "overflow and known-beni… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: CLAUDE.md still carries the unverified "overflow and known-benign 'stream ended' keep their existing paths" sentence — the exact claim this task was written to measure — and the only Day 194 entry is from Task 1, not this one.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 29s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The verdict file is written. Let me confirm it's correctly formatted, then stop.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/eval_task_2.md … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The one < is the legitimate restore_at < compact_at < retry_at comparison, not a placeholder. Verifying:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -oE "<[a-z_ ]+>" session_pl… ✓ (6ms)
+
+Evaluation complete. No placeholders remain, all four Checked: lines are present and parseable, and git status is clean — I modified no code.
+
+## Verdict: FAIL
+
+What I verified (substance first, not just the diff):
+
+The probe's measurement is genuine and correct. I checked it against the real source rather than trusting the doc comment:
+
+• `grep -n "PromptResult::ContextOverflow { error_msg, usage } => {" src/prompt.rs` → exactly **2** hits (`:1322`, `:1713`), matching the test's exact-count anti-vacuous assertion and its drift-guard purpose.
+• The text-path arm at `:1322 really does run restore_messages → compact_agent → **one** run_prompt_once, so restore_at < compact_at < retry_at` pins reality — and the ordering is the actual safety property, since the restore puts back the state that overflowed and compaction is the only thing making the retry a different request.
+• The image/content arm at :1713 is api_error = Some(error_msg); break; with no retry, so retries == 0 → continue and retrying_arms == 1 both hold.
+• The 12-space arm_end needle correctly targets the outer FatalError arm (:1723) rather than the nested match's — a real subtlety, handled right.
+
+The test is well-built: shape-based rather than position-indexed classification (avoiding the "two doors, one deaf" trap), runtime-assembled needles, anti-vacuous in both directions, and an honest stated limit that it proves the calls are positioned, never that compaction shrank anything. The register bump (2567 → 2713) is present.
+
+Why it still fails:
+
+CLAUDE.md was named explicitly in the task's Files: line and given a dedicated ## Docs section demanding the measurement with file:line citations, a date, and the one-class/one-site limit. It is absent from both commits — git diff a31f974a..HEAD --stat shows only src/prompt_retry.rs and tests/module_size.rs.
+
+The measurement therefore lives only in a test's doc comment, while CLAUDE.md's prompt_retry.rs bullet still carries the un-cited sentence "overflow and known-benign 'stream ended' keep their existing paths" — precisely the claim the task body identifies as "a description of a routing decision, not a measurement of it." The one Day 194 entry in CLAUDE.md belongs to Task 1's #902 slice.
+
+This is not a style nit. The task's headline deliverable is the measurement, and the target surface was specified because CLAUDE.md is re-injected as authoritative context every session. The repo's own #864 entry records this identical omission going stale for two consecutive payments and being rejected by an evaluator for it — so the precedent is direct, and a cargo test green cannot catch it.
+
+Cleanup note for the fix pass: the remedy is one file and pasteable — append the measurement (2 arms, :1322 restore→compact→retry-once, :1713 break-no-retry, dated 2026-09-10) plus the stated limit to the existing prompt_retry.rs bullet. No code change is needed, and src/prompt_retry.rs is already registered at its new count, so a docs-only edit cannot disturb the size gate.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

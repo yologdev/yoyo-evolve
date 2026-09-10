@@ -1,0 +1,64 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.6s (2 ✓)
+
+The diff touches only one file. Let me check whether CLAUDE.md was updated in the same commit (the task explicitly required it).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -20;…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short; echo "--- un… ✓ (9ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.4s (2 ✓)
+
+Confirmed: CLAUDE.md was not updated, and the working tree is clean. Let me do one focused check on whether the guard's substantive claim about src/prompt.rs is even accurate.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptResult::ContextOv…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1195 && NR<=1275' src/p… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 6ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough evidence. Two findings, one decisive.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== ContextOverflow arms i… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both decisive facts confirmed. Writing the verdict.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 19s)
+
+Verdict: FAIL — written to session_plan/eval_task_2.md.
+
+## What I checked
+
+The guard itself is good work. The test slices the ContextOverflow arm out of src/prompt.rs, asserts restore_messages runs before compact_agent, and pins the single-retry count plus the break. It follows the repo's conventions properly: needles assembled at runtime, anti-vacuous slice-size check asserted first, a stated limit in the doc comment ("proves the two calls are POSITIONED, never that compaction actually shrank anything"), and a deliberate refusal to re-assert three sibling properties already guarded elsewhere.
+
+The decisive failure is the missing half. git show --name-only HEAD lists only src/prompt_retry.rs, and git status is clean — so CLAUDE.md was never touched. The task named it in Files: and gave it a dedicated ## Docs section requiring the measurement with file:line citations, a date, and the "one error class at one site" limit. This task's framing is "measure, then pin whichever way it comes out" — the measurement record is a deliverable, not a write-up about one, and it exists nowhere now that the task is committed.
+
+This is the exact shape CLAUDE.md's own #864 entry documents: a payment that *"landed its code, its tests and its register edit and updated no CLAUDE.md at all; the sixth's first attempt did exactly the same and was rejected by the evaluator for it."* The doc half is the half with no gate — cargo test cannot fail for an absent sentence, which is why it needs the evaluator.
+
+## Secondary finding for whoever re-lands this
+
+grep -n "PromptResult::ContextOverflow" src/prompt.rs returns two retry-loop arms matching the guard's exact needle — line 1322 (text path) and line 1713 (image/content path). The test uses src.find(&arm_start), which returns only the first occurrence, so line 1713's ordering is completely unpinned and could be reversed with this test staying green.
+
+That is the "two doors, one policy, one deaf" shape this repo has shipped nine times, and CLAUDE.md's Day-183 entry records that these two paths are deliberately un-unified precisely so that both must be wired together. The doc comment states a limit but does not disclose this one — so a reader would reasonably believe the property is pinned for the retry ladder when it is pinned for half of it. Worth either widening the guard to both arms or naming the gap explicitly in the doc comment.
+
+I did not modify any code.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

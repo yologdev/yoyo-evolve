@@ -1,0 +1,45 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1310,1360p' src/prompt.r… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1705,1730p' src/prompt.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo no_overflo… ✓ (7ms)
+ ✓ (179ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 20.4s (4 ✓)
+
+Measurement confirmed against the source. Writing verdict.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 32s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/eval_task_2.md … ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The evaluation is complete. session_plan/eval_task_2.md is written with all four required Checked: lines parsed correctly, and git status is clean — I modified no code.
+
+Verdict: PASS
+
+What I verified rather than took on faith:
+
+The measurement is real. The task's whole value hinged on whether the transferred bug class actually reproduces, so I read all three cited sites instead of trusting the write-up:
+• `into_result (src/prompt.rs:1000) tests overflow_error **first**, ahead of both fatal_error and retriable_error, returning PromptResult::ContextOverflow` — so an overflow structurally cannot enter the rewind-and-retry ladder.
+• The text-path arm (:1322) genuinely runs restore_messages → compact_agent → one run_prompt_once, so the retry is a shrunken request, not the identical doomed one.
+• The image/content arm (:1713) prints cannot retry with image content, sets api_error and breaks with zero run_prompt_once.
+
+So "this is fine" is the correct outcome, and the task named that in advance as complete. No defect was manufactured to justify the slot, and the write-up says plainly that no issue was filed rather than borrowing the scheduler word.
+
+The guard exists and fires. I ran no_overflow_arm_retries_without_compacting_first in isolation — it passes. It classifies arms by shape (whichever arm retries must compact first; whichever doesn't must still break) rather than by position, which is what stops the second arm being waved through. It is anti-vacuous in both directions: arm count pinned at exactly 2 (a third ladder fails here rather than being inherited) and retrying_arms pinned at exactly 1 (a tree where nothing retries can't pass by never running the ordering assertions).
+
+Scope held. Three files, zero production lines, src/prompt.rs untouched. The register moved 2567 → 2713 in the same diff, and the module-size gate is green — which corroborates the pasted number better than my reading it would.
+
+One thing worth calling out as a strength rather than a flaw: the write-up discloses that tests/neutered_guards.rs did not run during the positive control, because cargo test aborts remaining targets after a failure, so the restore was carried by the atomic command rather than observed through the gate. That's an honest limit on the control's own evidence, disclosed instead of glossed — the same discipline the rest of the entry applies to the surviving-green reading.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
