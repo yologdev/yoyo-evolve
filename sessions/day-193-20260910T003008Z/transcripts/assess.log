@@ -1,0 +1,142 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the current state — trajectory, source structure, and recent history in parallel.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== DAY ===" && cat DAY_CO…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== TOP 25 SRC BY LINES ==… ✓ (12ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+Now let me read recent history and check the backlog in parallel.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -120 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (4ms)
+ ✓ (524ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== EVOLVE RUNS ===" && gh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (405ms)
+ ✓ (1.2s)
+  4 tools completed in 13.5s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Good — I have the trajectory, backlog, and CI picture. Let me write an early draft now, and run the self-test in parallel (per the write-early instruction).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== version ===" && timeou…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== gate register drift ==… ✓ (179ms)
+ ✓ (774ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.8s (2 ✓)
+
+Binary works, module-size gate clean. Writing the early draft now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/assessment.md (97 lines) ✓ (1m 53s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Draft is on disk. Now the research step — yopedia recall first, then competitor research.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if [ -z "$YOPEDIA_AGENT_TOKEN" ]… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Token budget is tight — let me do recall and research in one parallel pass with tight limits.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && BASE=https://yopedia.yolog.dev; …  ▶ web search 'Claude Code Cursor Aider coding agent new features September…' ✓ (1.5s)
+ ✓ (8.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 26.9s (2 ✓)
+
+Rich findings. Let me ingest the keeper and finalize.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && BASE=https://yopedia.yolog.dev; … ✓ (239ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Ingest refused (Sign in required — token not accepted for POST); noted, not retried. Finalizing the assessment.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit session_plan/assessment.md (3 → 32 lines)
+    ## Capability Gaps
+    
+  - *(filled in after research — see Research Findings)*
+  + Measured against the live Claude Code changelog (see Research Findings for the scan). **Four of the last month's entries describe fixes I had already shipped**, which is the useful half of this scan — it says my recent fix *classes* were right, and it means the gaps below are real rather than a list of everything a bigger product has.
+  + 
+  + 1. **No sandbox of any kind.** They ship `sandbox.network.strictAllowlist` (deny non-allowlisted hosts for sandboxed commands without prompting). `--restricted` is explicitly *not* a sandbox — its own help text says so — and `bash` remains under every one of my confinement flags. This is the largest structural gap and it is not closeable in a session.
+  + 
+  + 2. **Permissions cannot address non-bash tools.** They match `Tool(param:value)` — e.g. `Agent(model:opus)`. My `PermissionConfig::check` matches **bash command strings only**, so there is no way to express a rule about any other tool's arguments. `[directories]` covers file paths; nothing covers tool parameters.
+  + 
+  + 3. **One fallback model, not a chain.** They configure up to **three** tried in order. `AgentConfig::try_switch_to_fallback` swaps once, and `FallbackSubAgentTool` is documented as "one extra attempt, never a chain".
+  + 
+  + 4. **No config-value hygiene warning.** They warn on "MCP config values with hidden leading or trailing whitespace". A value that silently fails to match because of an invisible character is the *exact* class as #892's unknown-hook-key no-op — accepted vocabulary with no validation. This is the cheapest real gap on the list.
+  + 
+  + 5. **No `/add-dir`**, hence no `DirectoryAdded` hook. Related to #869, which is about the *inverse* — `/cd` moving without reloading the new directory's config.
+  + 
+  + ## Research Findings
+  + 
+  + **Yopedia recall (step 6a) succeeded; ingest (6c) FAILED and was not retried** — `POST /api/ingest` returned `{"error":"Sign in required."}` despite `YOPEDIA_AGENT_TOKEN` and `YOPEDIA_VAULT_ID` being set (search on the same token works, so it is a write-path auth issue, not a missing key). Recording it plainly because *"could not save" must not read as "nothing was worth saving"* — the delta scan below is a genuine keeper and it is **not** in the vault. One recall query also returned `{"erro… [yoyo: 127 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + Recall returned prior notes (`claude-code-delta-scan`, `agent-changelog-delta-analysis`, `claude-code-background-agents`, `ai-coding-agents-2026-landscape`), so this scan builds on them rather than re-treading.
+  ... (13 more lines)
+ ✓ (1m 20s)
+    ## Capability Gaps
+    
+  - *(filled in after research — see Research Findings)*
+  + Measured against the live Claude Code changelog (see Research Findings for the scan). **Four of the last month's entries describe fixes I had already shipped**, which is the useful half of this scan — it says my recent fix *classes* were right, and it means the gaps below are real rather than a list of everything a bigger product has.
+  + 
+  + 1. **No sandbox of any kind.** They ship `sandbox.network.strictAllowlist` (deny non-allowlisted hosts for sandboxed commands without prompting). `--restricted` is explicitly *not* a sandbox — its own help text says so — and `bash` remains under every one of my confinement flags. This is the largest structural gap and it is not closeable in a session.
+  + 
+  + 2. **Permissions cannot address non-bash tools.** They match `Tool(param:value)` — e.g. `Agent(model:opus)`. My `PermissionConfig::check` matches **bash command strings only**, so there is no way to express a rule about any other tool's arguments. `[directories]` covers file paths; nothing covers tool parameters.
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (23ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design (ephemeral — the harness reads it from disk), so the commit is a no-op as the || true anticipates. Verifying the file is complete:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^## " session_plan/asse… ✓ (5ms)
+
+
+All nine sections present, 12.7KB on disk. The assessment is complete.
+
+## Day 193 assessment — done
+
+Written to `session_plan/assessment.md` (the git add is a designed no-op — session_plan/ is gitignored as ephemeral; the harness reads it from disk).
+
+### What I found
+
+Build: clean, and unusually so. Last 6 CI runs green, last 6 evolve runs green, 0 task reverts across 10 sessions. cargo test --test module_size prints zero warnings — no register drift owed anywhere, which matters because that gate reverted #884 and went unread for five sessions earlier this month.
+
+Self-test surfaced no breakage. yoyo model list works — that's the #886 fix earning its keep, since before Day 187 the three-token form fell past the near-miss guard into a billed LLM turn. risk epistemic renders all four study tiers correctly.
+
+The research step's most useful result was the four *hits*, not the gaps. Four entries in Claude Code's current changelog describe defects I have already closed independently — the -p mid-stream death dropping produced text (my Day-192 fatal_handoff), mcp_server_errors in headless JSON (#895), and hooks from untrusted folders requiring workspace trust (#897). Two landed the same week as theirs. That's the transferred-bug-class discipline working: I'm arriving at these rather than trailing them.
+
+Real gaps that remain: no sandbox of any kind; permissions that can only address bash command strings, never Tool(param:value); one fallback model rather than a chain of three; and no warning for config values with hidden whitespace — that last one being the same silent-no-op class as #892 and the cheapest thing on the list.
+
+### Two things I recorded rather than smoothed over
+
+Yopedia ingest failed — POST /api/ingest returned Sign in required although search on the same token works, so the delta scan above is genuinely not saved to my vault. I wrote that into the assessment plainly, because "could not save" must not read as "nothing was worth saving." A recall query also returned Invalid frontmatter: unterminated quoted string in array, meaning a corrupt note in my own vault is breaking a search path.
+
+One unchecked lead, named as unchecked: their fix for "negative turn durations after a system clock adjustment — now timed with a monotonic clock" is the same family as #896, the wall-clock fixture race that cost me a session on Day 190. Worth one audit pass over every duration I report. I did not verify it this session and said so rather than implying I had.
+
+The planner now has the backlog picture (11 agent-self issues, with #903 and #902 both filed today and deliberately unfixed), the three dark rooms (format/mod.rs at 47 snapshots, gasp_cli.rs at 44, commands.rs at 31), and a gap list grounded in a live scan rather than in what I assume a rival can do.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

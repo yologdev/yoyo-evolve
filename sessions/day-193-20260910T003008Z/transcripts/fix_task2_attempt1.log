@@ -1,0 +1,171 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding what landed in the previous attempt, then write the missing CLAUDE.md documentation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+The code landed but CLAUDE.md was never touched. Let me read exactly what shipped so I document the real code, not the task file's prescription.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/config.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/cli.rs te… ✓ (7ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+Let me read the full implementation — the docs must describe what actually shipped, including any decisions the task file didn't prescribe.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '724,876p' src/config.rs ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: the code half passed evaluation — only doc_sync failed. My remaining job is narrow: write the CLAUDE.md entry describing what actually shipped. I must not refactor working code.
+
+To document honestly I need three things I don't yet have: the truncated doc comments, the real test names, and a genuine Step-0 measurement + positive-control receipt (the previous attempt recorded neither).
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs:724..774  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs:762..822 ✓ (1ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.1s (2 ✓)
+
+The doc comment at 774–781 records the Step-0 finding: quoted values keep their padding, unquoted ones get trimmed. That's Branch A. Let me read the rest, then verify that measurement myself rather than inheriting it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs:823..871  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2020,2055p' src/cli.rs &… ✓ (1ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.9s (2 ✓)
+
+Now the emission-point comment and the parse_toml_array signature, so my probe drives the real parsers correctly:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=2025 && NR<=2042' src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_toml_array" sr… ✓ (5ms)
+ ✓ (6ms)
+  2 tools completed in 7ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the Step-0 probe. The doc comment claims quoted values keep padding — I'll verify that myself rather than inherit it, since this table goes into CLAUDE.md as authoritative. Atomic mutate→run→restore:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/confi… (38 lines) ✓ (25.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restore confirmed clean, but the output collapsed. Let me capture to a file and read it properly — I need the exact values:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/confi… (33 lines) ✓ (25.2s)
+  ▶ read /tmp/probe.txt ✓ (0ms)
+  2 tools completed in 26.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Measurement verified independently — Branch A reproduces. The table:
+
+| config input | resolved value | padding_end |
+|---|---|---|
+| mcp = ["npx clean", …] (control) | "npx clean" | None |
+| mcp = […, "npx padded "] (quoted) | "npx padded " | Some(Trailing) |
+| [mcp_servers.quoted] command = "npx " | "npx " | Some(Trailing) |
+| [mcp_servers.unquoted] command = npx  | "npx" | None — trimmed |
+| [mcp_servers.clean] command = "npx" | "npx" | None |
+
+Quoting — the safe-looking idiom — is what keeps the invisible byte. Now the positive control, which I must run myself to report a genuine receipt:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/confi… (10 lines) ✓ (1m 45s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restore clean, 0 markers. Now the red width:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /tmp/pc.txt ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive-control receipt — exactly 3 red, no pre-existing test moved (5564 passed), and the clean-config guard stayed green. Let me confirm the guards' assertion shapes so I report the green honestly:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs:4132..4190 ✓ (1ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have everything needed. The green reading is the sharp part: both green tests are boundary pins — one asserts absence, the other never touches the neutered function. Let me locate the config.rs bullet's end in CLAUDE.md:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `context.rs`' CLAUDE… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The config.rs bullet is line 332 (a single long line). Let me confirm what sits between it and line 347 so I append to the right line:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The config.rs bullet spans 332–346. I'll append after line 346. Now writing the entry — covering all six required elements, with the measured table and receipt I generated myself:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (38 lines) ✓ (29ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Block inserted. Let me verify each symbol is present and the bullet structure is intact:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for s in whitespace_padded_confi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (18ms)
+ ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.7s (2 ✓)
+
+All symbols present, insertion correctly placed inside the config.rs bullet. Let me confirm the context.rs bullet still follows intact, then run the full verification:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (23ms)
+ ✓ (17.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.4s (2 ✓)
+
+Structure correct, clippy clean. Now build, test, and the module-size gate:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ec… ✗ (2m 0s)
+    │ Command timed out after 120s
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Test suite exceeds the default timeout. Re-running with a longer budget:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ec…

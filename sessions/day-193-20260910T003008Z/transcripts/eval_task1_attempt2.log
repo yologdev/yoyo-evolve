@@ -1,0 +1,61 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.6s (2 ✓)
+
+Only one file changed — the task explicitly listed CLAUDE.md in Files: and has a ## Docs section. Let me verify.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== files in commit ===" &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/coun… ✓ (11ms)
+ ✓ (73ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.9s (2 ✓)
+
+Doc gap confirmed. One focused check on the new variables' scope (a real NameError risk if the print sits outside the branch that defines them):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (25ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Scope check clean — all three sites sit at indent 8 inside the same if args.max_runs is not None: branch, so no NameError risk. The code half is sound; the documentation half is entirely absent.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 21s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+## Summary
+
+The code half is genuinely good. I checked it rather than assuming:
+
+• `classify_parent_lockfile maps True/False/None` to the three required states and never folds them — the docstring states why (a failed lookup is not evidence of absence).
+• `commit_parent_lockfile is the injected I/O half; every failure path (non-zero exit, exception, unreachable parent) returns UNKNOWN`.
+• `order_by_parent_lockfile is a **preference, never an exclusion** — keep + rest keeps every row, UNKNOWN` and unenumerated values sort with the skips, order is stable within group.
+• All five required guards are present, with the anti-vacuous all-ABSENT row asserted first and the all-TRACKED near-miss guard using a full list == rather than a membership check.
+• `--test → ALL PASSED`, exit 0, still 6 run verdicts — no verdict state added, as required.
+• Wiring is real and scoped correctly: I walked the indentation and confirmed _sig_n/lock_counts are defined (line 3564) and consumed (line 3624) at the same indent under the same if args.max_runs is not None: branch, so the new print cannot raise NameError. Every new definition has a consumer in this diff.
+
+What fails is the documentation half, and it is not a nitpick.
+
+git show --name-only HEAD lists only scripts/counterfactual_green.py. git status --porcelain is empty, so nothing is sitting unstaged. grep for order_by_parent_lockfile, classify_parent_lockfile and LOCKFILE_TRACKED in CLAUDE.md returns 0.
+
+The task listed CLAUDE.md in its Files: line and specified precisely what to write there — the three states, the injected resolver, preference-not-exclusion, why UNKNOWN sorts conservatively, the measured KEEP/SKIP split, the positive-control red width, both stated limits, and the Day-193 prose predictor marked superseded rather than erased.
+
+Behaviour did change: the selector reorders the signal-bearing tier and prints two new lines on every bounded run. This is exactly the shape CLAUDE.md itself records under the #864 payments — *"the fifth payment landed its code, its tests and its register edit and updated no CLAUDE.md at all; the sixth's first attempt did exactly the same and was rejected by the evaluator for it"* — and the reason it matters is written in that same entry: cargo test cannot fail for a missing sentence, so the doc half is the half with no gate.
+
+One thing I did not verify, stated rather than implied: the task required capturing --census --src-census before and after and confirming an empty diff. I did not run that check, so I am not claiming the false-denominator property holds — only that the run-verdict count is unchanged, which is a weaker signal.
+
+The remedy is small and mechanical: the code needs no edit, only the CLAUDE.md section the task already scoped.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

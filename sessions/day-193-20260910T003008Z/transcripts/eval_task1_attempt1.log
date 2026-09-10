@@ -1,0 +1,68 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.3s (2 ✓)
+
+The diff touches only one file — the task listed two. Let me verify.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -20 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "LOCKFILE_TRACKED\|order… ✓ (5ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.9s (2 ✓)
+
+CLAUDE.md was not touched, though the task lists it in Files: and has a dedicated ## Docs section. Let me verify the code half before finalizing.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== definitions ===" && gr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/coun… ✓ (6ms)
+ ✓ (72ms)
+  2 tools completed in 73ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Code half verified: all three new definitions have real consumers in main() (lines 3564–3565, 3624–3629), not just tests; self-tests pass; run-verdict count is still 6, so no verdict state was added. But CLAUDE.md is untouched.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== does CLAUDE.md still a… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: CLAUDE.md still asserts "**Deliberately NOT wired into the selector** — that is an instrument decision for a later session" — now a false authoritative claim in the file re-injected as context every session. Writing the verdict.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 20s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+The code half is genuinely good and I want to be clear about that:
+
+• All three states exist and are never folded; the docstring gives the reason (a failed lookup is not evidence of absence).
+• The resolver is properly injected — commit_parent_lockfile returns UNKNOWN on non-zero exit, unreachable parent, and any exception, so the self-tests touch no git.
+• `order_by_parent_lockfile` is a real preference: `keep + rest`, stable within group, nothing dropped, with an unenumerated answer counted as `UNKNOWN` and sorted conservatively.
+• Placement is thoughtfully narrow — confined to todo[:_sig_n] with a comment explaining that applying it to the merged list would falsify the tiers: claim and break merge_src_test_only's ordered[:signal_bearing] slice.
+• Guards cover all five required directions plus the classifier table; anti-vacuous is asserted first; the byte-identity guard uses a full list ==.
+• `--test prints ALL PASSED (self-tests over 6 run verdicts + census fold)` — the run-verdict count did not move, so no verdict state was added.
+• Every new definition has a consumer inside main(), not only in tests.
+
+What fails it is the doc half. CLAUDE.md was named in the task's Files: line and given its own ## Docs step listing exactly what to record, and the commit does not touch it. The consequence is not cosmetic: that section still reads
+
+│ **Deliberately NOT wired into the selector** — that is an instrument decision for a later session, and this was a reading session; the constraint held.
+
+which this diff makes false, in the file re-injected as authoritative context every session. That is precisely the shape CLAUDE.md itself records twice about the #864 payments — "the docs went stale by TWO payments … the doc half is the half with no gate" — where cargo test cannot fail for a false sentence and the evaluator was the only reader that caught it. Same mechanism here: build and tests pass over a write-up that now contradicts the code.
+
+The remedy is small and mechanical — the classifier and its three states, the injected resolver, preference-not-exclusion, why UNKNOWN sorts conservatively, the measured KEEP/SKIP split, the positive-control receipt with its red width, and both stated limits (this changes what is sampled, not what is answerable; a tracked Cargo.lock is not a promise of a green baseline), with the Day-193 prose predictor marked superseded — it now has a consumer rather than erased.
+
+One thing I could not verify and am not claiming either way: the task's Step 0 probe, the live KEEP/SKIP run, and the positive control are all reported nowhere in the diff, so whether they were run is not evidence I have. That did not drive the verdict — the missing CLAUDE.md update did.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,63 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- CLAUDE.md | h… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.5s (2 ✓)
+
+CLAUDE.md was not touched. Let me confirm and check the functional side.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib whitespace 2>&1… ✓ (8ms)
+ ✓ (288ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.9s (2 ✓)
+
+Confirmed: CLAUDE.md is entirely absent from the diff despite being listed in Files: and having a dedicated ## Docs step. Let me verify the feature works end-to-end.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf wstest && mkdir wstest && cd wstest && cat… (8 lines) ✓ (18ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have decisive evidence. Writing the verdict.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 19s)
+
+Verdict: FAIL — written to session_plan/eval_task_2.md.
+
+## Summary
+
+The implementation is genuinely good. I read the whole src/config.rs addition and it hits the task's design points squarely:
+
+• `whitespace_padded_config_values` is pure over values the two *existing* MCP parsers already produced — no third parser, so "what is an MCP value" keeps one statement per door.
+• `config_whitespace_warning returns None for an empty slice (the entire regression surface), asserted with assert_eq!` in the near-miss guard.
+• `PaddingEnd keeps leading / trailing / both / all-whitespace / empty as **separate facts** — the empty-value row is None` rather than collapsing into padding, which is the distinction the task specifically asked not to fold.
+• One emission point in parse_mcp_and_openapi_config, covering both MCP doors, with a call-site comment saying outright it does not join the trust boundary and why.
+• Warn-never-mutate-never-refuse is argued in the doc comment, not just the task file.
+• Anti-vacuous assertions come first; the glyph-free test carries the reverse check.
+
+## Why it still fails
+
+CLAUDE.md was never touched. git diff HEAD~1 --name-only returns exactly three files, and grepping CLAUDE.md for the three new symbols returns 0.
+
+That is not a style nit here. The task listed CLAUDE.md in Files: and gave it a dedicated ## Docs step enumerating six required contents — the measured Step-0 table, the warn-never-mutate reason, the one-emission-point argument, the positive-control receipt with its red width and green reading, the un-swept siblings, and the stated limit. None of that exists anywhere now. The Step-0 measurement in particular — that a quoted "npx " keeps its padding while an unquoted one is trimmed, so the safe-looking idiom is the dangerous one — survives only inside a doc comment on one function, not in the file re-injected as context every session.
+
+This is the precise shape CLAUDE.md itself records twice: "`cargo test` cannot fail for a false sentence… none of them answers **is the prose consistent with the code**", and the #864 entry where the docs went stale by two whole payments because the code half is gated and the write-up half is not.
+
+## Cleanup note (not a fail reason)
+
+src/cli.rs was edited but is not in the task's Files: list. That is defensible — it is the only production site holding both MCP sources — but it is worth naming in the write-up rather than leaving silent, since it is the one file where the "one emission point" claim is actually verifiable.
+
+The remedy is small: the code can stand as-is, and a CLAUDE.md src/config.rs note carrying the measured table and the receipt would make this a clean pass.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
