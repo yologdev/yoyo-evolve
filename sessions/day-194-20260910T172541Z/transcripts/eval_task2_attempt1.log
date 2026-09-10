@@ -1,0 +1,54 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- tests/module_… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.8s (2 ✓)
+
+The diff touches only src/hooks.rs — but the task named two files and required a CLAUDE.md update. Let me verify.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test mo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "deliberately out of sco… ✓ (8ms)
+ ✓ (219ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.4s (2 ✓)
+
+Register drift is unpaid (gate still warns 7022 vs 6997) and CLAUDE.md is untouched. One focused check on the now-false doc claim:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "#892 STAYS OPEN[^*]*" C… ✓ (7ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have all the evidence needed. Confirmed: the commit touches only `src/hooks.rs` (1 file, 224 insertions), while the task named Files: src/hooks.rs, tests/module_size.rs and required a CLAUDE.md update.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 16s)
+
+Verdict: FAIL
+
+The warning mechanism itself is good work — I have no complaint with the code:
+
+• `malformed_hook_key_warning` is pure, deliberately narrow (exact `pre`/`post` only, so `preflight`/`timeout`/`Pre` stay silent rather than crying wolf on a config key it doesn't know), warns rather than refuses with the reasoning at the code, and states its own limit in the doc comment.
+• Its consumer lands in the same diff at the continue site, signature unchanged as asked.
+• Guards are thorough: anti-vacuous asserted first, near-miss derived from the real BUILTIN_TOOL_NAMES const across both plain values, reverse anti-vacuous on the glyph test, the two #892 warnings asserted distinct, and a behaviour test pinning that a malformed key eats no neighbours.
+
+What fails it is that two named deliverables never landed:
+
+1. **Register payment unpaid.** The task's `Files:` line named `tests/module_size.rs` and gave it a whole section ending *"this is a real step, not bookkeeping."* `cargo test --test module_size still prints src/cli.rs grew to 7022 lines, 25 past its recorded 6997. The commit is 1 file changed`.
+
+2. **CLAUDE.md untouched, and now actively false.** The `hooks.rs` bullet still says `#892 STAYS OPEN with a named remainder` and calls the malformed-key arm *"deliberately out of scope"* — a true record of Day 192 and a false description of the code as of this commit. That is precisely the STATUS-word decay the task asked to mark superseded, sitting in the file re-injected as authoritative context every session. The repo's own history records this exact rejection twice (the #864 payment and the #870 slice both landed code plus tests with no CLAUDE.md and were sent back).
+
+The remedy is small and mechanical: paste ("src/cli.rs", 7022) from what the gate itself printed (run cargo fmt first so the number isn't stale in the shrinking direction), and update the hooks.rs bullet to record the third arm as paid, the warn-not-refuse reasoning, the positive-control width and the stated limit — so Phase C can close #892 with all three arms genuinely paid.
+
+Verdict written to session_plan/eval_task_2.md. No code modified.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

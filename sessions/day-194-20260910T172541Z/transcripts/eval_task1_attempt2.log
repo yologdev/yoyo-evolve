@@ -1,0 +1,87 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "split" src/safety.rs | … ✓ (5ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+The mechanism claim checks out at src/safety.rs:2028. Let me verify the new tests actually exercise the real detector.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/safety.rs && grep -n '… ✓ (4ms)
+ ✓ (183ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.3s (2 ✓)
+
+All 3 tests pass, and the register number 4557 matches wc -l exactly (pasted, not hand-typed). Let me verify one specific factual claim in the CLAUDE.md table.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (4 lines) ✓ (156ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough evidence. Let me confirm the diff is purely additive (no pre-existing test edited) and the tree is clean.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- safety.rs hunks (addit… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: single additive hunk, 0 deleted lines in src/safety.rs (Day-182 rows unedited as required), clean working tree (no leftover NEUTERED markers).
+
+Evidence summary:
+
+| Check | Finding |
+|---|---|
+| Mechanism claim | src/safety.rs:2028 = split([';', '\|', '&', '\n', '(', ')', '']) — split **does** include (/)/backtick; the =-skip is a *separate* !t.contains('=') in tokens.find(...)`. Correction is factually right. |
+| Left-to-right claim | for segment in … { … return Some(…) } — early return confirms touch beats git push in the A=1 B=$(…) git push row, matching the CLAUDE.md table. |
+| Tests | 3/3 pass, driven through the real detect_write_command / analyze_bash_command (emission point, not a helper). |
+| Register number | wc -l src/safety.rs = 4557, register = 4557 — pasted, not hand-typed. |
+| Anti-vacuous | assert!(contains "$(" …) and assert!(twin.is_some()) come before the assert_eq! in both write-asserting tests. |
+| Near-miss guards | All 6 task-specified rows present (+1 extra backtick-read row), asserted None on both classifiers. |
+
+The write-up is honest in the two places it would have been easy to overclaim: it labels the near-miss guard a boundary pin rather than evidence (Day-191 rule), and it reports the positive-control width as no pre-existing test moved rather than claiming broader coverage.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 17s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The verdict file is written. Let me confirm it's in place and correctly formatted, then stop.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== verdict file ===" && h… ✓ (6ms)
+
+Evaluation complete. Verdict written to session_plan/eval_task_1.md — all 4 Checked: lines present, no angle-bracket placeholders remaining.
+
+## Verdict: PASS
+
+What the task asked for: measure first, and if the substitution-prefix shape is already caught, ship the guard (not a fix), because nothing enforced the property.
+
+What I verified independently rather than taking on faith:
+
+1. **The central mechanism claim is factually correct.** The write-up's whole point is a correction — that the Day-182 `=`-skip is *not* what catches `REPORTTIME=$(touch /tmp/x) ls`. Reading `src/safety.rs:2026-2045 confirms two genuinely separate mechanisms: the split [';','|','&','\n','(',')',''] runs before the command-word search, and the =-skip is a distinct !t.contains('=') filter inside tokens.find(...). The correction is measured, not asserted.
+
+2. **The one specific factual claim in the docs table checks out.** The `A=1 B=$(touch /tmp/x) git push` row claims `touch` is reported rather than `git push` — confirmed by the early `return Some(...)` inside the left-to-right segment loop. Notably the test asserts only the weaker "names a write", which is the honest choice.
+
+3. **Tests are real, not vacuous.** 3/3 pass against the real detector at the emission point, with anti-vacuous assertions placed first, so a broken detector can't pass by both sides agreeing on None.
+
+4. **The register number was pasted, not typed.** wc -l = 4557, register = 4557 — exactly the discipline #884 was reverted for missing.
+
+5. **No pre-existing assertion was adjusted to fit. The `src/safety.rs` diff is one hunk with 0** deleted lines, so the Day-182 literal-prefix rows are genuinely untouched.
+
+Two things I'd flag as strengths rather than defects, since they're the places overclaiming would have been easy: the write-up labels its own near-miss guard a boundary pin that was "structurally incapable of failing" under the control (rather than counting it as evidence), and it reports the red width as no pre-existing test moved rather than inflating the coverage claim. Both are the honest reading.
+
+No cleanup feedback — working tree is clean, no stray files, no leftover NEUTERED markers.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

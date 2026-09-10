@@ -1,0 +1,183 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code in src/hooks.rs to reproduce the defect.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_hooks_from_config…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unknown_hook_tool_warni… ✓ (9ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+Now let me read the existing unknown_hook_tool_warning shape I need to mirror, and reproduce the defect.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '470,560p' src/hooks.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1610,1720p' src/hooks.rs ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.1s (2 ✓)
+
+Structurally rest = "pre" matches neither "pre." nor "post.". Let me reproduce it by running rather than inferring, as step 0 requires.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (18 lines) ✓ (84ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check what state the working tree is in before continuing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, Task 1 committed. Reproduction confirmed: hooks.pre → rest = "pre" → matches neither "pre." nor "post." → bare continue, silent. Now the fix — mirroring the unknown_hook_tool_warning shape that shipped one session ago.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (7 → 55 lines)
+            msg.push_str(&format!(" Did you mean `{nearest}`?"));
+        }
+        Some(msg)
+  + }
+  + 
+  + /// Pure: warn when a `hooks.*` key names a phase but no tool, so it can never
+  + /// fire (#892's third arm).
+  + ///
+  + /// `rest` is the key with its `hooks.` prefix already stripped — exactly what
+  + /// `parse_hooks_from_config`'s phase split reads. A key of `hooks.pre` matches
+  + /// neither `pre.` nor `post.`, falls to a bare `continue`, and used to emit
+  + /// nothing at all. That is the quietest failure in this file: the hook never
+  + /// fires, prints nothing, and a user cannot tell it from a hook that ran and
+  + /// did nothing.
+  + ///
+  + /// WARN, never refuse. Refusing would break a config that starts a session
+  + /// today, which is the same call the unreachable-tool-name arm above made and
+  + /// it applies verbatim here.
+  + ///
+  + /// Deliberately NARROW, and the reason is the cry-wolf direction rather than
+  ... (34 more lines)
+ ✓ (16.4s)
+            msg.push_str(&format!(" Did you mean `{nearest}`?"));
+        }
+        Some(msg)
+  + }
+  + 
+  + /// Pure: warn when a `hooks.*` key names a phase but no tool, so it can never
+  + /// fire (#892's third arm).
+  + ///
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The dead-code error is my own "never add a definition without its consumer" rule firing correctly. Wiring the call site now.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (5 → 18 lines)
+            } else if let Some(tool) = rest.strip_prefix("post.") {
+                (HookPhase::Post, tool)
+            } else {
+  +             // #892's third arm: a key with no tool segment (`hooks.pre = "..."`)
+  +             // matches neither prefix and used to fall to this bare `continue` in
+  +             // complete silence. Say so. WARN, never refuse — see the function's
+  +             // doc comment for why, and for why an unrecognised phase stays
+  +             // quiet. Same shape as the unreachable-tool-name warning below: a
+  +             // pure decision, with the two global reads at this call site.
+  +             if let Some(warning) =
+  +                 malformed_hook_key_warning(rest, crate::format::is_plain_output())
+  +             {
+  +                 if !crate::format::is_quiet() {
+  +                     eprintln!("{warning}");
+  +                 }
+  +             }
+                continue; // Invalid format, skip
+            };
+ ✓ (2m 1s)
+            } else if let Some(tool) = rest.strip_prefix("post.") {
+                (HookPhase::Post, tool)
+            } else {
+  +             // #892's third arm: a key with no tool segment (`hooks.pre = "..."`)
+  +             // matches neither prefix and used to fall to this bare `continue` in
+  +             // complete silence. Say so. WARN, never refuse — see the function's
+  +             // doc comment for why, and for why an unrecognised phase stays
+  +             // quiet. Same shape as the unreachable-tool-name warning below: a
+  ... (10 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests. Let me locate the #892 test sections.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^    // --- #892\|neare… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1768,1778p' src/hooks.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests for defect 3, inserted between the defect-1 and defect-2 sections.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (9 → 169 lines)
+                    nearest_builtin(pattern, known),
+                    want,
+                    "nearest_builtin({pattern:?})"
+  +             );
+  +         }
+  +     }
+  + 
+  +     // --- #892 defect 3: a malformed hook key is now audible ------------------
+  + 
+  +     /// ANTI-VACUOUS, and asserted FIRST: a warner that fires on nothing and one
+  +     /// that fires on everything are the same bug wearing opposite signs, so
+  +     /// pin that a genuinely malformed key really does warn and a genuinely
+  +     /// valid one really does not, before asserting any silence below.
+  +     #[test]
+  +     fn malformed_hook_key_warning_is_anti_vacuous() {
+  +         assert!(
+  +             malformed_hook_key_warning("pre", false).is_some(),
+  +             "`hooks.pre` names no tool and must warn, or this guard can never fire"
+  +         );
+  +         assert!(
+  ... (148 more lines)
+ ✓ (2m 2s)
+                    nearest_builtin(pattern, known),
+                    want,
+                    "nearest_builtin({pattern:?})"
+  +             );
+  +         }
+  +     }
+  + 
+  +     // --- #892 defect 3: a malformed hook key is now audible ------------------
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (46.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+55/55 green. Now the positive control, as one atomic mutate → run → restore with the sabotage marked NEUTERED.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/hooks… (13 lines) ✓ (27.9s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control clean. Width (Day 190): exactly 4 red, all new, zero pre-existing tests moved. Now the full suite and the register gate.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✗ (2m 0s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (229ms)
+  2 tools completed in 2m 6s (1 ✓, 1 ✗)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
