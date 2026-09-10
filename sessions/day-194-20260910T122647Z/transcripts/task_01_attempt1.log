@@ -1,0 +1,265 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the existing test and the gate to get the before-state in hand.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "exact_zero_cancellation…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,680p' src/commands_r… ✓ (7ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+The existing test isn't in the sibling. Let me locate it and see the full scoring block.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "exact_zero_cancellatio…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '555,630p' src/commands_r… ✓ (3ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+Now let me read the weight constants (verifying signs rather than trusting the task file) and the existing test.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub(crate) const W_\|^…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1740,1823p' src/commands… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me run the existing test to capture the before-state, and check module sizes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo exact_zero…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '28,66p' src/commands_ris… ✓ (3ms)
+ ✓ (141ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+Confirmed: exactly two positive signals (W_NEVER_GRADED, stale_weight) and three negative discounts. Now the surgical change — track the positive sum separately:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (11 → 23 lines)
+        for (path, s) in &stats {
+            let mut score = 0.0;
+  +         // The ENTRY condition is the sum of the POSITIVE signals only; `score`
+  +         // (positives plus the study discounts) is the ORDERING value. They are
+  +         // deliberately two numbers rather than one — see the gate below.
+  +         //
+  +         // Which constants sit on which side, verified by reading them rather
+  +         // than by name (Day 194): positive = `W_NEVER_GRADED` (2.0) and
+  +         // `stale_weight(..)` (in [`W_STALE`, `W_STALE_MAX`], both positive);
+  +         // discounts = `W_RECENTLY_STUDIED` (-1.0), `W_VISITED_UNGRADED` (-0.5),
+  +         // `W_PARTIALLY_STUDIED` (-0.75). A fourth signal added later belongs in
+  +         // whichever family its SIGN puts it in, not whichever its name suggests.
+  +         let mut positive_signal = 0.0;
+            let mut reasons = Vec::new();
+    
+            let appearances = s.predicted_count + s.emerging_count;
+  ···
+    
+            if graded_day.is_none() {
+                score += W_NEVER_GRADED;
+  ... (3 more lines)
+ ✓ (15.5s)
+        for (path, s) in &stats {
+            let mut score = 0.0;
+  +         // The ENTRY condition is the sum of the POSITIVE signals only; `score`
+  +         // (positives plus the study discounts) is the ORDERING value. They are
+  +         // deliberately two numbers rather than one — see the gate below.
+  +         //
+  +         // Which constants sit on which side, verified by reading them rather
+  +         // than by name (Day 194): positive = `W_NEVER_GRADED` (2.0) and
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — definition without its consumer. Landing the other two halves now:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 2 lines)
+                score += stale_weight(snapshots_ago);
+  +             positive_signal += stale_weight(snapshots_ago);
+ ✓ (15.4s)
+                score += stale_weight(snapshots_ago);
+  +             positive_signal += stale_weight(snapshots_ago);
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate is the missing consumer. Landing it now:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (9 → 36 lines)
+  -         if score > 0.0 {
+  +         // Gate on the POSITIVE signals; order by the FULL score. Do NOT
+  +         // "simplify" this back to `score > 0.0` (Day 194, #903).
+  +         //
+  +         // Two properties, running in opposite directions, and the single
+  +         // comparison could only ever hold one of them:
+  +         //
+  +         // 1. PRESERVED — a study discount alone can never PUT a file on the
+  +         //    list. The discounts are negative, so a file with no positive
+  +         //    signal still fails this gate. That is Day 179's recorded property
+  +         //    and it is deliberate: being studied is not evidence of blindness.
+  +         //
+  +         // 2. FIXED — a study discount can no longer REMOVE a file that a
+  +         //    positive signal had already earned a place for. `score > 0.0`
+  +         //    could, because two judgment thresholds chosen months apart are
+  +         //    exact negatives: `stale_weight(STALE_SNAPSHOT_GAP)` is exactly
+  +         //    `W_STALE` (0.5, the backward-compatibility anchor) and
+  +         //    `W_VISITED_UNGRADED` is exactly -0.5, so a file stale at
+  +         //    precisely the threshold and named by one ungraded round summed to
+  +         //    exactly 0.0 and VANISHED — one snapshot staler it scored 0.029
+  ... (12 more lines)
+ ✓ (1m 49s)
+  -         if score > 0.0 {
+  +         // Gate on the POSITIVE signals; order by the FULL score. Do NOT
+  +         // "simplify" this back to `score > 0.0` (Day 194, #903).
+  +         //
+  +         // Two properties, running in opposite directions, and the single
+  +         // comparison could only ever hold one of them:
+  +         //
+  +         // 1. PRESERVED — a study discount alone can never PUT a file on the
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy passes now. Let me confirm exactly which test fails — that failure should be the old behaviour-pinning test:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | gre… ✓ (1m 7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly one test fails — the one pinning the old behaviour. Now I invert it in place (not delete it), keeping both anti-vacuous assertions and the near-miss guard:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1748,1770p' src/commands… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now inverting the failing test in place. Let me get its exact doc comment:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1786 && NR<=1806' src/c… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:1788..1808 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.0s (2 ✓)
+
+Now the inversion — doc comment, name, and the flipped assertion:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (20 → 27 lines)
+  -     /// Blind round 95 (day 193) — the `score > 0.0` gate silently DROPS a file
+  -     /// whose signals and discounts cancel exactly, and the cancellation is
+  -     /// reachable rather than theoretical.
+  +     /// A file whose positive signals and study discounts cancel exactly RANKS
+  +     /// LAST — it is no longer deleted from the ranking (day 194, #903).
+        ///
+        /// `stale_weight(STALE_SNAPSHOT_GAP)` returns *exactly* `W_STALE` (0.5) by
+        /// construction — that is the documented backward-compatibility anchor —
+        /// and `W_VISITED_UNGRADED` is *exactly* `-0.5`. So a file that is stale at
+        /// precisely the threshold and was named by one ungraded round sums to
+  -     /// exactly `0.0`, fails `score > 0.0`, and vanishes from the ranking
+  -     /// entirely rather than sorting last.
+  +     /// exactly `0.0`. It still has a REAL positive signal (staleness fired), so
+  +     /// it belongs on the list; the discount now only orders it, never removes
+  +     /// it.
+        ///
+  -     /// **This pins observed behaviour; it does not endorse it.** Whether such a
+  -     /// file *should* vanish or should rank last is a design question about the
+  -     /// ranking that steers my own planner, filed rather than decided here. What
+  -     /// the test buys is that the knife-edge stops being invisible: it exists
+  ... (20 more lines)
+ ✓ (1m 49s)
+  -     /// Blind round 95 (day 193) — the `score > 0.0` gate silently DROPS a file
+  -     /// whose signals and discounts cancel exactly, and the cancellation is
+  -     /// reachable rather than theoretical.
+  +     /// A file whose positive signals and study discounts cancel exactly RANKS
+  +     /// LAST — it is no longer deleted from the ranking (day 194, #903).
+        ///
+        /// `stale_weight(STALE_SNAPSHOT_GAP)` returns *exactly* `W_STALE` (0.5) by
+        /// construction — that is the documented backward-compatibility anchor —
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the assertion itself — flip it to pin the new behaviour:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (9 → 18 lines)
+            let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &visits);
+  -         assert!(
+  -             !ranking.iter().any(|e| e.path == "src/knife.rs"),
+  -             "exact-zero score is dropped by `score > 0.0`, got: {:?}",
+  -             ranking
+  -                 .iter()
+  -                 .map(|e| (&e.path, e.score))
+  -                 .collect::<Vec<_>>()
+  +         let entry = ranking
+  +             .iter()
+  +             .find(|e| e.path == "src/knife.rs")
+  +             .unwrap_or_else(|| {
+  +                 panic!(
+  +                     "exact-zero score must RANK, not vanish — staleness fired, so the \
+  +                      positive signal is real; got: {:?}",
+  +                     ranking
+  +                         .iter()
+  +                         .map(|e| (&e.path, e.score))
+  +                         .collect::<Vec<_>>()
+  +                 )
+  ... (5 more lines)
+ ✓ (2m 1s)
+            let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &visits);
+  -         assert!(
+  -             !ranking.iter().any(|e| e.path == "src/knife.rs"),
+  -             "exact-zero score is dropped by `score > 0.0`, got: {:?}",
+  -             ranking
+  -                 .iter()
+  -                 .map(|e| (&e.path, e.score))
+  -                 .collect::<Vec<_>>()
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me verify that passes, and check the sibling test file's helpers so my new guards match its conventions:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo exact_zero…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/commands_risk… ✓ (5ms)
+ ✓ (170ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.1s (2 ✓)
+
+The inverted test passes. Let me see the sibling's snap helper and the parent's graded helper so my new guards match conventions:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '302,330p' src/commands_r… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have what I need. Now the new guards — with an anti-vacuous companion, since both assert absence:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1015,1030p' src/commands… ✓ (4ms)
+
+Now the new guard module:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (113 lines) ✓ (24.3s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,53 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_safe_mode\|set_safe_… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -20 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== safe_mode set in cli.r… ✓ (6ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== line 1820-1835 ===" &&… ✓ (12ms)
+  5 tools completed in 15.1s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== main.rs 795-825 ===" &… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== cli.rs 2725-2740 (Conf…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_spawn.rs && c… ✓ (5ms)
+ ✓ (190ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== does CLAUDE.md mention… ✓ (8ms)
+  4 tools completed in 39.6s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have all the evidence needed. Writing the verdict.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 18s)
+
+Verdict: FAIL (written to session_plan/eval_task_2.md)
+
+## Summary
+
+The implementation is good — this is a doc omission, not a broken fix.
+
+What I verified as correct:
+
+• **Branch A fired correctly.** Both spawn sites (`handle_spawn`, `handle_spawn_bg`) previously called `crate::cli::load_project_context()` directly; both now route through spawn_project_context().
+• **The seam is genuinely wired — I traced it rather than trusting the doc comment. This was the task's named landmine ("`cli.rs` computes `safe_mode` as a local** … so it may not be readable elsewhere"). It doesn't bite: `cli.rs:2499` computes `restricted || --safe-mode` → `Config.safe_mode` (`:2734`) → `main.rs:809 set_safe_mode(true). So is_safe_mode() is true for **both** flags, matching the parent's if !safe_mode` guard exactly.
+• **Shape 1 was used** (existing `AtomicBool` accessor, no new global), which the task preferred — and `set_safe_mode` is already in `GLOBAL_SETTERS` (`tests/global_state_races.rs:104`), so no #884-class register omission.
+• **Touchpoints complete:** both new fns have real consumers in this diff; register entry 4258 → 4417 matches wc -l exactly; module_size passes 28/28.
+• **Guards are the right shape:** whole-value near-miss guard with awkward bytes, anti-vacuous assertions first, source guard checking *both* directions with runtime-assembled needles, no CWD moves, no cargo spawns.
+
+Why it fails:
+
+Behaviour changed on a user-visible confinement hatch, and the commit touched only src/commands_spawn.rs + tests/module_size.rs. git show HEAD -- CLAUDE.md is empty; grep -c "spawn_project_context" CLAUDE.md → 0. The task had explicit ## Docs and ## Stated limit for the write-up sections; neither landed.
+
+This repo's own CLAUDE.md records the precedent in the #864 entry: a payment that "landed its code, its tests and its register edit and updated **no** CLAUDE.md at all", whose successor "was rejected by the evaluator for it" — the identical shape.
+
+The remedy is one file: add the measured reading, the branch taken, and the "this does not close #902" limit to the commands_spawn.rs bullet. No code needs to change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

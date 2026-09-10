@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_safe_mode\|set_safe_… ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_safe_mode" tests/gl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_spawn.rs; ech… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '805,812p' src/main.rs; e… ✓ (4ms)
+  5 tools completed in 16.9s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have all the evidence needed. Let me write the verdict.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 30s)
+
+Verdict: PASS
+
+The diff implements exactly what the task asked, and every claim in the write-up checked out against the source:
+
+The measurement was real, not asserted. I read cli.rs:2499-2500 myself — the parent's guard is verbatim what the doc claims — and the diff shows both spawn sites previously calling crate::cli::load_project_context() outside it. Branch A was the correct branch.
+
+The seam is traced, not trusted by name. The task flagged the risk that safe_mode is a local in cli.rs and might be unreachable. It flows cli.rs:2499 → Config.safe_mode (:2734) → main.rs:809 set_safe_mode(true) → is_safe_mode(), so --restricted implies safe mode and the worker's predicate matches the parent's exactly.
+
+Shape 1 was taken and the two landmines were avoided. SAFE_MODE is an AtomicBool (cli_config.rs:88), not a OnceLock; set_safe_mode was already at tests/global_state_races.rs:104, so the #884 register-omission class could not arise. That's why src/cli.rs and tests/global_state_races.rs appear in the task's Files: line but not in the diff — correct, and explained in the write-up.
+
+**forgotten_touchpoints is clean.** Both new functions have consumers in this diff, `grep` confirms no raw loader call survives outside the seam, and `wc -l src/commands_spawn.rs` = 4417, matching the pasted register line exactly.
+
+Docs landed. The CLAUDE.md bullet carries the measured reading, the positive-control width (1 red test, named, no pre-existing test moving), the Day-191 green-reading naming both survivors as boundary pins, and the stated limit that this does not close #902.
+
+One observation worth recording rather than failing on: the write-up's own "Process note" says this task landed once before with no CLAUDE.md update and was rejected for it. That correction is now present and is itself documented — which is the right handling.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

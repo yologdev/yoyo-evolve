@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying my source code and recent history.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs 2…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 ✓ (3ms)
+ ✓ (30ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -160 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (5ms)
+ ✓ (498ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (8ms)
+ ✓ (389ms)
+  6 tools completed in 11.6s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: I have build status, git log, journal, backlog, and CI history. Let me run a few fast probes, then write the draft early.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== risk epistemic ===" &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/mod.rs src/gasp… ✓ (8ms)
+ ✓ (757ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.9s (2 ✓)
+
+Now writing the draft early, before research.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/assessment.md (86 lines) ✓ (1m 53s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Draft on disk. Now committing it and starting research.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if [ -n "$YOPEDIA_AGENT_TOKEN" ]… ✓ (1ms)
+ ✓ (4ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Draft is on disk (session_plan/ is gitignored — the harness reads it from disk, so the commit is a no-op by design). Now the research step.
+  ▶ web search 'Claude Code Cursor Aider coding agent new features September…' ✓ (2.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Rich results — several directly transferred classes. Two cheap probes on the ones I can check now:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== SystemTime used for DU…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== is there an /mcp comma… ✓ (18ms)
+ ✓ (18ms)
+  2 tools completed in 19ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two probe results in. Finalizing the assessment now.
+  ▶ edit session_plan/assessment.md (3 → 15 lines)
+    ## Capability Gaps
+    
+  - *(filled in during research step — see Research Findings)*
+  + **Measured this session (not inferred) — the fifth audience for a failed MCP connect:**
+  + Claude Code 2.1.25x shipped *"Added HTTP status and error text to `claude mcp list` and `/mcp` when a server fails to connect."* I have the route (`dispatch.rs:267` → `CommandRoute::Mcp`) and I have the record (`EXTERNAL_SERVER_REPORT`, never drained, populated by all three `Err` arms). But `grep` for `external_server_report` returns **exactly one consumer: `src/main.rs:182`** — the `--output-format json` path (#895). So the command a user runs *specifically to ask "what is the state of my M… [yoyo: 50 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + That is **"two doors, one policy, one deaf" at instance #11**, and it is the sharpest instance yet, because I have now served this one fact to **four** audiences — user stderr at the pre-flight skip (#841), user stderr at connect failure (#842 + the Day-192 `{e}` guard), the model's own turn (Day 181 `external_tool_failure_note`), and a machine-readable script (#895 `external_servers`) — and never to the **interactive command whose entire purpose is answering that question**. My own archive … [yoyo: 216 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Structural gaps vs Claude Code (large, not this-session-sized):**
+  + - **Sandboxing.** They ship `sandbox.network.strictAllowlist` (deny non-allowlisted hosts for sandboxed commands without prompting). I have `--restricted`, `--read`, `dir_restrictions` and `permissions` — all of which I say plainly are *narrowings, not a sandbox*. There is no process/network confinement anywhere in me.
+  + - **Plugins.** `--plugin-dir` pointing at a *folder*, with children hot-added/removed at runtime. I have skills, which is the adjacent idea, with no marketplace and no runtime reload.
+  + - **Background/teammate agents.** `/code-review` as a background subagent so review work never fills the conversation; agent teammates with their own resume/prompt-cache lifecycle. I have `/spawn --parallel` with worktree isolation and replay manifests, which is closer than it looks, but nothing that keeps a long-running agent *out of* the main context.
+  + - **Accessibility depth.** Their `--ax-screen-reader` announces deleted text per word/line, moves the terminal cursor to the focused row for magnifiers, and echoes only the typed character. My `is_plain_output()` is a glyph/animation switch — correct as far as it goes, and roughly one tenth of the surface.
+  + - **Effort/model session scoping.** `s` in `/effort` for session-only changes, `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` to override every subagent's model. My `--read-only-subagents` (Day 193) is session-wide by the same constraint (`SubAgentTool::execute` is yoagent's, so a per-dispatch argument needs a schema I do not own) — the *same* limitation, named on #881.
+  + 
+  + **Where I am at parity or ahead**, stated because the gap list alone is misleading: `-p` dropping a produced answer on a mid-stream error (Day 192 `fatal_handoff`), `mcp_server_errors` in headless JSON (Day 192 #895), untrusted-folder gating of agent-authored config (Day 192 #897), hidden-whitespace MCP config warnings (Day 193), the context-overflow retry loop (Day 194 — measured absent, guard added), and nested subagents at depth 3. Six transferred classes in the last three sessions, five of… [yoyo: 41 more bytes elided — diff lines are capped at 500 bytes]
+  ▶ edit session_plan/assessment.md (3 → 12 lines)
+    ## Research Findings
+    
+  - *(filled in during research step)*
+  + **yopedia:** `YOPEDIA_AGENT_TOKEN` is set, `YOPEDIA_EVOLVE_VAULT_ID` is **not**, so ingest routes nowhere for this loop and was skipped per the skill's own rule. Recording that plainly rather than silently — an unset key is a real state, and "skipped because unconfigured" must not read as "nothing was worth keeping".
+  + 
+  + **Competitor changelog mining (Claude Code 2.1.25x–2.1.266)** — the highest-yield source I have, and the yield this time is mostly *confirmation*, which is its own result:
+  + 
+  + 1. **Context-overflow retry loop** — *"Fixed a retry loop that re-sent identical doomed requests after a context-overflow error **with a large thinking budget**"*. I probed this last session and measured it absent. **The bolded qualifier is a condition I did not test.** My probe established that overflow is classified into its own variant ahead of fatal/retriable and that the one retrying arm compacts first; it said nothing about whether a large thinking budget changes what `compact_agent` can… [yoyo: 80 more bytes elided — diff lines are capped at 500 bytes]
+  + 2. **Monotonic clock** — *"Fixed rare negative or incorrect turn duration measurements after a system clock adjustment by timing turns with a monotonic clock."* **Probed and the class does not reproduce.** All 13 `SystemTime::now()` sites in `src/` are `duration_since(UNIX_EPOCH)` — producing a *timestamp*, not measuring an *elapsed* duration. The one true wall-clock duration is `commands_spawn.rs:2190/2206` (`now.duration_since(file_mtime)`, a file-age computation), and it already handles t… [yoyo: 300 more bytes elided — diff lines are capped at 500 bytes]
+  + 3. **The `/mcp` reader gap** — see Capability Gaps. This is the one concrete, small, this-session-sized finding.
+  + 4. Other classes not yet checked against my tree, listed for the planner rather than claimed: `/context` reporting stale pre-compact usage after a compaction; prompt-history entries dropped or duplicated when history writes race or fail; a tool-executor error silently dropped; an unpaired `tool_use` block left in the transcript when a tool aborts mid-response.
+  + 
+  + **The meta-observation worth acting on:** three of the last four sessions have been *probes of a transferred class where the bug was absent*, and each produced a guard rather than a fix. That is a genuinely good pattern — Day 192's lesson is that correct-but-unenforced is invisible to every alarm I own — but it has a ceiling: it can only ever harden behaviour I already have. The `/mcp` finding is the opposite shape (a capability I *lack*, found by asking who reads a value rather than who wri… [yoyo: 85 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 19s)
+    ## Capability Gaps
+    
+  - *(filled in during research step — see Research Findings)*
+  + **Measured this session (not inferred) — the fifth audience for a failed MCP connect:**
+  + Claude Code 2.1.25x shipped *"Added HTTP status and error text to `claude mcp list` and `/mcp` when a server fails to connect."* I have the route (`dispatch.rs:267` → `CommandRoute::Mcp`) and I have the record (`EXTERNAL_SERVER_REPORT`, never drained, populated by all three `Err` arms). But `grep` for `external_server_report` returns **exactly one consumer: `src/main.rs:182`** — the `--output-format json` path (#895). So the command a user runs *specifically to ask "what is the state of my M… [yoyo: 50 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + That is **"two doors, one policy, one deaf" at instance #11**, and it is the sharpest instance yet, because I have now served this one fact to **four** audiences — user stderr at the pre-flight skip (#841), user stderr at connect failure (#842 + the Day-192 `{e}` guard), the model's own turn (Day 181 `external_tool_failure_note`), and a machine-readable script (#895 `external_servers`) — and never to the **interactive command whose entire purpose is answering that question**. My own archive … [yoyo: 216 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  ... (8 more lines)
+ ✓ (2m 37s)
+    ## Research Findings
+    
+  - *(filled in during research step)*
+  + **yopedia:** `YOPEDIA_AGENT_TOKEN` is set, `YOPEDIA_EVOLVE_VAULT_ID` is **not**, so ingest routes nowhere for this loop and was skipped per the skill's own rule. Recording that plainly rather than silently — an unset key is a real state, and "skipped because unconfigured" must not read as "nothing was worth keeping".
+  + 
+  + **Competitor changelog mining (Claude Code 2.1.25x–2.1.266)** — the highest-yield source I have, and the yield this time is mostly *confirmation*, which is its own result:
+  + 
+  + 1. **Context-overflow retry loop** — *"Fixed a retry loop that re-sent identical doomed requests after a context-overflow error **with a large thinking budget**"*. I probed this last session and measured it absent. **The bolded qualifier is a condition I did not test.** My probe established that overflow is classified into its own variant ahead of fatal/retriable and that the one retrying arm compacts first; it said nothing about whether a large thinking budget changes what `compact_agent` can… [yoyo: 80 more bytes elided — diff lines are capped at 500 bytes]
+  ... (5 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l session_plan/assessment.md…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.… ✓ (4ms)
+ ✓ (4ms)
+  4 tools completed in 2m 45s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Assessment complete and on disk at session_plan/assessment.md (95 lines, all 9 required sections). The commit is a no-op by design — session_plan/ is gitignored, and the harness reads the file from disk.
+
+## What I found
+
+Health: Ten consecutive 2/2 sessions, zero reverts in 14 days, all five recent evolve.yml runs green. Provider health clean, usage records 10/10. The CI errors in the trajectory window are 9 days old and correctly labelled CI has gone green since — the Day-178 probe working as built.
+
+The one concrete, session-sized finding — measured, not inferred. Claude Code just shipped "HTTP status and error text to `claude mcp list` and `/mcp` when a server fails to connect." I have the route (dispatch.rs:267) and I have the record (EXTERNAL_SERVER_REPORT, never drained). But grep external_server_report returns exactly one consumer: `src/main.rs:182`, the JSON path. So I have served this one fact to four audiences — user stderr twice, the model's own turn, a machine-readable script — and never to the interactive command whose entire purpose is answering that question. That's instance #11 of "two doors, one policy, one deaf," and my own archive predicted it: my sweep unit is the call site, so I enumerate writers and never readers. #895's write-up says exactly that while adding a fifth writer and not checking /mcp.
+
+A null worth keeping. Their monotonic-clock fix doesn't reproduce here: all 13 SystemTime::now() sites produce timestamps via duration_since(UNIX_EPOCH), not elapsed durations; the single wall-clock duration (commands_spawn.rs:2190, file age) already handles the backwards case with .ok(). Recorded so a later session doesn't re-derive it.
+
+A residue on work I called done. Their overflow-retry fix says "with a large thinking budget" — a condition last session's probe never tested. My measurement established the classification path and the compact-before-retry ordering; it said nothing about whether a large thinking budget changes what compaction can free.
+
+Honest note: YOPEDIA_EVOLVE_VAULT_ID is unset, so ingest routes nowhere and was skipped. Said plainly rather than silently — "skipped because unconfigured" must not read as "nothing was worth keeping."
+
+The pattern I flagged for the planner: three of the last four sessions were probes of a transferred class where the bug was absent, each producing a guard rather than a fix. Good work, with a ceiling — it can only harden behaviour I already have. The /mcp gap is the opposite shape, found by asking who reads a value rather than who writes it.
+
+Stopping here — no task files, no implementation.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,225 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by measuring what actually happens — reading the two spawn call sites and the safe-mode branch in cli.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "load_project_context" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe_mode\|safe-mode" s… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+safe_mode appears to land on the Config at :2734. Let me read both sites carefully.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2485,2520p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2725,2745p' src/cli.rs &… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+There's already a set_safe_mode/is_safe_mode accessor. Let me read it and the two spawn call sites.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '78,100p' src/cli_config.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '795,825p' src/commands_s… ✓ (5ms)
+ ✓ (12ms)
+  2 tools completed in 12ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 is answered: it leaks. Let me confirm the two remaining facts — that set_safe_mode is actually called at startup, and where Day 193's disclosure note is emitted.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '803,814p' src/main.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_spawn\b\|fn h… ✓ (5ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.4s (2 ✓)
+
+Measurement complete — branch A fires, and the leak is real:
+
+• `cli.rs:2499-2500 — parent's load is guarded by if !safe_mode`
+• `commands_spawn.rs:810 / :961 — crate::cli::load_project_context()` with no guard
+• `grep is_safe_mode src/commands_spawn.rs` → 0 hits
+
+Good news for scope: SAFE_MODE is already an AtomicBool with is_safe_mode(), already set at main.rs:809, and set_safe_mode is already in GLOBAL_SETTERS. No new global needed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn spawn_context_prompt… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '463,500p' src/commands_s… ✓ (3ms)
+  2 tools completed in 2.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the fix. I'll insert the seam above spawn_context_prompt, using the apply_effort_hint/apply_effort_hint_with split so the global read sits in a thin wrapper at one site.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (1 → 47 lines)
+  + /// Project context for a spawned worker, honouring the parent's `--safe-mode`.
+  + ///
+  + /// `--safe-mode`'s promise is "disable all project customizations", and
+  + /// `cli.rs:2500` guards the **parent's** `load_project_context()` behind exactly
+  + /// that predicate. Both spawn call sites called the loader *directly*, outside
+  + /// that branch, so a confined parent dispatched an **unconfined** worker — the
+  + /// "two doors, one policy, one deaf" shape this repo has now shipped eleven
+  + /// times, and it mattered because Day 193's `project_instruction_note` names
+  + /// `--safe-mode` to the user as the hatch. Naming a hatch that only reaches two
+  + /// of three doors is a confident wrong claim, which is worse than none (#710).
+  + ///
+  + /// **Direction:** skipping the load is a **narrowing**, and it is exactly what
+  + /// the parent already got, so it can only ever confine more. It must never
+  + /// become a widening.
+  + ///
+  + /// **The loader is called LAZILY, and that is a behavioural claim rather than an
+  + /// optimisation:** `load_project_context` reads the filesystem and, since Day
+  + /// 193, emits the `project_instruction_note` disclosure to stderr — so a
+  + /// `--safe-mode` run must not announce instruction files it is deliberately not
+  + /// loading. Pinned by a call-counting stub rather than assumed.
+  ... (27 more lines)
+ ✓ (16.0s)
+  + /// Project context for a spawned worker, honouring the parent's `--safe-mode`.
+  + ///
+  + /// `--safe-mode`'s promise is "disable all project customizations", and
+  + /// `cli.rs:2500` guards the **parent's** `load_project_context()` behind exactly
+  + /// that predicate. Both spawn call sites called the loader *directly*, outside
+  + /// that branch, so a confined parent dispatched an **unconfined** worker — the
+  + /// "two doors, one policy, one deaf" shape this repo has now shipped eleven
+  + /// times, and it mattered because Day 193's `project_instruction_note` names
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That's the never-a-definition-without-its-consumer rule firing exactly as documented. Wiring both call sites now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "crate::cli::load_projec… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (2 → 3 lines)
+  -     // Load project context for the subagent
+  -     let project_context = crate::cli::load_project_context();
+  +     // Load project context for the subagent, honouring the parent's --safe-mode
+  +     // (#902 slice): a confined parent must not dispatch an unconfined worker.
+  +     let project_context = spawn_project_context();
+ ✓ (2m 1s)
+  -     // Load project context for the subagent
+  -     let project_context = crate::cli::load_project_context();
+  +     // Load project context for the subagent, honouring the parent's --safe-mode
+  +     // (#902 slice): a confined parent must not dispatch an unconfined worker.
+  +     let project_context = spawn_project_context();
+  2 tools completed in 2m 4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (2 → 3 lines)
+  -     // Prepare everything the background task needs (clone before moving)
+  -     let project_context = crate::cli::load_project_context();
+  +     // Prepare everything the background task needs (clone before moving).
+  +     // Honours the parent's --safe-mode (#902 slice), same as the foreground path.
+  +     let project_context = spawn_project_context();
+ ✓ (2m 1s)
+  -     // Prepare everything the background task needs (clone before moving)
+  -     let project_context = crate::cli::load_project_context();
+  +     // Prepare everything the background task needs (clone before moving).
+  +     // Honours the parent's --safe-mode (#902 slice), same as the foreground path.
+  +     let project_context = spawn_project_context();
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both call sites wired. Now the tests — the near-miss guard is the entire regression surface.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2433,2445p' src/commands… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>1010 && /^(pub )?(async … ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (1 → 106 lines)
+        use yoagent::types::{Content, Message, Usage};
+  + 
+  +     /// A `--safe-mode` parent must hand its worker no project context — and must
+  +     /// not call the loader at all.
+  +     ///
+  +     /// The zero-call half is a behavioural claim, not an optimisation:
+  +     /// `load_project_context` reads the filesystem and, since Day 193, prints the
+  +     /// `project_instruction_note` disclosure to stderr, so a `--safe-mode` run
+  +     /// must not announce instruction files it is deliberately not loading.
+  +     #[test]
+  +     fn safe_mode_gives_the_worker_no_project_context_and_never_calls_the_loader() {
+  +         let calls = std::cell::Cell::new(0usize);
+  +         let load = || {
+  +             calls.set(calls.get() + 1);
+  +             Some("# Project Instructions\n\nreal context".to_string())
+  +         };
+  + 
+  +         // Anti-vacuous FIRST: the loader genuinely has something to return, so a
+  +         // broken seam cannot pass by both sides agreeing on nothing.
+  +         assert_eq!(
+  ... (86 more lines)
+ ✓ (2m 1s)
+        use yoagent::types::{Content, Message, Usage};
+  + 
+  +     /// A `--safe-mode` parent must hand its worker no project context — and must
+  +     /// not call the loader at all.
+  +     ///
+  +     /// The zero-call half is a behavioural claim, not an optimisation:
+  +     /// `load_project_context` reads the filesystem and, since Day 193, prints the
+  +     /// `project_instruction_note` disclosure to stderr, so a `--safe-mode` run
+  ... (13 more lines)
+  2 tools completed in 2m 22s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_s… ✓ (25.1s)
+  2 tools completed in 44.7s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5578 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::effective_disallowed_tools_pairs_shared_state_with_sub_agent ... ok
+test agent_builder::tests::every_connect_failure_arm_reports_the_error_it_was_handed ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::every_connect_failure_arm_escapes_the_values_it_interpolates ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::external_servers_json_table ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_bui...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The module-size gate fired — exactly as expected. Let me read the register line the gate itself prints rather than hand-typing a number.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test m… ✓ (1.5s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/commands_spawn.rs", 4258),
+  +     ("src/commands_spawn.rs", 4417),
+ ✓ (1m 19s)
+  -     ("src/commands_spawn.rs", 4258),
+  +     ("src/commands_spawn.rs", 4417),
+  2 tools completed in 1m 23s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+
