@@ -465,6 +465,52 @@ pub fn parse_spawn_task(input: &str) -> Option<String> {
     parse_spawn_args(input).map(|args| args.task)
 }
 
+/// Project context for a spawned worker, honouring the parent's `--safe-mode`.
+///
+/// `--safe-mode`'s promise is "disable all project customizations", and
+/// `cli.rs:2500` guards the **parent's** `load_project_context()` behind exactly
+/// that predicate. Both spawn call sites called the loader *directly*, outside
+/// that branch, so a confined parent dispatched an **unconfined** worker — the
+/// "two doors, one policy, one deaf" shape this repo has now shipped eleven
+/// times, and it mattered because Day 193's `project_instruction_note` names
+/// `--safe-mode` to the user as the hatch. Naming a hatch that only reaches two
+/// of three doors is a confident wrong claim, which is worse than none (#710).
+///
+/// **Direction:** skipping the load is a **narrowing**, and it is exactly what
+/// the parent already got, so it can only ever confine more. It must never
+/// become a widening.
+///
+/// **The loader is called LAZILY, and that is a behavioural claim rather than an
+/// optimisation:** `load_project_context` reads the filesystem and, since Day
+/// 193, emits the `project_instruction_note` disclosure to stderr — so a
+/// `--safe-mode` run must not announce instruction files it is deliberately not
+/// loading. Pinned by a call-counting stub rather than assumed.
+pub(crate) fn spawn_project_context_with(
+    safe_mode: bool,
+    load: &dyn Fn() -> Option<String>,
+) -> Option<String> {
+    if safe_mode {
+        None
+    } else {
+        load()
+    }
+}
+
+/// Thin wrapper holding the single global read.
+///
+/// This is the `apply_effort_hint` / `apply_effort_hint_with` split that
+/// `tests/global_state_races.rs` names as its **best** remedy: the decision is
+/// pure and table-driven, the process-global read happens at exactly one site,
+/// so no test writes `SAFE_MODE` and none needs `#[serial]`. `set_safe_mode` was
+/// already an `AtomicBool` (never a write-once `OnceLock` — the `TRUST_PROJECT`
+/// landmine) and already registered in `GLOBAL_SETTERS`, so this adds no new
+/// global writer for the race gate to miss.
+fn spawn_project_context() -> Option<String> {
+    spawn_project_context_with(crate::cli_config::is_safe_mode(), &|| {
+        crate::cli::load_project_context()
+    })
+}
+
 /// Build a context prompt for a subagent, including project context and
 /// a brief summary of the current conversation. This gives the subagent
 /// enough context to be useful without overwhelming it.
@@ -806,8 +852,9 @@ pub async fn handle_spawn(
         }
     };
 
-    // Load project context for the subagent
-    let project_context = crate::cli::load_project_context();
+    // Load project context for the subagent, honouring the parent's --safe-mode
+    // (#902 slice): a confined parent must not dispatch an unconfined worker.
+    let project_context = spawn_project_context();
     let context_prompt = spawn_context_prompt(
         main_messages,
         project_context.as_deref(),
@@ -957,8 +1004,9 @@ fn handle_spawn_bg(
         }
     };
 
-    // Prepare everything the background task needs (clone before moving)
-    let project_context = crate::cli::load_project_context();
+    // Prepare everything the background task needs (clone before moving).
+    // Honours the parent's --safe-mode (#902 slice), same as the foreground path.
+    let project_context = spawn_project_context();
     let context_prompt = spawn_context_prompt(
         main_messages,
         project_context.as_deref(),
@@ -2388,6 +2436,117 @@ mod tests {
     use super::*;
     use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
     use yoagent::types::{Content, Message, Usage};
+
+    /// A `--safe-mode` parent must hand its worker no project context — and must
+    /// not call the loader at all.
+    ///
+    /// The zero-call half is a behavioural claim, not an optimisation:
+    /// `load_project_context` reads the filesystem and, since Day 193, prints the
+    /// `project_instruction_note` disclosure to stderr, so a `--safe-mode` run
+    /// must not announce instruction files it is deliberately not loading.
+    #[test]
+    fn safe_mode_gives_the_worker_no_project_context_and_never_calls_the_loader() {
+        let calls = std::cell::Cell::new(0usize);
+        let load = || {
+            calls.set(calls.get() + 1);
+            Some("# Project Instructions\n\nreal context".to_string())
+        };
+
+        // Anti-vacuous FIRST: the loader genuinely has something to return, so a
+        // broken seam cannot pass by both sides agreeing on nothing.
+        assert_eq!(
+            spawn_project_context_with(false, &load),
+            Some("# Project Instructions\n\nreal context".to_string()),
+            "fixture loader must genuinely produce context, or this test is vacuous"
+        );
+        assert_eq!(
+            calls.get(),
+            1,
+            "the anti-vacuous probe should have loaded once"
+        );
+
+        // The fix: safe mode yields nothing, and the loader is never reached.
+        assert_eq!(
+            spawn_project_context_with(true, &load),
+            None,
+            "a --safe-mode parent must not hand project context to its worker"
+        );
+        assert_eq!(
+            calls.get(),
+            1,
+            "safe mode must not call the loader at all (it does I/O and prints the \
+             Day-193 instruction-file disclosure)"
+        );
+    }
+
+    /// THE near-miss guard, and the entire regression surface: with safe mode off
+    /// a spawned worker receives exactly what the loader returned, byte for byte.
+    /// That is every user who has not passed `--safe-mode` or `--restricted`.
+    #[test]
+    fn without_safe_mode_the_worker_receives_the_loaders_value_byte_identically() {
+        let calls = std::cell::Cell::new(0usize);
+        // Deliberately awkward bytes: this is a pass-through, so if one moves it
+        // is not one.
+        let payload = "# Project Instructions\r\n\tCRLF, tab, and a 🐙\n";
+        let load = || {
+            calls.set(calls.get() + 1);
+            Some(payload.to_string())
+        };
+
+        assert_eq!(
+            spawn_project_context_with(false, &load),
+            Some(payload.to_string()),
+            "without safe mode the worker's context must be byte-identical to before"
+        );
+        assert_eq!(calls.get(), 1, "the loader must be called exactly once");
+
+        // A project with no context files still yields None, unchanged.
+        let empty = || None;
+        assert_eq!(spawn_project_context_with(false, &empty), None);
+    }
+
+    /// Deliberately WEAK source-level guard: it proves the two spawn call sites are
+    /// *positioned* behind the seam, never that a worker was confined. Both
+    /// `handle_spawn` and `handle_spawn_bg` are `async` and spawn real agents, so
+    /// no test drives them behaviourally; the two tests above are what prove the
+    /// decision. Needles are assembled at runtime so this cannot match its own
+    /// source.
+    #[test]
+    fn both_spawn_call_sites_route_project_context_through_the_safe_mode_seam() {
+        let src = include_str!("commands_spawn.rs");
+        let seam = format!("spawn_project_{}()", "context");
+        let raw = format!("crate::cli::load_project_{}()", "context");
+
+        for (start, end) in [
+            ("async fn handle_spawn(", "fn handle_spawn_bg("),
+            ("fn handle_spawn_bg(", "fn handle_spawn_parallel("),
+        ] {
+            let from = src
+                .find(start)
+                .unwrap_or_else(|| panic!("no {start} in source"));
+            let to = src[from..]
+                .find(end)
+                .unwrap_or_else(|| panic!("no {end} after {start}"))
+                + from;
+            let body = &src[from..to];
+
+            // Anti-vacuous FIRST: the slice must genuinely hold the assignment, or
+            // every assertion below is satisfied by having nothing to count.
+            assert!(
+                body.contains("let project_context ="),
+                "slice for {start} does not contain the project-context assignment"
+            );
+            assert!(
+                body.contains(&seam),
+                "{start} must route project context through the safe-mode seam"
+            );
+            // Both directions: a half-applied edit carrying BOTH reads as done.
+            assert!(
+                !body.contains(&raw),
+                "{start} still calls the loader directly, bypassing --safe-mode"
+            );
+        }
+    }
 
     #[test]
     fn test_parallel_suggestion_fires_on_independent_tasks() {
