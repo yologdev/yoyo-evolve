@@ -2564,17 +2564,29 @@ mod broad_word_tests {
             "overflow must match no transient shape"
         );
     }
-    /// Day 194: pins the ORDER of two calls inside `run_prompt_auto_retry`'s
-    /// `ContextOverflow` arm in `src/prompt.rs` — `restore_messages` must run
-    /// BEFORE `compact_agent`.
+    /// Day 194: pins the invariant that makes a context overflow safe in BOTH
+    /// of `src/prompt.rs`'s retry ladders — **no overflow arm may retry without
+    /// compacting first.**
     ///
     /// Why THIS property, and not the broader "overflow is handled safely":
-    /// the arm rewinds to the pre-prompt state — which is *the state that
-    /// overflowed* — and then compacts it. Compaction is the ONLY thing that
-    /// makes the single retry a different request. Reverse the two calls and
-    /// the restore puts the un-compacted state back, so the retry re-sends the
-    /// identical doomed request against a wall that cannot move. That is the
-    /// transferred bug class this guard was written for.
+    /// the text-path arm rewinds to the pre-prompt state — which is *the state
+    /// that overflowed* — and then compacts it. Compaction is the ONLY thing
+    /// that makes the single retry a different request. Reverse the two calls
+    /// and the restore puts the un-compacted state back, so the retry re-sends
+    /// the identical doomed request against a wall that cannot move. That is
+    /// the transferred bug class this guard was written for.
+    ///
+    /// TWO ARMS, TWO SHAPES, ONE RULE. `src/prompt.rs` has two overflow arms
+    /// and they are NOT the same code: `run_prompt_with_changes` (:1322)
+    /// restores, compacts, retries once and breaks; `run_prompt_with_content_
+    /// and_changes` (:1713) records the error and breaks, retrying nothing at
+    /// all (it cannot re-send image content). So the arms are classified by
+    /// SHAPE rather than by position — whichever arm retries must compact
+    /// first, and whichever does not retry must still leave the ladder. A
+    /// position-indexed guard would pin the first arm and wave the second
+    /// through, which is the "two doors, one policy, one deaf" shape this repo
+    /// has shipped ten times. The count is asserted at exactly 2, so a THIRD
+    /// ladder added later fails here rather than being inherited silently.
     ///
     /// Three sibling facts are already pinned elsewhere and are deliberately
     /// NOT re-asserted here (re-asserting a guarded property is ceremony, and
@@ -2587,11 +2599,11 @@ mod broad_word_tests {
     /// retriable (`test_prompt_event_state_into_result_overflow_takes_priority`,
     /// `src/prompt.rs`).
     ///
-    /// STATED LIMIT: this proves the two calls are POSITIONED, never that
-    /// compaction actually shrank anything. `run_prompt_auto_retry` is `async`
-    /// and does network I/O, so no test drives this arm behaviourally.
+    /// STATED LIMIT: this proves the calls are POSITIONED, never that
+    /// compaction actually shrank anything. Both enclosing functions are
+    /// `async` and do network I/O, so no test drives either arm behaviourally.
     #[test]
-    fn the_overflow_arm_restores_before_it_compacts_so_the_retry_is_not_identical() {
+    fn no_overflow_arm_retries_without_compacting_first() {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/prompt.rs"),
         )
@@ -2606,56 +2618,96 @@ mod broad_word_tests {
             "Overflow"
         );
         // Anchored to the OUTER match arm's indentation: the nested
-        // `match run_prompt_once(...)` inside this arm has its own
+        // `match run_prompt_once(...)` inside the text-path arm has its own
         // `PromptResult::Fatal*` arm, and matching that one would truncate the
         // slice before the `break` and pin nothing.
         let arm_end = format!("\n            PromptResult::Fatal{} {{", "Error");
         let restore = format!("restore_{}(", "messages");
         let compact = format!("compact_{}(", "agent");
         let once = format!("run_prompt_{}(", "once");
+        let brk = format!("{};", "break");
 
-        // ANTI-VACUOUS, asserted FIRST: a slice that found nothing would
-        // satisfy every ordering assertion below by having nothing to order.
-        let start = src
-            .find(&arm_start)
-            .expect("the ContextOverflow retry arm must exist in src/prompt.rs");
-        let end = src[start..]
-            .find(&arm_end)
-            .expect("the ContextOverflow arm must be followed by the FatalError arm")
-            + start;
-        let arm = &src[start..end];
-        assert!(
-            arm.len() > 400,
-            "sliced overflow arm is implausibly small ({} bytes) — the slice, \
-             not the code, is what broke",
-            arm.len()
-        );
-
-        let restore_at = arm
-            .find(&restore)
-            .expect("the overflow arm must restore the pre-prompt state");
-        let compact_at = arm
-            .find(&compact)
-            .expect("the overflow arm must compact the restored state");
-        assert!(
-            restore_at < compact_at,
-            "restore_messages must run BEFORE compact_agent: the restore puts \
-             back the state that overflowed, and compaction is the only thing \
-             that makes the retry a different request. Reversed, the retry \
-             re-sends the identical doomed request."
-        );
-
-        // Single retry, never a loop.
+        // ANTI-VACUOUS, asserted FIRST: a scan that found nothing would satisfy
+        // every assertion below by having nothing to check. The exact count is
+        // also the drift guard — a third ladder must fail here, not inherit.
+        let starts: Vec<usize> = src.match_indices(&arm_start).map(|(i, _)| i).collect();
         assert_eq!(
-            arm.matches(&once).count(),
-            1,
-            "the overflow arm must retry exactly ONCE — a second attempt here \
-             would be a retry loop against a limit that a rewind cannot move"
+            starts.len(),
+            2,
+            "expected exactly 2 ContextOverflow retry-ladder arms in \
+             src/prompt.rs (the text path and the image/content path), found \
+             {} — a new ladder must be classified here deliberately, never \
+             inherited silently",
+            starts.len()
         );
-        assert!(
-            arm.contains(&format!("{};", "break")),
-            "the overflow arm must leave the retry ladder — without the break \
-             it falls through to the next `attempt` and retries again"
+
+        let mut retrying_arms = 0usize;
+        for start in starts {
+            let end = src[start..]
+                .find(&arm_end)
+                .expect("each ContextOverflow arm must be followed by the FatalError arm")
+                + start;
+            let arm = &src[start..end];
+            assert!(
+                arm.len() > 150,
+                "sliced overflow arm is implausibly small ({} bytes) — the \
+                 slice, not the code, is what broke",
+                arm.len()
+            );
+
+            // Every arm, whichever shape, must leave the ladder. Without the
+            // break it falls through to the next `attempt` and retries again.
+            assert!(
+                arm.contains(&brk),
+                "every overflow arm must break out of the retry ladder"
+            );
+
+            let retries = arm.matches(&once).count();
+            if retries == 0 {
+                // The image/content shape: it cannot re-send image content, so
+                // it retries nothing. Nothing to compact, and nothing to pin
+                // beyond the break already asserted above.
+                continue;
+            }
+            retrying_arms += 1;
+
+            // Single retry, never a loop.
+            assert_eq!(
+                retries, 1,
+                "a retrying overflow arm must retry exactly ONCE — a second \
+                 attempt would be a retry loop against a limit that a rewind \
+                 cannot move"
+            );
+
+            let restore_at = arm
+                .find(&restore)
+                .expect("a retrying overflow arm must restore the pre-prompt state");
+            let compact_at = arm
+                .find(&compact)
+                .expect("a retrying overflow arm must compact the restored state");
+            let retry_at = arm.find(&once).expect("checked non-zero above");
+            assert!(
+                restore_at < compact_at,
+                "restore_messages must run BEFORE compact_agent: the restore \
+                 puts back the state that overflowed, and compaction is the \
+                 only thing that makes the retry a different request. \
+                 Reversed, the retry re-sends the identical doomed request."
+            );
+            assert!(
+                compact_at < retry_at,
+                "compact_agent must run BEFORE the retry, or the retry sends \
+                 the un-compacted state that just overflowed"
+            );
+        }
+
+        // Anti-vacuous in the other direction: if NO arm retried, the ordering
+        // assertions above never ran and this test would pass on a tree where
+        // the invariant is untested rather than upheld.
+        assert_eq!(
+            retrying_arms, 1,
+            "exactly one overflow arm (the text path) is expected to retry; \
+             found {retrying_arms} — if that changed, the ordering rule above \
+             needs re-deciding, not re-counting"
         );
     }
 }
