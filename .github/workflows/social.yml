@@ -2,8 +2,12 @@ name: Social
 
 on:
   schedule:
-    - cron: '20 2,6,10,14,18,22 * * *'  # every 4h. A 4h cadence shares hours 6 and 18 with evolution's 3h one (unavoidable), so the START is offset to :20; social's own concurrency group is separate, and both push to main.
+    - cron: '20 2,6,10,14,18,22 * * *'  # every 4h. A 4h cadence shares hours 6 and 18 with evolution's 3h one (unavoidable), so the START is offset to :20; all canonical GASP writers share the evolution concurrency group.
   workflow_dispatch:       # manual trigger for testing
+
+concurrency:
+  group: evolution
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -100,3 +104,11 @@ jobs:
             -f 'client_payload[action]=end' \
             -f 'client_payload[workflow]=Social' \
             -f 'client_payload[conclusion]=${{ job.status }}' || true
+
+      - name: Flush Cloudflare Twitter memory under the shared writer lock
+        if: ${{ always() && github.ref == 'refs/heads/main' }}
+        uses: ./.github/actions/yoyo-writeback
+        with:
+          runtime-read-key: ${{ secrets.YOYO_RUNTIME_READ_KEY }}
+          source-token: ${{ secrets.GH_PAT }}
+          worker-secret: ${{ secrets.YOYO_WORKER_ADMIN_SECRET }}

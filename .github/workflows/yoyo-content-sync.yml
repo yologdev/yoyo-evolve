@@ -1,0 +1,62 @@
+name: Publish Cloudflare Memory
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7,37 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: yoyo-cloudflare-content
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: yuanhao/yoyo-cloudflare
+          ref: 1f596322fdaa1376094fb2694da3e9af4535c62c
+          ssh-key: ${{ secrets.YOYO_RUNTIME_READ_KEY }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: yologdev/yoyo-gasp
+          path: sources/yoyo-gasp
+          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: yologdev/yoyo-book
+          path: sources/yoyo-book
+          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            tools/gasp-export/target
+          key: ${{ runner.os }}-yoyo-bridge-${{ hashFiles('tools/gasp-export/Cargo.lock') }}
+      - run: npm ci
+      - run: npm run bridge:build
+      - name: Export pinned sources and verify public book chapters
+        env:
+          BOOK_PUBLIC: 'true'
+        run: npm run export:content -- sources/yoyo-gasp sources/yoyo-book exports
+      - name: Publish verified bundle
+        env:
+          YOYO_WORKER_URL: https://yoyo-cloudflare.yuanhao-li.workers.dev
+          CONTENT_PUBLISH_SECRET: ${{ secrets.YOYO_CONTENT_PUBLISH_SECRET }}
+        run: |
+          node --input-type=module -e '
+            import { readdirSync } from "node:fs";
+            import { execFileSync } from "node:child_process";
+            const bundle = readdirSync("exports").find(n => /^[a-f0-9]{64}\.json$/.test(n));
+            if (!bundle) throw new Error("No verified bundle");
+            execFileSync("npm", ["run", "publish:content", "--", `exports/${bundle}`], { stdio: "inherit" });
+          '

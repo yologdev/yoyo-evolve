@@ -1,0 +1,55 @@
+name: Flush Yoyo Twitter memory
+description: Record Cloudflare outbox in the same serialized lane as evolution
+inputs:
+  runtime-read-key:
+    required: true
+    description: Read-only deploy key for the pinned runtime
+  source-token:
+    required: true
+    description: Existing canonical GASP writer credential
+  worker-secret:
+    required: true
+    description: Worker outbox access
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        repository: yuanhao/yoyo-cloudflare
+        ref: 1f596322fdaa1376094fb2694da3e9af4535c62c
+        path: .yoyo-cloudflare-runtime
+        ssh-key: ${{ inputs.runtime-read-key }}
+        persist-credentials: false
+    - uses: actions/checkout@v4
+      with:
+        repository: yologdev/yoyo-gasp
+        ref: main
+        path: .yoyo-cloudflare-state
+        token: ${{ inputs.source-token }}
+        fetch-depth: 0
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          .yoyo-cloudflare-runtime/tools/gasp-export/target
+        key: ${{ runner.os }}-yoyo-bridge-${{ hashFiles('.yoyo-cloudflare-runtime/tools/gasp-export/Cargo.lock') }}
+    - shell: bash
+      working-directory: .yoyo-cloudflare-runtime
+      run: npm ci && npm run bridge:build
+    - shell: bash
+      working-directory: .yoyo-cloudflare-state
+      run: |
+        git config user.name 'yoyo[gasp]'
+        git config user.email 'yoyo-gasp@users.noreply.github.com'
+    - name: Append social records without evolution patches
+      shell: bash
+      working-directory: .yoyo-cloudflare-runtime
+      env:
+        YOYO_WORKER_URL: https://yoyo-cloudflare.yuanhao-li.workers.dev
+        YOYO_ADMIN_SECRET: ${{ inputs.worker-secret }}
+        GASP_WRITER_COORDINATED: 'true'
+      run: npm run gasp:ingest -- ../.yoyo-cloudflare-state --apply --push
