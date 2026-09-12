@@ -1822,6 +1822,65 @@ mod tests {
         assert_eq!(routed_cli_subcommands(&src), vec!["doctor", "health"]);
     }
 
+    /// Routed `yoyo <verb>` subcommands that are deliberately absent from
+    /// `--help`, each with the reason a human wrote. **One statement, two
+    /// readers** — `cli_help_documents_every_routed_subcommand` (which reaches
+    /// the dispatcher by text-scanning its source) and
+    /// `cli_help_documents_every_verb_the_near_miss_table_routes` (which reaches
+    /// it through `ROUTED_SUBCOMMANDS`) both consult this list. A second copy
+    /// would agree the day it was written and diverge forever after.
+    ///
+    /// The register is debt, not absolution: both readers also run the ratchet,
+    /// so an entry that becomes documented, or whose verb stops being routed, is
+    /// fatal. It can only shrink.
+    const DELIBERATELY_UNDOCUMENTED: &[(&str, &str)] = &[(
+        "gasp",
+        "#827: harness-facing door onto the ported GASP arms, behind the \
+         default-off `gasp` feature. Listing it in user help would promise a \
+         normal build something it refuses; it is routed anyway so a \
+         multi-token `yoyo gasp …` cannot fall through to a billed LLM turn.",
+    )];
+
+    /// True if `--help` documents `verb` as a subcommand entry.
+    ///
+    /// Boundary-aware in **both** directions, and that is load-bearing rather
+    /// than hygiene: `ROUTED_SUBCOMMANDS` is full of strict-prefix pairs (`def`
+    /// inside `default`, `run` inside `running`, `pr`, `ast`, `risk`), so a bare
+    /// `contains` would report a verb as documented on the strength of an
+    /// unrelated word. The two-space prefix pins the left edge to the start of a
+    /// help-list entry; the trailing space-or-newline pins the right.
+    ///
+    /// Deliberately **not** `help_mentions`, which is this module's flag-side
+    /// matcher: it checks only the *trailing* boundary (enough for `--flag`
+    /// tokens, which carry their own left edge) and would match `def` inside
+    /// `predef`. One matcher per question, rather than one matcher stretched
+    /// over two.
+    fn subcommand_documented(text: &str, verb: &str) -> bool {
+        text.contains(&format!("  {verb} ")) || text.contains(&format!("  {verb}\n"))
+    }
+
+    #[test]
+    fn subcommand_documented_requires_a_token_boundary_on_both_sides() {
+        // The near-miss guard for the matcher above. A discriminator tested only
+        // on the side that fires is vacuous green, so both directions are pinned.
+        assert!(subcommand_documented(
+            "  def               Find where a symbol is defined\n",
+            "def"
+        ));
+        // Right edge: a longer word starting with the verb is not the verb.
+        assert!(!subcommand_documented("  default           Something\n", "def"));
+        // Left edge: a longer word *ending* with the verb is not the verb either —
+        // this is the half `help_mentions` cannot see.
+        assert!(!subcommand_documented("  predef            Something\n", "def"));
+        // End-of-line entries with no trailing description still count.
+        assert!(subcommand_documented("  version\n", "version"));
+        // Prose mentioning the verb mid-sentence is not a help-list entry.
+        assert!(!subcommand_documented(
+            "  run               e.g. yoyo run cargo test\n",
+            "cargo"
+        ));
+    }
+
     #[test]
     fn cli_help_documents_every_routed_subcommand() {
         // The `--help` subcommand list is prose that mirrors the match arms in
@@ -1835,14 +1894,6 @@ mod tests {
         // verb, it forbids an *unnamed* one. It runs in both directions — a
         // registered verb that has become documented, or that stopped being
         // routed, is also fatal — so the register can only shrink.
-        const DELIBERATELY_UNDOCUMENTED: &[(&str, &str)] = &[(
-            "gasp",
-            "#827: harness-facing door onto the ported GASP arms, behind the \
-             default-off `gasp` feature. Listing it in user help would promise a \
-             normal build something it refuses; it is routed anyway so a \
-             multi-token `yoyo gasp …` cannot fall through to a billed LLM turn.",
-        )];
-
         let dispatch_src = include_str!("dispatch_sub.rs");
         let arms = routed_cli_subcommands(dispatch_src);
         assert!(
