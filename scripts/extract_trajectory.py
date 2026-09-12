@@ -1168,10 +1168,134 @@ def render_ci_errors(scan: CiScan | None, green: "GreenScan | None" = None,
 # ── Section 5: Provider/API health from audit.jsonl files ────────────────
 
 
-PROVIDER_ERROR_RE = re.compile(r'"type"\s*:\s*"error"|provider_error|rate_limit', re.IGNORECASE)
-
-
 AUDIT_FILE_SIZE_CAP = 10 * 1024 * 1024  # 10MB per file — guard against runaway audit.jsonl
+
+
+# --- Provider-error detection (Day 196) -----------------------------------
+#
+# The measured defect: Day 195 ran 5 sessions and produced ZERO task commits,
+# Day 194 added 2 more; every one filed `tasks N/N ✅` with a `success`
+# workflow conclusion, and this very section rendered
+# `10 sessions, no provider errors detected.` into the planner's briefing
+# while `scripts/measure_abstentions.py` read the same world and reported
+# `[EXCLUDED_PROVIDER_ERROR: 7 line(s)]` on 7 of 8 logs. Two of my own
+# instruments disagreed and the one in my prompt said "healthy".
+#
+# Two independent causes, both real:
+#   1. WRONG STREAM. The scan read `audit.jsonl` only. The rate-limit text is
+#      emitted by the yoyo binary to its own stderr, which `evolve.sh` tees
+#      into `transcripts/*.log` — the same stream mismatch
+#      `measure_abstentions.py` was repaired for on Day 175.
+#   2. WRONG REGEX. The old `PROVIDER_ERROR_RE` matched `rate_limit` with an
+#      UNDERSCORE; the binary prints `Rate limited` — space, past tense. It
+#      could not match the string on any stream.
+# Fixing either alone is a non-fix: (2) without (1) has nothing to read, and
+# (1) without (2) reads the right file with a matcher that cannot fire.
+#
+# THE LANDMINE, and why the prose filter below is load-bearing rather than
+# ceremony: my transcripts, journals, CLAUDE.md and session write-ups contain
+# the literal string `Rate limited` constantly — the write-up for THIS change
+# contains all three shapes verbatim. A bare substring scan reports my own
+# writing as provider evidence, and the contamination grows monotonically
+# every session. That is exactly the defect that forced
+# `measure_abstentions.py` to be rebuilt, so the two rules it proved out are
+# copied rather than re-invented: anchor to the whole emitted line, and run
+# every candidate through a prose filter whose rejects are COUNTED.
+#
+# These are a deliberate second copy of that file's `is_quoted_prose` /
+# `classify_line` pair, not an import — the same reasoning written at
+# `counterfactual_green.py`'s second copy of `TASK_COMMIT_RE`: two hand-run
+# scripts with different lifecycles, where sharing costs a cross-import for
+# one predicate. The shapes below were captured VERBATIM from the real
+# transcripts (day-194/195/196), never hand-typed: 43 × the retry-after line,
+# 43 × the no-fallback line, 15 × the stopped-retrying line.
+_PROVIDER_MARKER_PATTERNS = [
+    # `  error: Rate limited, retry after Some(84004000)ms`
+    # Leading whitespace is REQUIRED to be tolerated: the binary's stderr is
+    # indented 2 spaces in the teed transcript, so an anchor without \s* fires
+    # on nothing at all. Measured, not assumed.
+    ("rate_limited", re.compile(r"^\s*error:\s*Rate limited,\s*retry after\s+Some\(\d+\)ms\s*$")),
+    # `  ⏳ stopped retrying on purpose: the provider says its rate limit resets in ~23h 20m. …`
+    ("retry_giveup", re.compile(r"^\s*\u23f3?\s*stopped retrying on purpose:\s*the provider says its rate limit resets in\s*~\S+.*$")),
+    # `  API error with no fallback configured. Exiting.`
+    ("no_fallback", re.compile(r"^\s*API error with no fallback configured\.\s*Exiting\.\s*$")),
+    # The three pre-existing alternatives are KEPT verbatim. They may match
+    # genuine structured audit.jsonl lines, and dropping them would be a
+    # narrowing nobody asked for — this task widens the scan, it does not
+    # trade one blind spot for another.
+    ("audit_error_object", re.compile(r'"type"\s*:\s*"error"', re.IGNORECASE)),
+    ("provider_error_token", re.compile(r"provider_error", re.IGNORECASE)),
+    ("rate_limit_token", re.compile(r"rate_limit", re.IGNORECASE)),
+]
+
+_PROVIDER_GREP_PREFIX_RE = re.compile(r"^\s*(?:[\w./-]+:)?\d+:")
+_PROVIDER_BLOCKQUOTE_RE = re.compile(r"^\s*>")
+
+
+def is_provider_prose(line: str) -> bool:
+    """True when the line carries the tells of MY writing, not the harness's stdout.
+
+    Pure. The four tells are the ones `measure_abstentions.py` proved out: a
+    markdown pipe (a table cell), a backtick (an inline quote), a `NNN:` or
+    `path:NNN:` grep prefix, and a leading `>` blockquote. Verified against the
+    real emissions before shipping: none of the three live shapes contains a
+    pipe or a backtick, so this filter costs no true positives today.
+    """
+    line = strip_ansi(line).rstrip("\n")
+    if "|" in line:
+        return True
+    if "`" in line:
+        return True
+    if _PROVIDER_BLOCKQUOTE_RE.match(line):
+        return True
+    if _PROVIDER_GREP_PREFIX_RE.match(line):
+        return True
+    return False
+
+
+def classify_provider_error_line(line: str) -> str | None:
+    """Shape-match one line against the anchored provider emissions.
+
+    Pure. Returns a marker name or None, and says NOTHING about provenance —
+    `is_provider_prose` owns that half and `classify_provider_error` composes
+    the two, exactly as the sibling script splits them.
+    """
+    line = strip_ansi(line).rstrip("\n").rstrip()
+    for marker, pattern in _PROVIDER_MARKER_PATTERNS:
+        if pattern.search(line):
+            return marker
+    return None
+
+
+def classify_provider_error(line: str) -> tuple[str | None, bool]:
+    """Return (marker, rejected_as_prose).
+
+    A line whose SHAPE matches but whose provenance is my own writing is
+    reported as rejected, never silently dropped — a shrinking denominator
+    inside my own meter is the defect this whole section is about.
+    """
+    marker = classify_provider_error_line(line)
+    if marker is None:
+        return (None, False)
+    if is_provider_prose(line):
+        return (None, True)
+    return (marker, False)
+
+
+@dataclass
+class ProviderScan:
+    """What the provider-health walk actually observed.
+
+    `streams` names the files that were READ, so the rendered claim can never
+    be read wider than its evidence — the clean branch used to say "no
+    provider errors detected", which reads as *the provider was fine*, when
+    what it supports is *no provider-error lines in the files I opened*.
+    """
+
+    sessions: int = 0
+    hits: int = 0
+    prose_rejected: int = 0
+    streams: tuple = ()
 
 
 # Three states for the audit-log directory, and none of them may be folded into
@@ -1237,41 +1361,97 @@ def resolve_audit_dir(raw) -> tuple[str, Path | None]:
     return state, (Path(str(raw)) if state == AUDIT_DIR_OK else None)
 
 
-def collect_provider_errors(audit_dir: Path) -> tuple[int, int]:
-    """Return (sessions_examined, total_provider_error_hits).
-    Streams audit.jsonl line-by-line so a multi-MB file doesn't slurp into
-    memory. Per-file size cap (10MB) protects against pathological cases."""
+def _scan_provider_stream(path: Path) -> tuple[int, int]:
+    """Scan one file for provider-error lines. Returns (hits, prose_rejected).
+
+    Bounded by the existing AUDIT_FILE_SIZE_CAP — no new budget was invented.
+    Fail-soft: an OSError warns and contributes nothing, because this
+    extractor must never block a session.
+    """
+    hits = 0
+    prose = 0
+    try:
+        size = path.stat().st_size
+        if size > AUDIT_FILE_SIZE_CAP:
+            warn(f"{path} is {size} bytes (>{AUDIT_FILE_SIZE_CAP}); scanning first {AUDIT_FILE_SIZE_CAP}B only")
+        with path.open(encoding="utf-8", errors="replace") as f:
+            bytes_read = 0
+            for line in f:
+                bytes_read += len(line)
+                if bytes_read > AUDIT_FILE_SIZE_CAP:
+                    break
+                marker, rejected = classify_provider_error(line)
+                if marker is not None:
+                    hits += 1
+                elif rejected:
+                    prose += 1
+    except OSError as e:
+        warn(f"skipped {path}: {e}")
+    return hits, prose
+
+
+def collect_provider_errors(audit_dir: Path) -> ProviderScan:
+    """Walk the already-fetched session dirs for provider-error lines.
+
+    BRANCH A fired (Day 196, measured before any edit): the rate-limit text
+    lives in `transcripts/*.log` and NOT in `audit.jsonl`. Measured on three
+    real day-195 dirs — `grep -c 'Rate limited' audit.jsonl` returned 0 on
+    every one, while all six transcripts per dir carried it. So the scan reads
+    BOTH streams: `audit.jsonl` keeps its three structured alternatives, and
+    the transcripts are where the harness's teed stderr actually lands.
+
+    Zero new `gh` calls and zero network: the worktree these dirs live in was
+    already fetched by `evolve.sh` step 1c, so this is the same walk with one
+    more `glob` per directory. Each file is bounded by AUDIT_FILE_SIZE_CAP.
+
+    A session counts as examined when it has EITHER stream, so a dir carrying
+    transcripts but no audit.jsonl is no longer invisible to the denominator.
+    """
     if not audit_dir.exists():
-        return 0, 0
+        return ProviderScan()
     sessions = 0
     hits = 0
+    prose_rejected = 0
+    saw_audit = False
+    saw_transcripts = False
     for child in sorted(audit_dir.iterdir(), reverse=True):
         if not child.is_dir():
             continue
         audit = child / "audit.jsonl"
-        if not audit.is_file():
+        try:
+            transcripts = sorted((child / "transcripts").glob("*.log"))
+        except OSError as e:
+            warn(f"skipped transcripts of {child}: {e}")
+            transcripts = []
+        streams = ([audit] if audit.is_file() else []) + transcripts
+        if not streams:
             continue
         sessions += 1
-        try:
-            size = audit.stat().st_size
-            if size > AUDIT_FILE_SIZE_CAP:
-                warn(f"{audit} is {size} bytes (>{AUDIT_FILE_SIZE_CAP}); scanning first {AUDIT_FILE_SIZE_CAP}B only")
-            with audit.open(encoding="utf-8", errors="replace") as f:
-                bytes_read = 0
-                for line in f:
-                    bytes_read += len(line)
-                    if bytes_read > AUDIT_FILE_SIZE_CAP:
-                        break
-                    if PROVIDER_ERROR_RE.search(line):
-                        hits += 1
-        except OSError as e:
-            warn(f"skipped {audit}: {e}")
+        if audit.is_file():
+            saw_audit = True
+        if transcripts:
+            saw_transcripts = True
+        for stream in streams:
+            h, pr = _scan_provider_stream(stream)
+            hits += h
+            prose_rejected += pr
         if sessions >= WINDOW_SESSIONS:
             break
-    return sessions, hits
+    names = []
+    if saw_audit:
+        names.append("audit.jsonl")
+    if saw_transcripts:
+        names.append("transcripts/*.log")
+    return ProviderScan(sessions, hits, prose_rejected, tuple(names))
 
 
-def render_provider_health(sessions: int, hits: int, state: str = AUDIT_DIR_OK) -> str:
+def render_provider_health(
+    sessions: int,
+    hits: int,
+    state: str = AUDIT_DIR_OK,
+    prose_rejected: int = 0,
+    streams: tuple = (),
+) -> str:
     """Render the provider-health section, or an honest one-line refusal.
 
     The two non-OK states get ONE line each (header inline, the shape
@@ -1279,8 +1459,18 @@ def render_provider_health(sessions: int, hits: int, state: str = AUDIT_DIR_OK) 
     renders before the epistemic block, TOTAL_BYTE_CAP is tight, and the
     epistemic section has been truncated away once already (Day 142).
 
-    The OK path is byte-identical to before — that is `evolve.sh`'s path, i.e.
-    every real session and the whole regression surface.
+    Day 196 NARROWED THE CLEAN CLAIM. It used to read
+    `N sessions, no provider errors detected.`, which reads as *the provider
+    was fine* — and it said exactly that over 7 consecutive sessions that were
+    killed by a 23-hour rate limit and produced zero task commits. What the
+    evidence supports is *no provider-error lines in the files I opened*, so
+    the sentence now names the streams that were read. `streams` empty keeps
+    the pre-#843 wording, so every existing call site is byte-identical.
+
+    `prose_rejected` is reported only when > 0 and is NEVER summed into the
+    hit count: a line whose shape matched but whose provenance is my own
+    writing is a different fact from a provider error, and folding them is the
+    contamination defect this whole section exists to avoid.
     """
     if state == AUDIT_DIR_UNSET:
         return (
@@ -1294,9 +1484,18 @@ def render_provider_health(sessions: int, hits: int, state: str = AUDIT_DIR_OK) 
         )
     if sessions == 0:
         return ""
+    scanned = f" in {', '.join(streams)}" if streams else ""
+    tail = f" ({prose_rejected} prose-shaped line(s) rejected)" if prose_rejected > 0 else ""
     if hits == 0:
-        return f"## Provider/API health\n{sessions} sessions, no provider errors detected."
-    return f"## Provider/API health\n{sessions} sessions, {hits} provider error hit(s) in audit.jsonl."
+        # Says what was READ, never that the provider was healthy.
+        return (
+            f"## Provider/API health\n{sessions} sessions, no provider-error "
+            f"lines{scanned}.{tail}"
+        )
+    return (
+        f"## Provider/API health\n{sessions} sessions, {hits} provider error "
+        f"hit(s){scanned or ' in audit.jsonl'}.{tail}"
+    )
 
 
 # --- Usage-record coverage (#848 follow-up) -------------------------------
@@ -2555,8 +2754,8 @@ def main() -> int:
     # unusable — there is no placeholder to walk, which is the whole of #843.
     outcomes = load_outcomes(audit_dir) if audit_dir is not None else []
     tasks, reverts = collect_task_commits()
-    sessions_audited, provider_hits = (
-        collect_provider_errors(audit_dir) if audit_dir is not None else (0, 0)
+    provider_scan = (
+        collect_provider_errors(audit_dir) if audit_dir is not None else ProviderScan()
     )
     usage_cov = (
         collect_usage_coverage(audit_dir) if audit_dir is not None else UsageCoverage()
@@ -2624,7 +2823,13 @@ def main() -> int:
     ci_unknown = bool(s) and not ci_scan.ok
     if s:
         sections.append(s)
-    s = render_provider_health(sessions_audited, provider_hits, audit_dir_state)
+    s = render_provider_health(
+        provider_scan.sessions,
+        provider_scan.hits,
+        audit_dir_state,
+        provider_scan.prose_rejected,
+        provider_scan.streams,
+    )
     # Same rule as `ci_unknown` above: a "could not check" provider note is
     # honest, but it is not trajectory DATA and must not suppress the global
     # "(no trajectory data yet)" state below.
