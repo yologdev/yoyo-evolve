@@ -76,9 +76,18 @@ pub(crate) struct GaspCommon {
     /// `--goal`: the standing goal. Empty means "unset" (the shim spells it that
     /// way), so it normalises to `None` and the arm falls back to `DEFAULT_GOAL`.
     pub goal: Option<String>,
-    /// `--worker`: the lease identity the graph-tier store is opened under.
-    /// Honoured since #828 item 2; a blank value falls back to
-    /// [`DEFAULT_GRAPH_WORKER_ID`]. See [`graph_worker_id`].
+    /// `--worker`: the lease identity the graph-tier store is opened under,
+    /// carried **raw** — exactly as the caller spelled it, blank included.
+    ///
+    /// This is the one optional flag that is *not* normalised here, and the
+    /// asymmetry is load-bearing rather than an oversight (Day 196, round 97):
+    /// [`worker_fallback_note`] announces a `--worker` that was **typed and
+    /// dropped**, so it needs to know the flag was typed. Collapsing `""` to
+    /// `None` with [`optional`] — right for `--goal`/`--outcome`/`--extra`,
+    /// whose *value* is all that matters — destroyed that evidence and made
+    /// the announcement structurally unreachable. Normalisation has exactly
+    /// one statement, in [`graph_worker_id`], which trims and falls back to
+    /// [`DEFAULT_GRAPH_WORKER_ID`]; the resolved id is unchanged either way.
     pub worker: Option<String>,
 }
 
@@ -220,7 +229,11 @@ fn common_of(flags: &[(String, String)]) -> Result<GaspCommon, String> {
         state_dir: required(flags, "state-dir")?,
         run_id: required(flags, "run-id")?,
         goal: optional(flags, "goal"),
-        worker: optional(flags, "worker"),
+        // RAW on purpose, never `optional()`: a blank `--worker` must stay
+        // distinguishable from an absent one, or `worker_fallback_note` can
+        // never fire. `graph_worker_id` is the single statement of the
+        // blank-to-default rule. See the field doc on `GaspCommon::worker`.
+        worker: flag(flags, "worker").map(str::to_string),
     })
 }
 
@@ -520,6 +533,91 @@ mod tests {
         assert_eq!(worker_fallback_note(Some("evolve-shim-4711")), None);
     }
 
+    /// **The emission point, which is the half the sibling test above cannot
+    /// reach.** That test drives `worker_fallback_note` *directly* with
+    /// `Some("  ")`. Production never hands it that: `run_gasp_command` reads
+    /// `common.worker`, so the only thing deciding whether the announcement
+    /// ever fires is what `parse_gasp_args` puts in that field for a blank
+    /// `--worker`.
+    ///
+    /// **Superseded behaviour, recorded rather than erased (Day 196, blind
+    /// round 97):** `common_of` built this field with `optional()`, which
+    /// collapses an empty value to `None`. That is the honest reading for
+    /// `--goal` / `--outcome` / `--extra`, whose *value* is all that matters,
+    /// and it is fatal for this one, because `worker_fallback_note(None)`
+    /// returns `None` on its first line. So the note was **structurally
+    /// unreachable in production** from #828 item 2 (Day 179) until Day 196,
+    /// while its own unit test stayed green — two correct functions composing
+    /// into a dead announcement. `--worker` is the one optional flag whose
+    /// *provenance* matters and not merely its value: the caller asked for a
+    /// distinct lease identity and is silently sharing the default.
+    #[test]
+    fn a_blank_worker_flag_reaches_the_announcement_at_the_emission_point() {
+        let cmd = parse_gasp_args(&argv(&[
+            "task",
+            "--state-dir",
+            "d",
+            "--run-id",
+            "r",
+            "--worker",
+            "",
+            "--num",
+            "1",
+            "--title",
+            "t",
+        ]))
+        .expect("a blank --worker is the shim's spelling of `unset`, not an error");
+        let GaspCommand::Task { common, .. } = &cmd else {
+            panic!("expected Task, got {cmd:?}");
+        };
+
+        // ANTI-VACUOUS, asserted FIRST: the fixture really did type the flag, so
+        // a broken parse cannot pass by both sides agreeing on nothing.
+        assert!(
+            common.worker.is_some(),
+            "the fixture types `--worker \"\"`, so the parsed command must record \
+             that it was typed — otherwise the note below has no input at all"
+        );
+
+        // The defect, at the value a caller of `run_gasp_command` actually reads.
+        let note = worker_fallback_note(common.worker.as_deref())
+            .expect("a --worker was typed and dropped, so the caller must be told");
+        assert!(note.contains(DEFAULT_GRAPH_WORKER_ID), "{note}");
+
+        // NEAR-MISS GUARD, and the entire regression surface: the resolved lease
+        // identity is byte-identical either way. This changes what is
+        // ANNOUNCED, never which worker id the store opens under.
+        assert_eq!(
+            graph_worker_id(common.worker.as_deref()),
+            DEFAULT_GRAPH_WORKER_ID
+        );
+
+        // The other near-miss, and the direction that proves the fix did not
+        // simply make every worker `Some`: an ABSENT flag is still absent, and
+        // still silent.
+        let absent = parse_gasp_args(&argv(&[
+            "task",
+            "--state-dir",
+            "d",
+            "--run-id",
+            "r",
+            "--num",
+            "1",
+            "--title",
+            "t",
+        ]))
+        .expect("no --worker at all must still parse");
+        let GaspCommand::Task { common, .. } = &absent else {
+            panic!("expected Task, got {absent:?}");
+        };
+        assert_eq!(common.worker, None);
+        assert_eq!(worker_fallback_note(common.worker.as_deref()), None);
+        assert_eq!(
+            graph_worker_id(common.worker.as_deref()),
+            DEFAULT_GRAPH_WORKER_ID
+        );
+    }
+
     /// The note that used to be printed asserted the flag had **no effect**.
     /// That claim is false as of #828 item 2, and a stale "impossible" in this
     /// exact module is what cost #683 eight empty-diff sessions.
@@ -742,7 +840,19 @@ mod tests {
                 extra,
             } => {
                 assert_eq!(common.goal, None);
-                assert_eq!(common.worker, None);
+                // `--worker` is DELIBERATELY not in this list, and the
+                // asymmetry is the point (Day 196, round 97). This line read
+                // `assert_eq!(common.worker, None);` from #828 item 2 until
+                // Day 196 — a fixture pinning the exact normalisation that
+                // made `worker_fallback_note` unreachable in production. The
+                // other three flags are normalised because only their *value*
+                // matters; this one carries provenance, because a dropped
+                // `--worker` must be announced.
+                assert_eq!(common.worker.as_deref(), Some(""));
+                assert!(
+                    worker_fallback_note(common.worker.as_deref()).is_some(),
+                    "a typed-but-blank --worker must still reach the note"
+                );
                 assert_eq!(outcome, None);
                 assert_eq!(extra, "");
             }
