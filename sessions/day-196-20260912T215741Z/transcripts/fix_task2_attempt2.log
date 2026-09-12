@@ -1,0 +1,190 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, what's missing, and what the two authorities actually look like.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch_near_miss.rs … ✓ (4ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+The evaluator is right — let me see exactly what landed and what the two files contain.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me see what landed in src/help.rs (the unrequested refactor) and the existing help-side guard.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 87faaea3..HEAD -- src/h… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me pick up: I need to see the current state of the landed refactor, help_mentions, and the Subcommands block.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1820,1960p' src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "help_mentions" src/help… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1710,1745p' src/help.rs … ✓ (4ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 16.6s (4 ✓)
+
+Confirmed: help_mentions is a private helper inside help.rs's own #[cfg(test)] mod tests (line 1718, module opens at 1139) — unreachable from another module's test module without widening visibility, which the task forbids. Let me see the false claim and the Subcommands block.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1824,1848p' src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Subcommands (run from s… ✓ (3ms)
+ ✓ (2ms)
+  2 tools completed in 3ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me see the Subcommands block to match neighbour shape, and confirm the help.rs register has no non-empty assertion.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '324,372p' src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DELIBERATELY_UNDOCUMENT… ✓ (2ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.2s (2 ✓)
+
+No non-empty assertion — emptying the register is safe (the REGISTERED_ORPHANS precedent). Let me see the tail of the Subcommands block to place gasp in the right shape.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '372,470p' src/help.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the full picture now. Let me verify cli_help_text's visibility and the GASP arms before writing.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn cli_help_text" src/h… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have everything. Now let me make the edits — first, document gasp in the Subcommands block.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (5 → 9 lines)
+        let _ = writeln!(
+            s,
+            "  extended          Long autonomous task — prints usage; needs an interactive session"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  gasp              Record a GASP graph event (e.g. yoyo gasp session-start); needs a --features gasp build"
+        );
+        let _ = writeln!(s);
+ ✓ (1m 38s)
+        let _ = writeln!(
+            s,
+            "  extended          Long autonomous task — prints usage; needs an interactive session"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  gasp              Record a GASP graph event (e.g. yoyo gasp session-start); needs a --features gasp build"
+        );
+        let _ = writeln!(s);
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The ratchet fired exactly as designed — gasp is now documented, so its register entry must go. That pairing is what makes the change self-verifying. Let me read the register block and empty it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1828,1860p' src/help.rs ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs:1826..1848 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the ratchet's demand: gasp is documented, so its register entry must be deleted. Let me empty the register.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (7 → 9 lines)
+  -     const DELIBERATELY_UNDOCUMENTED: &[(&str, &str)] = &[(
+  -         "gasp",
+  -         "#827: harness-facing door onto the ported GASP arms, behind the \
+  -          default-off `gasp` feature. Listing it in user help would promise a \
+  -          normal build something it refuses; it is routed anyway so a \
+  -          multi-token `yoyo gasp …` cannot fall through to a billed LLM turn.",
+  -     )];
+  +     /// **Ships EMPTY as of Day 196.** `gasp` was its only entry, and it was
+  +     /// *documented* rather than registered, so the ratchet below correctly
+  +     /// demanded the entry's deletion — that pairing is what makes the change
+  +     /// self-verifying. An empty register is a legitimate terminal state and not
+  +     /// a broken scan (`REGISTERED_ORPHANS` and `REGISTERED_GIT_BYPASSES` both
+  +     /// ship empty for the same reason); the anti-vacuous branch is on the *arm
+  +     /// scan*, never on this list, so the guard still fails loudly if the
+  +     /// extractor ever stops finding arms.
+  +     const DELIBERATELY_UNDOCUMENTED: &[(&str, &str)] = &[];
+ ✓ (1m 48s)
+  -     const DELIBERATELY_UNDOCUMENTED: &[(&str, &str)] = &[(
+  -         "gasp",
+  -         "#827: harness-facing door onto the ported GASP arms, behind the \
+  -          default-off `gasp` feature. Listing it in user help would promise a \
+  -          normal build something it refuses; it is routed anyway so a \
+  -          multi-token `yoyo gasp …` cannot fall through to a billed LLM turn.",
+  -     )];
+  +     /// **Ships EMPTY as of Day 196.** `gasp` was its only entry, and it was
+  ... (8 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the main deliverable — the guard in src/dispatch_near_miss.rs. Let me confirm the test module's opening so I append correctly.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests\|use super" s… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the main deliverable — the guard tying ROUTED_SUBCOMMANDS to cli_help_text().
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (8 → 208 lines)
+                assert!(
+                    !repl_only.contains(verb),
+                    "{verb} is routed as a subcommand, so it is not REPL-only"
+  +             );
+  +         }
+  +     }
+  + 
+  +     /// Routed `yoyo <verb>` subcommands deliberately absent from `--help`'s
+  +     /// Subcommands block, each with the reason a human wrote.
+  +     ///
+  +     /// **Ships EMPTY (Day 196).** The census that landed this guard found all 39
+  +     /// of `ROUTED_SUBCOMMANDS`' verbs documented, so there is no debt to name. An
+  +     /// empty register is a legitimate terminal state and not a broken scan —
+  +     /// `REGISTERED_ORPHANS` and `REGISTERED_GIT_BYPASSES` both ship empty for the
+  +     /// same reason — and the anti-vacuous branch is asserted on the *scan*, never
+  +     /// on this list, so a broken extractor still fails loudly.
+  +     const REGISTERED_UNDOCUMENTED_SUBCOMMANDS: &[(&str, &str)] = &[];
+  + 
+  +     /// The `--help` Subcommands block, sliced from its header to the blank line
+  +     /// that ends it; `None` when the header is absent.
+  ... (186 more lines)
+ ✓ (1m 47s)
+                assert!(
+                    !repl_only.contains(verb),
+                    "{verb} is routed as a subcommand, so it is not REPL-only"
+  +             );
+  +         }
+  +     }
+  + 
+  +     /// Routed `yoyo <verb>` subcommands deliberately absent from `--help`'s
+  ... (13 more lines)
+

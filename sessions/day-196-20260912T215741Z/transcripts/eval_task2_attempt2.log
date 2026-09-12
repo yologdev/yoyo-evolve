@@ -1,0 +1,57 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 87faaea3..HEAD --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gasp" src/help.rs | hea… ✓ (2ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== dispatch_near_miss.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ROUTED_SUBCOMMANDS\|cli… ✓ (2ms)
+ ✓ (8ms)
+  6 tools completed in 16.5s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evaluation complete. Three quick checks confirmed the scope gap; writing the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== does dispatch_near_mis… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed. src/dispatch_near_miss.rs contains no reference to cli_help_text — the guard the task called "the deliverable" does not exist, and the diff's own new doc comment asserts it does.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 1s)
+
+Verdict: FAIL
+
+The diff delivers roughly 15% of the task, and the missing 85% is the part the task called "the deliverable."
+
+What was required vs. what landed:
+
+| Required | Status |
+|---|---|
+| Guard in src/dispatch_near_miss.rs tying ROUTED_SUBCOMMANDS → cli_help_text() | Absent — file untouched, zero cli_help_text references |
+| Add gasp to cli_help_text()'s Subcommands block | Absent — gasp appears only inside the test register |
+| CLAUDE.md: close the Day-187 known-gap clause | Absent — CLAUDE.md untouched |
+| CLAUDE.md: close the #912 ## Productivity objection | Absent — grep -c returns 0 |
+
+What did land is a tidy refactor of the pre-existing help.rs guard: hoisting DELIBERATELY_UNDOCUMENTED to module scope, extracting the inline documented closure into a named subcommand_documented, and adding a genuinely good both-edges near-miss test (including the predef case that help_mentions structurally cannot see). That is real work — it just isn't this task, and it leaves the central defect intact: the existing guard reads dispatch_sub.rs source text, not ROUTED_SUBCOMMANDS, so the two authorities the task named are still untied.
+
+The sharpest finding is self-referential. The new doc comment states:
+
+│ *"That reader now exists, in dispatch_near_miss.rs, and it deliberately carries its own register"*
+
+It does not. src/dispatch_near_miss.rs is untouched by this diff and contains no reference to cli_help_text. So the diff removes one false authoritative claim from a comment and installs another in its place — in the file an agent opens to do this exact work, which is the failure mode the task was written to close.
+
+forgotten_touchpoints passes on the mechanical criterion (both new definitions have live consumers in the same diff, no dangling variants or renames), and product_surface is N/A because only the #[cfg(test)] region moved — though that N/A is itself symptomatic, since the task required the user-visible help line to change.
+
+Verdict written to session_plan/eval_task_2.md.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

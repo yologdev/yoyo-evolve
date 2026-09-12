@@ -1,0 +1,59 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD~1 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gasp" src/help.rs | hea… ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.0s (2 ✓)
+
+Critical gaps visible already. Let me verify.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== does the near-miss-tab…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== CLAUDE.md changed? ===… ✓ (7ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.0s (2 ✓)
+
+Confirmed multiple hard misses. One focused check on the new helper's consumer.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== consumers of the new h… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Investigation complete. Findings are decisive.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1905,1915p' src/help.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 21s (2 ✓)
+
+Verdict: FAIL — written to session_plan/eval_task_2.md.
+
+## What I found
+
+The diff touches only src/help.rs (plus a stray .yoyo/risk_validations.jsonl artifact — cleanup feedback, not a failure reason). Three of the task's explicit requirements are absent:
+
+1. The guard was never written. Step 1 asked for a test in src/dispatch_near_miss.rs's own #[cfg(test)] module iterating ROUTED_SUBCOMMANDS against cli_help_text(). That file is untouched; ROUTED_SUBCOMMANDS has no new reader. The only guard present, cli_help_documents_every_routed_subcommand, is pre-existing and reaches the dispatcher by text-scanning dispatch_sub.rs source — a different authority from the one the task named. The task's whole premise ("nothing ties the two together") is unchanged.
+
+2. Two definitions landed without consumers — the shape the instructions single out as first among equals:
+
+• `subcommand_documented (line 1858) is called only by its own near-miss test. The live gate at line 1910 still uses an inline documented` closure at 1906 that is byte-identical logic. So the diff created a **second copy of a rule three lines from the first** and left it unwired — the duplication defect this repo's own conventions warn about.
+• The hoisted DELIBERATELY_UNDOCUMENTED const's doc comment asserts "One statement, two readers" and names cli_help_documents_every_verb_the_near_miss_table_routes. That identifier appears exactly once in the tree: in the comment itself. The const was moved to module scope for a reader that was never written, and the comment states as fact something the code does not contain.
+
+3. `gasp` is still undocumented and CLAUDE.md is untouched. ./target/debug/yoyo --help confirms gasp is absent from the Subcommands block, and the diff's own removal hunk shows the gasp register entry already existed inside the function with identical wording — it was moved, not created. git diff --stat -- CLAUDE.md is empty, so both required doc edits are missing, including the #912 objection closure.
+
+The net effect is a const relocated and an unused helper added. The genuinely new work — the boundary-aware matcher and its near-miss assertions pinning both edges — is sound in isolation, but it guards nothing, and the task was explicit that the guard-plus-fix pair is the task.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

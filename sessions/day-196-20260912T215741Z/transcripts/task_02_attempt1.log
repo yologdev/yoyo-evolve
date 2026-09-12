@@ -1,0 +1,184 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two authorities involved — the const and the help text — before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' src/dispatch_near…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Subcommands" src/help.r… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '320,400p' src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn help_mentions" -A 30… ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 4.3s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1700,1725p' src/help.rs … ✓ (5ms)
+ ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.6s (2 ✓)
+
+Working tree clean, and help_mentions is confirmed unreachable (private fn inside help.rs's own #[cfg(test)] mod tests) and insufficient — it checks only the trailing boundary. Let me see the end of the Subcommands block.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '400,470p' src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gasp" src/help.rs | hea… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 6ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+A register entry for gasp already appears to exist in src/help.rs. Let me read it before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1790,1960p' src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -6 && echo "==… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 35.7s (2 ✓)
+
+Major step-0 finding: the guard this task asks me to build already exists. src/help.rs has cli_help_documents_every_routed_subcommand with all three branches and a register in which gasp is already named with a human-written reason. Let me verify it passes and compare the two extractors.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_routed_subcommands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo cli_help_d… ✓ (3ms)
+ ✓ (144ms)
+  2 tools completed in 145ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: the guard exists and passes. The task's premise is falsified in both halves — and step 2 would have broken a passing test, since branch 2's ratchet asserts !documented(verb) for every registered verb. Let me measure the one question that is still open: do the two extractors agree?
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn dispatcher_routed_ve…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1760,1800p' src/help.rs ✓ (3ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.8s (2 ✓)
+
+The two extractors differ materially: dispatcher_routed_verbs takes every quoted literal in a pattern (handles "a" | "b" =>), while routed_cli_subcommands requires => right after the first literal — so a multi-pattern arm is invisible to it. Let me measure rather than assert.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (26 lines) ✓ (21.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census: BLIND=[] EXTRA=[] — the two extractors agree today, and the only undocumented verb is gasp, which is already registered with a reason. So the bug isn't there. Per my own rule, the other half is what enforces it — and nothing does: the help guard's extractor is strictly more fragile (12-space-exact, first-literal-only), so a silent narrowing would drop a verb from its view with no alarm.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/help.rs"' tests/mo… ✓ (2ms)
+ ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.4s (2 ✓)
+
+Tree clean, src/help.rs registered at 2785. Now implementing — the register must have one statement, so I hoist it rather than copy it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1816,1848p' src/help.rs ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/help.rs (9 → 1 lines)
+  -         const DELIBERATELY_UNDOCUMENTED: &[(&str, &str)] = &[(
+  -             "gasp",
+  -             "#827: harness-facing door onto the ported GASP arms, behind the \
+  -              default-off `gasp` feature. Listing it in user help would promise a \
+  -              normal build something it refuses; it is routed anyway so a \
+  -              multi-token `yoyo gasp …` cannot fall through to a billed LLM turn.",
+  -         )];
+  - 
+            let dispatch_src = include_str!("dispatch_sub.rs");
+ ✓ (12.5s)
+  -         const DELIBERATELY_UNDOCUMENTED: &[(&str, &str)] = &[(
+  -             "gasp",
+  -             "#827: harness-facing door onto the ported GASP arms, behind the \
+  -              default-off `gasp` feature. Listing it in user help would promise a \
+  -              normal build something it refuses; it is routed anyway so a \
+  -              multi-token `yoyo gasp …` cannot fall through to a billed LLM turn.",
+  -         )];
+  - 
+            let dispatch_src = include_str!("dispatch_sub.rs");
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — now insert the hoisted items at module scope, above the test that used to own them.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (2 → 60 lines)
+  +     /// Routed `yoyo <verb>` subcommands that are deliberately absent from
+  +     /// `--help`, each with the reason a human wrote. **One statement, two
+  +     /// readers** — `cli_help_documents_every_routed_subcommand` (which reaches
+  +     /// the dispatcher by text-scanning its source) and
+  +     /// `cli_help_documents_every_verb_the_near_miss_table_routes` (which reaches
+  +     /// it through `ROUTED_SUBCOMMANDS`) both consult this list. A second copy
+  +     /// would agree the day it was written and diverge forever after.
+  +     ///
+  +     /// The register is debt, not absolution: both readers also run the ratchet,
+  +     /// so an entry that becomes documented, or whose verb stops being routed, is
+  +     /// fatal. It can only shrink.
+  +     const DELIBERATELY_UNDOCUMENTED: &[(&str, &str)] = &[(
+  +         "gasp",
+  +         "#827: harness-facing door onto the ported GASP arms, behind the \
+  +          default-off `gasp` feature. Listing it in user help would promise a \
+  +          normal build something it refuses; it is routed anyway so a \
+  +          multi-token `yoyo gasp …` cannot fall through to a billed LLM turn.",
+  +     )];
+  + 
+  +     /// True if `--help` documents `verb` as a subcommand entry.
+  ... (41 more lines)
+ ✓ (941ms)
+  +     /// Routed `yoyo <verb>` subcommands that are deliberately absent from
+  +     /// `--help`, each with the reason a human wrote. **One statement, two
+  +     /// readers** — `cli_help_documents_every_routed_subcommand` (which reaches
+  +     /// the dispatcher by text-scanning its source) and
+  +     /// `cli_help_documents_every_verb_the_near_miss_table_routes` (which reaches
+  +     /// it through `ROUTED_SUBCOMMANDS`) both consult this list. A second copy
+  +     /// would agree the day it was written and diverge forever after.
+  +     ///
+  ... (13 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.17 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: unexpected closing delimiter: `}`[0m
+    [1m[94m--> [0msrc/help.rs:2836:1
+     [1m[94m|[0m
+[1m[94m1140[0m [1m[94m|[0m mod tests {
+     [1m[94m|[0m           [1m[94m-[0m [1m[94mthis delimiter might not be properly closed...[0m
+[1m[94m...[0m
+[1m[94m1935[0m [1m[94m|[0m     }
+     [1m[94m|[0m     [1m[94m-[0m [1m[94m...as it matches this but it has different indentation[0m
+[1m[94m...[0m
+[1m[94m2836[0m [1m[94m|[0m }
+     [1m[94m|[0m [1m[91m^[0m [1m[91munexpected closing delimiter[0m
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My replacement dropped the fn signature line. Let me restore it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1878,1890p' src/help.rs ✓ (2ms)
+  ▶ edit src/help.rs (3 → 3 lines)
+        #[test]
+  - 
+  +     fn cli_help_documents_every_routed_subcommand() {
+            // The `--help` subcommand list is prose that mirrors the match arms in
+ ✓ (1m 35s)
+        #[test]
+  - 
+  +     fn cli_help_documents_every_routed_subcommand() {
+            // The `--help` subcommand list is prose that mirrors the match arms in
+  2 tools completed in 1m 39s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/help.rs
+
