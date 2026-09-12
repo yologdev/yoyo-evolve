@@ -458,6 +458,10 @@ pub fn cli_help_text() -> String {
         s,
         "  extended          Long autonomous task — prints usage; needs an interactive session"
     );
+    let _ = writeln!(
+        s,
+        "  gasp              Record a GASP graph event (e.g. yoyo gasp session-start); needs a --features gasp build"
+    );
     let _ = writeln!(s);
     let _ = writeln!(s, "Commands (in REPL):");
     let _ = writeln!(s);
@@ -1842,13 +1846,15 @@ mod tests {
     /// The register is debt, not absolution: the reader also runs the ratchet,
     /// so an entry that becomes documented, or whose verb stops being routed, is
     /// fatal. It can only shrink.
-    const DELIBERATELY_UNDOCUMENTED: &[(&str, &str)] = &[(
-        "gasp",
-        "#827: harness-facing door onto the ported GASP arms, behind the \
-         default-off `gasp` feature. Listing it in user help would promise a \
-         normal build something it refuses; it is routed anyway so a \
-         multi-token `yoyo gasp …` cannot fall through to a billed LLM turn.",
-    )];
+    /// **Ships EMPTY as of Day 196.** `gasp` was its only entry, and it was
+    /// *documented* rather than registered, so the ratchet below correctly
+    /// demanded the entry's deletion — that pairing is what makes the change
+    /// self-verifying. An empty register is a legitimate terminal state and not
+    /// a broken scan (`REGISTERED_ORPHANS` and `REGISTERED_GIT_BYPASSES` both
+    /// ship empty for the same reason); the anti-vacuous branch is on the *arm
+    /// scan*, never on this list, so the guard still fails loudly if the
+    /// extractor ever stops finding arms.
+    const DELIBERATELY_UNDOCUMENTED: &[(&str, &str)] = &[];
 
     /// True if `--help` documents `verb` as a subcommand entry.
     ///
