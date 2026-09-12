@@ -1368,6 +1368,16 @@ class ProviderScan:
     # carrying the emission's text in a shape the harness never emits is a
     # different fact from a line I wrote quoting one.
     unanchored_rejected: int = 0
+    # Day 196 (second task): files the scan could NOT read WHOLE — an OSError,
+    # or a file past AUDIT_FILE_SIZE_CAP whose tail was never scanned. Counted
+    # and named, NEVER summed into `hits` or into either reject count: three
+    # different facts with three different remedies. A rejected line was READ
+    # and judged; an unread stream was never judged at all, and reporting the
+    # second as silence is "could not check" reading as "checked; clean" —
+    # the refusal the pre-push hook and `CiScan`'s could-not-run branch make.
+    # The direction matters: a terminal rate limit lands at the END of a
+    # transcript, which is exactly the half a head-bounded read drops.
+    unread_streams: int = 0
 
 
 # Three states for the audit-log directory, and none of them may be folded into
