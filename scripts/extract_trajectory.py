@@ -1361,6 +1361,25 @@ def resolve_audit_dir(raw) -> tuple[str, Path | None]:
     return state, (Path(str(raw)) if state == AUDIT_DIR_OK else None)
 
 
+def scan_provider_lines(lines) -> tuple[int, int]:
+    """Fold a stream of lines into (hits, prose_rejected).
+
+    Pure — this is the ONE statement of the fold, so the self-tests drive the
+    same rule `_scan_provider_stream` runs over a real file rather than a
+    second copy of it that agrees the day it is written and diverges forever
+    after (the `significant_braces` precedent).
+    """
+    hits = 0
+    prose = 0
+    for line in lines:
+        marker, rejected = classify_provider_error(line)
+        if marker is not None:
+            hits += 1
+        elif rejected:
+            prose += 1
+    return hits, prose
+
+
 def _scan_provider_stream(path: Path) -> tuple[int, int]:
     """Scan one file for provider-error lines. Returns (hits, prose_rejected).
 
@@ -1368,26 +1387,24 @@ def _scan_provider_stream(path: Path) -> tuple[int, int]:
     Fail-soft: an OSError warns and contributes nothing, because this
     extractor must never block a session.
     """
-    hits = 0
-    prose = 0
     try:
         size = path.stat().st_size
         if size > AUDIT_FILE_SIZE_CAP:
             warn(f"{path} is {size} bytes (>{AUDIT_FILE_SIZE_CAP}); scanning first {AUDIT_FILE_SIZE_CAP}B only")
-        with path.open(encoding="utf-8", errors="replace") as f:
+
+        def _bounded(f):
             bytes_read = 0
             for line in f:
                 bytes_read += len(line)
                 if bytes_read > AUDIT_FILE_SIZE_CAP:
                     break
-                marker, rejected = classify_provider_error(line)
-                if marker is not None:
-                    hits += 1
-                elif rejected:
-                    prose += 1
+                yield line
+
+        with path.open(encoding="utf-8", errors="replace") as f:
+            return scan_provider_lines(_bounded(f))
     except OSError as e:
         warn(f"skipped {path}: {e}")
-    return hits, prose
+        return 0, 0
 
 
 def collect_provider_errors(audit_dir: Path) -> ProviderScan:
@@ -1464,8 +1481,18 @@ def render_provider_health(
     was fine* — and it said exactly that over 7 consecutive sessions that were
     killed by a 23-hour rate limit and produced zero task commits. What the
     evidence supports is *no provider-error lines in the files I opened*, so
-    the sentence now names the streams that were read. `streams` empty keeps
-    the pre-#843 wording, so every existing call site is byte-identical.
+    the sentence now names the streams that were read.
+
+    An EMPTY `streams` names no stream at all rather than falling back to a
+    literal `in audit.jsonl`: the caller recorded nothing about what it read,
+    and asserting a file we cannot show we opened is the same fabrication as
+    the old clean line claiming health. So the two OK branches lost their
+    trailing location clause when `streams` is empty, and the three self-tests
+    that pinned the old wording were UPDATED rather than deleted (a fixture
+    pinning a superseded convention that outlives its replacement converts a
+    defect into a green invariant). The two AUDIT_DIR_* refusal branches are
+    byte-identical and their assertions are untouched — that is #843's
+    regression guard and it stays green unedited.
 
     `prose_rejected` is reported only when > 0 and is NEVER summed into the
     hit count: a line whose shape matched but whose provenance is my own
@@ -1494,7 +1521,7 @@ def render_provider_health(
         )
     return (
         f"## Provider/API health\n{sessions} sessions, {hits} provider error "
-        f"hit(s){scanned or ' in audit.jsonl'}.{tail}"
+        f"hit(s){scanned}.{tail}"
     )
 
 
@@ -4634,23 +4661,33 @@ src/commands_config.rs
         "## Provider/API health: not checked — YOYO_AUDIT_DIR is set but is "
         "not a readable directory. This is not 'no provider errors'.",
     )
+    # SUPERSEDED WORDING, recorded rather than erased (Day 196). These three
+    # used to assert `... 3 provider error hit(s) in audit.jsonl.` and
+    # `... no provider errors detected.`, and the second one is the sentence
+    # this task exists to kill: it read as *the provider was fine* while 7
+    # consecutive rate-limited sessions produced zero task commits. The
+    # trailing ` in audit.jsonl` went with it, because with no `streams`
+    # recorded the caller cannot show it opened that file — naming it anyway
+    # is the same fabrication one clause over. Updated, not deleted: a fixture
+    # pinning a superseded convention that outlives its replacement converts a
+    # defect into a green invariant (Day 148).
     assert_eq(
-        "OK with hits is byte-identical to the pre-#843 render",
+        "OK with hits names no stream when the caller recorded none",
         render_provider_health(7, 3, AUDIT_DIR_OK),
-        "## Provider/API health\n7 sessions, 3 provider error hit(s) in audit.jsonl.",
+        "## Provider/API health\n7 sessions, 3 provider error hit(s).",
     )
     assert_eq(
-        "OK with no hits is byte-identical to the pre-#843 render",
+        "OK with no hits says what was READ, never that the provider was fine",
         render_provider_health(7, 0, AUDIT_DIR_OK),
-        "## Provider/API health\n7 sessions, no provider errors detected.",
+        "## Provider/API health\n7 sessions, no provider-error lines.",
     )
     assert_eq(
         "OK with zero sessions still renders nothing (unchanged)",
         render_provider_health(0, 0, AUDIT_DIR_OK), "",
     )
     assert_eq(
-        "default state argument keeps every existing call site unchanged",
-        render_provider_health(4, 1), "## Provider/API health\n4 sessions, 1 provider error hit(s) in audit.jsonl.",
+        "default state argument keeps every existing call site reachable",
+        render_provider_health(4, 1), "## Provider/API health\n4 sessions, 1 provider error hit(s).",
     )
 
     # The I/O half must hand back NO path for the two refusals — the whole of
@@ -4661,6 +4698,109 @@ src/commands_config.rs
     assert_eq("resolve: /dev/null yields no path", f"{st}/{p}", f"{AUDIT_DIR_UNUSABLE}/None")
     st, p = resolve_audit_dir("/tmp")
     assert_eq("resolve: a real directory yields that path", f"{st}/{p}", f"{AUDIT_DIR_OK}//tmp")
+
+    # --- Provider-error detection (Day 196) -------------------------------
+    # Pinned at the EMISSION POINT: every assertion below runs the real fold
+    # (`scan_provider_lines`, the same one `_scan_provider_stream` runs over a
+    # file) and then asserts the string `render_provider_health` returns.
+    print("\n=== provider-error detection self-tests ===\n")
+
+    # The three real shapes, lifted VERBATIM from run 34619700898's transcript.
+    real_rate_limit = "  error: Rate limited, retry after Some(38965000)ms"
+    real_giveup = (
+        "  \u23f3 stopped retrying on purpose: the provider says its rate "
+        "limit resets in ~10h 49m."
+    )
+    real_no_fallback = "  API error with no fallback configured. Exiting."
+
+    # (2) ANTI-VACUOUS, ASSERTED FIRST. A scanner that finds nothing and
+    # reports a clean bill is this very defect wearing the opposite sign, and
+    # it is quieter than the bug — so prove the fixture really does fire
+    # before any "must be zero" row below is allowed to mean anything.
+    anti_hits, anti_prose = scan_provider_lines([real_rate_limit])
+    assert_eq(
+        "ANTI-VACUOUS: a genuine unquoted rate-limit line really is detected",
+        f"hits={anti_hits} prose={anti_prose}", "hits=1 prose=0",
+    )
+
+    # (1) All three real shapes detected, each by its own marker, so a regex
+    # that collapsed two of them into one cannot pass by luck.
+    assert_eq(
+        "the three real emissions each match their own marker",
+        "/".join(
+            str(classify_provider_error_line(x))
+            for x in (real_rate_limit, real_giveup, real_no_fallback)
+        ),
+        "rate_limited/retry_giveup/no_fallback",
+    )
+    # ...and at the emission point, all three in one stream are reported.
+    h, pr = scan_provider_lines([real_rate_limit, real_giveup, real_no_fallback])
+    assert_eq(
+        "all three real shapes reach the rendered line as hits",
+        render_provider_health(1, h, AUDIT_DIR_OK, pr, ("transcripts/*.log",)),
+        "## Provider/API health\n1 sessions, 3 provider error hit(s) in "
+        "transcripts/*.log.",
+    )
+
+    # (3) NEAR-MISS GUARD — my own prose is the false-positive population, and
+    # it grows every session. The last line is lifted VERBATIM from this
+    # task's own file, which is the case that makes the point: writing about
+    # the defect must never register as the defect.
+    prose_lines = [
+        "| `error: Rate limited, retry after Some(38965000)ms` | 11x | dead |",
+        "The log says `API error with no fallback configured. Exiting.` here.",
+        "scripts/extract_trajectory.py:1171:error: Rate limited, retry after Some(1)ms",
+        "> error: Rate limited, retry after Some(38965000)ms",
+        "Each log carries 11x `429`, 6x `529`, 7x `API error with no fallback "
+        "configured. Exiting.`",
+    ]
+    p_hits, p_prose = scan_provider_lines(prose_lines)
+    assert_eq(
+        "NEAR-MISS: five prose shapes yield ZERO hits and are all COUNTED",
+        f"hits={p_hits} prose={p_prose}", "hits=0 prose=5",
+    )
+    assert_eq(
+        "NEAR-MISS: the rendered line reports the rejects, never as hits",
+        render_provider_health(1, p_hits, AUDIT_DIR_OK, p_prose, ("transcripts/*.log",)),
+        "## Provider/API health\n1 sessions, no provider-error lines in "
+        "transcripts/*.log. (5 prose-shaped line(s) rejected)",
+    )
+
+    # (4) NEAR-MISS GUARD — a genuinely clean session set still renders the
+    # healthy branch and claims NOTHING false. The old wording ("no provider
+    # errors detected") is asserted ABSENT: that sentence is the defect.
+    clean_hits, clean_prose = scan_provider_lines(
+        ['{"tool":"read_file","success":true}', "Phase A1: Assessment (900s)..."]
+    )
+    clean_render = render_provider_health(
+        10, clean_hits, AUDIT_DIR_OK, clean_prose, ("audit.jsonl", "transcripts/*.log")
+    )
+    assert_eq(
+        "NEAR-MISS: a clean set names the streams it read and nothing more",
+        clean_render,
+        "## Provider/API health\n10 sessions, no provider-error lines in "
+        "audit.jsonl, transcripts/*.log.",
+    )
+    assert_eq(
+        "NEAR-MISS: the superseded 'errors detected' claim is gone for good",
+        str("no provider errors detected" in clean_render), "False",
+    )
+
+    # The prose filter must not eat a true positive: the three real shapes
+    # carry no pipe, no backtick, no grep prefix and no blockquote.
+    assert_eq(
+        "the prose filter rejects none of the three real emissions",
+        "/".join(
+            str(is_provider_prose(x))
+            for x in (real_rate_limit, real_giveup, real_no_fallback)
+        ),
+        "False/False/False",
+    )
+
+    # (5) The two AUDIT_DIR_* refusal branches keep their PRE-EXISTING,
+    # UNEDITED assertions above — that is #843's regression guard, and it is
+    # deliberately not re-asserted here (re-asserting a guarded property is
+    # ceremony and inflates what a red would mean).
 
     # --- Usage-record coverage (#848 follow-up) ---------------------------
     # The predicate is `type == "usage"`, never "has a type": a line with NO
