@@ -1883,10 +1883,16 @@ mod tests {
             "def"
         ));
         // Right edge: a longer word starting with the verb is not the verb.
-        assert!(!subcommand_documented("  default           Something\n", "def"));
+        assert!(!subcommand_documented(
+            "  default           Something\n",
+            "def"
+        ));
         // Left edge: a longer word *ending* with the verb is not the verb either —
         // this is the half `help_mentions` cannot see.
-        assert!(!subcommand_documented("  predef            Something\n", "def"));
+        assert!(!subcommand_documented(
+            "  predef            Something\n",
+            "def"
+        ));
         // End-of-line entries with no trailing description still count.
         assert!(subcommand_documented("  version\n", "version"));
         // Prose mentioning the verb mid-sentence is not a help-list entry.
