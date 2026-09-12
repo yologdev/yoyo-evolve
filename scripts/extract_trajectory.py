@@ -4804,10 +4804,11 @@ src/commands_config.rs
     # reports a clean bill is this very defect wearing the opposite sign, and
     # it is quieter than the bug — so prove the fixture really does fire
     # before any "must be zero" row below is allowed to mean anything.
-    anti_hits, anti_prose = scan_provider_lines([real_rate_limit])
+    anti_hits, anti_prose, anti_unanchored = scan_provider_lines([real_rate_limit])
     assert_eq(
         "ANTI-VACUOUS: a genuine unquoted rate-limit line really is detected",
-        f"hits={anti_hits} prose={anti_prose}", "hits=1 prose=0",
+        f"hits={anti_hits} prose={anti_prose} unanchored={anti_unanchored}",
+        "hits=1 prose=0 unanchored=0",
     )
 
     # (1) All three real shapes detected, each by its own marker, so a regex
@@ -4821,10 +4822,10 @@ src/commands_config.rs
         "rate_limited/retry_giveup/no_fallback",
     )
     # ...and at the emission point, all three in one stream are reported.
-    h, pr = scan_provider_lines([real_rate_limit, real_giveup, real_no_fallback])
+    h, pr, ur = scan_provider_lines([real_rate_limit, real_giveup, real_no_fallback])
     assert_eq(
         "all three real shapes reach the rendered line as hits",
-        render_provider_health(1, h, AUDIT_DIR_OK, pr, ("transcripts/*.log",)),
+        render_provider_health(1, h, AUDIT_DIR_OK, pr, ("transcripts/*.log",), ur),
         "## Provider/API health\n1 sessions, 3 provider error hit(s) in "
         "transcripts/*.log.",
     )
@@ -4841,14 +4842,17 @@ src/commands_config.rs
         "Each log carries 11x `429`, 6x `529`, 7x `API error with no fallback "
         "configured. Exiting.`",
     ]
-    p_hits, p_prose = scan_provider_lines(prose_lines)
+    p_hits, p_prose, p_unanchored = scan_provider_lines(prose_lines)
     assert_eq(
         "NEAR-MISS: five prose shapes yield ZERO hits and are all COUNTED",
-        f"hits={p_hits} prose={p_prose}", "hits=0 prose=5",
+        f"hits={p_hits} prose={p_prose} unanchored={p_unanchored}",
+        "hits=0 prose=5 unanchored=0",
     )
     assert_eq(
         "NEAR-MISS: the rendered line reports the rejects, never as hits",
-        render_provider_health(1, p_hits, AUDIT_DIR_OK, p_prose, ("transcripts/*.log",)),
+        render_provider_health(
+            1, p_hits, AUDIT_DIR_OK, p_prose, ("transcripts/*.log",), p_unanchored
+        ),
         "## Provider/API health\n1 sessions, no provider-error lines in "
         "transcripts/*.log. (5 prose-shaped line(s) rejected)",
     )
@@ -4856,11 +4860,16 @@ src/commands_config.rs
     # (4) NEAR-MISS GUARD — a genuinely clean session set still renders the
     # healthy branch and claims NOTHING false. The old wording ("no provider
     # errors detected") is asserted ABSENT: that sentence is the defect.
-    clean_hits, clean_prose = scan_provider_lines(
+    clean_hits, clean_prose, clean_unanchored = scan_provider_lines(
         ['{"tool":"read_file","success":true}', "Phase A1: Assessment (900s)..."]
     )
     clean_render = render_provider_health(
-        10, clean_hits, AUDIT_DIR_OK, clean_prose, ("audit.jsonl", "transcripts/*.log")
+        10,
+        clean_hits,
+        AUDIT_DIR_OK,
+        clean_prose,
+        ("audit.jsonl", "transcripts/*.log"),
+        clean_unanchored,
     )
     assert_eq(
         "NEAR-MISS: a clean set names the streams it read and nothing more",
