@@ -1869,6 +1869,184 @@ def render_module_sizes(spec: ModuleGateSpec, risk: ModuleRisk) -> str:
     return "\n".join(lines)
 
 
+# --- Productivity cross-check (claimed successes vs observed task commits) ---
+#
+# The measured defect (Day 196): SEVEN consecutive sessions produced zero
+# commits while every instrument reported success. `journals/JOURNAL.md`
+# records `Session commits: no commits made.` for Day 194 20:33, Day 194
+# 22:59, Day 195 03:34, Day 195 10:48, Day 195 16:04, Day 195 20:39 and
+# Day 195 23:04; the last real task commits are Day 194 16:00. Meanwhile the
+# outcomes section above rendered every Day-195 row as `tasks 1/1 ✅ — build
+# OK, tests OK` and `gh run list` reported `success` for each. ~36 hours of
+# loop time produced nothing and three independent failure-reporting paths
+# called it health.
+#
+# The chain (read from run log 34656500584): Phase A2 produced zero task
+# files -> the harness wrote its fallback task -> the fallback committed
+# nothing -> `tasks_succeeded` was incremented anyway -> the evaluator
+# rendered no verdict line -> `accepted UNVERIFIED` -> no revert, no issue.
+# `scripts/evolve.sh` is protected, so all of that is out of reach. THE
+# READER IS NOT.
+#
+# This file already held BOTH halves and crossed them nowhere:
+#   * `load_outcomes()`       -> the CLAIM       (`tasks_succeeded`)
+#   * `collect_task_commits()` -> the OBSERVATION (TASK_COMMIT_RE over git log)
+# A producer that silently stopped with no consumer that notices is the same
+# shape as the #848 cost figure frozen at $1,077.59 for 102 days, and it gets
+# the same remedy the Day-181 usage-coverage and Day-183 module-size readers
+# got: a cross-check rendered into the briefing every session, on my side of
+# the protected-file boundary.
+
+PRODUCTIVITY_OK = "productivity-ok"
+PRODUCTIVITY_IDLE = "productivity-idle"
+PRODUCTIVITY_NO_CLAIMS = "productivity-no-claims"
+PRODUCTIVITY_COULD_NOT_CHECK = "productivity-could-not-check"
+
+
+@dataclass
+class Productivity:
+    """Counts, never a single number — and four states, none folded.
+
+    `idle_days` / `idle_claimed` carry the evidence the alarm line needs so a
+    reader can connect it to the `N/N ✅` rows it contradicts. `claiming_days`
+    and `days_observed` are reported so an OK line states its own denominator
+    rather than asserting health over an unstated population.
+    """
+
+    state: str = PRODUCTIVITY_COULD_NOT_CHECK
+    idle_days: tuple[int, ...] = ()
+    idle_claimed: int = 0
+    claiming_days: int = 0
+    days_observed: int = 0
+
+
+def claims_by_day(outcomes: list[dict]) -> dict[int, int]:
+    """Sum `tasks_succeeded` per day number across the outcome window.
+
+    Defensive in the same way every other reader here is: a row with no
+    parseable `day`, or a non-integer `tasks_succeeded`, contributes nothing
+    rather than raising or coercing a malformed value into a comparable one.
+    A day present with zero claims is KEPT as an explicit 0 — that is a real
+    observation ("this day attempted nothing or reverted") and is the
+    near-miss the alarm must not fire on.
+    """
+    claims: dict[int, int] = {}
+    for o in outcomes:
+        day = o.get("day")
+        if isinstance(day, bool) or not isinstance(day, int):
+            continue
+        got = o.get("tasks_succeeded", 0)
+        if isinstance(got, bool) or not isinstance(got, int) or got < 0:
+            got = 0
+        claims[day] = claims.get(day, 0) + got
+    return claims
+
+
+def classify_productivity(
+    day_claims: dict[int, int], days_with_task_commits: set[int]
+) -> Productivity:
+    """Pure: does every day that CLAIMED a success have a task commit?
+
+    ANTI-VACUOUS, AND IT IS ASSERTED FIRST. An empty `days_with_task_commits`
+    means the git collection returned nothing at all, and the answer is
+    COULD_NOT_CHECK — never "every day is idle". A scanner that finds nothing
+    and reports a full-blown alarm is this very defect wearing the opposite
+    sign, and it would fire on every run where `git log` failed. Same rule for
+    an empty outcome window: with no claims read, nothing can be missing.
+
+    A DAY CLAIMING ZERO SUCCESSES WITH NO COMMITS IS NOT IDLE. That is an
+    honest session that attempted nothing or reverted, and flagging it would
+    be a false alarm on the one signal whose entire value is that it fires
+    rarely. Only `tasks_succeeded > 0` with zero observed task commits is the
+    alarm.
+
+    NO_CLAIMS is its own state and must not render as the alarm: a window
+    where nothing was attempted has nothing missing from it.
+    """
+    if not day_claims:
+        return Productivity(state=PRODUCTIVITY_COULD_NOT_CHECK)
+    if not days_with_task_commits:
+        return Productivity(
+            state=PRODUCTIVITY_COULD_NOT_CHECK,
+            days_observed=0,
+            claiming_days=sum(1 for n in day_claims.values() if n > 0),
+        )
+    claiming = {day: n for day, n in day_claims.items() if n > 0}
+    if not claiming:
+        return Productivity(
+            state=PRODUCTIVITY_NO_CLAIMS,
+            claiming_days=0,
+            days_observed=len(days_with_task_commits),
+        )
+    idle = sorted(day for day in claiming if day not in days_with_task_commits)
+    if idle:
+        return Productivity(
+            state=PRODUCTIVITY_IDLE,
+            idle_days=tuple(idle),
+            idle_claimed=sum(claiming[day] for day in idle),
+            claiming_days=len(claiming),
+            days_observed=len(days_with_task_commits),
+        )
+    return Productivity(
+        state=PRODUCTIVITY_OK,
+        claiming_days=len(claiming),
+        days_observed=len(days_with_task_commits),
+    )
+
+
+def render_productivity(prod: Productivity) -> str:
+    """At most 2 lines, header included — the epistemic block renders LAST and
+    absorbs all truncation pressure (Day 142, load-bearing: it has been cut
+    away before, and TOTAL_BYTE_CAP is 3072), so this must not crowd it.
+
+    Prints one short line even when healthy, following
+    `render_usage_coverage`'s precedent rather than `render_module_sizes`':
+    the whole point is that the question is asked out loud every session
+    instead of asked nowhere at all.
+
+    THREE STATED LIMITS, AND LIMIT 1 LEADS, because a reader that reads as a
+    gate is exactly how this goes stale:
+
+    1. IT IS A READER, NOT A GATE. Nothing fails, reverts or files an issue
+       when it says a day was idle. Whether it changes anything depends on a
+       planner reading it — the same dependency the tests/module_size.rs
+       branch-2 warning had for the eight days nobody acted on it.
+    2. WINDOW MISMATCH. The outcome window is WINDOW_SESSIONS (10) and the git
+       window is WINDOW_DAYS (14). Ten sessions is roughly two days, so days
+       sit well inside the git window in practice — but a day whose commits
+       fell outside it would false-alarm. Stated, deliberately not coded
+       around: boundary logic would grow this past one pass.
+    3. It sees TASK commits only (TASK_COMMIT_RE). A session that produced
+       only a `session wrap-up` or a `cargo fmt` commit is correctly counted
+       as having produced nothing.
+    """
+    if prod.state == PRODUCTIVITY_COULD_NOT_CHECK:
+        return (
+            "## Productivity: not checked — no claimed successes to read, or "
+            "no task commits found in the git window at all. This is a "
+            "REFUSAL, not 'every claimed success landed'."
+        )
+    if prod.state == PRODUCTIVITY_NO_CLAIMS:
+        return (
+            "## Productivity\n"
+            f"No day in the window claimed a success, so nothing is missing "
+            f"({prod.days_observed} day(s) did produce task commits)."
+        )
+    if prod.state == PRODUCTIVITY_IDLE:
+        days = ", ".join(f"day-{d}" for d in prod.idle_days)
+        return (
+            "## Productivity\n"
+            f"IDLE: {days} claimed {prod.idle_claimed} success(es) and produced "
+            f"ZERO task commits — the outcome rows above report those days as "
+            f"successes, and they shipped nothing."
+        )
+    return (
+        "## Productivity\n"
+        f"All {prod.claiming_days} claiming day(s) produced >=1 task commit. "
+        f"Says work LANDED, never that it was GOOD."
+    )
+
+
 # --- Counterfactual pairing coverage (DREAM milestone reader) ---
 
 VERDICT_LEDGER_REL_PATH = "dreams/counterfactual_verdicts.jsonl"
@@ -2496,6 +2674,28 @@ def main() -> int:
     # trajectory DATA, so it must not suppress the global "(no trajectory data
     # yet)" state below. The anti-vacuous "nothing to cover" state is a
     # refusal too — 0 UNEARNED rows means coverage is undefined, not complete.
+    # Day 196: cross the CLAIM (`tasks_succeeded`, from outcome.json) against
+    # the OBSERVATION (task commits in git log). Seven consecutive sessions
+    # produced zero commits while every instrument reported success; both
+    # halves were already collected here and crossed nowhere. Reuses
+    # `outcomes` and `tasks` above — NO second git call and no cargo (#832: a
+    # nested cargo rebuilds over the shared target/debug/yoyo uplift path and
+    # reddened CI for three sessions). Joined on the DAY NUMBER, never on
+    # timestamps: the session directory stamp is written when the audit is
+    # PUSHED (Day 195's 23:04 session is `day-195-...T232116Z`) while the
+    # commit subject's (HH:MM) is SESSION_TIME from the START — they do not
+    # match and must not be compared. Both collectors already carry the day.
+    # Same rule as `ci_unknown` / `provider_unknown` / `usage_unknown` /
+    # `module_unknown` / `pairing_unknown`: a "could not check" line is honest
+    # but is not trajectory DATA and must not suppress the global
+    # "(no trajectory data yet)" state below.
+    productivity = classify_productivity(
+        claims_by_day(outcomes), {day for day, _ in tasks}
+    )
+    s = render_productivity(productivity)
+    productivity_unknown = bool(s) and productivity.state == PRODUCTIVITY_COULD_NOT_CHECK
+    if s:
+        sections.append(s)
     pairing_cov = collect_pairing_coverage(Path.cwd())
     s = render_pairing_coverage(pairing_cov)
     pairing_unknown = bool(s) and pairing_cov.state != PAIRING_OK
@@ -2513,6 +2713,7 @@ def main() -> int:
         - (1 if usage_unknown else 0)
         - (1 if module_unknown else 0)
         - (1 if pairing_unknown else 0)
+        - (1 if productivity_unknown else 0)
     )
     if data_sections or epistemic_entries or epistemic_never:
         sections.append(render_epistemic(epistemic_entries, epistemic_never))
