@@ -1384,4 +1384,115 @@ mod tests {
             "the disclosure leaked into the model-facing context: got {ctx}"
         );
     }
+
+    /// What a reader must be told when the guard below goes red.
+    ///
+    /// Kept as one constant so the "loader returned None" branch and the
+    /// "content never arrived" branch cannot drift into saying different
+    /// things about the same failure.
+    const CONTEXT_LOSS_REMEDY: &str = "\
+         WHAT JUST HAPPENED: the evolve loop stopped receiving its own project context. \
+         `scripts/evolve.sh` feeds every phase through this loader, and CLAUDE.md is the \
+         file re-injected as authoritative context every session.\n\
+         WHY THIS TEST IS THE ONLY ALARM: the loop consumes context through this path and \
+         judges a session on the exit code alone. A session that silently receives no \
+         project context still builds, still tests, still commits, and still files itself \
+         green — nothing else anywhere notices.\n\
+         REMEDY: make the TRUSTED path work for the loop — grant the loop trust, or scope \
+         the gate so a trusted directory still loads its instruction files.\n\
+         NOT THE REMEDY: deleting this test, exempting CLAUDE.md by filename, or \
+         special-casing this repository. Each of those restores the green and restores the \
+         blindness with it.";
+
+    /// GUARD: this repository's own `CLAUDE.md` still reaches the caller of the
+    /// project-context loader.
+    ///
+    /// This is the prerequisite #902's gate half was blocked on, twice, for the
+    /// same stated reason: a seventh project-trust gate of the obvious shape
+    /// would make my own harness stop reading `CLAUDE.md`, and `cargo build &&
+    /// cargo test` would pass, because nothing tested "does the evolve loop
+    /// still receive its context". Nothing did. Now something does.
+    ///
+    /// It is the Day-192 lesson applied to a property rather than a defect: the
+    /// property is correct today and was enforced by nothing, so it was
+    /// invisible to every discipline in this repo — tests, gates, positive
+    /// controls and the fix loop all fire on *failure*, and a
+    /// correct-but-unenforced property emits no red anywhere.
+    ///
+    /// No process CWD is moved (#780 — the test-side population is zero and
+    /// stays zero): the dir-taking seam is handed `CARGO_MANIFEST_DIR`, the
+    /// same resolution `src/help_data_guards.rs` and `tests/git_chokepoint.rs`
+    /// already use.
+    ///
+    /// STATED LIMIT: it proves the loader returns the file's CONTENT. It proves
+    /// nothing about whether the model USED it. Presence is mechanically
+    /// checkable; influence is not — the same limit
+    /// `tests/blind_round_grades.rs` states about grades and
+    /// `tests/doc_version_claims.rs` states about markers.
+    #[test]
+    fn the_evolve_loop_still_receives_its_own_project_context() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        // Structural headings, deliberately not line numbers and not counts —
+        // every count in CLAUDE.md has gone stale at least once, several twice.
+        // Two markers rather than one, taken from near the top and near the
+        // bottom, so a loader that returns a truncated prefix fails too.
+        let markers = ["## Build & Test Commands", "## Safety Rules"];
+
+        // (1) ANTI-VACUOUS, FIRST. Without this, a loader returning nothing and
+        // a marker that was never in the file agree on nothing and pass
+        // together — this task's own subject wearing the opposite sign.
+        let on_disk = std::fs::read_to_string(repo.join("CLAUDE.md")).unwrap_or_else(|e| {
+            panic!("CLAUDE.md is unreadable at {}: {e}", repo.display());
+        });
+        for marker in markers {
+            assert!(
+                on_disk.contains(marker),
+                "ANTI-VACUOUS CHECK FAILED: CLAUDE.md on disk no longer contains the marker \
+                 {marker:?}, so this guard would pass by agreeing with itself. Pick a new \
+                 structural heading; do not delete the assertion."
+            );
+        }
+
+        // (2) The loader answers for this repository at all.
+        let ctx = load_project_context_from(repo).unwrap_or_else(|| {
+            panic!("load_project_context_from returned None for this repository.\n{CONTEXT_LOSS_REMEDY}")
+        });
+
+        // (3) CLAUDE.md's content genuinely reached the caller.
+        for marker in markers {
+            assert!(
+                ctx.contains(marker),
+                "CLAUDE.md's content did not reach the caller: marker {marker:?} is on disk \
+                 but absent from the loaded context.\n{CONTEXT_LOSS_REMEDY}"
+            );
+        }
+
+        // (4) The Day-194 provenance boundary wraps it. The nonce is per-process
+        // by construction, so the SHAPE around the path is matched and never the
+        // nonce itself.
+        assert!(
+            ctx.starts_with("[PROJECT-INSTRUCTIONS-"),
+            "the loaded context does not open with a provenance block: got {:?}",
+            &ctx[..ctx.len().min(120)]
+        );
+        let begin_at = ctx.find("-BEGIN CLAUDE.md]").unwrap_or_else(|| {
+            panic!(
+                "no provenance BEGIN marker names CLAUDE.md in the loaded context.\n\
+                 {CONTEXT_LOSS_REMEDY}"
+            )
+        });
+        // The wrapper must PRECEDE the content, or the marker could have been
+        // satisfied by CLAUDE.md's own prose about this format rather than by a
+        // block the loader actually emitted.
+        let body_at = ctx
+            .find(markers[0])
+            .expect("marker presence was asserted above");
+        assert!(
+            begin_at < body_at,
+            "the provenance BEGIN marker does not precede CLAUDE.md's content \
+             (begin at {begin_at}, content at {body_at}) — the match may have come from \
+             the file's own prose rather than from a block the loader emitted."
+        );
+    }
 }
