@@ -5110,6 +5110,155 @@ src/commands_config.rs
         never_run.state == PAIRING_OK and (never_run.paired, never_run.unpaired) == (0, 4),
     )
 
+    print("\n=== claims_by_day / classify_productivity self-tests ===\n")
+
+    # Every fixture below is FABRICATED — plain dicts and sets, no filesystem,
+    # no git, no audit-log. The classifier is pure over already-parsed data and
+    # must be drivable with nothing mounted.
+
+    # ANTI-VACUOUS, AND IT IS ASSERTED FIRST. An empty observation set means the
+    # git collection returned nothing at all; answering "every day is idle" there
+    # is this very defect wearing the opposite sign, and it would fire on every
+    # run where `git log` failed.
+    blind = classify_productivity({195: 5}, set())
+    assert_true(
+        "anti-vacuous: an empty commit set is COULD_NOT_CHECK, never 'every day idle'",
+        blind.state == PRODUCTIVITY_COULD_NOT_CHECK and blind.idle_days == (),
+    )
+    blind_render = render_productivity(blind)
+    # Asserted on the RENDERED STRING, not merely on the tally: the string is
+    # what reaches the planner prompt, and the refusal has to survive rendering.
+    assert_true(
+        "the empty-commit-set line refuses out loud rather than reading as a clean bill",
+        "REFUSAL" in blind_render
+        and "not checked" in blind_render
+        and "IDLE" not in blind_render,
+    )
+    assert_true(
+        "an empty outcome window is COULD_NOT_CHECK too: no claims read, nothing missing",
+        classify_productivity({}, {194, 195}).state == PRODUCTIVITY_COULD_NOT_CHECK,
+    )
+
+    # THE REAL STREAK, as a fixture. Day 195 ran five sessions, every instrument
+    # reported success, and `git log` carries no Day-195 task commit at all.
+    streak = classify_productivity({194: 4, 195: 5}, {194})
+    assert_true(
+        "the measured streak: {195: 5} claimed vs {194} observed is IDLE naming day 195",
+        streak.state == PRODUCTIVITY_IDLE
+        and streak.idle_days == (195,)
+        and streak.idle_claimed == 5,
+    )
+    streak_render = render_productivity(streak)
+    assert_true(
+        "the IDLE line names the day, the claimed total, and the rows it contradicts",
+        "day-195" in streak_render
+        and "5 success(es)" in streak_render
+        and "ZERO task commits" in streak_render
+        and "outcome rows above" in streak_render,
+    )
+    assert_true(
+        "a claiming day that DID commit is not dragged into the alarm",
+        "day-194" not in streak_render,
+    )
+    multi = classify_productivity({193: 1, 194: 2, 195: 5}, {194})
+    assert_true(
+        "several idle days are listed in order and their claims summed, never averaged",
+        multi.idle_days == (193, 195) and multi.idle_claimed == 6,
+    )
+
+    # NEAR-MISS GUARD — THE ENTIRE REGRESSION SURFACE. Every claiming day has a
+    # task commit, so the OK line renders and the alarm does not. A discriminator
+    # tested only on the side that fires is vacuous green.
+    #
+    # The pass-through claim and the denominator claim are asserted SEPARATELY,
+    # not folded into one row: they are two facts with two different remedies,
+    # and bundling them means a red cannot say which half moved. Only the first
+    # is the near-miss guard proper — it is the row that must survive a
+    # neutered classifier, which is what proves it tests the pass-through.
+    healthy = classify_productivity({194: 4, 195: 2}, {194, 195})
+    assert_true(
+        "near-miss: every claiming day has a task commit -> OK state, no idle days",
+        healthy.state == PRODUCTIVITY_OK and healthy.idle_days == (),
+    )
+    healthy_render = render_productivity(healthy)
+    assert_true(
+        "near-miss: the healthy line renders the OK sentence, not the alarm",
+        "produced >=1 task commit" in healthy_render,
+    )
+    assert_true(
+        "the healthy line carries no alarm vocabulary and no refusal",
+        "IDLE" not in healthy_render
+        and "ZERO task commits" not in healthy_render
+        and "REFUSAL" not in healthy_render,
+    )
+    assert_true(
+        "the OK line states its own denominator rather than asserting bare health",
+        "All 2 claiming day(s)" in healthy_render and healthy.claiming_days == 2,
+    )
+    assert_true(
+        "an extra observed day with no claim does not disturb the OK verdict",
+        classify_productivity({195: 2}, {193, 194, 195}).state == PRODUCTIVITY_OK,
+    )
+
+    # A DAY CLAIMING ZERO SUCCESSES WITH NO COMMITS IS NOT IDLE. That is an
+    # honest session that attempted nothing or reverted; flagging it would be a
+    # false alarm on the one signal whose whole value is that it fires rarely.
+    zero_claim = classify_productivity({194: 3, 195: 0}, {194})
+    assert_true(
+        "a day claiming ZERO with no commits is not idle — honest abstention, not a miss",
+        zero_claim.state == PRODUCTIVITY_OK and zero_claim.idle_days == (),
+    )
+    all_zero = classify_productivity({194: 0, 195: 0}, {194})
+    assert_true(
+        "a window where nothing was claimed is NO_CLAIMS, its own state",
+        all_zero.state == PRODUCTIVITY_NO_CLAIMS and all_zero.claiming_days == 0,
+    )
+    no_claims_render = render_productivity(all_zero)
+    assert_true(
+        "the no-claims line says nothing is missing and does not render as the alarm",
+        "nothing is missing" in no_claims_render
+        and "IDLE" not in no_claims_render
+        and "REFUSAL" not in no_claims_render,
+    )
+
+    # The join key is the DAY NUMBER. Session dir stamps are written at audit
+    # PUSH time and commit subjects carry SESSION_TIME from the start, so the
+    # two never match and must never be compared.
+    assert_eq(
+        "claims_by_day sums tasks_succeeded per day across that day's sessions",
+        claims_by_day(
+            [
+                {"day": 195, "tasks_succeeded": 1},
+                {"day": 195, "tasks_succeeded": 1},
+                {"day": 194, "tasks_succeeded": 2},
+            ]
+        ),
+        {195: 2, 194: 2},
+    )
+    assert_eq(
+        "a day present with zero claims is KEPT as an explicit 0, not dropped",
+        claims_by_day([{"day": 195, "tasks_succeeded": 0}]),
+        {195: 0},
+    )
+    assert_eq(
+        "a row with no parseable day contributes nothing rather than raising",
+        claims_by_day(
+            [{"tasks_succeeded": 3}, {"day": "195", "tasks_succeeded": 3}, {"day": 1}]
+        ),
+        {1: 0},
+    )
+    assert_eq(
+        "a malformed tasks_succeeded is read as 0, never coerced into a comparable",
+        claims_by_day(
+            [
+                {"day": 195, "tasks_succeeded": "many"},
+                {"day": 195, "tasks_succeeded": -4},
+                {"day": 195, "tasks_succeeded": True},
+            ]
+        ),
+        {195: 0},
+    )
+
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
     return 1 if failures else 0
 
