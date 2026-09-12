@@ -1,0 +1,155 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by measuring the stream — Step 0 is the branch decision and must come before any edit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git fetch --no-tags origin audit…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1160,1260p' scripts/extr… ✓ (3ms)
+ ✓ (863ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.3s (2 ✓)
+
+Now the Step 0 measurement — this decides the branch:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/al && ls sessions/ | grep -E 'day-19[456]' | head -20 && echo "=== total…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1260,1330p' scripts/extr… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/al/sessions && for d in day-195-20260911T035347Z day… (7 lines)  ▶ $ cd /tmp/al/sessions && d=day-195-20260911T035347Z && echo "=== dir listing ===" … ✓ (4ms)
+ ✓ (47ms)
+  4 tools completed in 7.6s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 has fired: Branch A — the string is in transcripts/*.log, zero in audit.jsonl. Let me capture the exact lines verbatim:
+  ▶ $ cd /tmp/al/sessions/day-195-20260911T035347Z/transcripts && echo "=== assess.log…  ▶ $ cd /tmp/al/sessions && echo "=== grep -h the 3 shapes across day-194/195/196 tra… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.0s (2 ✓)
+
+Critical detail: the lines are indented 2 spaces in transcripts. Let me get the full shape inventory:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/al/sessions && grep -rh 'Rate limited\|stopped retrying\|no fallback con…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'is_quoted_prose' script… ✓ (7ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.2s (2 ✓)
+
+All three shapes confirmed with real counts (43/43/15), and all three pass the prose filter. Let me see the existing self-tests and call site:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'render_provider_health\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'provider' scripts/extra… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me see the exact test block, then make all edits:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4415,4452p' scripts/extr… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have everything. Writing the classifier (anchored + prose filter):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 127 lines)
+  - PROVIDER_ERROR_RE = re.compile(r'"type"\s*:\s*"error"|provider_error|rate_limit', re.IGNORECASE)
+  + AUDIT_FILE_SIZE_CAP = 10 * 1024 * 1024  # 10MB per file — guard against runaway audit.jsonl
+    
+    
+  - AUDIT_FILE_SIZE_CAP = 10 * 1024 * 1024  # 10MB per file — guard against runaway audit.jsonl
+  + # --- Provider-error detection (Day 196) -----------------------------------
+  + #
+  + # The measured defect: Day 195 ran 5 sessions and produced ZERO task commits,
+  + # Day 194 added 2 more; every one filed `tasks N/N ✅` with a `success`
+  + # workflow conclusion, and this very section rendered
+  + # `10 sessions, no provider errors detected.` into the planner's briefing
+  + # while `scripts/measure_abstentions.py` read the same world and reported
+  + # `[EXCLUDED_PROVIDER_ERROR: 7 line(s)]` on 7 of 8 logs. Two of my own
+  + # instruments disagreed and the one in my prompt said "healthy".
+  + #
+  + # Two independent causes, both real:
+  + #   1. WRONG STREAM. The scan read `audit.jsonl` only. The rate-limit text is
+  + #      emitted by the yoyo binary to its own stderr, which `evolve.sh` tees
+  + #      into `transcripts/*.log` — the same stream mismatch
+  + #      `measure_abstentions.py` was repaired for on Day 175.
+  ... (109 more lines)
+ ✓ (1m 1s)
+  - PROVIDER_ERROR_RE = re.compile(r'"type"\s*:\s*"error"|provider_error|rate_limit', re.IGNORECASE)
+  + AUDIT_FILE_SIZE_CAP = 10 * 1024 * 1024  # 10MB per file — guard against runaway audit.jsonl
+    
+    
+  - AUDIT_FILE_SIZE_CAP = 10 * 1024 * 1024  # 10MB per file — guard against runaway audit.jsonl
+  + # --- Provider-error detection (Day 196) -----------------------------------
+  + #
+  + # The measured defect: Day 195 ran 5 sessions and produced ZERO task commits,
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' scripts/extract_t… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+NamedTuple isn't imported — switching to @dataclass to match the file's CiScan/GreenScan precedent:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (13 → 14 lines)
+  - class ProviderScan(NamedTuple):
+  + @dataclass
+  + class ProviderScan:
+        """What the provider-health walk actually observed.
+    
+        `streams` names the files that were READ, so the rendered claim can never
+  ···
+        sessions: int = 0
+        hits: int = 0
+        prose_rejected: int = 0
+  -     streams: tuple[str, ...] = ()
+  +     streams: tuple = ()
+ ✓ (1m 0s)
+  - class ProviderScan(NamedTuple):
+  + @dataclass
+  + class ProviderScan:
+        """What the provider-health walk actually observed.
+    
+        `streams` names the files that were READ, so the rendered claim can never
+  ···
+        sessions: int = 0
+  ... (4 more lines)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1363,1400p' scripts/extr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now widening the read to transcripts (Branch A):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (99 lines) ✓ (74ms)
+
+
+Now narrowing the claim in render_provider_health:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (64 lines) ✓ (69ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the call sites:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (27 lines) ✓ (21ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

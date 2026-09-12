@@ -1,0 +1,54 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat -- CLAUDE… ✓ (4ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== HEAD~2..HEAD stat ==="…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'extract_trajectory' CLA… ✓ (12ms)
+ ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== CLAUDE.md in either co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== self-tests ===" && tim… ✓ (6ms)
+ ✓ (66ms)
+  6 tools completed in 17.3s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (66ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (66ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== stale refs to deleted … ✓ (6ms)
+  3 tools completed in 27.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evidence is conclusive. Writing the verdict.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 0s)
+
+Verdict: FAIL
+
+Two independent, decisive problems:
+
+1. The task's own completion gate fails. python3 scripts/extract_trajectory.py --test exits 1 with 2 FAILURE(S):
+
+```
+FAIL: NEAR-MISS: five prose shapes yield ZERO hits and are all COUNTED
+  got:  'hits=0 prose=0'
+  want: 'hits=0 prose=5'
+FAIL: NEAR-MISS: the rendered line reports the rejects, never as hits
+```
+
+This is the guard the task itself calls "the half that matters." The cause is a real design inconsistency, not a typo: classify_provider_error only reports a prose reject when classify_provider_error_line first returns a marker — but the new patterns are line-anchored (^\s*error:…$), so a markdown-piped, backticked, grep-prefixed or >-quoted line matches nothing and returns (None, False). is_provider_prose is never consulted, so `prose_rejected` is structurally unreachable and its rendered clause is dead code. The "count the rejects rather than dropping them silently" requirement — which the task grounds in the shrinking-denominator defect — did not land.
+
+Note the harness reported Tests: PASS because that is cargo test, which gives zero coverage of scripts/*.py. This file is precisely the silent case CLAUDE.md documents.
+
+2. CLAUDE.md was not touched. git diff HEAD~2 --name-only lists only scripts/extract_trajectory.py, and grep -c 'Provider/API health' CLAUDE.md returns 0. The rendered briefing string genuinely changed (no provider errors detected → no provider-error lines in <streams>), and the task asked explicitly for a paragraph covering the defect, both causes, which Step-0 branch fired, the prose-filter reasoning and the positive-control width. CLAUDE.md's own #864 entry records a prior payment being rejected for exactly this.
+
+What did land correctly, and is worth keeping in a re-land: Branch A is named and justified, the two-stream walk reuses the existing AUDIT_FILE_SIZE_CAP with no new gh call, the three legacy alternatives are retained rather than narrowed, the clean claim is narrowed to name the streams actually read, the AUDIT_DIR_* refusals are byte-identical, and forgotten-touchpoints is clean (no stale PROVIDER_ERROR_RE references, every new definition has a consumer, the tuple→dataclass and signature changes are handled at their call sites).
+
+Verdict written to session_plan/eval_task_1.md. No code modified.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

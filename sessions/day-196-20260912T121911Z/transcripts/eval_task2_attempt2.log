@@ -1,0 +1,43 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff focused on the key claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "get_custom_command_cont…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "project_trust_grants" … ✓ (10ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "discover_custom_comman…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "slash command\|is_slash… ✓ (3ms)
+ ✓ (17ms)
+  4 tools completed in 9.7s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "goal_verify\|\.yoyo/ski… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (11ms)
+  2 tools completed in 12.8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+--help short-circuits before lazy discovery, so no refusal renders on that path — expected, not counter-evidence. I have enough: the end-to-end test discovery_drops_the_project_dir_and_keeps_the_user_dir_when_untrusted drives the real discovery seam on real directories and passes.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 12s)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+The decisive evidence:
+
+Both doors wired. This was the trap. gate_project_commands alone would have been a gate that does not gate: dispatch.rs:1292 executes a slash command through get_custom_command_content, a separate lookup path from batch discovery. The diff gives that path get_custom_command_content_with reading the same shared project_commands_refused predicate — one statement of the rule, not two copies.
+
+The licence claim was checkable and held. The task asked me to verify that gating this directory cannot starve the evolve loop before relying on it. src/main.rs:563-567 carries the comment "Piped mode can't dispatch slash commands (they need REPL state)" and prints a refusal — so scripts/evolve.sh's stdin-piped agents never load a custom command, and the blocker that keeps #902's instruction-file half frozen genuinely does not apply here.
+
+**forgotten_touchpoints, checked by grep rather than by reading the diff optimistically:** `project_trust_grants` grew a 4th parameter and has exactly one non-test caller (cli.rs:2276), updated here. discover_custom_commands_from became #[cfg(test)] with zero references outside commands.rs. load_commands_from_dir was renamed and changed return type, load_single_dir_commands was deleted — both clean. The public wrappers kept their signatures, so help.rs and dispatch.rs needed no edits.
+
+Two honest notes rather than failures:
+
+• `--help` exits before lazy discovery, so my live binary probe rendered nothing on either the untrusted or trusted run. That is the expected short-circuit, not counter-evidence; the functional proof is discovery_drops_the_project_dir_and_keeps_the_user_dir_when_untrusted, which drives the real discovery seam over real tempdirs and asserts the untrusted, trusted, and ungated cases with whole-vec equality.
+• `docs/src/troubleshooting/safety.md:126 mentions the boundary in one prose sentence naming only MCP servers, hooks and permissions.allow. It does not enumerate the doors and already omitted goal_verify, notify_command and .yoyo/skills/`, so the task's conditional docs ask ("if that page enumerates the boundary") does not fire — cleanup feedback, consistent with three prior doors, not a regression introduced here.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

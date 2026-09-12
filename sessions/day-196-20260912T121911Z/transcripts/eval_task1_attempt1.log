@@ -1,0 +1,70 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.2s (2 ✓)
+
+Diff touches only one file. The task explicitly required a CLAUDE.md paragraph and LIMITS block updates. Let me verify.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== self-tests added for p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== LIMITS block ===" && g… ✓ (9ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.2s (2 ✓)
+
+No test lines in the diff. Let me confirm the existing self-tests are unchanged and whether the new classifier is covered at all.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== diff hunks touching ru…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (11ms)
+ ✓ (68ms)
+  2 tools completed in 69ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The self-test suite fails (exit 1). Let me identify which test.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (65ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (64ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 25.4s (2 ✓)
+
+Decisive. The self-test suite is red — and the failing test is the pre-existing clean-branch assertion the task said must stay green. cargo test never runs Python self-tests, which is why the harness reported PASS.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4640,4650p' scripts/extr… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: the render now emits no provider-error lines... while the pre-existing assertion at :4644 still expects no provider errors detected. — the suite is red, and cargo test never runs Python self-tests, which is why the harness reported PASS.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 0s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+The production logic is actually decent work: Branch A is declared and justified with measured evidence, both causes are fixed together (transcripts read alongside audit.jsonl, bounded by the existing AUDIT_FILE_SIZE_CAP, no new gh call), the anchored whole-line patterns replace the rate_limit-underscore regex that could never match Rate limited, and the prose filter counts rejects rather than dropping them. The AUDIT_DIR_* three-state discipline is preserved.
+
+But three things sink it:
+
+1. **The self-test suite is red.** `python3 scripts/extract_trajectory.py --test` exits 1 with `1 FAILURE(S)` — `FAIL: OK with no hits is byte-identical to the pre-#843 render. The clean branch was reworded to no provider-error lines... while the assertion at :4644 still expects no provider errors detected. The task's terminal requirement was explicitly ALL PASSED, exit 0. The harness reported "Tests: PASS" because cargo test gives zero coverage of scripts/*.py` — precisely the silent case the task itself flagged.
+
+2. **Zero tests added.** Added lines matching `check(|assert` = 0; none of `classify_provider_error`, `is_provider_prose` or `ProviderScan` is referenced in the self-test region. The task required five named categories — the three real shapes, the anti-vacuous check asserted first, the prose near-miss guard (including a line lifted from the task file), the clean-session guard — plus a positive control run as an atomic mutate→run→restore with a NEUTERED marker, recording the width of the red. None of that exists, so the claim "this detects rate limits" has no guard behind it.
+
+3. **No CLAUDE.md paragraph**, despite an explicit Docs section. This is the same shape the `#864` entry in CLAUDE.md already records twice: `cargo test` cannot fail for a missing sentence, so the doc half is the half with no gate.
+
+The fix is small — update the stale assertion (inverting it with the superseded wording recorded, per repo convention), add the tests, and write the doc paragraph. I have not modified any code.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

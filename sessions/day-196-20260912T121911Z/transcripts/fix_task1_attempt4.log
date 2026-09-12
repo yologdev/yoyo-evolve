@@ -1,0 +1,146 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding what was already done, then add the missing CLAUDE.md documentation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The code is complete; only the CLAUDE.md documentation is missing. Let me read the actual diff so the doc paragraph is accurate rather than inferred.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff aa269822~1 HEAD -- scri… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1171,1260p' scripts/extr… ✓ (3ms)
+  2 tools completed in 8.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me gather the remaining facts I need for an accurate doc paragraph — the render text, the Step 0 measurement, and the LIMITS block.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def collect_provider_e… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def render_provider_he… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "provider" scripts/extra… ✓ (3ms)
+  3 tools completed in 9.3s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: the code is complete and passing; the missing piece is the CLAUDE.md paragraph. Let me verify the last two facts I need — the LIMITS block and the positive-control record.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^LIMITS\|^const LIMITS"… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "LIMITS" scripts/extrac… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2310,2345p' scripts/extr… ✓ (8ms)
+  3 tools completed in 12.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The LIMITS block at 2319 belongs to a different section (render_productivity) — this file has no global LIMITS constant. Let me confirm where the provider limits landed and find the positive-control record.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "never whether the provi… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The stated limits never made it into the code — the task required them there, not only in the write-up. Two gaps to close then: the limits in render_provider_health, and the CLAUDE.md paragraph. First let me run the positive control to get the real width for both.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (17 lines) ✓ (223ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+5 failures, but my grep pattern missed the names. Let me re-run capturing the actual failure lines.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (13 lines) ✓ (91ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restore verified clean. Let me capture all 5 failure names precisely.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (14 lines) ✓ (154ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (16 lines) ✓ (102ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 28.3s (2 ✓)
+
+Positive control complete: 5 red, named, restore byte-empty. Now let me close the two gaps. First the stated limits, which the task required in-code and which never landed:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (6 → 26 lines)
+        are NEVER summed into the hit count: a line whose shape matched but whose provenance is my own
+        writing is a different fact from a provider error, and folding them is the
+        contamination defect this whole section exists to avoid.
+  + 
+  +     THREE STATED LIMITS, AND LIMIT 3 IS THE ONE THAT BOUNDS THE WHOLE SECTION:
+  + 
+  +     1. IT DETECTS A LINE, NOT AN OUTAGE. A hit means the harness printed a
+  +        provider-error line, never that the provider was actually down, and
+  +        never that the session failed to recover — a run that hit one 429,
+  +        retried and finished green scores identically to the 7 dead day-195
+  +        sessions. The count is evidence to read, not a verdict.
+  +     2. THE HARNESS'S OWN STDOUT IS STILL UNREAD. Branch A put the rate-limit
+  +        text in `transcripts/*.log`, which this now reads — but a session dir
+  +        carries AGENT transcripts and not the harness's own stdout
+  +        (`measure_abstentions.py`'s Day-177 finding), so a provider error that
+  +        appears ONLY in the workflow log is invisible here. That is why the
+  +        clean line names the streams it read instead of claiming health:
+  +        silence over an unread stream must not read as clean.
+  +     3. THIS MAKES THE CAUSE LEGIBLE; IT STOPS NOTHING. The harness still runs
+  +        every phase after a terminal rate limit and still files the session as
+  ... (4 more lines)
+ ✓ (1m 13s)
+        are NEVER summed into the hit count: a line whose shape matched but whose provenance is my own
+        writing is a different fact from a provider error, and folding them is the
+        contamination defect this whole section exists to avoid.
+  + 
+  +     THREE STATED LIMITS, AND LIMIT 3 IS THE ONE THAT BOUNDS THE WHOLE SECTION:
+  + 
+  +     1. IT DETECTS A LINE, NOT AN OUTAGE. A hit means the harness printed a
+  +        provider-error line, never that the provider was actually down, and
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the CLAUDE.md paragraph. Let me find the anchor — and note the existing text says "from audit.jsonl", which my change makes stale.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (69ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That's one enormous line. Let me get just the local context around the stale phrase.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (5 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have everything I need. Now the CLAUDE.md paragraph, replacing the now-stale from audit.jsonl phrase:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - ), provider/API health from audit.jsonl, **usage-record coverage** (Day 181, #848 follow-up
+  + ), provider/API health (**superseded description, recorded rather than erased: this read "provider/API health from audit.jsonl" until Day 196** — it now reads `audit.jsonl` **and** `transcripts/*.log`, and the clause that went stale is the one naming the stream, which is exactly the half the defect below was hiding in. **The measured defect: Day 195 ran 5 sessions and Day 194 added 2, and those 7 produced ZERO task commits** — `git log --since=2026-09-11 | grep '(Task N)'` returns nothing … [yoyo: 7848 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 12s)
+  - ), provider/API health from audit.jsonl, **usage-record coverage** (Day 181, #848 follow-up
+  + ), provider/API health (**superseded description, recorded rather than erased: this read "provider/API health from audit.jsonl" until Day 196** — it now reads `audit.jsonl` **and** `transcripts/*.log`, and the clause that went stale is the one naming the stream, which is exactly the half the defect below was hiding in. **The measured defect: Day 195 ran 5 sessions and Day 194 added 2, and those 7 produced ZERO task commits** — `git log --since=2026-09-11 | grep '(Task N)'` returns nothing … [yoyo: 7848 more bytes elided — diff lines are capped at 500 bytes]
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,218 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — the evaluator says the self-tests crash on a tuple-arity mismatch.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (8ms)
+ ✓ (116ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+Confirmed: the suite dies before any new guard executes. Let me look at the function and its consumers.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1380,1470p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'scan_provider_lines' sc… ✓ (2ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+The production consumer at 1479 is fine; the four test sites destructure two. Let me read them.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4780,4890p' scripts/extr… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me re-establish state and inspect the pieces I need to reconcile.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1150,1250p' scripts/extr… ✓ (3ms)
+ ✓ (112ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1250,1380p' scripts/extr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1470,1600p' scripts/extr… ✓ (3ms)
+  4 tools completed in 6.7s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Production side is fully wired (render_provider_health takes unanchored_rejected). The sole defect is the four test call sites. Let me fix them.
+  ▶ edit scripts/extract_trajectory.py (5 → 6 lines)
+  -     anti_hits, anti_prose = scan_provider_lines([real_rate_limit])
+  +     anti_hits, anti_prose, anti_unanchored = scan_provider_lines([real_rate_limit])
+        assert_eq(
+            "ANTI-VACUOUS: a genuine unquoted rate-limit line really is detected",
+  -         f"hits={anti_hits} prose={anti_prose}", "hits=1 prose=0",
+  +         f"hits={anti_hits} prose={anti_prose} unanchored={anti_unanchored}",
+  +         "hits=1 prose=0 unanchored=0",
+        )
+  ▶ edit scripts/extract_trajectory.py (4 → 4 lines)
+  -     h, pr = scan_provider_lines([real_rate_limit, real_giveup, real_no_fallback])
+  +     h, pr, ur = scan_provider_lines([real_rate_limit, real_giveup, real_no_fallback])
+        assert_eq(
+            "all three real shapes reach the rendered line as hits",
+  -         render_provider_health(1, h, AUDIT_DIR_OK, pr, ("transcripts/*.log",)),
+  +         render_provider_health(1, h, AUDIT_DIR_OK, pr, ("transcripts/*.log",), ur),
+ ✓ (1m 1s)
+  -     anti_hits, anti_prose = scan_provider_lines([real_rate_limit])
+  +     anti_hits, anti_prose, anti_unanchored = scan_provider_lines([real_rate_limit])
+        assert_eq(
+            "ANTI-VACUOUS: a genuine unquoted rate-limit line really is detected",
+  -         f"hits={anti_hits} prose={anti_prose}", "hits=1 prose=0",
+  +         f"hits={anti_hits} prose={anti_prose} unanchored={anti_unanchored}",
+  +         "hits=1 prose=0 unanchored=0",
+        )
+ ✓ (2m 1s)
+  -     h, pr = scan_provider_lines([real_rate_limit, real_giveup, real_no_fallback])
+  +     h, pr, ur = scan_provider_lines([real_rate_limit, real_giveup, real_no_fallback])
+        assert_eq(
+            "all three real shapes reach the rendered line as hits",
+  -         render_provider_health(1, h, AUDIT_DIR_OK, pr, ("transcripts/*.log",)),
+  +         render_provider_health(1, h, AUDIT_DIR_OK, pr, ("transcripts/*.log",), ur),
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/extract_trajectory.py (8 → 11 lines)
+  -     p_hits, p_prose = scan_provider_lines(prose_lines)
+  +     p_hits, p_prose, p_unanchored = scan_provider_lines(prose_lines)
+        assert_eq(
+            "NEAR-MISS: five prose shapes yield ZERO hits and are all COUNTED",
+  -         f"hits={p_hits} prose={p_prose}", "hits=0 prose=5",
+  +         f"hits={p_hits} prose={p_prose} unanchored={p_unanchored}",
+  +         "hits=0 prose=5 unanchored=0",
+        )
+        assert_eq(
+            "NEAR-MISS: the rendered line reports the rejects, never as hits",
+  -         render_provider_health(1, p_hits, AUDIT_DIR_OK, p_prose, ("transcripts/*.log",)),
+  +         render_provider_health(
+  +             1, p_hits, AUDIT_DIR_OK, p_prose, ("transcripts/*.log",), p_unanchored
+  +         ),
+  ▶ edit scripts/extract_trajectory.py (6 → 11 lines)
+  -     clean_hits, clean_prose = scan_provider_lines(
+  +     clean_hits, clean_prose, clean_unanchored = scan_provider_lines(
+            ['{"tool":"read_file","success":true}', "Phase A1: Assessment (900s)..."]
+        )
+        clean_render = render_provider_health(
+  -         10, clean_hits, AUDIT_DIR_OK, clean_prose, ("audit.jsonl", "transcripts/*.log")
+  +         10,
+  +         clean_hits,
+  +         AUDIT_DIR_OK,
+  +         clean_prose,
+  +         ("audit.jsonl", "transcripts/*.log"),
+  +         clean_unanchored,
+        )
+ ✓ (1m 12s)
+  -     p_hits, p_prose = scan_provider_lines(prose_lines)
+  +     p_hits, p_prose, p_unanchored = scan_provider_lines(prose_lines)
+        assert_eq(
+            "NEAR-MISS: five prose shapes yield ZERO hits and are all COUNTED",
+  -         f"hits={p_hits} prose={p_prose}", "hits=0 prose=5",
+  +         f"hits={p_hits} prose={p_prose} unanchored={p_unanchored}",
+  +         "hits=0 prose=5 unanchored=0",
+        )
+  ... (6 more lines)
+ ✓ (2m 24s)
+  -     clean_hits, clean_prose = scan_provider_lines(
+  +     clean_hits, clean_prose, clean_unanchored = scan_provider_lines(
+            ['{"tool":"read_file","success":true}', "Phase A1: Assessment (900s)..."]
+        )
+        clean_render = render_provider_health(
+  -         10, clean_hits, AUDIT_DIR_OK, clean_prose, ("audit.jsonl", "transcripts/*.log")
+  +         10,
+  +         clean_hits,
+  ... (5 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (114ms)
+  5 tools completed in 4m 43s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The edit reported success but line 4807 still shows the old form — that suggests duplicate blocks. Let me verify.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'scan_provider_lines' sc… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Sites 2 and 4 took; 1 and 3 did not — my edits hit duplicate copies elsewhere. Let me find them.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'ANTI-VACUOUS: a genuine… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No duplicates — my two parallel edit_file calls raced on the same file and one write clobbered the other, in each pair. That is precisely the serial-controls lesson in CLAUDE.md, walked into with edit_file. Applying the remaining two serially.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (5 → 6 lines)
+  -     anti_hits, anti_prose = scan_provider_lines([real_rate_limit])
+  +     anti_hits, anti_prose, anti_unanchored = scan_provider_lines([real_rate_limit])
+        assert_eq(
+            "ANTI-VACUOUS: a genuine unquoted rate-limit line really is detected",
+  -         f"hits={anti_hits} prose={anti_prose}", "hits=1 prose=0",
+  +         f"hits={anti_hits} prose={anti_prose} unanchored={anti_unanchored}",
+  +         "hits=1 prose=0 unanchored=0",
+        )
+ ✓ (1m 13s)
+  -     anti_hits, anti_prose = scan_provider_lines([real_rate_limit])
+  +     anti_hits, anti_prose, anti_unanchored = scan_provider_lines([real_rate_limit])
+        assert_eq(
+            "ANTI-VACUOUS: a genuine unquoted rate-limit line really is detected",
+  -         f"hits={anti_hits} prose={anti_prose}", "hits=1 prose=0",
+  +         f"hits={anti_hits} prose={anti_prose} unanchored={anti_unanchored}",
+  +         "hits=1 prose=0 unanchored=0",
+        )
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/extract_trajectory.py (8 → 11 lines)
+  -     p_hits, p_prose = scan_provider_lines(prose_lines)
+  +     p_hits, p_prose, p_unanchored = scan_provider_lines(prose_lines)
+        assert_eq(
+            "NEAR-MISS: five prose shapes yield ZERO hits and are all COUNTED",
+  -         f"hits={p_hits} prose={p_prose}", "hits=0 prose=5",
+  +         f"hits={p_hits} prose={p_prose} unanchored={p_unanchored}",
+  +         "hits=0 prose=5 unanchored=0",
+        )
+        assert_eq(
+            "NEAR-MISS: the rendered line reports the rejects, never as hits",
+  -         render_provider_health(1, p_hits, AUDIT_DIR_OK, p_prose, ("transcripts/*.log",)),
+  +         render_provider_health(
+  +             1, p_hits, AUDIT_DIR_OK, p_prose, ("transcripts/*.log",), p_unanchored
+  +         ),
+ ✓ (1m 12s)
+  -     p_hits, p_prose = scan_provider_lines(prose_lines)
+  +     p_hits, p_prose, p_unanchored = scan_provider_lines(prose_lines)
+        assert_eq(
+            "NEAR-MISS: five prose shapes yield ZERO hits and are all COUNTED",
+  -         f"hits={p_hits} prose={p_prose}", "hits=0 prose=5",
+  +         f"hits={p_hits} prose={p_prose} unanchored={p_unanchored}",
+  +         "hits=0 prose=5 unanchored=0",
+        )
+  ... (6 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'scan_provider_lines' sc… ✓ (68ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 19s (2 ✓)
+
+ALL PASSED, exit 0. Let me confirm the four required guards actually executed rather than merely not crashing.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (65ms)
+ ✓ (65ms)
+  2 tools completed in 66ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (131ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (77ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'ok:.*UNUSABLE\|ok:.*not… ✓ (3ms)
+  3 tools completed in 11.4s (3 ✓)
+
