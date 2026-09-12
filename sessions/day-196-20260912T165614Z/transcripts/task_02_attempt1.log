@@ -1,0 +1,103 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant part of src/context.rs to find the seam and check visibility.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "load_project_context\|P…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/context.rs && grep -n … ✓ (7ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,275p' src/context.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '443,470p' src/context.rs… ✓ (4ms)
+ ✓ (4ms)
+  4 tools completed in 3.6s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^## " CLAUDE.md | head …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '244,330p' src/context.rs… ✓ (3ms)
+ ✓ (5ms)
+  3 tools completed in 9.7s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tree is clean, loader has no truncation, CLAUDE.md is the only instruction file present. Writing the guard now.
+  ▶ edit src/context.rs (6 → 117 lines)
+            assert!(
+                !ctx.contains("--safe-mode"),
+                "the disclosure leaked into the model-facing context: got {ctx}"
+  +         );
+  +     }
+  + 
+  +     /// What a reader must be told when the guard below goes red.
+  +     ///
+  +     /// Kept as one constant so the "loader returned None" branch and the
+  +     /// "content never arrived" branch cannot drift into saying different
+  +     /// things about the same failure.
+  +     const CONTEXT_LOSS_REMEDY: &str = "\
+  +          WHAT JUST HAPPENED: the evolve loop stopped receiving its own project context. \
+  +          `scripts/evolve.sh` feeds every phase through this loader, and CLAUDE.md is the \
+  +          file re-injected as authoritative context every session.\n\
+  +          WHY THIS TEST IS THE ONLY ALARM: the loop consumes context through this path and \
+  +          judges a session on the exit code alone. A session that silently receives no \
+  +          project context still builds, still tests, still commits, and still files itself \
+  +          green — nothing else anywhere notices.\n\
+  +          REMEDY: make the TRUSTED path work for the loop — grant the loop trust, or scope \
+  ... (97 more lines)
+ ✓ (2m 5s)
+            assert!(
+                !ctx.contains("--safe-mode"),
+                "the disclosure leaked into the model-facing context: got {ctx}"
+  +         );
+  +     }
+  + 
+  +     /// What a reader must be told when the guard below goes red.
+  +     ///
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (1.6s)
+  2 tools completed in 2m 10s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Test passes. Now the positive control — atomic mutate→run→restore, with the sabotage marked so tests/neutered_guards.rs enforces the restore.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/conte… (10 lines) ✓ (1m 46s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Width is 2, not 1 — a pre-existing test reddened too. Running the discriminating control Day 190 asks for: the realistic gate predicate (project-local config present), which tempdir fixtures lack and this repo has.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/conte… (9 lines) ✓ (1m 46s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Discriminating control: exactly 1 red — mine. Now the full gate.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (27.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (462ms)
+  2 tools completed in 31.1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 56s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green — 5601 passed, every integration target clean. Now the docs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'does the evolve loop st… ✓ (11ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/context.rs
+
