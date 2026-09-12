@@ -1,0 +1,165 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by writing my prediction before reading the target. Let me first derive the round number from the ledger.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (19 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -4 drea… (8 lines) ✓ (28ms)
+ ✓ (39ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.0s (2 ✓)
+
+Round 96. Let me check the ledger schema for a line that carries scope_limit, without touching the target file.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (12 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines) ✓ (29ms)
+ ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 52s (2 ✓)
+
+Round 96. Now I write the prediction before the first read of the target, and mirror it to #738 — the half a git reset --hard cannot reach.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (52 lines) ✓ (50ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction is in the ledger. Now the mirror to #738 — the half a git reset --hard cannot reach — before any read of the target.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (782ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/r… (32 lines) ✓ (739ms)
+  2 tools completed in 24.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction mirrored ([#738 comment 5643497131](https://github.com/yologdev/yoyo-evolve/issues/738#issuecomment-5643497131)). The blindfold is now off — Step 2: read the scoped region.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "HintContext\|contextual… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs:900..1020 ✓ (1ms)
+  2 tools completed in 3.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Blindfold off. Let me check the call site and the existing tests before grading.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== is… (4 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== re… (3 lines) ✓ (7ms)
+  2 tools completed in 6.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything confirmed. h1 and h2 both hit — and the defect is live. Now the fix at the emission point.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub… (2 lines) ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+is_plain_output is in scope via pub use tools::*, and quiet is correctly gated at the call site — only plain is unhandled. Making the fix:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (63 → 93 lines)
+  + /// The decorative marker every contextual hint carries in ordinary output.
+  + ///
+  + /// **One statement of the glyph**, so the table below holds the *message* and
+  + /// nothing else and the marker cannot drift between the six rules. Under
+  + /// `--screen-reader` this is omitted entirely rather than transliterated: a
+  + /// screen reader announcing "light bulb" before every hint is noise, and the
+  + /// sentence after it is the whole content.
+  + const HINT_GLYPH: &str = "💡 ";
+  + 
+    /// Return at most one contextual hint based on what just happened.
+    ///
+    /// Rules are evaluated in priority order. Each hint category fires at most
+    /// once per session. Returns `None` when no rules match or the matching
+    /// category was already shown. Callers should gate on `is_quiet()` before
+    /// printing.
+  + ///
+  + /// This wrapper is the **only** global read in the pair — it resolves
+  + /// `is_plain_output()` and hands the answer to the decision half, exactly as
+  + /// `print_usage` / `print_context_usage` do for their own cores (Day 177). Do
+  + /// not move that read into [`contextual_hint_with`]: a global read inside the
+  ... (79 more lines)
+ ✓ (14.5s)
+  + /// The decorative marker every contextual hint carries in ordinary output.
+  + ///
+  + /// **One statement of the glyph**, so the table below holds the *message* and
+  + /// nothing else and the marker cannot drift between the six rules. Under
+  + /// `--screen-reader` this is omitted entirely rather than transliterated: a
+  + /// screen reader announcing "light bulb" before every hint is noise, and the
+  + /// sentence after it is the whole content.
+  + const HINT_GLYPH: &str = "💡 ";
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two existing test call sites need the new argument. Let me see them:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2630,2662p' src/format/m… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (10.2s)
+  2 tools completed in 15.4s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5587 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::effective_disallowed_tools_pairs_shared_state_with_sub_agent ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::every_connect_failure_arm_reports_the_error_it_was_handed ... ok
+test agent_builder::tests::every_connect_failure_arm_escapes_the_values_it_interpolates ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::external_servers_json_table ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_bui...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That's the blind-round gate firing correctly — a prediction with no grade is exactly the half-written state it exists to catch. Step 3: grade it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (51 lines) ✓ (215ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate green. Now the tests — and per Day 194 I'll pin the property across every rule, not the one path I walked. First let me check the existing source-level wrapper guard:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2360,2400p' src/format/m… ✓ (3ms)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

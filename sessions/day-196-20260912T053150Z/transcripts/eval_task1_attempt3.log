@@ -1,0 +1,89 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+The diff shown only touches scripts/extract_trajectory.py. The task explicitly requires CLAUDE.md docs. Let me check the full committed diff.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 6131defd..HEAD --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 6131defd..HEAD -- CLAUD… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.5s (2 ✓)
+
+CLAUDE.md was not updated — the task's Files: line names it and has a full ## Docs section. Let me verify the functional half before finalizing.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def collect_task_commit…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (4ms)
+ ✓ (79ms)
+  2 tools completed in 80ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: self-tests pass (ALL PASSED, exit 0) and tasks is list[tuple[int, str]], so the {day for day, _ in tasks} consumer wiring is correct. One fast composition check, then the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 30 p… (11 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "productivity" scripts/e… ✓ (6ms)
+ ✓ (80ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.7s (2 ✓)
+
+Functional half is sound. One last fairness check — confirm CLAUDE.md isn't modified uncommitted or in the eval-fix commit:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== working tree ==="; git… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: clean tree, one file across both commits, zero mentions of the new reader in CLAUDE.md. Writing the verdict.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 16s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The verdict is already written. Let me verify it parses against the harness's format rules, then stop.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== placeholder check (mus… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -oE '^Checked: (forgotten_t… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.6s (2 ✓)
+
+Evaluation complete. The verdict is written to session_plan/eval_task_1.md and parses cleanly: one Verdict: line, all four Checked: lines present with legal verdict words, no leftover angle-bracket placeholders, and every reason well over the 10-character floor.
+
+## Verdict: FAIL
+
+What landed and works. The code half is genuinely good, and I verified it by driving the real functions rather than reading the diff:
+
+• `classify_productivity returns **four states with none folded**, and the anti-vacuous branch is asserted *first* — an empty commit set yields COULD_NOT_CHECK`, never "every day is idle".
+• The real streak fixture renders IDLE: day-195 claimed 5 success(es) and produced ZERO task commits — the outcome rows above report those days as successes, which connects the alarm to the N/N ✅ rows it contradicts, exactly as asked.
+• The healthy case renders the OK line with its denominator; the refusal says REFUSAL out loud; a day claiming 0 is correctly not flagged.
+• Each render is ≤2 lines header-included, appended above render_epistemic (line 2719), with productivity_unknown subtracted from data_sections (line 2709).
+• Joined on the day number — the trap the task named — with no second git call and no cargo.
+• `--test prints ALL PASSED`, exit 0.
+
+Forgotten touchpoints passed, and I checked the one that could have bitten. Rather than assume the call-site shape, I read the producer: collect_task_commits is declared -> tuple[list[tuple[int, str]], int], so {day for day, _ in tasks} unpacks correctly. Every new definition has a consumer in this diff; all four constants are handled in render_productivity.
+
+Why it fails. CLAUDE.md was never touched. git diff 6131defd..HEAD --name-only returns only scripts/extract_trajectory.py; the tree is clean; grep -c "classify_productivity\|PRODUCTIVITY_IDLE\|Day 196" CLAUDE.md returns 0. The task named CLAUDE.md in its Files: line and specified the paragraph's contents in a dedicated ## Docs section — receipts, the day-number join, the four unfolded states, the anti-vacuous-first branch, the near-miss guard, the positive control's red width, the live before/after diff, and the three limits with limit 1 leading. None of that exists, so a new section that renders into every Phase A1/A2 prompt is undocumented, and the "live reading is part of the deliverable" requirement is unlanded with no record that the positive control was run at all.
+
+This is not a style quibble — it is the precise failure mode CLAUDE.md already records twice as evaluator-caught (#864's undocumented payment; the #902 slice "rejected by the evaluator for it"), along with the mechanism: the doc half is the half with no gate, because cargo test cannot fail for a missing sentence. The remedy is small and the code needs no changes — a fix attempt should add the CLAUDE.md paragraph and, if the positive control and live before/after diff were not actually run, run them and paste the real output rather than describing it.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

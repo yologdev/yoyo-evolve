@@ -1,0 +1,97 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "contextual_hint_with\|c… ✓ (10ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+All call sites updated. Let me check the source-level guard at line 2406 that inspects the wrapper's source text — a signature change could break it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2390,2430p src/format/mod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 900,945p src/format/mod.r… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.9s (2 ✓)
+
+The source guard at 2406 keys on the wrapper signature (unchanged), so it still resolves. Let me verify the new test actually exercises all six rows and the module-size register is correct.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/mod.rs && timeo… ✓ (284ms)
+ ✓ (286ms)
+  2 tools completed in 287ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The fix, the guard, and the register are all verified (2788 lines matches the pasted register exactly; gate passes clean). One concrete uncertainty blocks the verdict: the task's Files: line names CLAUDE.md and the diff stat I saw didn't include it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "round 96\|blind round 9… ✓ (7ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 30.7s (2 ✓)
+
+Decisive finding. git diff --stat HEAD~2 shows only three files — CLAUDE.md was not touched — while the task named it in Files: and gave it a dedicated ## Docs section. Let me confirm the staleness this creates.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --name-only HEAD~2 && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (8 lines) ✓ (9ms)
+ ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.1s (2 ✓)
+
+Both concerns confirmed. Writing the verdict.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 29s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The verdict file is written. Let me verify it landed correctly and is parseable.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/eval_task_2.md … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The placeholder count of 1 needs checking — it may be a false positive from the Rust generic syntax I quoted.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "<[^>]*>" session_plan/e… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+False positive confirmed — <&'static str> is the Rust generic in the quoted signature, not an unfilled placeholder. All 5 required lines parse at line-start. Evaluation complete.
+
+## Verdict: FAIL — on `doc_sync` only
+
+The engineering is genuinely good and I verified it rather than trusting the diff:
+
+• **Fix is at the emission point.** `HINT_GLYPH` is one statement prepended only on the non-plain path, so a seventh rule can't reintroduce a glyph on the plain path. The wrapper reads `is_plain_output()` — not the core — preserving the Day-177 "wrapper is the only global read" invariant the split was made to establish.
+• **Touchpoints complete.** `contextual_hint_with` gained a third parameter; all four call sites (`:963`, `:2653`, `:2746`, `:2754`) are updated in this diff. I specifically checked the source-level guard at :2406, which was the plausible silent breakage — it keys on the wrapper's signature, which is unchanged, so it still resolves.
+• **The guard pins the property, not the trace** (the Day-194 requirement). I ran it: it passes, asserts both directions with whole-string `assert_eq!` across all six rows, and makes the distinct-category count itself an assertion — so a row duplicating its neighbour would leave a hint string untested and still fail.
+• **Register is honest.** wc -l = 2788, matching the pasted entry exactly; gate passes 28/28 with zero warnings.
+
+Why it still fails:
+
+git diff --name-only HEAD~2 returns three files and CLAUDE.md is not among them, while the task named it in Files: and gave it a dedicated ## Docs section. This matters concretely rather than procedurally: the diff changes user-visible output, and CLAUDE.md still carries contextual_hint_with(&mut HashSet<&'static str>, ctx) — the two-parameter signature — plus the claims "Production behaviour is byte-identical" and "every plain parameter and glyph-free path is unaffected." Those describe the exact function this diff changed, in the file re-injected as authoritative context every session. That is the src/gasp.rs staleness class the repo records as having cost eight sessions, and the evaluator rejected two prior tasks (#864's payment, the Day-194 commands_spawn.rs task) for this identical omission.
+
+Two things I noticed while checking and recorded rather than treating as separate failures: the round's own result line reports that CLAUDE.md's rtk.rs bullet ("the only stderr notice in the codebase that consulted neither") is now false — a correction the round discovered and didn't land — and the round-96 experiment_result has no `positive_control` field, where round 95 does, so the mandated mutate→run→restore with its red width and sorted green is unrecorded.
+
+The remedy is small and the work beside it is sound: the fix, guard, ledger and register should survive; what's missing is the CLAUDE.md write-up and the positive-control record.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

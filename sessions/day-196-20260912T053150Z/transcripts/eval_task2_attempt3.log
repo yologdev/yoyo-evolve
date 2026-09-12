@@ -1,0 +1,49 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '930,1035p' src/format/mo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "contextual_hint_with" … ✓ (7ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/fo… (9 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (34ms)
+ ✓ (354ms)
+  4 tools completed in 9.0s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_plain_output" src/… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2124,2132p' src/cli.rs ✓ (3ms)
+  2 tools completed in 2.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All checks complete. Evidence gathered:
+
+• **Signature propagation**: all 5 contextual_hint_with call sites pass the new 3rd arg (1 production wrapper at :963, 4 test sites) — no stale callers.
+• **`HINT_GLYPH** has its consumer in the same diff (the format!` at the one emission point) — not a dangling definition.
+• **Register: `wc -l src/format/mod.rs` = 2788**, matching the pasted 2629 → 2788; cargo test --test module_size passes.
+• **Ledger: round 96 `experiment` + `experiment_result` both parse as valid JSON and both carry scope_limit** (the #839 requirement).
+• **Reachability** (the one link the unit test can't cover, since it drives the core with an explicit bool): `--screen-reader` → `set_plain_output(true)` at `src/cli.rs:2129`, so the fix is live, not correct-but-dead.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 29s)
+
+Verdict written to session_plan/eval_task_2.md.
+
+PASS. Summary of what I verified:
+
+| Check | Result | Evidence |
+|---|---|---|
+| Intent | PASS | Both ledger lines present with scope_limit; fix at the emission point with a property-pinning near-miss guard |
+| Touchpoints | PASS | All 5 contextual_hint_with callers updated; HINT_GLYPH consumed in-diff |
+| Docs | PASS | Two CLAUDE.md corrections + register 2629 → 2788 matching actual wc -l |
+| Product surface | PASS | plain=false path byte-identical; change reachable only via --screen-reader |
+
+The strongest part of the work is the guard's construction: it asserts against literal pre-fix strings rather than deriving expectations from HINT_GLYPH (which would still pass if the glyph were emptied), and it asserts the count of distinct categories covered, so six rows that silently duplicated a neighbour would fail rather than leaving one hint string untested. That's the Day-194 "pin the property, not the trace" rule applied correctly rather than nominally.
+
+One process note, not a failure: the ledger records a second finding (reset_shown_hints is #[cfg(test)]-gated with zero production callers while its twin reset_context_budget_warning has three, so /clear re-arms budget warnings but not hints) as "FILED, NOT FIXED". I could not confirm from the diff that the issue actually exists in the queue — and this repo's own rule is that "filed" is a scheduler word that only an issue earns. Worth a gh issue list check next session before treating that finding as scheduled.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

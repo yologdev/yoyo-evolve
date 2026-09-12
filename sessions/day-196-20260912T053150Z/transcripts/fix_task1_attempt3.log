@@ -1,0 +1,118 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, and what the docs need.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The code landed but CLAUDE.md is untouched. Let me read exactly what shipped so the write-up describes the real code.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 6131defd..HEAD -- scrip… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1869,2060p' scripts/extr… ✓ (5ms)
+  2 tools completed in 4.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: the code landed, CLAUDE.md is untouched. Let me read the call site and self-tests, then do the live reading and positive control.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2670,2725p' scripts/extr… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'claims_by_day / classif… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5113,5265p' scripts/extr… ✓ (5ms)
+  3 tools completed in 4.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Code and self-tests are fully landed. What remains is the doc half the evaluator failed me on — plus the two pieces of evidence it needs: the live before/after diff and the positive control. Let me run those now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 6131defd:scripts/extrac… ✓ (1.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The stdout diff is empty — the new section renders nothing live. That's a finding I need to understand before documenting. Let me check why.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== briefing (after) ===" … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The briefing is empty in both runs — this environment has no audit-log fetched. Let me trace what the two collectors actually return here, so the write-up reports a real reading rather than an assumed one.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (21 lines) ✓ (202ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My probe mis-unpacked the resolver. Let me correct it and get the real live reading.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (15 lines) ✓ (52ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the precise live behaviour. The empty stdout is itself a verification: the refusal fires and is correctly excluded from data_sections, so it does not suppress the global no-data state. But this environment has no audit-log, so let me fetch it read-only (as the harness does) to get a genuine reading where the section renders.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 git fetch --depth=1 … ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The safety guard caught my rm -rf /tmp/... pattern. Using a fresh unique path instead:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 git fetch --depth=1 … ✓ (1.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Audit-log fetched (578 session dirs). Now the genuine live reading — before and after, with the real audit dir, diffed:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && W=$(cat /tmp/alw_path.txt) && ex… ✓ (2.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "after bytes: $(wc -c < /tm… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.1s (2 ✓)
+
+Output is still 0 bytes — outcomes aren't loading. Let me check what path shape load_outcomes expects:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,175p' scripts/extrac… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && W=$(cat /tmp/alw_path.txt) && ls… ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+outcome.json exists in all 578 dirs (and note unverified_task_1.md — the "accepted UNVERIFIED" artifact, direct evidence of the defect). Let me probe the full path with the env var set:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && W=$(cat /tmp… (21 lines) ✓ (80ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The live reading reproduces the defect exactly: {195: 5, 194: 8} claimed vs [193, 194, 196] observed → IDLE naming day 195. But the full main() printed 0 bytes. Let me find out why:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && W=$(cat /tmp/alw_path.txt) && YO… ✓ (1.0s)
+
+  watch: no files changed this turn — skipping
+

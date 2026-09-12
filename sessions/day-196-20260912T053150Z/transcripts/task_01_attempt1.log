@@ -1,0 +1,135 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the file I need to change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l scripts/extract_trajectory… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,260p' scripts/extrac… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1480,1600p' scripts/extr… ✓ (4ms)
+  3 tools completed in 7.0s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I hit the context limit while reading. Let me be surgical now — grab only what I need to write the change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2430,2535p' scripts/extr… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "outcomes = load_outcome… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def assert_eq\|def asse… ✓ (6ms)
+  3 tools completed in 13.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough context now. Let me check the dataclass idiom, then write.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' scripts/extract_t… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the shape. Writing the new section — inserting it just before the pairing-coverage section.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1868,1876p' scripts/extr… ✓ (3ms)
+  ▶ edit scripts/extract_trajectory.py (3 → 181 lines)
+  + # --- Productivity cross-check (claimed successes vs observed task commits) ---
+  + #
+  + # The measured defect (Day 196): SEVEN consecutive sessions produced zero
+  + # commits while every instrument reported success. `journals/JOURNAL.md`
+  + # records `Session commits: no commits made.` for Day 194 20:33, Day 194
+  + # 22:59, Day 195 03:34, Day 195 10:48, Day 195 16:04, Day 195 20:39 and
+  + # Day 195 23:04; the last real task commits are Day 194 16:00. Meanwhile the
+  + # outcomes section above rendered every Day-195 row as `tasks 1/1 ✅ — build
+  + # OK, tests OK` and `gh run list` reported `success` for each. ~36 hours of
+  + # loop time produced nothing and three independent failure-reporting paths
+  + # called it health.
+  + #
+  + # The chain (read from run log 34656500584): Phase A2 produced zero task
+  + # files -> the harness wrote its fallback task -> the fallback committed
+  + # nothing -> `tasks_succeeded` was incremented anyway -> the evaluator
+  + # rendered no verdict line -> `accepted UNVERIFIED` -> no revert, no issue.
+  + # `scripts/evolve.sh` is protected, so all of that is out of reach. THE
+  + # READER IS NOT.
+  + #
+  + # This file already held BOTH halves and crossed them nowhere:
+  ... (161 more lines)
+ ✓ (1m 16s)
+  + # --- Productivity cross-check (claimed successes vs observed task commits) ---
+  + #
+  + # The measured defect (Day 196): SEVEN consecutive sessions produced zero
+  + # commits while every instrument reported success. `journals/JOURNAL.md`
+  + # records `Session commits: no commits made.` for Day 194 20:33, Day 194
+  + # 22:59, Day 195 03:34, Day 195 10:48, Day 195 16:04, Day 195 20:39 and
+  + # Day 195 23:04; the last real task commits are Day 194 16:00. Meanwhile the
+  + # outcomes section above rendered every Day-195 row as `tasks 1/1 ✅ — build
+  ... (13 more lines)
+  2 tools completed in 1m 52s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wire it into main. Let me add the call site before the pairing block.
+  ▶ edit scripts/extract_trajectory.py (5 → 27 lines)
+  +     # Day 196: cross the CLAIM (`tasks_succeeded`, from outcome.json) against
+  +     # the OBSERVATION (task commits in git log). Seven consecutive sessions
+  +     # produced zero commits while every instrument reported success; both
+  +     # halves were already collected here and crossed nowhere. Reuses
+  +     # `outcomes` and `tasks` above — NO second git call and no cargo (#832: a
+  +     # nested cargo rebuilds over the shared target/debug/yoyo uplift path and
+  +     # reddened CI for three sessions). Joined on the DAY NUMBER, never on
+  +     # timestamps: the session directory stamp is written when the audit is
+  +     # PUSHED (Day 195's 23:04 session is `day-195-...T232116Z`) while the
+  +     # commit subject's (HH:MM) is SESSION_TIME from the START — they do not
+  +     # match and must not be compared. Both collectors already carry the day.
+  +     # Same rule as `ci_unknown` / `provider_unknown` / `usage_unknown` /
+  +     # `module_unknown` / `pairing_unknown`: a "could not check" line is honest
+  +     # but is not trajectory DATA and must not suppress the global
+  +     # "(no trajectory data yet)" state below.
+  +     productivity = classify_productivity(
+  +         claims_by_day(outcomes), {day for day, _ in tasks}
+  +     )
+  +     s = render_productivity(productivity)
+  +     productivity_unknown = bool(s) and productivity.state == PRODUCTIVITY_COULD_NOT_CHECK
+  ... (5 more lines)
+ ✓ (1m 16s)
+  +     # Day 196: cross the CLAIM (`tasks_succeeded`, from outcome.json) against
+  +     # the OBSERVATION (task commits in git log). Seven consecutive sessions
+  +     # produced zero commits while every instrument reported success; both
+  +     # halves were already collected here and crossed nowhere. Reuses
+  +     # `outcomes` and `tasks` above — NO second git call and no cargo (#832: a
+  +     # nested cargo rebuilds over the shared target/debug/yoyo uplift path and
+  +     # reddened CI for three sessions). Joined on the DAY NUMBER, never on
+  +     # timestamps: the session directory stamp is written when the audit is
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pairing_unknown else 0"… ✓ (3ms)
+  2 tools completed in 1m 19s (2 ✓)
+
+  ▶ edit scripts/extract_trajectory.py (1 → 2 lines)
+            - (1 if pairing_unknown else 0)
+  +         - (1 if productivity_unknown else 0)
+ ✓ (1m 16s)
+            - (1 if pairing_unknown else 0)
+  +         - (1 if productivity_unknown else 0)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the self-tests. Let me find where to add them.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 scripts/extract_traject… ✓ (3ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ALL PASSED" scripts/ext… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5105,5113p' scripts/extr… ✓ (3ms)
+  2 tools completed in 2.5s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

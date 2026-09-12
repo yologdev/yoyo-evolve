@@ -1,0 +1,188 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the implementation to see what landed and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PRODUCTIVITY_\|classify… ✓ (4ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+The classifier landed but self-tests and docs are missing. Let me read the implementation carefully.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1880,2060p' scripts/extr… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The classifier is solid. Now let me look at how run_self_tests is structured and the main call site.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2680,2725p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "usage-coverage\|pairing… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 6ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check the current state of my working tree before continuing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "productivity\|PRODUCTIV… ✓ (5ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.4s (2 ✓)
+
+Clean tree, 0 tests, CLAUDE.md untouched — confirming the evaluator. Let me study the self-test conventions.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2742,2800p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "usage_coverage\|render_… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4500,4580p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "assert_true\|def assert… ✓ (4ms)
+ ✓ (6ms)
+  4 tools completed in 4.9s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the conventions. Let me find the insertion point at the end of the self-tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4983,5000p' scripts/extr… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5100,5122p' scripts/extr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.4s (2 ✓)
+
+Now I'll insert the test block right before the summary line.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (9 → 150 lines)
+        assert_true(
+            "a missing PAIRING ledger reads as 0 coverage, not as could-not-check",
+            never_run.state == PAIRING_OK and (never_run.paired, never_run.unpaired) == (0, 4),
+  +     )
+  + 
+  +     print("\n=== claims_by_day / classify_productivity self-tests ===\n")
+  + 
+  +     # Every fixture below is FABRICATED — plain dicts and sets, no filesystem,
+  +     # no git, no audit-log. The classifier is pure over already-parsed data and
+  +     # must be drivable with nothing mounted.
+  + 
+  +     # ANTI-VACUOUS, AND IT IS ASSERTED FIRST. An empty observation set means the
+  +     # git collection returned nothing at all; answering "every day is idle" there
+  +     # is this very defect wearing the opposite sign, and it would fire on every
+  +     # run where `git log` failed.
+  +     blind = classify_productivity({195: 5}, set())
+  +     assert_true(
+  +         "anti-vacuous: an empty commit set is COULD_NOT_CHECK, never 'every day idle'",
+  +         blind.state == PRODUCTIVITY_COULD_NOT_CHECK and blind.idle_days == (),
+  +     )
+  ... (127 more lines)
+ ✓ (1m 16s)
+        assert_true(
+            "a missing PAIRING ledger reads as 0 coverage, not as could-not-check",
+            never_run.state == PAIRING_OK and (never_run.paired, never_run.unpaired) == (0, 4),
+  +     )
+  + 
+  +     print("\n=== claims_by_day / classify_productivity self-tests ===\n")
+  + 
+  +     # Every fixture below is FABRICATED — plain dicts and sets, no filesystem,
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Test block inserted. Let me verify it runs — noting assert_eq is annotated for str but compares with !=, so dicts work at runtime.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (80ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All pass. Now the positive control — one atomic mutate→run→restore, with the sabotage marked NEUTERED.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (12 lines) ✓ (104ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control fired — 10 failures. Let me capture the exact width and which of my rows stayed green.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (11 lines) ✓ (108ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control fired with 0 markers left. Let me read the full lists to report the width honestly.
+  ▶ read /tmp/neutered.txt ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Full picture captured. 10 FAILs, all 10 in my new block — no pre-existing test reddened. But one finding: my near-miss guard reddened, because I bundled a pass-through claim with a denominator claim in one assertion. Let me split those — two facts deserve two assertions.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (21 → 29 lines)
+        # NEAR-MISS GUARD — THE ENTIRE REGRESSION SURFACE. Every claiming day has a
+        # task commit, so the OK line renders and the alarm does not. A discriminator
+        # tested only on the side that fires is vacuous green.
+  +     #
+  +     # The pass-through claim and the denominator claim are asserted SEPARATELY,
+  +     # not folded into one row: they are two facts with two different remedies,
+  +     # and bundling them means a red cannot say which half moved. Only the first
+  +     # is the near-miss guard proper — it is the row that must survive a
+  +     # neutered classifier, which is what proves it tests the pass-through.
+        healthy = classify_productivity({194: 4, 195: 2}, {194, 195})
+        assert_true(
+  -         "near-miss: every claiming day has a task commit -> OK, not the alarm",
+  -         healthy.state == PRODUCTIVITY_OK
+  -         and healthy.idle_days == ()
+  -         and healthy.claiming_days == 2,
+  +         "near-miss: every claiming day has a task commit -> OK state, no idle days",
+  +         healthy.state == PRODUCTIVITY_OK and healthy.idle_days == (),
+        )
+        healthy_render = render_productivity(healthy)
+        assert_true(
+  ... (15 more lines)
+ ✓ (1m 16s)
+        # NEAR-MISS GUARD — THE ENTIRE REGRESSION SURFACE. Every claiming day has a
+        # task commit, so the OK line renders and the alarm does not. A discriminator
+        # tested only on the side that fires is vacuous green.
+  +     #
+  +     # The pass-through claim and the denominator claim are asserted SEPARATELY,
+  +     # not folded into one row: they are two facts with two different remedies,
+  +     # and bundling them means a red cannot say which half moved. Only the first
+  +     # is the near-miss guard proper — it is the row that must survive a
+  ... (13 more lines)
+
+Now re-run the control with the split assertions:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scri… (11 lines) ✓ (185ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /tmp/n2.txt ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control now lands exactly as specified: 9 FAILs, all in my new block, and the near-miss guards stay green. Now the live before/after reading.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD~1:scripts/extract_… ✓ (1.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== DIFF before -> after =… ✓ (4ms)
+  2 tools completed in 4.3s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

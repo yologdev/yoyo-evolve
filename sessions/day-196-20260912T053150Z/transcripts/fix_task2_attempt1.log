@@ -1,0 +1,102 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -2 drea… (9 lines) ✓ (17ms)
+ ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.3s (2 ✓)
+
+Steps 1–3 landed. Three deliverables missing: the near-miss guard, the positive control, and CLAUDE.md. Let me read the actual change.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/format/mo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,1010p' src/format/mo… ✓ (3ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.3s (2 ✓)
+
+The fix is sound. Now let me see the exact return expression and the existing test region.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1020,1050p' src/format/m…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "contextual_hint\|HintCo… ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: three deliverables remain — the near-miss guard, the positive control, and CLAUDE.md. Let me read the test region.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2475,2500p' src/format/m… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three gaps confirmed. Writing the near-miss guard first — pinning the property (all six sites), not the one path the round walked.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (7 → 136 lines)
+            assert!(
+                second.is_some_and(|h| !h.contains("/help")),
+                "first_turn must not repeat; a lower-priority hint should win"
+  +         );
+  +     }
+  + 
+  +     /// The near-miss guard for the `--screen-reader` fix — and the invariant it
+  +     /// pins is deliberately **not** the trace this round walked (Day 194).
+  +     ///
+  +     /// The property that makes the fix correct is not *"the first_turn hint is
+  +     /// glyph-free under plain"*; that is one path through a six-row table, and a
+  +     /// walk contains exactly one path by construction. It is **every one of the
+  +     /// six hint strings carries exactly one glyph in ordinary output and none
+  +     /// under `--screen-reader`**. So the number of sites that could hold the
+  +     /// property is itself an assertion: the six rows must fire six **distinct**
+  +     /// categories, or a row that silently duplicated its neighbour would leave
+  +     /// one hint string untested while every assertion here still passed.
+  +     ///
+  +     /// Both directions are whole-string `assert_eq!`, never a `contains`:
+  +     /// * `plain = false` is **every user who has not passed `--screen-reader`**
+  ... (115 more lines)
+ ✓ (2m 11s)
+            assert!(
+                second.is_some_and(|h| !h.contains("/help")),
+                "first_turn must not repeat; a lower-priority hint should win"
+  +         );
+  +     }
+  + 
+  +     /// The near-miss guard for the `--screen-reader` fix — and the invariant it
+  +     /// pins is deliberately **not** the trace this round walked (Day 194).
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo hint 2>&1 … ✓ (227ms)
+  2 tools completed in 2m 16s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Guard passes. Let me verify the full suite, then run the positive control.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 13s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 28s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B3 -A25 … ✓ (1m 28s)
+  3 tools completed in 4m 13s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate fired with its own pasteable remedy — cargo fmt already ran before reading it, so the number is stable. Pasting what the gate printed:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/format/mod.rs"' te… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/format/mod.rs", 2629),
+  +     ("src/format/mod.rs", 2788),
