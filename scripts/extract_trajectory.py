@@ -3025,11 +3025,21 @@ def main() -> int:
         prose_rejected=provider_scan.prose_rejected,
         streams=provider_scan.streams,
         unanchored_rejected=provider_scan.unanchored_rejected,
+        unread_streams=provider_scan.unread_streams,
     )
     # Same rule as `ci_unknown` above: a "could not check" provider note is
     # honest, but it is not trajectory DATA and must not suppress the global
     # "(no trajectory data yet)" state below.
-    provider_unknown = bool(s) and audit_dir_state != AUDIT_DIR_OK
+    #
+    # `sessions == 0` is part of the test for the SAME reason `usage_unknown`
+    # below carries `usage_cov.examined == 0`: the zero-session branch is a
+    # REFUSAL ("nothing was scanned"), not a reading, so counting it as data
+    # would let a scanner that found nothing suppress the honest global
+    # "(no trajectory data yet)" state — this section's own subject wearing
+    # the opposite sign.
+    provider_unknown = bool(s) and (
+        audit_dir_state != AUDIT_DIR_OK or provider_scan.sessions == 0
+    )
     if s:
         sections.append(s)
     # #848 follow-up: is the usage channel still producing? Same rule as
