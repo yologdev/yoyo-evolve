@@ -1823,14 +1823,23 @@ mod tests {
     }
 
     /// Routed `yoyo <verb>` subcommands that are deliberately absent from
-    /// `--help`, each with the reason a human wrote. **One statement, two
-    /// readers** — `cli_help_documents_every_routed_subcommand` (which reaches
-    /// the dispatcher by text-scanning its source) and
-    /// `cli_help_documents_every_verb_the_near_miss_table_routes` (which reaches
-    /// it through `ROUTED_SUBCOMMANDS`) both consult this list. A second copy
-    /// would agree the day it was written and diverge forever after.
+    /// `--help`, each with the reason a human wrote. Its one reader is
+    /// `cli_help_documents_every_routed_subcommand`, which reaches the
+    /// dispatcher by text-scanning its source.
     ///
-    /// The register is debt, not absolution: both readers also run the ratchet,
+    /// **Superseded claim, recorded rather than erased (Day 196):** this comment
+    /// read "One statement, two readers" and named a second reader,
+    /// `cli_help_documents_every_verb_the_near_miss_table_routes`, that did not
+    /// exist — a false authoritative claim in the file an agent opens to do the
+    /// work. That reader now exists, in `dispatch_near_miss.rs`, and it
+    /// deliberately carries its **own** register: this const lives in a private
+    /// `#[cfg(test)]` module, so no sibling module can read it, and widening its
+    /// visibility to share it would be a production change smuggled in under a
+    /// test. Two registers over two different populations is the honest shape —
+    /// this one is keyed on *dispatcher match arms*, that one on
+    /// `ROUTED_SUBCOMMANDS`.
+    ///
+    /// The register is debt, not absolution: the reader also runs the ratchet,
     /// so an entry that becomes documented, or whose verb stops being routed, is
     /// fatal. It can only shrink.
     const DELIBERATELY_UNDOCUMENTED: &[(&str, &str)] = &[(
@@ -1903,8 +1912,7 @@ mod tests {
             arms.len()
         );
         let text = cli_help_text();
-        let documented =
-            |arm: &str| text.contains(&format!("  {arm} ")) || text.contains(&format!("  {arm}\n"));
+        let documented = |arm: &str| subcommand_documented(&text, arm);
         let mut undocumented: Vec<&str> = Vec::new();
         for arm in &arms {
             if !documented(arm) && !DELIBERATELY_UNDOCUMENTED.iter().any(|(v, _)| v == arm) {
