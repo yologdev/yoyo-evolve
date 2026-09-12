@@ -160,7 +160,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // REGISTER_DRIFT_GRACE_LINES and so only warned on the stderr of a *passing*
     // test. That is Day-174's eight-day silence verbatim: the loop's only consumer
     // of `cargo test` reads the exit code. Number pasted from what the gate printed.
-    ("src/cli.rs", 7022), // Day 194: paid pre-existing drift; see above.
+    ("src/cli.rs", 7023), // Day 196: +1 line wiring the .yoyo/commands/ trust grant.
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
@@ -191,6 +191,12 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 174: +3 absorbed since Day 166.
     // Day 183: +1 absorbed since Day 179 (#837's auto-context scoring change).
     // Paid off rather than left as a third unread warning.
+    // Day 196 (#902, the `.yoyo/commands/` half): crossed the cap landing the
+    // seventh trust door — the gate, its refusal message and its guards.
+    // REGISTERED RATHER THAN SPLIT on the `src/prompt_retry.rs` precedent: a
+    // register edit cannot half-land, a pure move can, and a half-landed move
+    // is a reverted session. The split is owed, not done.
+    ("src/commands.rs", 2164),
     ("src/commands_project.rs", 3640),
     // Day 162 (#708): +40 lines — classify_broke_files now filters to `src/`
     // (the risk model's whole universe), plus its unit test and the updated

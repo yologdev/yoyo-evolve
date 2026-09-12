@@ -677,58 +677,253 @@ pub fn discover_custom_commands() -> Vec<(String, String)> {
     if crate::cli_config::is_safe_mode() {
         return Vec::new();
     }
-    discover_custom_commands_from(None)
+    // The one global read for this door (#902). `--safe-mode` already returned
+    // above, so it remains the blunt hatch that drops every custom command.
+    discover_custom_commands_with(
+        None,
+        crate::config::loaded_config_is_project_local(),
+        crate::cli::is_trust_project(),
+    )
 }
 
-/// Discover custom slash commands from explicit directories (for testing).
-/// If `override_dirs` is `None`, uses the default project + home paths.
+/// Ungated directory seam the pre-existing `.yoyo/commands/` tests drive.
+///
+/// Kept so those two guards stay **unedited**: they assert the merge and
+/// override semantics, which this task must not move, and they would
+/// otherwise race on the provenance `OnceLock`.
+#[cfg(test)]
 pub(crate) fn discover_custom_commands_from(
     override_dirs: Option<(&std::path::Path, &std::path::Path)>,
 ) -> Vec<(String, String)> {
+    discover_custom_commands_with(override_dirs, false, false)
+}
+
+/// Provenance label for a command found in the project-local `.yoyo/commands/`.
+///
+/// The trust boundary's whole question is *who wrote this*, so provenance is
+/// carried on the entry rather than inferred from load order.
+pub(crate) const PROJECT_COMMAND_LABEL: &str = "project";
+
+/// Provenance label for a command found in the user-level `~/.yoyo/commands/`.
+pub(crate) const USER_COMMAND_LABEL: &str = "user";
+
+/// A discovered custom slash command, carrying the provenance the trust
+/// boundary asks about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CommandSource {
+    pub name: String,
+    pub body: String,
+    pub label: &'static str,
+}
+
+/// What [`gate_project_commands`] decided: the entries still worth loading,
+/// plus the names of any project-local ones that were refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CommandGateOutcome {
+    pub kept: Vec<CommandSource>,
+    pub refused: Vec<String>,
+}
+
+/// The one statement of the rule, read by **both** doors into
+/// `.yoyo/commands/` — batch discovery ([`discover_custom_commands_from`]) and
+/// the single-command lookup ([`get_custom_command_content`]).
+///
+/// Gating only the first would be a gate that does not gate: `dispatch.rs`
+/// executes a slash command through the *second* door, so a project-local
+/// command would still load and run. Two copies of this condition is how the
+/// two doors drift apart, which is the "two doors, one policy, one deaf" shape
+/// this repo has shipped ten times.
+pub(crate) fn project_commands_refused(project_local: bool, trusted: bool) -> bool {
+    project_local && !trusted
+}
+
+/// The seventh door on the project-config trust boundary (#902, the
+/// `.yoyo/commands/` half): a project-local `.yoyo/commands/*.md` becomes a
+/// slash command whose **body is fed to the model as instructions**, so
+/// cloning a stranger's repo used to make that repo's authored commands
+/// available in the session with no prompt and no display of what was loaded.
+///
+/// Drops **only** entries labelled [`PROJECT_COMMAND_LABEL`], and **only**
+/// when the loaded config is project-local and `--trust-project` was not
+/// passed. `~/.yoyo/commands/` is user-level provenance — the user's own word,
+/// exactly as a `--allow` flag is — and passes through byte-identically, as
+/// does a home/XDG config, a trusted run, and a tree with no
+/// `.yoyo/commands/` at all.
+///
+/// **Direction rule, written here so nobody "sorts" it later:** a custom
+/// command's body is model-facing instruction, so it is **refused like a hook
+/// (#820)**, never sorted like a declarative `deny` pattern. The Day-166
+/// asymmetry sorts *declarative* values yoyo interprets (a deny pattern, a
+/// path list — kept verbatim, since a repo may always confine yoyo further);
+/// a command body is not one. Direction is decided by what the entry **is**,
+/// not by what it does after it loads.
+///
+/// **Stated limits, because a partial fix that reads as complete is worse
+/// than none:**
+/// - This gates **who wrote the command**, never **whether the command is
+///   safe**. A command in a directory the user *does* trust is still
+///   arbitrary model-facing instruction, exactly as a trusted hook is still
+///   arbitrary shell.
+/// - It does **not** close #902. The six project instruction files
+///   (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`,
+///   `.github/copilot-instructions.md`, `YOYO.md`, `.yoyo/instructions.md`)
+///   still reach every prompt with no gate.
+/// - **Known predicate hole, inherited from #897 and named rather than
+///   pretended away:** this keys on `loaded_config_is_project_local()`, which
+///   is **false** for a repo carrying `.yoyo/commands/` and no `.yoyo.toml`
+///   at all — so the gate does not fire on that shape, even though
+///   `project_trust_grants` (keyed on directory existence) does correctly
+///   raise the trust question. The same asymmetry already exists in the
+///   shipped `.yoyo/skills/` gate. Changing the key touches all seven gates
+///   at once, which is how a verified narrow change becomes an unverified
+///   wide one.
+pub(crate) fn gate_project_commands(
+    entries: Vec<CommandSource>,
+    project_local: bool,
+    trusted: bool,
+) -> CommandGateOutcome {
+    // Home/XDG configs and explicitly trusted runs pass through untouched.
+    if !project_commands_refused(project_local, trusted) {
+        return CommandGateOutcome {
+            kept: entries,
+            refused: Vec::new(),
+        };
+    }
+    let mut kept = Vec::with_capacity(entries.len());
+    let mut refused = Vec::new();
+    for entry in entries {
+        if entry.label == PROJECT_COMMAND_LABEL {
+            refused.push(entry.name);
+        } else {
+            kept.push(entry);
+        }
+    }
+    refused.sort();
+    CommandGateOutcome { kept, refused }
+}
+
+/// The refusal block. Names **every** refused command, because a user cannot
+/// judge what they cannot see; states outright that nothing was loaded; and
+/// gives both hatches.
+///
+/// Names go through [`crate::cli::sanitize_for_display`] (#873): the
+/// *repository* authored those filenames and this block renders into the
+/// terminal of someone who has explicitly not trusted it.
+///
+/// An empty `names` is reachable and is **not** silence — the directory
+/// exists but could not be listed — so it says so rather than rendering an
+/// empty list as if nothing were there. The caller drops the whole message
+/// under `--quiet`.
+pub(crate) fn project_command_refusal_message(names: &[String], plain: bool) -> String {
+    let marker = if plain { "" } else { "⚠ " };
+    let dash = if plain { ", " } else { " — " };
+    let listed = if names.is_empty() {
+        "    (could not list the directory)".to_string()
+    } else {
+        names
+            .iter()
+            .map(|n| format!("    /{}", crate::cli::sanitize_for_display(n)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let count = names.len();
+    let noun = if count == 1 { "command" } else { "commands" };
+    format!(
+        "{marker}A project-local .yoyo/commands/ offered {count} slash {noun} to this session. \
+yoyo did not load them:\n{listed}\n  A custom command's body becomes instructions in the \
+model's context{dash}this project wrote them, not you. Nothing was loaded.\n  Re-run with \
+--trust-project to load them this session, or use --safe-mode to disable\n  all project \
+customizations."
+    )
+}
+
+/// Fires at most once per process, like `RTK_ANNOUNCED`: discovery is lazy and
+/// runs from tab-completion, `/help` and dispatch, so an unguarded `eprintln!`
+/// would repeat the block every keystroke.
+static COMMAND_REFUSAL_ANNOUNCED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn announce_refused_commands(names: &[String]) {
+    if is_quiet() {
+        return;
+    }
+    if COMMAND_REFUSAL_ANNOUNCED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let msg = project_command_refusal_message(names, is_plain_output());
+    eprintln!("{YELLOW}{msg}{RESET}");
+}
+
+/// Discover custom slash commands, with the trust answer passed **explicitly**.
+///
+/// The provenance pair is a parameter rather than a global read because
+/// `loaded_config_is_project_local()` is a process-wide `OnceLock` that this
+/// repo's own `.yoyo.toml` sets to `true`: reading it here made the two
+/// pre-existing directory tests race on it, which is the shared-global class
+/// `tests/global_state_races.rs` enumerates. Passing the value is that gate's
+/// own stated *best* remedy.
+pub(crate) fn discover_custom_commands_with(
+    override_dirs: Option<(&std::path::Path, &std::path::Path)>,
+    project_local: bool,
+    trusted: bool,
+) -> Vec<(String, String)> {
     let project_dir;
     let global_dir;
-    let (proj_path, glob_path) = match override_dirs {
-        Some((p, g)) => (p, g),
+    let (proj_path, glob_path): (&std::path::Path, Option<&std::path::Path>) = match override_dirs {
+        Some((p, g)) => (p, Some(g)),
         None => {
             project_dir = std::path::PathBuf::from(".yoyo/commands");
-            global_dir = match std::env::var("HOME") {
-                Ok(h) => std::path::PathBuf::from(h).join(".yoyo/commands"),
-                Err(_) => {
-                    return load_single_dir_commands(&std::path::PathBuf::from(".yoyo/commands"))
-                }
-            };
-            (project_dir.as_path(), global_dir.as_path())
+            global_dir = std::env::var("HOME")
+                .ok()
+                .map(|h| std::path::PathBuf::from(h).join(".yoyo/commands"));
+            (project_dir.as_path(), global_dir.as_deref())
         }
     };
 
+    // Collect labelled entries and gate them **before** merging. Merging first
+    // would let a *refused* project command shadow a same-named user-level one
+    // out of existence, since the project entry overwrites it in the map.
+    let mut entries: Vec<CommandSource> = Vec::new();
+    if let Some(glob) = glob_path {
+        collect_commands_from_dir(glob, USER_COMMAND_LABEL, &mut entries);
+    }
+    let project_listed = collect_commands_from_dir(proj_path, PROJECT_COMMAND_LABEL, &mut entries);
+
+    let refusing = project_commands_refused(project_local, trusted);
+    let gated = gate_project_commands(entries, project_local, trusted);
+
+    // Only speak if there was something to refuse. An absent (or empty)
+    // `.yoyo/commands/` is the common case and must stay silent; a directory
+    // that exists and could not be listed is its own state and does speak.
+    if !gated.refused.is_empty() || (refusing && !project_listed) {
+        announce_refused_commands(&gated.refused);
+    }
+
+    // Merge in load order — later wins, so a kept project-local command still
+    // takes priority over a same-named user-level one.
     let mut commands: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-
-    // Load global commands first (lower priority)
-    load_commands_from_dir(glob_path, &mut commands);
-    // Load project-local commands second (higher priority — overwrites global)
-    load_commands_from_dir(proj_path, &mut commands);
+    for entry in gated.kept {
+        commands.insert(entry.name, entry.body);
+    }
 
     let mut result: Vec<(String, String)> = commands.into_iter().collect();
     result.sort_by(|a, b| a.0.cmp(&b.0));
     result
 }
 
-/// Helper: load commands from a single dir and return as a sorted vec.
-fn load_single_dir_commands(dir: &std::path::Path) -> Vec<(String, String)> {
-    let mut commands = std::collections::HashMap::new();
-    load_commands_from_dir(dir, &mut commands);
-    let mut result: Vec<(String, String)> = commands.into_iter().collect();
-    result.sort_by(|a, b| a.0.cmp(&b.0));
-    result
-}
-
-fn load_commands_from_dir(
+/// Collect `*.md` commands from one directory, tagging each with `label`.
+///
+/// Returns `false` only when the directory **exists and could not be listed** —
+/// an absent directory is the ordinary case and returns `true`, because there
+/// was nothing there to fail to read.
+fn collect_commands_from_dir(
     dir: &std::path::Path,
-    commands: &mut std::collections::HashMap<String, String>,
-) {
+    label: &'static str,
+    out: &mut Vec<CommandSource>,
+) -> bool {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return,
+        Err(_) => return !dir.is_dir(),
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -737,10 +932,15 @@ fn load_commands_from_dir(
         }
         if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
             if let Ok(content) = std::fs::read_to_string(&path) {
-                commands.insert(stem.to_string(), content);
+                out.push(CommandSource {
+                    name: stem.to_string(),
+                    body: content,
+                    label,
+                });
             }
         }
     }
+    true
 }
 
 /// Check if a slash command name (without leading `/`) matches a custom command.
@@ -751,12 +951,36 @@ pub fn is_custom_command(cmd: &str) -> bool {
 /// Get the content of a custom command by name (without leading `/`).
 /// Checks project-local `.yoyo/commands/` first, then global `~/.yoyo/commands/`.
 pub fn get_custom_command_content(cmd: &str) -> Option<String> {
-    // Check project-local first
-    let project_path = std::path::PathBuf::from(format!(".yoyo/commands/{cmd}.md"));
-    if let Ok(content) = std::fs::read_to_string(&project_path) {
-        return Some(content);
+    get_custom_command_content_with(
+        cmd,
+        project_commands_refused(
+            crate::config::loaded_config_is_project_local(),
+            crate::cli::is_trust_project(),
+        ),
+    )
+}
+
+/// The decision half of [`get_custom_command_content`], so the refusal is
+/// drivable without writing a process-global.
+///
+/// **This is the door `dispatch.rs` executes through** (`dispatch.rs:1292`),
+/// so gating batch discovery alone would have left a project-local command
+/// loading and running exactly as before. `refuse_project` comes from the
+/// shared [`project_commands_refused`] — one statement of the rule, never a
+/// second copy that agrees the day it is written.
+pub(crate) fn get_custom_command_content_with(cmd: &str, refuse_project: bool) -> Option<String> {
+    // Check project-local first — unless this run refuses project-authored
+    // commands, in which case it is skipped entirely rather than read and
+    // discarded.
+    if !refuse_project {
+        let project_path = std::path::PathBuf::from(format!(".yoyo/commands/{cmd}.md"));
+        if let Ok(content) = std::fs::read_to_string(&project_path) {
+            return Some(content);
+        }
     }
-    // Check global
+    // Check global. User-level provenance is the user's own word and is never
+    // gated, so a refused project command correctly falls through to a
+    // same-named user-level one instead of vanishing.
     if let Ok(home) = std::env::var("HOME") {
         let global_path = std::path::PathBuf::from(home).join(format!(".yoyo/commands/{cmd}.md"));
         if let Ok(content) = std::fs::read_to_string(&global_path) {
@@ -777,6 +1001,211 @@ pub fn custom_command_names() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cmd(name: &str, label: &'static str) -> CommandSource {
+        CommandSource {
+            name: name.to_string(),
+            body: format!("body of {name}"),
+            label,
+        }
+    }
+
+    /// The mixed fixture every gate test drives: one user-level command and
+    /// one project-local one.
+    fn mixed() -> Vec<CommandSource> {
+        vec![
+            cmd("shared", USER_COMMAND_LABEL),
+            cmd("proj", PROJECT_COMMAND_LABEL),
+        ]
+    }
+
+    #[test]
+    fn gate_project_commands_refuses_only_the_project_entry_and_only_when_untrusted() {
+        // ANTI-VACUOUS, ASSERTED FIRST: the fixture really does carry a
+        // project-local command, so a broken seam cannot pass by having both
+        // sides agree on nothing.
+        assert!(
+            mixed().iter().any(|e| e.label == PROJECT_COMMAND_LABEL),
+            "fixture must contain a project-local command or this test proves nothing"
+        );
+
+        let out = gate_project_commands(mixed(), true, false);
+        assert_eq!(out.refused, vec!["proj".to_string()]);
+        assert_eq!(out.kept, vec![cmd("shared", USER_COMMAND_LABEL)]);
+    }
+
+    #[test]
+    fn gate_project_commands_is_byte_identical_in_every_other_combination() {
+        // (project_local, trusted): only (true, false) refuses. The other
+        // three are the whole regression surface -- a home/XDG config, a
+        // --trust-project run, and both.
+        for (project_local, trusted) in [(false, false), (false, true), (true, true)] {
+            let out = gate_project_commands(mixed(), project_local, trusted);
+            assert_eq!(
+                out.kept,
+                mixed(),
+                "({project_local}, {trusted}) must pass through byte-identically"
+            );
+            assert!(
+                out.refused.is_empty(),
+                "({project_local}, {trusted}) refused something"
+            );
+        }
+    }
+
+    #[test]
+    fn gate_project_commands_with_only_user_level_entries_refuses_nothing() {
+        // `~/.yoyo/commands/` is user-level provenance -- the user's own word,
+        // exactly as a `--allow` flag is -- so it survives an untrusted run.
+        let user_only = vec![cmd("a", USER_COMMAND_LABEL), cmd("b", USER_COMMAND_LABEL)];
+        let out = gate_project_commands(user_only.clone(), true, false);
+        assert_eq!(out.kept, user_only);
+        assert!(out.refused.is_empty());
+    }
+
+    #[test]
+    fn gate_project_commands_with_no_commands_at_all_is_byte_identical() {
+        // Every existing user: no `.yoyo/commands/` anywhere.
+        for (project_local, trusted) in [(true, false), (false, false), (true, true)] {
+            let out = gate_project_commands(Vec::new(), project_local, trusted);
+            assert_eq!(out.kept, Vec::new());
+            assert_eq!(out.refused, Vec::<String>::new());
+        }
+    }
+
+    #[test]
+    fn a_refused_project_command_does_not_delete_a_same_named_user_level_one() {
+        // The gate runs BEFORE the merge on purpose. Merging first would let a
+        // refused project entry overwrite its user-level namesake out of
+        // existence, so refusing one command would silently delete another.
+        let entries = vec![
+            cmd("dup", USER_COMMAND_LABEL),
+            CommandSource {
+                name: "dup".to_string(),
+                body: "PROJECT BODY".to_string(),
+                label: PROJECT_COMMAND_LABEL,
+            },
+        ];
+        let out = gate_project_commands(entries, true, false);
+        assert_eq!(out.refused, vec!["dup".to_string()]);
+        assert_eq!(out.kept, vec![cmd("dup", USER_COMMAND_LABEL)]);
+        assert_eq!(out.kept[0].body, "body of dup");
+    }
+
+    #[test]
+    fn project_command_refusal_message_names_every_command_and_both_hatches() {
+        let names = vec!["deploy".to_string(), "review".to_string()];
+        let msg = project_command_refusal_message(&names, false);
+        assert!(msg.contains("/deploy"), "{msg}");
+        assert!(msg.contains("/review"), "{msg}");
+        assert!(msg.contains("Nothing was loaded"), "{msg}");
+        assert!(msg.contains("--trust-project"), "{msg}");
+        assert!(msg.contains("--safe-mode"), "{msg}");
+        assert!(msg.contains("2 slash commands"), "{msg}");
+    }
+
+    #[test]
+    fn project_command_refusal_message_says_so_when_it_cannot_list() {
+        // Reachable: the directory exists and could not be read. An empty list
+        // rendered as if nothing were there would be the quiet failure.
+        let msg = project_command_refusal_message(&[], false);
+        assert!(msg.contains("could not list the directory"), "{msg}");
+        assert!(msg.contains("Nothing was loaded"), "{msg}");
+    }
+
+    #[test]
+    fn project_command_refusal_message_escapes_repo_authored_names() {
+        // #873: the *repository* authored these filenames and this block
+        // renders into the terminal of someone who has explicitly not trusted
+        // it, so a control byte must not reach the terminal raw.
+        let hostile = vec!["evil\u{1b}[2Jclear".to_string()];
+        assert!(
+            hostile[0].as_bytes().contains(&0x1b),
+            "fixture must carry a control byte or this test proves nothing"
+        );
+        let msg = project_command_refusal_message(&hostile, false);
+        assert!(
+            !msg.as_bytes().contains(&0x1b),
+            "escape byte reached the terminal"
+        );
+    }
+
+    #[test]
+    fn project_command_refusal_message_is_glyph_free_and_em_dash_free_under_plain() {
+        let names = vec!["deploy".to_string()];
+        let plain = project_command_refusal_message(&names, true);
+        assert!(
+            !plain.contains('\u{26a0}'),
+            "marker glyph survived: {plain}"
+        );
+        assert!(!plain.contains('\u{2014}'), "em dash survived: {plain}");
+        // Reverse anti-vacuous check: the non-plain form really does carry
+        // both, so the assertions above discriminate rather than passing by
+        // accident.
+        let fancy = project_command_refusal_message(&names, false);
+        assert!(fancy.contains('\u{26a0}'), "{fancy}");
+        assert!(fancy.contains('\u{2014}'), "{fancy}");
+        assert!(plain.contains("1 slash command"), "{plain}");
+    }
+
+    #[test]
+    fn discovery_drops_the_project_dir_and_keeps_the_user_dir_when_untrusted() {
+        // End-to-end through the real discovery seam, on real directories, so
+        // the gate is proven WIRED rather than merely unit-tested one layer
+        // below. Uses a tempdir; moves no process CWD (#780).
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        let global = tmp.path().join("glob");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::write(project.join("deploy.md"), "PROJECT deploy").unwrap();
+        std::fs::write(global.join("lint.md"), "user lint").unwrap();
+
+        // ANTI-VACUOUS, ASSERTED FIRST: untrusted-but-not-project-local keeps
+        // both, so the fixture genuinely carries a droppable project command.
+        let ungated = discover_custom_commands_with(
+            Some((project.as_path(), global.as_path())),
+            false,
+            false,
+        );
+        assert_eq!(
+            ungated,
+            vec![
+                ("deploy".to_string(), "PROJECT deploy".to_string()),
+                ("lint".to_string(), "user lint".to_string()),
+            ]
+        );
+
+        // Project-local and untrusted: the project command is gone, the
+        // user-level one survives byte-identically.
+        let gated =
+            discover_custom_commands_with(Some((project.as_path(), global.as_path())), true, false);
+        assert_eq!(gated, vec![("lint".to_string(), "user lint".to_string())]);
+
+        // --trust-project restores it.
+        let trusted =
+            discover_custom_commands_with(Some((project.as_path(), global.as_path())), true, true);
+        assert_eq!(trusted, ungated);
+    }
+
+    #[test]
+    fn project_commands_refused_is_the_one_statement_of_the_rule() {
+        assert!(project_commands_refused(true, false));
+        assert!(!project_commands_refused(true, true));
+        assert!(!project_commands_refused(false, false));
+        assert!(!project_commands_refused(false, true));
+    }
+
+    #[test]
+    fn the_single_command_door_skips_the_project_path_when_refusing() {
+        // This is the door dispatch.rs executes through. It reads real paths,
+        // so the only honest assertion without touching the filesystem is
+        // that a refusing run cannot return a project-local body: with no
+        // such file present both answers are None, and the refusing branch
+        // must never be the one that finds something the other did not.
+        let refused = get_custom_command_content_with("yoyo-nonexistent-probe", true);
+        assert_eq!(refused, None);
+    }
 
     /// Structural drift guard (Day 141): every command whose tab-completions
     /// are wired to a subcommand constant must have an arg hint that mentions

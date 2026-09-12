@@ -2277,6 +2277,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
                 &raw_config_content,
                 std::path::Path::new(".yoyo/goal_verify.md").exists(),
                 std::path::Path::new(".yoyo/skills").is_dir(),
+                std::path::Path::new(".yoyo/commands").is_dir(),
             );
             if crate::config_paths::should_prompt_for_trust(
                 false,
