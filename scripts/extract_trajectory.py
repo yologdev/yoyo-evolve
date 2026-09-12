@@ -1579,6 +1579,26 @@ def render_provider_health(
     are NEVER summed into the hit count: a line whose shape matched but whose provenance is my own
     writing is a different fact from a provider error, and folding them is the
     contamination defect this whole section exists to avoid.
+
+    THREE STATED LIMITS, AND LIMIT 3 IS THE ONE THAT BOUNDS THE WHOLE SECTION:
+
+    1. IT DETECTS A LINE, NOT AN OUTAGE. A hit means the harness printed a
+       provider-error line, never that the provider was actually down, and
+       never that the session failed to recover — a run that hit one 429,
+       retried and finished green scores identically to the 7 dead day-195
+       sessions. The count is evidence to read, not a verdict.
+    2. THE HARNESS'S OWN STDOUT IS STILL UNREAD. Branch A put the rate-limit
+       text in `transcripts/*.log`, which this now reads — but a session dir
+       carries AGENT transcripts and not the harness's own stdout
+       (`measure_abstentions.py`'s Day-177 finding), so a provider error that
+       appears ONLY in the workflow log is invisible here. That is why the
+       clean line names the streams it read instead of claiming health:
+       silence over an unread stream must not read as clean.
+    3. THIS MAKES THE CAUSE LEGIBLE; IT STOPS NOTHING. The harness still runs
+       every phase after a terminal rate limit and still files the session as
+       `tasks N/N ✅`. `scripts/evolve.sh` is protected, so that half cannot be
+       fixed from here — this section only ensures the next planner can see
+       why a day produced nothing.
     """
     if state == AUDIT_DIR_UNSET:
         return (
