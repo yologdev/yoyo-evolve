@@ -1465,16 +1465,24 @@ def scan_provider_lines(lines) -> tuple[int, int, int]:
     return hits, prose, unanchored
 
 
-def _scan_provider_stream(path: Path) -> tuple[int, int, int]:
-    """Scan one file. Returns (hits, prose_rejected, unanchored_rejected).
+def _scan_provider_stream(path: Path) -> tuple[int, int, int, int]:
+    """Scan one file. Returns (hits, prose, unanchored, unread).
 
     Bounded by the existing AUDIT_FILE_SIZE_CAP — no new budget was invented.
     Fail-soft: an OSError warns and contributes nothing, because this
     extractor must never block a session.
+
+    `unread` is 1 when this file could NOT be read WHOLE — an OSError, or a
+    file past the cap whose tail was never scanned. It is a THIRD fact, never
+    summed into hits or into either reject count: a rejected line was read and
+    judged, an unread file was never judged at all, and rendering the second
+    as the first is "could not check" reading as "checked; clean" — the exact
+    refusal the pre-push hook and `CiScan`'s could-not-run branch already make.
     """
     try:
         size = path.stat().st_size
-        if size > AUDIT_FILE_SIZE_CAP:
+        capped = size > AUDIT_FILE_SIZE_CAP
+        if capped:
             warn(f"{path} is {size} bytes (>{AUDIT_FILE_SIZE_CAP}); scanning first {AUDIT_FILE_SIZE_CAP}B only")
 
         def _bounded(f):
@@ -1486,10 +1494,11 @@ def _scan_provider_stream(path: Path) -> tuple[int, int, int]:
                 yield line
 
         with path.open(encoding="utf-8", errors="replace") as f:
-            return scan_provider_lines(_bounded(f))
+            h, pr, ur = scan_provider_lines(_bounded(f))
+        return h, pr, ur, (1 if capped else 0)
     except OSError as e:
         warn(f"skipped {path}: {e}")
-        return 0, 0, 0
+        return 0, 0, 0, 1
 
 
 def collect_provider_errors(audit_dir: Path) -> ProviderScan:
@@ -1508,6 +1517,20 @@ def collect_provider_errors(audit_dir: Path) -> ProviderScan:
 
     A session counts as examined when it has EITHER stream, so a dir carrying
     transcripts but no audit.jsonl is no longer invisible to the denominator.
+
+    ORDERING IS THE WHOLE REACH, and it is why Day 196's both-streams fix read
+    as a no-op (Day 196, second task). This walk used a raw
+    `sorted(..., reverse=True)` — LEXICOGRAPHIC — while its two siblings
+    (`load_outcomes`, `collect_usage_coverage`) both key on `session_sort_key`.
+    Lexicographically `day-99-*` > `day-195-*` because `'9' > '1'`, so the
+    WINDOW_SESSIONS window filled up with day-9x dirs from months ago and never
+    reached day-194/195 at all. Measured on a fixture that reproduces the live
+    line byte-identically: 10 sessions examined, ZERO hits, ZERO rejects — and
+    reject counts print only when > 0, so "no candidate lines" and "no session
+    I read had one" rendered the same clean bill. The classifier was never
+    blind; the window simply pointed at the wrong decade of sessions.
+    `session_sort_key` is REUSED rather than re-derived: a second ordering rule
+    agrees the day it is written and diverges forever after.
     """
     if not audit_dir.exists():
         return ProviderScan()
@@ -1515,9 +1538,12 @@ def collect_provider_errors(audit_dir: Path) -> ProviderScan:
     hits = 0
     prose_rejected = 0
     unanchored_rejected = 0
+    unread = 0
     saw_audit = False
     saw_transcripts = False
-    for child in sorted(audit_dir.iterdir(), reverse=True):
+    for child in sorted(
+        audit_dir.iterdir(), key=lambda c: session_sort_key(c.name), reverse=True
+    ):
         if not child.is_dir():
             continue
         audit = child / "audit.jsonl"
@@ -1526,6 +1552,7 @@ def collect_provider_errors(audit_dir: Path) -> ProviderScan:
         except OSError as e:
             warn(f"skipped transcripts of {child}: {e}")
             transcripts = []
+            unread += 1
         streams = ([audit] if audit.is_file() else []) + transcripts
         if not streams:
             continue
@@ -1535,10 +1562,11 @@ def collect_provider_errors(audit_dir: Path) -> ProviderScan:
         if transcripts:
             saw_transcripts = True
         for stream in streams:
-            h, pr, ur = _scan_provider_stream(stream)
+            h, pr, ur, un = _scan_provider_stream(stream)
             hits += h
             prose_rejected += pr
             unanchored_rejected += ur
+            unread += un
         if sessions >= WINDOW_SESSIONS:
             break
     names = []
@@ -1547,7 +1575,7 @@ def collect_provider_errors(audit_dir: Path) -> ProviderScan:
     if saw_transcripts:
         names.append("transcripts/*.log")
     return ProviderScan(
-        sessions, hits, prose_rejected, tuple(names), unanchored_rejected
+        sessions, hits, prose_rejected, tuple(names), unanchored_rejected, unread
     )
 
 
@@ -1558,6 +1586,7 @@ def render_provider_health(
     prose_rejected: int = 0,
     streams: tuple = (),
     unanchored_rejected: int = 0,
+    unread_streams: int = 0,
 ) -> str:
     """Render the provider-health section, or an honest one-line refusal.
 
@@ -1621,7 +1650,20 @@ def render_provider_health(
             "not a readable directory. This is not 'no provider errors'."
         )
     if sessions == 0:
-        return ""
+        # ANTI-VACUOUS, and it is asserted BEFORE any clean branch: a walk that
+        # examined ZERO sessions has no evidence of anything, and rendering it
+        # as silence let "I found no session dirs" pass for "I checked and the
+        # provider was fine" — this section's own subject wearing the opposite
+        # sign, and quieter than the bug. SUPERSEDED BEHAVIOUR, recorded rather
+        # than erased: this used to `return ""`, and the self-test that pinned
+        # the empty string was INVERTED rather than deleted (Day 148 — a
+        # fixture pinning a superseded convention that outlives its replacement
+        # converts a defect into a green invariant).
+        return (
+            "## Provider/API health: not checked — the audit-log directory "
+            "holds no session directories, so nothing was scanned. This is not "
+            "'no provider errors'."
+        )
     scanned = f" in {', '.join(streams)}" if streams else ""
     rejects = []
     if prose_rejected > 0:
@@ -1629,6 +1671,16 @@ def render_provider_health(
     if unanchored_rejected > 0:
         rejects.append(f"{unanchored_rejected} unanchored")
     tail = f" ({', '.join(rejects)} line(s) rejected)" if rejects else ""
+    # A THIRD fact with a THIRD remedy: never summed into `hits` or into either
+    # reject count, and reported only when > 0 so a fully-read window is
+    # byte-identical to before. A file skipped for size or refused by the OS
+    # was never judged, so a clean line that does not mention it is claiming
+    # coverage it does not have.
+    if unread_streams > 0:
+        tail += (
+            f" {unread_streams} file(s) could NOT be read whole (size cap or "
+            f"OS error) — this window is INCOMPLETE, not clean."
+        )
     if hits == 0:
         # Says what was READ, never that the provider was healthy.
         return (
