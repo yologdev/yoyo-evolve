@@ -2656,4 +2656,133 @@ mod tests {
             "first_turn must not repeat; a lower-priority hint should win"
         );
     }
+
+    /// The near-miss guard for the `--screen-reader` fix — and the invariant it
+    /// pins is deliberately **not** the trace this round walked (Day 194).
+    ///
+    /// The property that makes the fix correct is not *"the first_turn hint is
+    /// glyph-free under plain"*; that is one path through a six-row table, and a
+    /// walk contains exactly one path by construction. It is **every one of the
+    /// six hint strings carries exactly one glyph in ordinary output and none
+    /// under `--screen-reader`**. So the number of sites that could hold the
+    /// property is itself an assertion: the six rows must fire six **distinct**
+    /// categories, or a row that silently duplicated its neighbour would leave
+    /// one hint string untested while every assertion here still passed.
+    ///
+    /// Both directions are whole-string `assert_eq!`, never a `contains`:
+    /// * `plain = false` is **every user who has not passed `--screen-reader`**
+    ///   and is the entire regression surface, so each expected value is the
+    ///   literal string the pre-fix code returned — copied from it rather than
+    ///   built from `HINT_GLYPH`, because an expectation derived from the const
+    ///   would still pass if the glyph were emptied, which is the vacuous shape.
+    /// * `plain = true` is the side the fix adds.
+    #[test]
+    fn every_hint_string_is_glyph_free_under_plain_and_byte_identical_without_it() {
+        // (category, ctx chosen so this row is the first match, plain form,
+        //  pre-fix form). No `#[serial]`: the pure core is driven with local
+        // sets and reads no process-wide state, which is the Day-177 seam.
+        let rows: &[(&str, HintContext, &str, &str)] = &[
+            (
+                "first_turn",
+                HintContext {
+                    turn_count: 1,
+                    ..make_hint_ctx()
+                },
+                "Type /help to see available commands",
+                "💡 Type /help to see available commands",
+            ),
+            (
+                "watch",
+                HintContext {
+                    files_modified: true,
+                    ..make_hint_ctx()
+                },
+                "/watch to auto-test after every prompt",
+                "💡 /watch to auto-test after every prompt",
+            ),
+            (
+                "retry",
+                HintContext {
+                    had_tool_error: true,
+                    ..make_hint_ctx()
+                },
+                "/retry to re-run with the error context",
+                "💡 /retry to re-run with the error context",
+            ),
+            (
+                "compact",
+                HintContext {
+                    context_usage_ratio: 0.8,
+                    ..make_hint_ctx()
+                },
+                "/compact to free context space",
+                "💡 /compact to free context space",
+            ),
+            (
+                "diff",
+                HintContext {
+                    files_modified: true,
+                    has_watch: true,
+                    ..make_hint_ctx()
+                },
+                "/diff to review changes, /commit to save",
+                "💡 /diff to review changes, /commit to save",
+            ),
+            (
+                "tips",
+                HintContext {
+                    turns_since_slash_command: 3,
+                    ..make_hint_ctx()
+                },
+                "Try /tips to discover features",
+                "💡 Try /tips to discover features",
+            ),
+        ];
+
+        let mut categories_covered: HashSet<&'static str> = HashSet::new();
+
+        for (label, ctx, bare, rich) in rows {
+            let mut shown_plain: HashSet<&'static str> = HashSet::new();
+            let plain_out = contextual_hint_with(&mut shown_plain, ctx, true);
+            assert_eq!(
+                plain_out.as_deref(),
+                Some(*bare),
+                "{label}: --screen-reader output must be the bare sentence"
+            );
+
+            let mut shown_rich: HashSet<&'static str> = HashSet::new();
+            let rich_out = contextual_hint_with(&mut shown_rich, ctx, false);
+            assert_eq!(
+                rich_out.as_deref(),
+                Some(*rich),
+                "{label}: ordinary output must be byte-identical to before the fix"
+            );
+
+            // `plain` is a RENDERING parameter, never a routing one: it must not
+            // change WHICH hint fires. Asserted rather than assumed, because a
+            // flag that quietly reorders a priority ladder is a behaviour change
+            // wearing a formatting change's clothes.
+            assert_eq!(
+                shown_plain, shown_rich,
+                "{label}: plain must not change which category fires"
+            );
+            assert_eq!(
+                shown_plain.len(),
+                1,
+                "{label}: expected exactly one category to fire"
+            );
+            categories_covered.extend(shown_plain.iter().copied());
+        }
+
+        // Day 194: the count of sites that could hold the property IS the
+        // assertion. Six rows firing five distinct categories would leave one
+        // hint string unexercised while every assertion above still passed.
+        assert_eq!(
+            categories_covered.len(),
+            rows.len(),
+            "each row must fire a DISTINCT category, so all {} hint strings are covered: {:?}",
+            rows.len(),
+            categories_covered
+        );
+    }
 }

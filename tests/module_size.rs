@@ -293,7 +293,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // cfg(test) pin and the three pure-core splits that paid the shared-global
     // register down). Inside REGISTER_DRIFT_GRACE_LINES, so it warned rather than
     // failed — and warned unread for six days, which is the finding this task fixes.
-    ("src/format/mod.rs", 2629),
+    ("src/format/mod.rs", 2788),
     // Day 162 (#665): +27 lines — the test-output filter is now gated on tool
     // provenance, so read_file results stop being eaten. Signature recorded
     // retroactively during Day 162 reflection: the raise itself shipped
