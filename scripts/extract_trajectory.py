@@ -4850,9 +4850,20 @@ src/commands_config.rs
         render_provider_health(7, 0, AUDIT_DIR_OK),
         "## Provider/API health\n7 sessions, no provider-error lines.",
     )
+    # SUPERSEDED BEHAVIOUR, recorded rather than erased (Day 196, second task).
+    # This assertion read `render_provider_health(0, 0, AUDIT_DIR_OK) == ""`
+    # from #843 until now, i.e. it pinned SILENCE for a walk that examined zero
+    # sessions. That is this section's own subject wearing the opposite sign:
+    # "I found no session dirs" and "I checked and there was nothing" rendered
+    # identically, and the first is quieter than the bug. INVERTED rather than
+    # deleted — a fixture pinning a superseded convention that outlives its
+    # replacement converts a defect into a green invariant (Day 148).
     assert_eq(
-        "OK with zero sessions still renders nothing (unchanged)",
-        render_provider_health(0, 0, AUDIT_DIR_OK), "",
+        "ANTI-VACUOUS: zero sessions REFUSES rather than rendering silence",
+        render_provider_health(0, 0, AUDIT_DIR_OK),
+        "## Provider/API health: not checked — the audit-log directory holds "
+        "no session directories, so nothing was scanned. This is not 'no "
+        "provider errors'.",
     )
     assert_eq(
         "default state argument keeps every existing call site reachable",
