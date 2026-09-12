@@ -1209,23 +1209,53 @@ AUDIT_FILE_SIZE_CAP = 10 * 1024 * 1024  # 10MB per file — guard against runawa
 # one predicate. The shapes below were captured VERBATIM from the real
 # transcripts (day-194/195/196), never hand-typed: 43 × the retry-after line,
 # 43 × the no-fallback line, 15 × the stopped-retrying line.
+# TWO-STAGE, and the ORDER is the whole correctness of it (Day 196, eval-fix).
+# The first landing anchored every pattern to `^...$` and then consulted the
+# prose filter. That made the counted-reject STRUCTURALLY DEAD: a markdown
+# table cell or a backticked quote fails `^\s*error:` before the filter is
+# ever reached, so `prose_rejected` could never be non-zero and the two guards
+# asserting it were red. A guard that cannot fire is the "cannot fail loudly"
+# defect wearing the opposite sign, and it is quieter than the bug.
+#
+# So the CANDIDATE stage is deliberately LOOSE — the bare substring scan the
+# task warns is contaminated by my own prose — and the prose filter runs over
+# exactly that population. Only a candidate that survives the filter is then
+# held to the ANCHOR. Loose-then-filter-then-anchor is what makes the reject
+# counter reachable, and it is the only ordering under which the filter is
+# load-bearing rather than ceremony.
+#
+# `anchor` is None for the three legacy token alternatives: they were always
+# substring matches, so the loose match IS the rule there and narrowing them
+# would be a narrowing nobody asked for.
 _PROVIDER_MARKER_PATTERNS = [
     # `  error: Rate limited, retry after Some(84004000)ms`
-    # Leading whitespace is REQUIRED to be tolerated: the binary's stderr is
-    # indented 2 spaces in the teed transcript, so an anchor without \s* fires
-    # on nothing at all. Measured, not assumed.
-    ("rate_limited", re.compile(r"^\s*error:\s*Rate limited,\s*retry after\s+Some\(\d+\)ms\s*$")),
+    # Leading whitespace is REQUIRED to be tolerated in the anchor: the binary's
+    # stderr is indented 2 spaces in the teed transcript, so an anchor without
+    # \s* fires on nothing at all. Measured, not assumed.
+    (
+        "rate_limited",
+        re.compile(r"error:\s*Rate limited,\s*retry after\s+Some\(\d+\)ms"),
+        re.compile(r"^\s*error:\s*Rate limited,\s*retry after\s+Some\(\d+\)ms\s*$"),
+    ),
     # `  ⏳ stopped retrying on purpose: the provider says its rate limit resets in ~23h 20m. …`
-    ("retry_giveup", re.compile(r"^\s*\u23f3?\s*stopped retrying on purpose:\s*the provider says its rate limit resets in\s*~\S+.*$")),
+    (
+        "retry_giveup",
+        re.compile(r"stopped retrying on purpose:\s*the provider says its rate limit resets in"),
+        re.compile(r"^\s*\u23f3?\s*stopped retrying on purpose:\s*the provider says its rate limit resets in\s*~\S+.*$"),
+    ),
     # `  API error with no fallback configured. Exiting.`
-    ("no_fallback", re.compile(r"^\s*API error with no fallback configured\.\s*Exiting\.\s*$")),
+    (
+        "no_fallback",
+        re.compile(r"API error with no fallback configured\.\s*Exiting\."),
+        re.compile(r"^\s*API error with no fallback configured\.\s*Exiting\.\s*$"),
+    ),
     # The three pre-existing alternatives are KEPT verbatim. They may match
     # genuine structured audit.jsonl lines, and dropping them would be a
     # narrowing nobody asked for — this task widens the scan, it does not
     # trade one blind spot for another.
-    ("audit_error_object", re.compile(r'"type"\s*:\s*"error"', re.IGNORECASE)),
-    ("provider_error_token", re.compile(r"provider_error", re.IGNORECASE)),
-    ("rate_limit_token", re.compile(r"rate_limit", re.IGNORECASE)),
+    ("audit_error_object", re.compile(r'"type"\s*:\s*"error"', re.IGNORECASE), None),
+    ("provider_error_token", re.compile(r"provider_error", re.IGNORECASE), None),
+    ("rate_limit_token", re.compile(r"rate_limit", re.IGNORECASE), None),
 ]
 
 _PROVIDER_GREP_PREFIX_RE = re.compile(r"^\s*(?:[\w./-]+:)?\d+:")
@@ -1254,32 +1284,70 @@ def is_provider_prose(line: str) -> bool:
 
 
 def classify_provider_error_line(line: str) -> str | None:
-    """Shape-match one line against the anchored provider emissions.
+    """LOOSE candidate match: does this line carry a provider-emission's text?
 
-    Pure. Returns a marker name or None, and says NOTHING about provenance —
-    `is_provider_prose` owns that half and `classify_provider_error` composes
-    the two, exactly as the sibling script splits them.
+    Pure. Returns a marker name or None, and says NOTHING about provenance or
+    about shape — `is_provider_prose` owns the first and
+    `provider_line_is_emission` the second. This is deliberately the bare
+    substring scan the task warns is contaminated by my own writing, because a
+    filter can only be load-bearing over a population wider than the thing it
+    filters down to.
+
+    Order is preserved and load-bearing: `rate_limited` is tried before the
+    legacy `rate_limit` token, so the real emission reports its own marker
+    rather than the catch-all's.
     """
     line = strip_ansi(line).rstrip("\n").rstrip()
-    for marker, pattern in _PROVIDER_MARKER_PATTERNS:
-        if pattern.search(line):
+    for marker, candidate, _anchor in _PROVIDER_MARKER_PATTERNS:
+        if candidate.search(line):
             return marker
     return None
 
 
-def classify_provider_error(line: str) -> tuple[str | None, bool]:
-    """Return (marker, rejected_as_prose).
+def provider_line_is_emission(marker: str, line: str) -> bool:
+    """ANCHORED match: is this line the shape the harness actually emits?
 
-    A line whose SHAPE matches but whose provenance is my own writing is
-    reported as rejected, never silently dropped — a shrinking denominator
-    inside my own meter is the defect this whole section is about.
+    Pure. A candidate that carries the text but not the shape is text ABOUT an
+    emission, not one. `anchor is None` means the loose match is the whole rule
+    (the three legacy token alternatives), so those are emissions by
+    definition and this returns True.
+    """
+    line = strip_ansi(line).rstrip("\n").rstrip()
+    for name, _candidate, anchor in _PROVIDER_MARKER_PATTERNS:
+        if name != marker:
+            continue
+        return anchor is None or bool(anchor.search(line))
+    return False
+
+
+# The two reject reasons are DISTINCT VALUES and are never folded into each
+# other: "my own prose quoting the emission" and "carries the text in a shape
+# the harness never emits" are different facts with different remedies, and a
+# counter wearing the other's name is the mislabelling this section is about.
+PROVIDER_REJECT_PROSE = "prose"
+PROVIDER_REJECT_UNANCHORED = "unanchored"
+
+
+def classify_provider_error(line: str) -> tuple[str | None, str | None]:
+    """Return (marker, reject_reason) — the composition, in a fixed order.
+
+    Candidate -> prose filter -> anchor. Every candidate that is declined is
+    declined WITH A REASON that the caller counts; nothing is dropped
+    silently, because a shrinking denominator inside my own meter is the
+    defect this whole section exists to avoid.
+
+    The prose filter runs BEFORE the anchor on purpose. A quoted line can be
+    both prose-shaped and unanchored, and "I wrote this" is the more specific
+    and more actionable of the two.
     """
     marker = classify_provider_error_line(line)
     if marker is None:
-        return (None, False)
+        return (None, None)
     if is_provider_prose(line):
-        return (None, True)
-    return (marker, False)
+        return (None, PROVIDER_REJECT_PROSE)
+    if not provider_line_is_emission(marker, line):
+        return (None, PROVIDER_REJECT_UNANCHORED)
+    return (marker, None)
 
 
 @dataclass
@@ -1296,6 +1364,10 @@ class ProviderScan:
     hits: int = 0
     prose_rejected: int = 0
     streams: tuple = ()
+    # Counted separately from `prose_rejected`, never summed into it: a line
+    # carrying the emission's text in a shape the harness never emits is a
+    # different fact from a line I wrote quoting one.
+    unanchored_rejected: int = 0
 
 
 # Three states for the audit-log directory, and none of them may be folded into
@@ -1361,8 +1433,8 @@ def resolve_audit_dir(raw) -> tuple[str, Path | None]:
     return state, (Path(str(raw)) if state == AUDIT_DIR_OK else None)
 
 
-def scan_provider_lines(lines) -> tuple[int, int]:
-    """Fold a stream of lines into (hits, prose_rejected).
+def scan_provider_lines(lines) -> tuple[int, int, int]:
+    """Fold a stream of lines into (hits, prose_rejected, unanchored_rejected).
 
     Pure — this is the ONE statement of the fold, so the self-tests drive the
     same rule `_scan_provider_stream` runs over a real file rather than a
@@ -1371,17 +1443,20 @@ def scan_provider_lines(lines) -> tuple[int, int]:
     """
     hits = 0
     prose = 0
+    unanchored = 0
     for line in lines:
-        marker, rejected = classify_provider_error(line)
+        marker, reason = classify_provider_error(line)
         if marker is not None:
             hits += 1
-        elif rejected:
+        elif reason == PROVIDER_REJECT_PROSE:
             prose += 1
-    return hits, prose
+        elif reason == PROVIDER_REJECT_UNANCHORED:
+            unanchored += 1
+    return hits, prose, unanchored
 
 
-def _scan_provider_stream(path: Path) -> tuple[int, int]:
-    """Scan one file for provider-error lines. Returns (hits, prose_rejected).
+def _scan_provider_stream(path: Path) -> tuple[int, int, int]:
+    """Scan one file. Returns (hits, prose_rejected, unanchored_rejected).
 
     Bounded by the existing AUDIT_FILE_SIZE_CAP — no new budget was invented.
     Fail-soft: an OSError warns and contributes nothing, because this
@@ -1404,7 +1479,7 @@ def _scan_provider_stream(path: Path) -> tuple[int, int]:
             return scan_provider_lines(_bounded(f))
     except OSError as e:
         warn(f"skipped {path}: {e}")
-        return 0, 0
+        return 0, 0, 0
 
 
 def collect_provider_errors(audit_dir: Path) -> ProviderScan:
@@ -1429,6 +1504,7 @@ def collect_provider_errors(audit_dir: Path) -> ProviderScan:
     sessions = 0
     hits = 0
     prose_rejected = 0
+    unanchored_rejected = 0
     saw_audit = False
     saw_transcripts = False
     for child in sorted(audit_dir.iterdir(), reverse=True):
@@ -1449,9 +1525,10 @@ def collect_provider_errors(audit_dir: Path) -> ProviderScan:
         if transcripts:
             saw_transcripts = True
         for stream in streams:
-            h, pr = _scan_provider_stream(stream)
+            h, pr, ur = _scan_provider_stream(stream)
             hits += h
             prose_rejected += pr
+            unanchored_rejected += ur
         if sessions >= WINDOW_SESSIONS:
             break
     names = []
@@ -1459,7 +1536,9 @@ def collect_provider_errors(audit_dir: Path) -> ProviderScan:
         names.append("audit.jsonl")
     if saw_transcripts:
         names.append("transcripts/*.log")
-    return ProviderScan(sessions, hits, prose_rejected, tuple(names))
+    return ProviderScan(
+        sessions, hits, prose_rejected, tuple(names), unanchored_rejected
+    )
 
 
 def render_provider_health(
@@ -1468,6 +1547,7 @@ def render_provider_health(
     state: str = AUDIT_DIR_OK,
     prose_rejected: int = 0,
     streams: tuple = (),
+    unanchored_rejected: int = 0,
 ) -> str:
     """Render the provider-health section, or an honest one-line refusal.
 
@@ -1494,8 +1574,9 @@ def render_provider_health(
     byte-identical and their assertions are untouched — that is #843's
     regression guard and it stays green unedited.
 
-    `prose_rejected` is reported only when > 0 and is NEVER summed into the
-    hit count: a line whose shape matched but whose provenance is my own
+    `prose_rejected` and `unanchored_rejected` are reported only when > 0,
+    are never summed into EACH OTHER (two different facts, two remedies), and
+    are NEVER summed into the hit count: a line whose shape matched but whose provenance is my own
     writing is a different fact from a provider error, and folding them is the
     contamination defect this whole section exists to avoid.
     """
@@ -1512,7 +1593,12 @@ def render_provider_health(
     if sessions == 0:
         return ""
     scanned = f" in {', '.join(streams)}" if streams else ""
-    tail = f" ({prose_rejected} prose-shaped line(s) rejected)" if prose_rejected > 0 else ""
+    rejects = []
+    if prose_rejected > 0:
+        rejects.append(f"{prose_rejected} prose-shaped")
+    if unanchored_rejected > 0:
+        rejects.append(f"{unanchored_rejected} unanchored")
+    tail = f" ({', '.join(rejects)} line(s) rejected)" if rejects else ""
     if hits == 0:
         # Says what was READ, never that the provider was healthy.
         return (
@@ -2854,8 +2940,9 @@ def main() -> int:
         provider_scan.sessions,
         provider_scan.hits,
         audit_dir_state,
-        provider_scan.prose_rejected,
-        provider_scan.streams,
+        prose_rejected=provider_scan.prose_rejected,
+        streams=provider_scan.streams,
+        unanchored_rejected=provider_scan.unanchored_rejected,
     )
     # Same rule as `ci_unknown` above: a "could not check" provider note is
     # honest, but it is not trajectory DATA and must not suppress the global
