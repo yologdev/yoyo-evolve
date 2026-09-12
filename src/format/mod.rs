@@ -936,15 +936,31 @@ pub struct HintContext {
     pub turns_since_slash_command: usize,
 }
 
+/// The decorative marker every contextual hint carries in ordinary output.
+///
+/// **One statement of the glyph**, so the table below holds the *message* and
+/// nothing else and the marker cannot drift between the six rules. Under
+/// `--screen-reader` this is omitted entirely rather than transliterated: a
+/// screen reader announcing "light bulb" before every hint is noise, and the
+/// sentence after it is the whole content.
+const HINT_GLYPH: &str = "💡 ";
+
 /// Return at most one contextual hint based on what just happened.
 ///
 /// Rules are evaluated in priority order. Each hint category fires at most
 /// once per session. Returns `None` when no rules match or the matching
 /// category was already shown. Callers should gate on `is_quiet()` before
 /// printing.
+///
+/// This wrapper is the **only** global read in the pair — it resolves
+/// `is_plain_output()` and hands the answer to the decision half, exactly as
+/// `print_usage` / `print_context_usage` do for their own cores (Day 177). Do
+/// not move that read into [`contextual_hint_with`]: a global read inside the
+/// core is what the Day-177 split removed, and it would put the three tests
+/// that drive the core back on process-wide state.
 pub fn contextual_hint(ctx: &HintContext) -> Option<String> {
     let mut guard = shown_hints().lock().ok()?;
-    contextual_hint_with(&mut guard, ctx)
+    contextual_hint_with(&mut guard, ctx, is_plain_output())
 }
 
 /// The decision half of [`contextual_hint`]. **Pure** in the sense that matters
@@ -952,48 +968,62 @@ pub fn contextual_hint(ctx: &HintContext) -> Option<String> {
 /// being read out of the process-wide `SHOWN_HINTS`, so a test drives local
 /// state and never calls `reset_shown_hints()`. Same shape as
 /// [`context_budget_warning_with`], for the same reason.
+///
+/// `plain` is the `--screen-reader` answer, passed in rather than read, for the
+/// same reason the shown-set is. When it is false the returned string is
+/// **byte-identical** to what this function has always returned — that is every
+/// user who has not passed `--screen-reader`, and the whole regression surface.
 pub(crate) fn contextual_hint_with(
     shown: &mut HashSet<&'static str>,
     ctx: &HintContext,
+    plain: bool,
 ) -> Option<String> {
     // Priority-ordered rules. First match wins.
+    //
+    // Messages are stored WITHOUT the marker: `HINT_GLYPH` is prepended once,
+    // below, so a rule added here cannot quietly reintroduce a glyph on the
+    // plain path. Keep them ASCII and em-dash-free for the same reason.
     let candidates: &[(&str, bool, &str)] = &[
         (
             "first_turn",
             ctx.turn_count == 1,
-            "💡 Type /help to see available commands",
+            "Type /help to see available commands",
         ),
         (
             "watch",
             ctx.files_modified && !ctx.has_watch,
-            "💡 /watch to auto-test after every prompt",
+            "/watch to auto-test after every prompt",
         ),
         (
             "retry",
             ctx.had_tool_error,
-            "💡 /retry to re-run with the error context",
+            "/retry to re-run with the error context",
         ),
         (
             "compact",
             ctx.context_usage_ratio > 0.5,
-            "💡 /compact to free context space",
+            "/compact to free context space",
         ),
         (
             "diff",
             ctx.files_modified,
-            "💡 /diff to review changes, /commit to save",
+            "/diff to review changes, /commit to save",
         ),
         (
             "tips",
             ctx.turns_since_slash_command >= 3,
-            "💡 Try /tips to discover features",
+            "Try /tips to discover features",
         ),
     ];
 
     for &(category, condition, message) in candidates {
         if condition && !shown.contains(category) {
             shown.insert(category);
-            return Some(message.to_string());
+            return Some(if plain {
+                message.to_string()
+            } else {
+                format!("{HINT_GLYPH}{message}")
+            });
         }
     }
 
@@ -2614,13 +2644,13 @@ mod tests {
             context_usage_ratio: 0.8,
             turns_since_slash_command: 5,
         };
-        let hint = contextual_hint_with(&mut shown, &ctx);
+        let hint = contextual_hint_with(&mut shown, &ctx, false);
         assert!(hint.is_some());
         assert!(hint.unwrap().contains("/help"));
         // The once-per-session memory is real, and now checkable without
         // touching the process global: the same ctx must not fire twice.
         assert!(shown.contains("first_turn"));
-        let second = contextual_hint_with(&mut shown, &ctx);
+        let second = contextual_hint_with(&mut shown, &ctx, false);
         assert!(
             second.is_some_and(|h| !h.contains("/help")),
             "first_turn must not repeat; a lower-priority hint should win"
