@@ -470,8 +470,12 @@ fn unverified_verdict_still_promotes_the_patch_and_approves_the_decision() {
         "the decision reason must not claim an oracle passed when none ran: \
          {reason:?}"
     );
+    // Case-insensitive on purpose: the property is that the reason NAMES the
+    // state, never that it spells it in a particular case. The emitted string
+    // says `UNVERIFIED` and an exact-case `contains` reddened on nothing but
+    // that, which is an assertion about typography wearing a claim's clothes.
     assert!(
-        reason.contains("unverified"),
+        reason.to_ascii_lowercase().contains("unverified"),
         "the decision reason must name the state, so a consumer can tell \
          \"the oracle passed\" from \"nobody looked\": {reason:?}"
     );
