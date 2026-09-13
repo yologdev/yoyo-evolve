@@ -1079,7 +1079,21 @@ async fn task_result_in<S: EventStore>(
     eval_command: Option<&str>,
     goal: &str,
 ) -> Result<(), StateError> {
-    let promoted = verdict == "promoted";
+    use crate::gasp_cli::{classify_verdict, verdict_landed, verdict_oracle_ran, TaskVerdict};
+
+    // #915: ONE statement of the verdict vocabulary, read by every site below
+    // that used to branch on `verdict == "promoted"`. Two spellings of the same
+    // comparison agree the day they are written and diverge forever after, and
+    // this function would then decide the eval status one way and the decision
+    // another — which is exactly the split it exists to keep honest.
+    let verdict = classify_verdict(verdict);
+    // Did the code land and stay? Answered `true` for BOTH `Promoted` and
+    // `Unverified`, because on an unverified accept the patch really is on
+    // `main` — claiming otherwise would be a second lie in the other direction.
+    let landed = verdict_landed(verdict);
+    // Did an oracle look at it? `true` for `Promoted` alone. This is the half
+    // #915 changed.
+    let oracle_ran = verdict_oracle_ran(verdict);
     let suffix = format!("{run_id}_{num}");
     ensure_goal(state, goal, actor).await?;
 
@@ -1110,7 +1124,7 @@ async fn task_result_in<S: EventStore>(
     // and a placeholder would be one more thing every reader must special-case.
     // `base_project_ref` above still records `pre_sha`, so the patch keeps
     // saying where it started from.
-    patch.artifacts = if promoted {
+    patch.artifacts = if landed {
         vec![ArtifactRef::new("git-commit", format!("{repo}@{post_sha}")).with_hash(post_sha)]
     } else {
         Vec::new()

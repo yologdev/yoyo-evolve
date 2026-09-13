@@ -314,6 +314,72 @@ pub(crate) fn needs_open_run(cmd: &GaspCommand) -> bool {
     !matches!(cmd, GaspCommand::SessionStart { .. })
 }
 
+/// What a `task-result --verdict` string means, as **three** values rather than
+/// two (#915).
+///
+/// The record used to ask one question — `verdict == "promoted"` — and answer
+/// two different ones with it: *did the code land and stay?* and *did an oracle
+/// look at it?* Those have the same answer on the two original verdicts and
+/// **different** answers on the third, so collapsing them wrote
+/// `eval.finished Passed` for a session where no evaluator ever ran. That is
+/// `"could not check"` reading as `"checked; clean"` inside an append-only
+/// record, which is the collapse the pre-push hook, `CiScan`'s could-not-run
+/// branch and `UngradedScan`'s unread-lines clause all refuse.
+///
+/// It lives here rather than in `gasp.rs` for the reason every other decision
+/// half in this file does: `gasp.rs` sits behind the default-off `gasp`
+/// feature, so a table test beside it compiles to **zero tests** under the
+/// plain `cargo test` that gates every task, while this file is on the plain
+/// build path and is genuinely covered by that run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TaskVerdict {
+    /// The code landed, stayed, and an oracle passed it.
+    Promoted,
+    /// The code landed and stayed, and **no oracle ran** — the harness accepted
+    /// it on `build`+`test` alone after the evaluator produced no verdict.
+    /// Deliberately *not* a failure: the patch really is on `main`, so saying
+    /// otherwise would be a second lie in the opposite direction.
+    Unverified,
+    /// The task was reverted.
+    Rejected,
+}
+
+/// Classify a `--verdict` string.
+///
+/// `--verdict` is a free string at the parse layer (`required`, no closed
+/// list), so this is the only place its vocabulary is stated. An unrecognised
+/// value resolves to [`TaskVerdict::Rejected`], which is both **byte-identical
+/// to the pre-#915 behaviour** (anything that was not `"promoted"` was already
+/// treated as a revert) and the conservative direction: an unknown verdict must
+/// never be promoted into the comfortable bucket.
+#[cfg_attr(not(feature = "gasp"), allow(dead_code))]
+pub(crate) fn classify_verdict(verdict: &str) -> TaskVerdict {
+    match verdict {
+        "promoted" => TaskVerdict::Promoted,
+        "unverified" => TaskVerdict::Unverified,
+        _ => TaskVerdict::Rejected,
+    }
+}
+
+/// Did the code land and stay on `main`?
+///
+/// True for both [`TaskVerdict::Promoted`] and [`TaskVerdict::Unverified`] —
+/// this is the half that must **not** change when an oracle fails to run.
+#[cfg_attr(not(feature = "gasp"), allow(dead_code))]
+pub(crate) fn verdict_landed(verdict: TaskVerdict) -> bool {
+    matches!(verdict, TaskVerdict::Promoted | TaskVerdict::Unverified)
+}
+
+/// Did an oracle actually look at it?
+///
+/// True **only** for [`TaskVerdict::Promoted`]. Kept as its own predicate
+/// rather than folded into [`verdict_landed`] precisely because the two
+/// disagree on `Unverified`, which is the whole of #915.
+#[cfg_attr(not(feature = "gasp"), allow(dead_code))]
+pub(crate) fn verdict_oracle_ran(verdict: TaskVerdict) -> bool {
+    matches!(verdict, TaskVerdict::Promoted)
+}
+
 /// The worker id the **graph-tier** store is opened under when `--worker` names
 /// none.
 ///
@@ -1066,6 +1132,61 @@ mod tests {
     /// predicate covered only where it fires is vacuous green, and the whole
     /// of #831 is that `session-start` must open a run while the other three
     /// must chain to the one an earlier process opened.
+    /// The #915 three-way split, and the two questions it keeps apart.
+    ///
+    /// ANTI-VACUOUS, asserted FIRST: the three verdicts really do resolve to
+    /// three distinct values, so a classifier that collapsed them could not
+    /// pass this by having every row agree.
+    ///
+    /// The NEAR-MISS GUARD is the `promoted`/reverted pair: those are every
+    /// row already in the live graph, and both must answer exactly as they did
+    /// before #915 — `landed` and `oracle_ran` agreeing on both, which is
+    /// precisely why two questions could be carried by one bool until a third
+    /// verdict existed.
+    #[test]
+    fn classify_verdict_splits_landed_from_oracle_ran() {
+        let promoted = classify_verdict("promoted");
+        let unverified = classify_verdict("unverified");
+        let rejected = classify_verdict("rejected");
+        assert_ne!(promoted, unverified, "the three verdicts must be distinct");
+        assert_ne!(unverified, rejected, "the three verdicts must be distinct");
+
+        // (verdict string, landed, oracle_ran)
+        let cases: &[(&str, bool, bool)] = &[
+            // Near-miss guard: unchanged from before #915.
+            ("promoted", true, true),
+            ("rejected", false, false),
+            // The unknown-verdict default, also unchanged: anything that is
+            // not "promoted" was already a revert, and an unknown verdict must
+            // never be promoted into the comfortable bucket.
+            ("", false, false),
+            ("PROMOTED", false, false),
+            ("unverifiedd", false, false),
+            // The new value, and the ONLY row where the two questions differ.
+            ("unverified", true, false),
+        ];
+        for (verdict, landed, oracle_ran) in cases {
+            let v = classify_verdict(verdict);
+            assert_eq!(
+                verdict_landed(v),
+                *landed,
+                "landed({verdict:?}) — did the code stay on main?"
+            );
+            assert_eq!(
+                verdict_oracle_ran(v),
+                *oracle_ran,
+                "oracle_ran({verdict:?}) — did an evaluator actually look?"
+            );
+        }
+
+        // The whole of #915 in one assertion: exactly one verdict answers the
+        // two questions differently.
+        assert!(
+            verdict_landed(unverified) && !verdict_oracle_ran(unverified),
+            "an UNVERIFIED accept landed the code AND had no oracle"
+        );
+    }
+
     #[test]
     fn needs_open_run_table() {
         let cases: &[(&str, Vec<String>, bool)] = &[
