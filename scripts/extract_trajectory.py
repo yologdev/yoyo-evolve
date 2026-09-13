@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -5967,6 +5968,156 @@ src/commands_config.rs
         ),
         {195: 0},
     )
+
+    print("\n=== collect_provider_errors fixture self-tests (Day 197, #917) ===\n")
+    # WHY THESE EXIST, AND WHY THEY ARE FIXTURE-DRIVEN RATHER THAN PURE.
+    # Day 196 fixed a real bug here -- the walk sorted session dirs with a raw
+    # `sorted(..., reverse=True)` (LEXICOGRAPHIC) while its two siblings key on
+    # `session_sort_key`, so `day-99-*` outranked `day-195-*` and the
+    # WINDOW_SESSIONS window filled with the wrong decade. The positive control
+    # on that fix had WIDTH ZERO: reverting the key reddened NO self-test at
+    # all, because every provider self-test drives the pure layer
+    # (`scan_provider_lines` / `classify_provider_error_line` /
+    # `render_provider_health`) one layer BELOW the walk -- and that layer was
+    # already green while the walk was broken.
+    #
+    # This is a COMPOSITION defect, which is why no unit test could see it: two
+    # individually-correct functions composed into a window that reached the
+    # wrong decade. A seam is where the bugs live and where my assertions stop.
+    # So these drive the REAL `collect_provider_errors` and assert at the
+    # EMISSION POINT -- the `ProviderScan` a caller receives.
+    REAL_EMISSION = "error: Rate limited, retry after Some(38965000)ms"
+
+    def _mk_session(root: Path, name: str, *, transcript: str | None = None,
+                    audit: str | None = None, unreadable: bool = False) -> Path:
+        d = root / name
+        (d / "transcripts").mkdir(parents=True, exist_ok=True)
+        if transcript is not None:
+            (d / "transcripts" / "impl.log").write_text(transcript, encoding="utf-8")
+        if audit is not None:
+            (d / "audit.jsonl").write_text(audit, encoding="utf-8")
+        if unreadable:
+            # A DIRECTORY named *.log: the glob matches it, `open()` raises
+            # IsADirectoryError (an OSError), and the scan books it as unread.
+            # Cheaper than writing a 10MB file to cross AUDIT_FILE_SIZE_CAP.
+            (d / "transcripts" / "broken.log").mkdir(exist_ok=True)
+        return d
+
+    with tempfile.TemporaryDirectory() as _td:
+        sess = Path(_td) / "sessions"
+        sess.mkdir()
+        # The lexicographic trap itself, not a hand-invented shape:
+        #   day-9-*   sorts LARGEST of the three under a raw string sort
+        #   day-99-*  sorts above day-195-* because '9' > '1'
+        #   day-195-* is numerically NEWEST and holds the needle
+        _mk_session(sess, "day-9-20260301T120000Z", transcript="all quiet here\n")
+        _mk_session(sess, "day-99-20260501T120000Z", transcript="nothing to see\n")
+        _mk_session(sess, "day-195-20260911T120000Z", transcript=REAL_EMISSION + "\n")
+
+        # (1) ANTI-VACUOUS, ASSERTED FIRST. A walk that reaches nothing and a
+        # needle that was never a needle AGREE ON ZERO AND PASS TOGETHER --
+        # this task's own subject wearing the opposite sign. So prove the
+        # planted line is an emission the classifier genuinely recognises
+        # BEFORE asserting anything about what the walk found.
+        check(
+            "ANTI-VACUOUS: the planted needle really is a recognised emission",
+            classify_provider_error_line(REAL_EMISSION) is not None,
+        )
+
+        scan = collect_provider_errors(sess)
+        # (2) THE ASSERTION THAT WOULD HAVE FAILED ON DAY 196: the walk must
+        # reach the numerically newest dir, not the lexicographically largest.
+        check(
+            "the walk REACHES the numerically newest session (day-195), not day-9",
+            scan.hits >= 1,
+        )
+        # (3) The denominator counts what it examined, so a shrinking
+        # denominator inside my own meter stays visible.
+        assert_eq(
+            "the denominator counts every session it examined",
+            scan.sessions,
+            3,
+        )
+        check(
+            "the streams it read are named, so the claim cannot outrun its evidence",
+            "transcripts/*.log" in scan.streams,
+        )
+
+    with tempfile.TemporaryDirectory() as _td:
+        # (4) NEAR-MISS GUARD -- the entire regression surface. This is the
+        # clean path every healthy session takes and it must not move.
+        sess = Path(_td) / "sessions"
+        sess.mkdir()
+        _mk_session(sess, "day-195-20260911T120000Z", transcript="all green\n")
+        _mk_session(sess, "day-196-20260912T120000Z", transcript="also fine\n")
+        clean = collect_provider_errors(sess)
+        assert_eq("NEAR-MISS: a clean fixture yields zero hits", clean.hits, 0)
+        assert_eq(
+            "NEAR-MISS: a clean fixture rejects nothing as prose",
+            clean.prose_rejected,
+            0,
+        )
+        assert_eq(
+            "NEAR-MISS: a clean fixture rejects nothing as unanchored",
+            clean.unanchored_rejected,
+            0,
+        )
+        assert_eq(
+            "NEAR-MISS: a clean fixture still reports its sessions as EXAMINED",
+            clean.sessions,
+            2,
+        )
+
+    with tempfile.TemporaryDirectory() as _td:
+        # (5) `unread_streams` is its OWN number and is NEVER summed into hits
+        # or into either reject counter: a rejected line was read and judged,
+        # an unread file was never judged at all.
+        sess = Path(_td) / "sessions"
+        sess.mkdir()
+        _mk_session(
+            sess,
+            "day-195-20260911T120000Z",
+            transcript=REAL_EMISSION + "\n",
+            unreadable=True,
+        )
+        mixed = collect_provider_errors(sess)
+        check("an unreadable stream lands in unread_streams", mixed.unread_streams >= 1)
+        assert_eq(
+            "unread_streams is NEVER summed into hits (the readable needle still counts once)",
+            mixed.hits,
+            1,
+        )
+        assert_eq(
+            "unread_streams is NEVER summed into prose_rejected",
+            mixed.prose_rejected,
+            0,
+        )
+        assert_eq(
+            "unread_streams is NEVER summed into unanchored_rejected",
+            mixed.unanchored_rejected,
+            0,
+        )
+
+    with tempfile.TemporaryDirectory() as _td:
+        # (6) The zero-session branch REFUSES rather than reporting a clean
+        # bill -- a scanner that finds nothing and passes is this defect
+        # wearing the opposite sign and is quieter than the bug.
+        sess = Path(_td) / "sessions"
+        sess.mkdir()
+        empty = collect_provider_errors(sess)
+        assert_eq("a zero-session walk examines zero sessions", empty.sessions, 0)
+        check(
+            "the zero-session branch REFUSES, it does not render a clean bill",
+            "REFUSAL" in render_provider_health(
+                empty.sessions,
+                empty.hits,
+                AUDIT_DIR_OK,
+                empty.prose_rejected,
+                empty.streams,
+                empty.unanchored_rejected,
+                empty.unread_streams,
+            ).upper(),
+        )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
     return 1 if failures else 0
