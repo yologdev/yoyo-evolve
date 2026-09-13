@@ -6066,7 +6066,6 @@ src/commands_config.rs
             "the streams it read are named, so the claim cannot outrun its evidence",
             "transcripts/*.log" in scan.streams,
         )
-        )
 
     with tempfile.TemporaryDirectory() as _td:
         # (4) NEAR-MISS GUARD -- the entire regression surface. This is the
