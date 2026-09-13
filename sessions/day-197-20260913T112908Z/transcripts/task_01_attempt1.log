@@ -1,0 +1,189 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Step 0 — measuring before trusting the issue's remedy. Let me read the four things that decide the branch.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "enum EvalStatus" -A 14…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "enum DecisionStatus" -… ✓ (29ms)
+ ✓ (33ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+The grep output is elided. Let me read the resolved version's source directly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== Cargo.lock resolved ==…  ▶ $ sed -n '50,100p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b55… ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 3ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 answers 3 and 4 are in: EvalStatus is Started | Passed | Failed | Error | Skipped — `Skipped` exists, so this is Branch A. DecisionStatus::Approved confirmed. Now questions 1 and 2.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "verdict\|reason" src/ga…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "promoted\|verdict\|reas… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.0s (2 ✓)
+
+Both answers found. Let me read the actual task_result_in body in full before editing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1005,1200p' src/gasp.rs ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 is complete. Recording the findings before editing — two of the four contradict the issue:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== Q1: is --verdict valid… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both answers recorded. --verdict is a free string (required, no closed list) so no parse edit is needed, and needs_open_run is the precedent for putting the pure decision in gasp_cli.rs where the plain cargo test reaches it. Writing the three-way split there:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '305,316p' src/gasp_cli.r… ✓ (2ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the edit. Adding the three-way split beside needs_open_run, in the file the plain cargo test reaches:
+  ▶ edit src/gasp_cli.rs (4 → 70 lines)
+    #[cfg_attr(not(feature = "gasp"), allow(dead_code))]
+    pub(crate) fn needs_open_run(cmd: &GaspCommand) -> bool {
+        !matches!(cmd, GaspCommand::SessionStart { .. })
+  + }
+  + 
+  + /// What a `task-result --verdict` string means, as **three** values rather than
+  + /// two (#915).
+  + ///
+  + /// The record used to ask one question — `verdict == "promoted"` — and answer
+  + /// two different ones with it: *did the code land and stay?* and *did an oracle
+  + /// look at it?* Those have the same answer on the two original verdicts and
+  + /// **different** answers on the third, so collapsing them wrote
+  + /// `eval.finished Passed` for a session where no evaluator ever ran. That is
+  + /// `"could not check"` reading as `"checked; clean"` inside an append-only
+  + /// record, which is the collapse the pre-push hook, `CiScan`'s could-not-run
+  + /// branch and `UngradedScan`'s unread-lines clause all refuse.
+  + ///
+  + /// It lives here rather than in `gasp.rs` for the reason every other decision
+  + /// half in this file does: `gasp.rs` sits behind the default-off `gasp`
+  + /// feature, so a table test beside it compiles to **zero tests** under the
+  ... (50 more lines)
+ ✓ (1m 22s)
+    #[cfg_attr(not(feature = "gasp"), allow(dead_code))]
+    pub(crate) fn needs_open_run(cmd: &GaspCommand) -> bool {
+        !matches!(cmd, GaspCommand::SessionStart { .. })
+  + }
+  + 
+  + /// What a `task-result --verdict` string means, as **three** values rather than
+  + /// two (#915).
+  + ///
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the table test, in the module the plain gate runs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "needs_open_run_table\|f… ✓ (3ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1130,1165p' src/gasp_cli… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/gasp_cli.rs (2 → 57 lines)
+  +     /// The #915 three-way split, and the two questions it keeps apart.
+  +     ///
+  +     /// ANTI-VACUOUS, asserted FIRST: the three verdicts really do resolve to
+  +     /// three distinct values, so a classifier that collapsed them could not
+  +     /// pass this by having every row agree.
+  +     ///
+  +     /// The NEAR-MISS GUARD is the `promoted`/reverted pair: those are every
+  +     /// row already in the live graph, and both must answer exactly as they did
+  +     /// before #915 — `landed` and `oracle_ran` agreeing on both, which is
+  +     /// precisely why two questions could be carried by one bool until a third
+  +     /// verdict existed.
+  +     #[test]
+  +     fn classify_verdict_splits_landed_from_oracle_ran() {
+  +         let promoted = classify_verdict("promoted");
+  +         let unverified = classify_verdict("unverified");
+  +         let rejected = classify_verdict("rejected");
+  +         assert_ne!(promoted, unverified, "the three verdicts must be distinct");
+  +         assert_ne!(unverified, rejected, "the three verdicts must be distinct");
+  + 
+  +         // (verdict string, landed, oracle_ran)
+  ... (37 more lines)
+ ✓ (1m 26s)
+  +     /// The #915 three-way split, and the two questions it keeps apart.
+  +     ///
+  +     /// ANTI-VACUOUS, asserted FIRST: the three verdicts really do resolve to
+  +     /// three distinct values, so a classifier that collapsed them could not
+  +     /// pass this by having every row agree.
+  +     ///
+  +     /// The NEAR-MISS GUARD is the `promoted`/reverted pair: those are every
+  +     /// row already in the live graph, and both must answer exactly as they did
+  ... (13 more lines)
+  2 tools completed in 1m 41s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now rewiring task_result_in to read the three-way split:
+  ▶ edit src/gasp.rs (2 → 16 lines)
+  -     let promoted = verdict == "promoted";
+  +     use crate::gasp_cli::{classify_verdict, verdict_landed, verdict_oracle_ran, TaskVerdict};
+  + 
+  +     // #915: ONE statement of the verdict vocabulary, read by every site below
+  +     // that used to branch on `verdict == "promoted"`. Two spellings of the same
+  +     // comparison agree the day they are written and diverge forever after, and
+  +     // this function would then decide the eval status one way and the decision
+  +     // another — which is exactly the split it exists to keep honest.
+  +     let verdict = classify_verdict(verdict);
+  +     // Did the code land and stay? Answered `true` for BOTH `Promoted` and
+  +     // `Unverified`, because on an unverified accept the patch really is on
+  +     // `main` — claiming otherwise would be a second lie in the other direction.
+  +     let landed = verdict_landed(verdict);
+  +     // Did an oracle look at it? `true` for `Promoted` alone. This is the half
+  +     // #915 changed.
+  +     let oracle_ran = verdict_oracle_ran(verdict);
+        let suffix = format!("{run_id}_{num}");
+ ✓ (49.8s)
+  -     let promoted = verdict == "promoted";
+  +     use crate::gasp_cli::{classify_verdict, verdict_landed, verdict_oracle_ran, TaskVerdict};
+  + 
+  +     // #915: ONE statement of the verdict vocabulary, read by every site below
+  +     // that used to branch on `verdict == "promoted"`. Two spellings of the same
+  +     // comparison agree the day they are written and diverge forever after, and
+  +     // this function would then decide the eval status one way and the decision
+  +     // another — which is exactly the split it exists to keep honest.
+  ... (9 more lines)
+  ▶ edit src/gasp.rs (5 → 5 lines)
+  -     patch.artifacts = if promoted {
+  +     patch.artifacts = if landed {
+            vec![ArtifactRef::new("git-commit", format!("{repo}@{post_sha}")).with_hash(post_sha)]
+        } else {
+            Vec::new()
+ ✓ (49.8s)
+  -     patch.artifacts = if promoted {
+  +     patch.artifacts = if landed {
+            vec![ArtifactRef::new("git-commit", format!("{repo}@{post_sha}")).with_hash(post_sha)]
+        } else {
+            Vec::new()
+  2 tools completed in 1m 43s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/2 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/gasp_cli.rs, src/gasp.rs
+

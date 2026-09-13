@@ -1,0 +1,48 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff. Let me start by checking the key claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "enum EvalStatus" -A 12… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '55,80p' ~/.cargo/registr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -6; echo "=== … ✓ (4ms)
+ ✓ (5ms)
+  4 tools completed in 8.3s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== files changed by this … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== any doc of the new beh… ✓ (5ms)
+  2 tools completed in 4.7s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have all the evidence needed. Writing the verdict.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 2s)
+
+Verdict written to session_plan/eval_task_1.md.
+
+FAIL — on documentation only.
+
+What I verified as correct (and it is genuinely good work):
+
+• **Branch A was the right branch, and the claim was measured not guessed.** I read `yoagent-state 0.5.2` (the version `Cargo.lock` actually resolves) at `primitives.rs:61` — `EvalStatus { Started, Passed, Failed, Error, Skipped }`. Skipped exists, so "no oracle ran" is expressible at the status level, and the code comment's stated variant list is accurate. DecisionStatus { Pending, Approved, Rejected, Superseded } confirms Approved too.
+• **One statement of the vocabulary.** `TaskVerdict` + the three predicates live in `gasp_cli.rs` (on the plain build path, so the table test actually runs under the gate), and all five sites that previously spelled verdict == "promoted" read them. The two questions stay separate: landed keeps the patch Promoted and the decision Approved; oracle_ran is what changed.
+• **`score: None, not 0.0`** — absence gets its own name rather than reading as a measurement nobody took.
+• **Tests assert on emitted payloads** with the anti-vacuous "exactly one event" helpers asserted first, plus a whole-value near-miss guard on the promoted path.
+• **forgotten_touchpoints is clean** — exhaustive matches (E0004 would catch a missed arm), every helper consumed, and `run_task_result` delegates so pre-existing call sites are byte-identical.
+
+What failed:
+
+CLAUDE.md is in the task's Files: line and the task carries an entire section headed "Docs — CLAUDE.md is NOT optional", naming this as the exact reason #912 and #914 were rejected. git diff 119f172b..HEAD --name-only shows it was never touched, and it contains zero references to EvalStatus::Skipped, TaskVerdict, classify_verdict or #915.
+
+That matters beyond bookkeeping here: the single most important sentence the task asked for is that the harness will not emit `unverified` until the creator's producer change lands — this ships the vocabulary and the door, not the fix. Without it written down, the next reader of CLAUDE.md sees a three-way split described nowhere and may reasonably conclude the record is already honest. cargo test cannot fail for a missing sentence, which is precisely why this half has no gate and has to be checked here.
+
+Minor cleanup note, not a fault: .yoyo/risk_validations.jsonl is a harness-written ledger line swept into the diff, and src/gasp_cli.rs was edited although not listed in Files: — the latter is a better placement than the task specified, since it puts the classifier on the plain build path where its table test is actually covered by the gate.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

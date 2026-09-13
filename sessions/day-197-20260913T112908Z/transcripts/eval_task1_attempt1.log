@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task. Let me look at the key claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CLAUDE.md" -c CLAUDE.md… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1075,1200p' src/gasp.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let promoted\|let lande… ✓ (3ms)
+  4 tools completed in 14.5s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "promoted" src/gasp.rs |… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod gasp" src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 240 env CARGO_TARGET_DIR… ✓ (2ms)
+ ✓ (36.4s)
+  3 tools completed in 47.8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Conclusive. Writing the verdict.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (52.8s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+The decisive finding, verified by running it rather than inferred:
+
+```
+error[E0425]: cannot find value `promoted` in this scope   (×6)
+```
+
+CARGO_TARGET_DIR=target/gasp-eval cargo check --features gasp fails. The diff deleted let promoted = verdict == "promoted"; and converted one of its six use sites (patch.artifacts = if landed), leaving five unbound references at src/gasp.rs:1151, 1156, 1168, 1173, 1187, 1196. The harness reported Build/Tests PASS only because mod gasp is behind the default-off gasp feature — exactly the blind spot the task file named in advance ("A break here surfaces as a red CI next session, not as a failed task gate"). This would have shipped a red Test (--features gasp) step.
+
+Three further gaps, any one of which is independently disqualifying:
+
+• **The core change is absent.** Eval status is still `if promoted { Passed } else { Failed }`, the decision reason still hardcodes `oracle passed ({eval_command})`, and `--reason` is still ignored on the promoted path. The unverified vocabulary exists in gasp_cli.rs but reaches only the artifact line.
+• **`tests/gasp_cli_run_ordering.rs` untouched.** The whole emission-point test section — anti-vacuous single `eval.finished`, status-not-`Passed`, reason verbatim, patch still `Promoted, and the byte-identical promoted` near-miss guard — never landed.
+• **CLAUDE.md untouched**, though named in Files: and flagged as non-optional after #912 and #914 were rejected for precisely this.
+
+Worth noting for whoever picks this up: the half-applied state is worse than the pre-diff behaviour, not merely incomplete. Had it compiled, --verdict unverified would attach the git-commit artifact (landed == true) while promoted == false drove EvalStatus::Failed, DecisionStatus::Rejected, PatchStatus::Rejected and record_failure — an internally contradictory row claiming the task failed while carrying its commit. That is the "two spellings of one comparison diverge inside one function" hazard the task warned against, committed into the diff. The gasp_cli.rs half (the enum, the two predicates, the table test with its anti-vacuous and near-miss rows) is sound and worth keeping on the retry; the work remaining is finishing the substitution at the five other sites, then the tests and the docs.
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The evaluation is complete — that was the whole of my assignment. Let me do a final format check on the verdict file, since the harness parses it strictly and an unparseable line counts against the session.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== placeholder check (mus… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Format verified clean — no placeholders, no fences, one Verdict: line, all four Checked: lines parseable, and N/A used only on product_surface where it is legal.
+
+The evaluation is complete; there is no remaining work in this role. My assignment was to judge the committed diff, write the verdict, and stop without modifying code. That is done:
+
+| Item | Result |
+|---|---|
+| Verdict | FAIL |
+| intent_alignment | FAIL — core change absent; tests/gasp_cli_run_ordering.rs untouched |
+| forgotten_touchpoints | FAIL — 5 of 6 promoted consumers orphaned; oracle_ran bound and never read |
+| doc_sync | FAIL — CLAUDE.md named in Files:, absent from the commit |
+| product_surface | N/A — diff is entirely behind the default-off gasp feature |
+
+The load-bearing evidence was run, not inferred: cargo check --features gasp reports error[E0425]: cannot find value 'promoted' in this scope six times. The plain gate reported PASS only because mod gasp sits behind a default-off feature, which is the blind spot the task file itself predicted.
+
+I am deliberately not fixing the code. Two reasons, and the second matters more than the first: the evaluator instructions forbid it outright, and an evaluator that repairs the diff it is judging destroys the only independent signal in the loop — the next session would inherit a green tree with no record that the mechanism failed. The revert is the correct outcome here, and the gasp_cli.rs half (the TaskVerdict enum, the two predicates, and the table test with its anti-vacuous and near-miss rows) is genuinely sound and worth carrying into the retry.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

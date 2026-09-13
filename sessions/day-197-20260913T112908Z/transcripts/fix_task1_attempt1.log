@@ -1,0 +1,213 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the code to understand what's there now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1060,1220p' src/gasp.rs ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.5s (2 ✓)
+
+The previous attempt left five unbound promoted references. Let me run Step 0 measurements properly before fixing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "enum EvalStatus" -A 14…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "enum DecisionStatus" -… ✓ (4ms)
+ ✓ (154ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A3 'name = "yoagent-state"… ✓ (4ms)
+  3 tools completed in 3.3s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Resolved versions confirmed: yoagent-state 0.5.2, yoagent 0.18.1. Now reading the exact variants from the resolved crate.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '55,85p' /home/runner/.ca…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "verdict\|reason" src/ga… ✓ (2ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 42.9s (2 ✓)
+
+Step 0 measured — and it resolves the A/B fork toward Branch A, contradicting the task file's hedge:
+
+| # | Question | Measured answer |
+|---|---|---|
+| 1 | --verdict validated? | Free string — gasp_cli.rs:271 is required(&flags, "verdict")?, no closed list |
+| 2 | --reason threaded? | Parsed at :277, reaches eval metadata; decision reason hardcodes `oracle passed` |
+| 3 | EvalStatus variants | `Started, Passed, Failed, Error, Skipped` (yoagent-state 0.5.2) — `Skipped` EXISTS → BRANCH A |
+| 4 | DecisionStatus | Pending, Approved, Rejected, Superseded — Approved confirmed |
+
+Let me verify the existing helper work and the exact call sites.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '315,385p' src/gasp_cli.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "promoted\|oracle_ran\|l… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Fixing the five unbound references now — implementing the real Branch A change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1140,1215p' src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l tests/gasp_cli_run_orderin… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+Now let me read the test helpers I'll build on.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '98,135p;160,235p' tests/… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have what I need. Fixing the five unbound references with the real Branch A change.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (7 → 22 lines)
+  -                 status: if promoted {
+  -                     EvalStatus::Passed
+  -                 } else {
+  -                     EvalStatus::Failed
+  +                 // #915, BRANCH A: `EvalStatus` carries `Skipped` (measured on
+  +                 // yoagent-state 0.5.2 — `Started, Passed, Failed, Error,
+  +                 // Skipped`), so "no oracle ran" is expressible AT THE STATUS
+  +                 // LEVEL and does not have to hide in a reason string.
+  +                 //
+  +                 // `Failed` would be wrong and `Passed` is the lie #915 is about:
+  +                 // the eval did not fail, it did not RUN. Three verdicts, three
+  +                 // statuses, none folded into a neighbour.
+  +                 status: match verdict {
+  +                     TaskVerdict::Promoted => EvalStatus::Passed,
+  +                     TaskVerdict::Unverified => EvalStatus::Skipped,
+  +                     TaskVerdict::Rejected => EvalStatus::Failed,
+                    },
+  -                 score: Some(if promoted { 1.0 } else { 0.0 }),
+  +                 // `None`, never `0.0`, on the unverified path: a score of zero
+  +                 // is a MEASUREMENT and would read as "the oracle looked and gave
+  ... (7 more lines)
+ ✓ (52.7s)
+  -                 status: if promoted {
+  -                     EvalStatus::Passed
+  -                 } else {
+  -                     EvalStatus::Failed
+  +                 // #915, BRANCH A: `EvalStatus` carries `Skipped` (measured on
+  +                 // yoagent-state 0.5.2 — `Started, Passed, Failed, Error,
+  +                 // Skipped`), so "no oracle ran" is expressible AT THE STATUS
+  +                 // LEVEL and does not have to hide in a reason string.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (10 → 20 lines)
+  -                 status: if promoted {
+  +                 // The code landed and stayed on BOTH promoted and unverified, so
+  +                 // the decision really is `Approved` on both — saying otherwise
+  +                 // would be a second lie in the opposite direction.
+  +                 status: if landed {
+                        DecisionStatus::Approved
+                    } else {
+                        DecisionStatus::Rejected
+                    },
+  -                 reason: if promoted {
+  -                     format!("oracle passed ({eval_command}); kept")
+  -                 } else {
+  -                     format!("reverted to {pre_sha}: {reason}")
+  +                 // ...but the REASON must not claim an oracle passed when none
+  +                 // ran. The unverified arm carries the harness's `--reason`
+  +                 // verbatim, which is what closes the parsed-but-ignored flag:
+  +                 // before #915 this branch hardcoded `oracle passed (…)` and
+  +                 // dropped `reason` on the floor.
+  +                 reason: match verdict {
+  +                     TaskVerdict::Promoted => format!("oracle passed ({eval_command}); kept"),
+  ... (5 more lines)
+ ✓ (50.8s)
+  -                 status: if promoted {
+  +                 // The code landed and stayed on BOTH promoted and unverified, so
+  +                 // the decision really is `Approved` on both — saying otherwise
+  +                 // would be a second lie in the opposite direction.
+  +                 status: if landed {
+                        DecisionStatus::Approved
+                    } else {
+                        DecisionStatus::Rejected
+  ... (13 more lines)
+  2 tools completed in 1m 51s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two promoted references left — the patch status and the failure block.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (5 → 8 lines)
+  -             if promoted {
+  +             // `landed`, not `oracle_ran`: the patch IS on main after an
+  +             // unverified accept, so `Promoted` stays correct here. #915 changes
+  +             // what the EVAL claims, never where the code is.
+  +             if landed {
+                    PatchStatus::Promoted
+                } else {
+                    PatchStatus::Rejected
+ ✓ (49.6s)
+  -             if promoted {
+  +             // `landed`, not `oracle_ran`: the patch IS on main after an
+  +             // unverified accept, so `Promoted` stays correct here. #915 changes
+  +             // what the EVAL claims, never where the code is.
+  +             if landed {
+                    PatchStatus::Promoted
+                } else {
+                    PatchStatus::Rejected
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (1 → 5 lines)
+  -     if !promoted {
+  +     // A failure node is recorded only when the code did NOT stay. An
+  +     // unverified accept kept its code, so it records no failure — the thing
+  +     // that is missing is the oracle, and that is already said by
+  +     // `EvalStatus::Skipped` above.
+  +     if !landed {
+ ✓ (48.9s)
+  -     if !promoted {
+  +     // A failure node is recorded only when the code did NOT stay. An
+  +     // unverified accept kept its code, so it records no failure — the thing
+  +     // that is missing is the oracle, and that is already said by
+  +     // `EvalStatus::Skipped` above.
+  +     if !landed {
+  2 tools completed in 1m 42s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the check the evaluator ran that failed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && CARGO_TARGET_DIR=target/gasp-che… ✓ (34.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Compiles. oracle_ran needs a real consumer rather than a suppression — giving it the machine-readable one.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (1 → 5 lines)
+  -                 metadata: serde_json::json!({ "reason": reason }),
+  +                 // `oracle_ran` rides along as a machine-readable flag beside the
+  +                 // prose reason, so a consumer can answer "did anything check
+  +                 // this?" without string-matching the status vocabulary — the
+  +                 // same reader-facing axis #895 added to `--output-format json`.
+  +                 metadata: serde_json::json!({ "reason": reason, "oracle_ran": oracle_ran }),
+ ✓ (47.5s)
+  -                 metadata: serde_json::json!({ "reason": reason }),
+  +                 // `oracle_ran` rides along as a machine-readable flag beside the
+  +                 // prose reason, so a consumer can answer "did anything check
+  +                 // this?" without string-matching the status vocabulary — the
+  +                 // same reader-facing axis #895 added to `--output-format json`.
+  +                 metadata: serde_json::json!({ "reason": reason, "oracle_ran": oracle_ran }),
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,56 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task. The critical thing I see immediately: CLAUDE.md is named in `Files:` and does not appear in the diff at all.
+
+Let me verify that and a couple of other touchpoints.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --name-only 46bac533~1.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 -- CLAUDE.m… ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 4.5s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evidence is conclusive. Let me write the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TaskVerdict\|classify_v… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed. Every new definition has its consumer and every TaskVerdict variant has match arms at all three sites — the code half is solid. But CLAUDE.md was named in Files: and is untouched across all six commits of this task.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 1s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The evaluation is complete — the verdict file is written. Nothing further to do.
+
+## Verdict: FAIL
+
+The code is genuinely good; the docs half is missing entirely.
+
+What passed:
+• **intent_alignment** — Branch A was correctly taken (`EvalStatus::Skipped` exists upstream), the three-way split is held in *one* place via `classify_verdict` → landed/oracle_ran, and the two questions are kept properly apart: patch stays Promoted and decision stays Approved (the code did land), while only the oracle claim changes. score is None rather than 0.0 on the unverified path — absence getting its own name rather than a measurement nobody took. Tests assert on the emitted eval.finished payload with an anti-vacuous exactly-one guard first, and the promoted near-miss guard uses whole-value comparisons.
+• **forgotten_touchpoints** — This was the one I checked hardest, given #618/#653/#658. Every new definition has a consumer in the same diff, and all three `TaskVerdict variants have exhaustive match arms at all three branch sites (status, score, reason). The #[cfg_attr(not(feature = "gasp"), allow(dead_code))] attributes correctly handle the plain build path where gasp.rs` compiles out.
+• **product_surface** — Default-off feature, operator lane only, and an unrecognised --verdict still resolves to Rejected byte-identically to before.
+
+What failed:
+
+CLAUDE.md is named in Files: and was not touched by a single one of the six commits in this task (git diff --name-only 46bac533~1..HEAD returns only the three source files plus the risk ledger; the last CLAUDE.md commit is from the previous task at 03:46).
+
+This is not a technicality. The emitted graph payload genuinely changed — EvalStatus::Skipped, a null score, a new oracle_ran metadata key, and new decision reason text — while CLAUDE.md's src/gasp.rs bullet still describes the two-valued verdict == "promoted" behavior. The task devoted an entire section to this, naming six specific required items, precisely because #912 and #914 were rejected for exactly this same omission. As that section says: cargo test cannot fail for a missing sentence, which is why it is the half with no gate — and why it needs a human reader to enforce it.
+
+The remedy is small and the code needs no changes: add the CLAUDE.md paragraph covering the measured EvalStatus variants and branch taken, the three-way split, why Promoted remains correct on the unverified path, the now-consumed --reason, the append-only limit (the seven false rows stay), and that the harness cannot emit unverified until the creator's producer change lands.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

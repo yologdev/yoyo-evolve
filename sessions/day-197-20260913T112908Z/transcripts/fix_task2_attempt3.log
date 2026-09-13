@@ -1,0 +1,124 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by measuring the current state — what landed, what's missing, and whether the census can be re-run.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "WRITTEN_CONVENTIONS\|CO… ✓ (2ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.1s (2 ✓)
+
+Deliverables 1, 2, 4 landed in the .py. Deliverable 3 (the CLAUDE.md census) is absent. Let me verify the four step-0 answers before writing anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== LIMITS ===" && sed -n …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "914" scripts/check_asse… ✓ (3ms)
+ ✓ (3ms)
+ ✓ (211ms)
+  3 tools completed in 212ms (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 confirmed: constants have consumers, LIMITS item 5 renders from the constant, the filing claim is corrected, --test exits 0. Only deliverable 3 (the CLAUDE.md census) remains. Let me get live numbers from the tool.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "count=$(git rev-list --cou…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/chec… ✓ (5ms)
+ ✓ (47ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.8s (2 ✓)
+
+Census runs fast (no need for the escape hatch). But 0 WEAKENED rows means nothing to attribute yet. Let me try the stricter per-commit reading and locate the CLAUDE.md section.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 500 python3 scripts/chec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "check_assertion_weakeni… ✓ (5ms)
+ ✓ (96ms)
+  2 tools completed in 96ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Very tight on context. Let me grab exactly what I need: the Day-196 census numbers recorded in the script, and the CLAUDE.md insertion point.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '270,345p' scripts/check_… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '240,292p' scripts/check_… ✓ (3ms)
+  2 tools completed in 4.7s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have everything needed. Writing the deliverable-3 census paragraph into CLAUDE.md now, anchored before the sibling section.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (33 lines) ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now verifying the census claims are accurate and nothing regressed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (140ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Only CLAUDE.md changed (markdown-only), --test green. Running the required verification — targeting the gates that actually read CLAUDE.md first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (496ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three CLAUDE.md-reading gates green. Now the full required verification:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (2m 0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Complete. Everything green.
+
+## What was missing, and what I did
+
+The evaluator's verdict was precise: deliverables 1, 2 and 4 had landed and verified live; deliverable 3 — the dated census in CLAUDE.md — was skipped a third time, with all three prior commits touching only scripts/check_assertion_weakening.py.
+
+Step 0 re-measured rather than trusted the receipt, and it confirmed the evaluator on all four points: the five CONVENTION_* constants now have two readers (render_conventions_limit() and the conv_fixtures table), LIMITS item 5 renders from WRITTEN_CONVENTIONS, the source says the finding is UNFILED and #914 is the harness's auto-filed receipt, and --test exits 0. So the only remaining work was the CLAUDE.md paragraph.
+
+## The census, measured rather than cited
+
+Re-running was not too slow, so I did not take the task's escape hatch for the live half:
+
+• **Window depth read from the tool: `git rev-list --count HEAD` → 60 commits, shallow=true**, so HEAD~40 spans ~one day — LIMITS item 4 demonstrating itself.
+• **Net scan HEAD~40..HEAD*: 40 commits · 27 `.rs` hunks · 6 test-file hunks — WEAKENED 0 · STRENGTHENED 6 · UNKNOWN 0 · MOVED 0.
+• **Per-commit, same window (stricter): 40 · 32 · 7 — WEAKENED 0 · STRENGTHENED 6 · UNKNOWN 1** · MOVED 0, the UNKNOWN being aa29fe9d src/help.rs, counted and reported.
+
+The four counts are never summed, and the two modes are reported separately rather than pooled — they cover different hunk populations (27 vs 32).
+
+Zero `WEAKENED` live means there was nothing to attribute today, so the per-convention column is the Day-196 reading, labelled as the dated reading it was rather than presented as current. That is the one place I used the escape hatch, and I said so in the paragraph instead of letting a stale number read as fresh.
+
+## The finding that outranks the counts
+
+The table records that 4 of 5 predictions held and 1 was falsified, and that register-paid-to-empty → WEAKENED is not a false positive: paying a register to empty deletes the anti-vacuous guard, which is a real assert! removed with none added back. It stays pinned WEAKENED on purpose — downgrading it would manufacture a clean bill over a genuine coverage reduction. I also recorded the second falsification the constants themselves carry: whole-file-test-rename is handled by two mechanisms (--diff-filter=d exclusion in per-commit mode, MOVED in the net scan), and the Day-196 prediction named only the second.
+
+## Verification
+
+• `python3 scripts/check_assertion_weakening.py --test → self-tests passed`, exit 0
+• Ordinary invocation still renders (--from HEAD~5 --to HEAD)
+• `doc_version_claims 5 ✓, module_size 28 ✓, neutered_guards` 9 ✓ (the three gates that actually read CLAUDE.md — 0 sabotage markers left)
+• cargo fmt clean · clippy --all-targets -- -D warnings clean · cargo test 16/16 targets ok, zero failures
+• `git diff --name-only → **CLAUDE.md` only**
+
+Two honest limits on this hand-off: the change is markdown-only, so the Rust suite's green is evidence that nothing regressed, not evidence about the paragraph's content; and no positive control was run this session — the convention-classification control belonged to the diff that shipped the classifier, and dreams/ ledgers are untouched, with no row rewritten or back-filled.
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,129 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the code and understanding what landed, then fix the two gaps: the missing test coverage and the missing CLAUDE.md documentation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+Confirmed: only src/gasp.rs and src/gasp_cli.rs were touched. Let me read what landed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 119f172b..HEAD -- src/g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 119f172b..HEAD -- src/g… ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+The code half is solid. Now let me read the full current implementation and the test file I need to extend.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1060,1250p' src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l tests/gasp_cli_run_orderin… ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: the code half landed, the two missing halves are the emission-point tests and CLAUDE.md. Let me read the rest of the test file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '80,250p' tests/gasp_cli_… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '250,474p' tests/gasp_cli… ✓ (4ms)
+  2 tools completed in 2.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me verify step 0's measurements (for accurate docs) and check the event payload shapes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "enum EvalStatus" -A 14…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent" Cargo.lock | h… ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '55,82p' ~/.cargo/registr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2537,2570p' Cargo.lock ✓ (2ms)
+ ✓ (2ms)
+  4 tools completed in 3.5s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 measured: Branch A — EvalStatus has Skipped. Let me confirm against the exact resolved version.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -d ~/.cargo/registry/src/*/yo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "eval.finished\|decision… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+Confirmed against the exact resolved yoagent-state 0.5.2. Now let me check the emitted payload shapes so my assertions read the right fields.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '635,665p' ~/.cargo/regis… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the payload shapes. Let me add the emission-point tests, starting with a reason-taking variant of the existing helper so no existing call site changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_task_result" -A … ✓ (4ms)
+
+Now let me make the helper take a reason, keeping existing call sites byte-identical:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/gasp_cli_run_ordering.rs (4 → 14 lines)
+    fn run_task_result(verdict: &str, run_id: &str) -> tempfile::TempDir {
+  +     run_task_result_with_reason(verdict, run_id, "verdict artifact test")
+  + }
+  + 
+  + /// As [`run_task_result`], but with the `--reason` the harness would pass.
+  + ///
+  + /// Split out for #915: the unverified path must carry the harness's own
+  + /// sentence **verbatim** into the eval record, so a test has to be able to
+  + /// choose that string. `run_task_result` delegates here with the reason it
+  + /// always used, so every pre-existing call site is byte-identical.
+  + fn run_task_result_with_reason(verdict: &str, run_id: &str, reason: &str) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path();
+        scratch_repo(dir);
+ ✓ (51.7s)
+    fn run_task_result(verdict: &str, run_id: &str) -> tempfile::TempDir {
+  +     run_task_result_with_reason(verdict, run_id, "verdict artifact test")
+  + }
+  + 
+  + /// As [`run_task_result`], but with the `--reason` the harness would pass.
+  + ///
+  + /// Split out for #915: the unverified path must carry the harness's own
+  + /// sentence **verbatim** into the eval record, so a test has to be able to
+  ... (6 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '205,230p' tests/gasp_cli… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/gasp_cli_run_ordering.rs (5 → 5 lines)
+                "yologdev/yoyo-evolve",
+                "--reason",
+  -             "verdict artifact test",
+  +             reason,
+            ],
+        );
+ ✓ (50.6s)
+                "yologdev/yoyo-evolve",
+                "--reason",
+  -             "verdict artifact test",
+  +             reason,
+            ],
+        );
+  2 tools completed in 53.6s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

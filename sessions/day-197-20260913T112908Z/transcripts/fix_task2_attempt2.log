@@ -1,0 +1,117 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by measuring the current state before editing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "verdict_name\|verdict_o… ✓ (2ms)
+ ✓ (104ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+Confirmed: verdict_name is called at 3 sites with no definition. Let me read the affected regions.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "WRITTEN_CONVENTIONS\|^C…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,345p' scripts/check_… ✓ (2ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+Deliverables 1 and 4 landed. Now let me read the broken self-test block.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1975,2145p' scripts/chec… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: the NameError fix is the blocker. Let me see the exact call sites and the verdict constants.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2112,2135p' scripts/chec… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both constants are plain strings and declared_verdict can be None. Let me find the insertion point for the missing function.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'MOVED = "MOVED"' script… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The blocker is the missing verdict_name. Inserting it beside the verdict vocabulary it renders.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '74,78p' scripts/check_as… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (3 → 15 lines)
+    MOVED = "MOVED"
+  + 
+  + 
+  + # The one statement of how a verdict -- or the ABSENCE of one -- is spelled in a message.
+  + # `None` is NOT `UNKNOWN` and must never render as it: `None` means the hunk was scanned
+  + # and judged OUT OF SCOPE (it touched no test-ish line), while `UNKNOWN` means it WAS in
+  + # scope and the direction could not be determined. Those are different facts with different
+  + # remedies, and `CONVENTION_REGISTER_LINES` exists precisely to pin the first -- so a
+  + # renderer that folded them together would erase the distinction inside the very message a
+  + # reader uses to check it. Pure, so the rule is testable without a diff.
+  + def verdict_name(verdict) -> str:
+  +     return "(out of scope -- not UNKNOWN)" if verdict is None else str(verdict)
+  + 
+    
+    # --------------------------------------------------------------------------------------
+ ✓ (1m 0s)
+    MOVED = "MOVED"
+  + 
+  + 
+  + # The one statement of how a verdict -- or the ABSENCE of one -- is spelled in a message.
+  + # `None` is NOT `UNKNOWN` and must never render as it: `None` means the hunk was scanned
+  + # and judged OUT OF SCOPE (it touched no test-ish line), while `UNKNOWN` means it WAS in
+  + # scope and the direction could not be determined. Those are different facts with different
+  + # remedies, and `CONVENTION_REGISTER_LINES` exists precisely to pin the first -- so a
+  ... (7 more lines)
+  2 tools completed in 1m 6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (191ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+--test passes, exit 0. Let me confirm the convention fixtures actually ran rather than silently passing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (138ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Passing checks print nothing, so I must prove the fixtures have teeth. Running the mandated positive control now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^def classify_assertion… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=501 && NR<=506 {print N… ✓ (3ms)
+  2 tools completed in 8.8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the atomic mutate→run→restore positive control, sabotage marked NEUTERED.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && F=scripts/ch… (5 lines) ✓ (95ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+grep ^FAIL found nothing — wrong format. Let me check the failure output shape and re-run the control.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def check/,/^def /p' s… ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

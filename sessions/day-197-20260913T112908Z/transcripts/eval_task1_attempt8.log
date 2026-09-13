@@ -1,0 +1,61 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task. Let me look at the key pieces.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TaskVerdict\|classify_v…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "enum EvalStatus" -A 14… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+Verifying the EvalStatus::Skipped variant claim and the score field type in the resolved version:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -d ~/.cargo/registry/src/*/yo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "struct EvalResult" -A … ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified the two load-bearing step-0 claims against the resolved yoagent-state 0.5.2: EvalStatus really is Started/Passed/Failed/Error/Skipped (so Branch A is legitimate and no variant was invented), DecisionStatus::Approved exists, and EvalResult.score is Option<f64> (so score: None is a real absence, not a coerced zero). One last combined check:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== register listing for t… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything checks out. Writing the verdict.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 1s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md. Evaluation complete.
+
+Verdict: PASS
+
+What I verified (beyond the diff text):
+
+| Claim | How checked | Result |
+|---|---|---|
+| EvalStatus::Skipped exists (Branch A legitimate) | Read yoagent-state-0.5.2/src/primitives.rs:61 — the version Cargo.lock actually resolves | ✅ Started/Passed/Failed/Error/Skipped |
+| DecisionStatus::Approved exists | Same file | ✅ Pending/Approved/Rejected/Superseded |
+| score: None is a real absence | EvalResult.score is Option<f64> | ✅ not a coerced zero |
+| One statement of the vocabulary | grep for TaskVerdict\|classify_verdict across both files | ✅ defined once in gasp_cli.rs, read at every former verdict == "promoted" site |
+| New enum has all its match arms | 9 TaskVerdict:: refs in gasp.rs = 3 matches × 3 arms | ✅ status, score, decision reason all exhaustive |
+| Positive control restored | grep for sabotage markers | ✅ none left |
+| Size gate | wc -l + register grep | ✅ 1575/1278, un-listed, under 2000 — no register line owed |
+
+The three claims that decided it: the split keeps did the code land separate from did an oracle look, so unverified gets Skipped + score: None while correctly keeping Promoted/Approved (the code really is on main — demoting it would be a second lie); step 0's falsification of the issue's --verdict-is-validated claim is recorded rather than quietly worked around; and the near-miss guard pins the promoted path with whole-value comparisons, which is every existing row in the live graph.
+
+One imprecision I noted but did not fail for: the write-up says "the promoted path now consumes `--reason` too" — the eval metadata already carried reason on all paths before, so what is genuinely new is the decision reason carrying it on the unverified path. The assertion itself is true and is a valid pin; the phrasing just overstates by one node. Worth tightening next time the bullet is touched, not worth a revert.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
