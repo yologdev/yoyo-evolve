@@ -6019,7 +6019,7 @@ src/commands_config.rs
         # this task's own subject wearing the opposite sign. So prove the
         # planted line is an emission the classifier genuinely recognises
         # BEFORE asserting anything about what the walk found.
-        check(
+        assert_true(
             "ANTI-VACUOUS: the planted needle really is a recognised emission",
             classify_provider_error_line(REAL_EMISSION) is not None,
         )
@@ -6027,7 +6027,7 @@ src/commands_config.rs
         scan = collect_provider_errors(sess)
         # (2) THE ASSERTION THAT WOULD HAVE FAILED ON DAY 196: the walk must
         # reach the numerically newest dir, not the lexicographically largest.
-        check(
+        assert_true(
             "the walk REACHES the numerically newest session (day-195), not day-9",
             scan.hits >= 1,
         )
@@ -6038,7 +6038,7 @@ src/commands_config.rs
             scan.sessions,
             3,
         )
-        check(
+        assert_true(
             "the streams it read are named, so the claim cannot outrun its evidence",
             "transcripts/*.log" in scan.streams,
         )
@@ -6081,7 +6081,7 @@ src/commands_config.rs
             unreadable=True,
         )
         mixed = collect_provider_errors(sess)
-        check("an unreadable stream lands in unread_streams", mixed.unread_streams >= 1)
+        assert_true("an unreadable stream lands in unread_streams", mixed.unread_streams >= 1)
         assert_eq(
             "unread_streams is NEVER summed into hits (the readable needle still counts once)",
             mixed.hits,
@@ -6106,7 +6106,7 @@ src/commands_config.rs
         sess.mkdir()
         empty = collect_provider_errors(sess)
         assert_eq("a zero-session walk examines zero sessions", empty.sessions, 0)
-        check(
+        assert_true(
             "the zero-session branch REFUSES, it does not render a clean bill",
             "REFUSAL" in render_provider_health(
                 empty.sessions,
