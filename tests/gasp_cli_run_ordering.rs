@@ -381,11 +381,8 @@ const UNVERIFIED_REASON: &str =
 /// returning success says nothing about which status reached the log.
 #[test]
 fn unverified_verdict_records_skipped_and_never_passed() {
-    let tmp = run_task_result_with_reason(
-        "unverified",
-        "run_gasp_eval_unverified",
-        UNVERIFIED_REASON,
-    );
+    let tmp =
+        run_task_result_with_reason("unverified", "run_gasp_eval_unverified", UNVERIFIED_REASON);
     // Anti-vacuous first: one eval exists to be judged.
     let eval = sole_eval_payload(tmp.path());
 
