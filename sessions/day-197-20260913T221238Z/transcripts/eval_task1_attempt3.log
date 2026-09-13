@@ -1,0 +1,54 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat -- CLAUDE… ✓ (5ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~3 --stat && echo "… ✓ (9ms)
+  3 tools completed in 5.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 p… (6 lines) ✓ (161ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 python3 scripts/extra… ✓ (81ms)
+  2 tools completed in 5.8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 90 python3 scripts/extra… ✓ (82ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '252,266p' /tmp/t.txt ✓ (3ms)
+  2 tools completed in 2.1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two pre-existing self-tests in the changed file are now red, and CLAUDE.md was never touched. Writing the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > sessio… (9 lines) ✓ (4ms)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+Two independent blockers:
+
+1. The instrument is red. python3 scripts/extract_trajectory.py --test exits 1 with 2 FAILURE(S):
+
+```
+FAIL: OK with hits names no stream when the caller recorded none
+  got:  '...3 provider error hit(s). 0 session(s) ended on a terminal give-up — ...'
+  want: '...3 provider error hit(s).'
+FAIL: default state argument keeps every existing call site reachable
+  got:  '...1 provider error hit(s). 0 session(s) ended on a terminal give-up — ...'
+  want: '...1 provider error hit(s).'
+```
+
+The new split clause is appended unconditionally to the hit branch, but two pre-existing render assertions still pin the pre-change string. The task's own STEP 1 mandated running exactly this command as the positive control, so this would have surfaced. cargo test structurally cannot reach this file — which is precisely why the harness reported Tests: PASS over a red instrument, the silent-case shape CLAUDE.md already documents.
+
+2. CLAUDE.md was never touched. git log -3 --name-only shows scripts/extract_trajectory.py alone in all three commits, while the task names CLAUDE.md in its Files: line and dedicates STEP 2 to two required write-ups — this change's, and the prose-only discharge of receipt #917. The rendered section's behavior did change, and the Provider/API health bullet still describes hits only, so the superseded claim stands uncorrected. This is verbatim the "code landed, doc did not" shape the task file itself warns about.
+
+The code half is otherwise good work — delegating to classify_provider_error rather than restating the pattern, the per-session vs per-line separation, the step-0 finding that the anchor was already on disk, and the conservative no_fallback exclusion with terminal_sessions named as a floor are all sound. The clean branch is byte-identical (verified: '## Provider/API health\n10 sessions, no provider-error lines in audit.jsonl.'). Fixing the two stale assertions and landing the CLAUDE.md prose should clear both blockers.
+
+  watch: no files changed this turn — skipping
+

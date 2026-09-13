@@ -1,0 +1,140 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual state of the code to understand exactly what landed and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_provider_health(… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+The evaluator is right. Let me read the production call site and the surrounding code.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3185,3225p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1560,1700p' scripts/extr… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed both failures. Let me read the render body and the relevant self-tests before fixing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1700,1810p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "class ProviderScan" -A … ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.9s (2 ✓)
+
+Both defects confirmed. The code is well-built but inert — the renderer never receives the count. Fixing the wiring first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 12 lines)
+            unanchored_rejected=provider_scan.unanchored_rejected,
+            unread_streams=provider_scan.unread_streams,
+  +         # Day 197: the ONLY production reader of `terminal_sessions`. Omitting
+  +         # it does not fail — the parameter defaults to 0 — so the renderer
+  +         # would print "0 session(s) ended on a terminal give-up" over a window
+  +         # that was never asked, which is a FABRICATED clean bill on the exact
+  +         # number this split exists to make honest. Pinned by
+  +         # `the_provider_render_is_handed_the_terminal_count` below, because
+  +         # every self-test supplies this argument explicitly and so the suite
+  +         # is structurally blind to the call site.
+  +         terminal_sessions=provider_scan.terminal_sessions,
+        )
+ ✓ (1m 31s)
+            unanchored_rejected=provider_scan.unanchored_rejected,
+            unread_streams=provider_scan.unread_streams,
+  +         # Day 197: the ONLY production reader of `terminal_sessions`. Omitting
+  +         # it does not fail — the parameter defaults to 0 — so the renderer
+  +         # would print "0 session(s) ended on a terminal give-up" over a window
+  +         # that was never asked, which is a FABRICATED clean bill on the exact
+  +         # number this split exists to make honest. Pinned by
+  +         # `the_provider_render_is_handed_the_terminal_count` below, because
+  ... (4 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the guard — the evaluator noted the suite is structurally blind to the call site because every self-test passes the argument explicitly.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5240,5290p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def run_self_tests" -A … ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "terminal" scripts/extra… ✓ (4ms)
+  3 tools completed in 4.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5187,5212p' scripts/extr… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the wiring guard — the defect class the evaluator named (#618/#653/#658) with no detector.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 30 lines)
+            "audit.jsonl. 7 session(s) ended on a terminal give-up (the retry "
+            "machinery STOPPED); the rest were retried.",
+  +     )
+  + 
+  +     # (T6) THE WIRING, and it is the one thing T1-T5 structurally cannot see.
+  +     # Every test above hands `render_provider_health` its terminal count
+  +     # explicitly, so the whole split stayed green while the ONE production call
+  +     # site omitted the argument and fell through to the `= 0` default —
+  +     # rendering "0 session(s) ended on a terminal give-up" over a window it
+  +     # never asked about. That is the #618/#653/#658 definition-without-its-
+  +     # consumer shape, and a suite that supplies the argument itself can never
+  +     # fail for it. Deliberately WEAK and source-level: it proves the argument
+  +     # is POSITIONED at the live call site, never that a count was right.
+  +     # Needles are assembled at runtime so this test cannot match its own source.
+  +     src = Path(__file__).read_text(encoding="utf-8")
+  +     call_at = src.find("s = " + "render_provider_health(\n")
+  +     # ANTI-VACUOUS, asserted FIRST: a slice that found nothing satisfies every
+  +     # "the argument is present" check by having nothing to search.
+  +     assert_eq(
+  +         "ANTI-VACUOUS: the production render call site was actually located",
+  ... (10 more lines)
+ ✓ (1m 31s)
+            "audit.jsonl. 7 session(s) ended on a terminal give-up (the retry "
+            "machinery STOPPED); the rest were retried.",
+  +     )
+  + 
+  +     # (T6) THE WIRING, and it is the one thing T1-T5 structurally cannot see.
+  +     # Every test above hands `render_provider_health` its terminal count
+  +     # explicitly, so the whole split stayed green while the ONE production call
+  +     # site omitted the argument and fell through to the `= 0` default —
+  ... (13 more lines)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (85ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tests pass. Now the positive controls — serially, each as one atomic mutate→run→restore with the NEUTERED marker.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (10 lines) ✓ (119ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 2 (wiring): exactly 1 red, the new guard, no pre-existing test — genuinely unguarded. Now control 1, the classifier.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (10 lines) ✓ (198ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1: exactly 2 red, both new, no pre-existing test. Now STEP 3 — measure live if reachable.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "YOYO_AUDIT_DIR=[${YOYO_AUD… ✓ (13ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

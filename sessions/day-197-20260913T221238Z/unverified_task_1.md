@@ -1,0 +1,15 @@
+**Day 197, Task 1** shipped UNVERIFIED — the fix loop stopped making progress (2 consecutive attempts changed no files), and the harness accepted the task on its green build+test (fail-open by design).
+
+**Task:** `## Provider/API health` counts LINES and reports them as outages — split survived from died, or say plainly it could not be measured
+
+**Evaluator's last verdict (FAIL, attempt 6):**
+Verdict: FAIL
+Reason: STEP 1 landed well and `python3 scripts/extract_trajectory.py --test` prints ALL PASSED, but STEP 2 is entirely absent — `git diff fa28e5c5..HEAD --stat` shows only `scripts/extract_trajectory.py` and `git diff fa28e5c5..HEAD -- CLAUDE.md` is empty, so neither write-up (a: this change; b: the #917 discharge that is the whole referenced issue) was written, while the rendered `## Provider/API health` line changed and the code's own docstring now marks limit 1 superseded.
+Checked: intent_alignment: PASS: STEP 1 is faithful — `TERMINAL_PROVIDER_MARKERS` + `classify_provider_terminal_line` delegate to `classify_provider_error` so the loose/anchored/prose discipline has one statement; `terminal_sessions` is folded per-SESSION (OR across streams) beside per-LINE `hits` and never summed; unread streams stay in neither count; the clean branch is untouched and the hit branch gains the `== 0` survived-not-died clause; guards include the anti-vacuous T1, the recovered-only near-miss T2, the terminal<=hits invariant T3, four prose shapes rejected-and-counted T4, both render directions T5, and a runtime-assembled source-level wiring guard T6.
+Checked: forgotten_touchpoints: PASS: every new definition has a consumer in this diff — `TERMINAL_PROVIDER_MARKERS` read by `classify_provider_terminal_line`, that function read by `scan_provider_lines`, `ProviderScan.terminal_sessions` written in `collect_provider_errors` and read at the single `main()` render call; both arity changes are fully swept (`scan_provider_lines` 3→4 at `_scan_provider_stream` and all six self-test call sites, `_scan_provider_stream` 4→5 at its one call site), and the default-arg call site that tests structurally cannot see is pinned by T6 with its own anti-vacuous slice check.
+Checked: doc_sync: FAIL: the section's rendered output changed (new terminal clause on the hit branch) and CLAUDE.md's `Provider/API health` bullet still describes hits only with no superseded-claim record; CLAUDE.md is named in the task's Files line, STEP 2a and 2b are mandatory, and 2b exists precisely to discharge #917, which failed for this same "code landed, doc did not" shape — repeating it here is the third instance.
+Checked: product_surface: N/A: the diff touches only `scripts/extract_trajectory.py`, a harness-side reader whose output is injected into the Phase A1/A2 prompts; no config default, CLI flag, setup wizard or binary startup behavior is involved.
+
+**Committed anyway:** `git diff fa28e5c5303f21e255f007804268159ebdbbcccf..HEAD`
+
+**For the next session:** decide whether the objection still stands against the committed code. If it does, fix it as a small follow-up task; if the evaluator was wrong, say so here and close. Do not re-run the whole task blindly.

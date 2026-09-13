@@ -1,0 +1,48 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat $(git log --form…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "terminal give-up\|termi… ✓ (14ms)
+ ✓ (60ms)
+  4 tools completed in 8.1s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Conclusive finding: the whole task span (HEAD~4..HEAD) touches only scripts/extract_trajectory.py, and CLAUDE.md contains zero occurrences of terminal give-up / terminal_sessions. STEP 2 — both write-ups, explicitly named in the task's Files: line — did not land.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== files changed across w… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One decisive touchpoint check — does main actually pass the new field to the renderer, or does it silently keep the default 0 (which would render a false "survived" clean bill on live data)?
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_provider_health(… ✓ (8ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Decisive. The production call site (lines 3202–3210) passes sessions, hits, prose_rejected, streams, unanchored_rejected, unread_streams — and not terminal_sessions. So the field is computed in collect_provider_errors and never read by the renderer on the live path; render_provider_health falls back to its default 0 and the real trajectory will always print "0 session(s) ended on a terminal give-up — every hit above was retried (survived, not died)" regardless of the truth. The self-tests stay green because every one of them passes the argument explicitly (T5 uses positional 0 and 7), so the wiring gap is exactly where the tests cannot see it.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 32s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+Two independent failures:
+
+1. The feature is dead on the live path (`forgotten_touchpoints`). collect_provider_errors computes terminal_sessions and folds it into ProviderScan, but the one production call site — extract_trajectory.py:3202-3210 — passes six fields and omits it. render_provider_health therefore takes its default 0, so the real trajectory section will always emit "0 session(s) ended on a terminal give-up — every hit above was retried (survived, not died)" regardless of what was scanned. That is worse than shipping nothing: it is a fabricated clean bill on precisely the number the task exists to make honest, and it is the #618/#653/#658 definition-without-its-consumer shape. Tests stayed green because every self-test passes the argument explicitly (T5 uses positional 0 and 7), which is the #893 "wired where the test could not see it" receipt.
+
+2. Both STEP 2 write-ups are absent (`doc_sync`). git diff --name-only HEAD~4 HEAD returns only scripts/extract_trajectory.py; CLAUDE.md's most recent commit is the 11:31 session. terminal_sessions / terminal give-up → 0 occurrences, observed_label_clause → 0 occurrences. The Provider/API health bullet still describes hits only, and the #917 receipt discharge — an independent deliverable with no code dependency — never landed.
+
+Worth noting for the next attempt, because the code half is otherwise strong: the delegation to classify_provider_error keeps one statement of the candidate/prose/anchor rule, no_fallback is excluded with its reasoning stated (making the count a floor), the step-0 finding correctly records that the anchor was already on disk, the prose near-miss guards cover all four contamination shapes, and the two superseded test expectations were updated rather than deleted. The gap is one keyword argument at line 3209 plus the two prose write-ups.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,84 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the committed diff against the task requirements.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.3s (2 ✓)
+
+The diff touches only scripts/extract_trajectory.py — CLAUDE.md is absent, which the task explicitly required (STEP 2, two write-ups). Let me check whether the consumer side landed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD --stat && echo "==…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== classify_provider_term… ✓ (4ms)
+ ✓ (9ms)
+  2 tools completed in 9ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Grep already shows the decisive facts. One focused check to confirm the arity bug is real rather than inferred:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1630,1650p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (3ms)
+ ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.6s (2 ✓)
+
+Confirmed. Let me empirically reproduce the runtime crash rather than infer it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tm… (12 lines) ✓ (79ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Conclusive. The half-landed refactor crashes on the live path. Writing the verdict:
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 21s)
+
+Verdict: FAIL
+
+The diff is a half-applied refactor that breaks the live path it was meant to improve.
+
+The decisive finding — reproduced, not inferred:
+
+_scan_provider_stream was widened to return a 5-tuple (h, pr, ur, unread, terminal), but its sole call site at line 1639 still unpacks four:
+
+```python
+h, pr, ur, un = _scan_provider_stream(stream)
+```
+
+Driving collect_provider_errors against a scratch session dir gives:
+
+```
+CRASH: ValueError too many values to unpack (expected 4)
+```
+
+Tests pass only because no self-test drives the real directory walk — the guards the task explicitly required are exactly the ones that would have caught this.
+
+Three definitions with no consumers (the #618/#653/#658 shape the brief calls first among equals):
+
+| symbol | occurrences in file | status |
+|---|---|---|
+| classify_provider_terminal_line | 1 | its own definition; never called, no self-test |
+| terminal_sessions | 2 | a comment at :1381 + the declaration at :1445; never written, never read |
+| _scan_provider_stream 5-tuple | — | caller never updated → runtime crash |
+
+So the per-session/per-line split the task exists to produce is never computed and never rendered. The 0 terminal over 69 lines reading — which the task names as "the actionable reading and the entire point" — cannot be emitted, because nothing reads the field.
+
+Missing entirely: the render clause, all four required guards (anti-vacuous, near-miss with a byte-identical clean render captured and diffed, prose near-miss, positive control with reported width and sorted green), and CLAUDE.md — named in the task's Files: line, with STEP 2 mandating two write-ups including the prose-only discharge of receipt #917. git show --stat reports one file changed.
+
+That last point is the sharp one: the task text itself cites "code landed, doc did not" as a shape already evaluator-rejected twice, and this diff reproduces it while also failing the code half.
+
+What did land well, and is worth keeping when this is re-attempted: the STEP-0 finding is genuine and valuable — it records that the discriminator was already on disk (retry_giveup has carried loose + anchored patterns since Day 196), corrects the task's own premise, cites src/prompt_retry_limits.rs:317 and the two eprintln! sites by line, notes CLAUDE.md quotes the sentence truncated, and settles reachability (stderr → evolve.sh tees → transcripts/*.log). The decision to exclude no_fallback as unverified, making terminal_sessions a floor rather than a ceiling, is the conservative direction stated rather than hidden. Delegating to classify_provider_error so the prose filter and anchor stay one statement each is the right design.
+
+Verdict written to session_plan/eval_task_1.md. No code modified.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

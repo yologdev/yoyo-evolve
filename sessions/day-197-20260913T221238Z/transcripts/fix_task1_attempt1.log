@@ -1,0 +1,180 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the code to understand what landed and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && echo "---STAT---" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_provider_termi… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1280,1470p' scripts/extr… ✓ (4ms)
+  3 tools completed in 7.2s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1500,1600p' scripts/extr… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1600,1680p' scripts/extr… ✓ (4ms)
+  2 tools completed in 8.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1680,1760p' scripts/extr… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1760,1790p' scripts/extr… ✓ (5ms)
+  2 tools completed in 6.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the full picture. Let me fix the crash and wire the per-session fold:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 6 lines)
+        unread = 0
+  +     # Day 197: a count of SESSIONS, folded from a per-session boolean below.
+  +     # NEVER summed with `hits`, which is per-LINE — they count different things.
+  +     terminal_sessions = 0
+        saw_audit = False
+        saw_transcripts = False
+ ✓ (1m 21s)
+        unread = 0
+  +     # Day 197: a count of SESSIONS, folded from a per-session boolean below.
+  +     # NEVER summed with `hits`, which is per-LINE — they count different things.
+  +     terminal_sessions = 0
+        saw_audit = False
+        saw_transcripts = False
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (8 → 17 lines)
+  +         # A session is TERMINAL when ANY of its streams carries an anchored
+  +         # terminal line — the OR is folded across streams, then counted once
+  +         # per session, because the question is "did this session end on a
+  +         # give-up", not "how many give-up lines were printed".
+  +         session_terminal = False
+            for stream in streams:
+  -             h, pr, ur, un = _scan_provider_stream(stream)
+  +             h, pr, ur, un, tm = _scan_provider_stream(stream)
+                hits += h
+                prose_rejected += pr
+                unanchored_rejected += ur
+                unread += un
+  +             if tm > 0:
+  +                 session_terminal = True
+  +         if session_terminal:
+  +             terminal_sessions += 1
+            if sessions >= WINDOW_SESSIONS:
+                break
+ ✓ (1m 20s)
+  +         # A session is TERMINAL when ANY of its streams carries an anchored
+  +         # terminal line — the OR is folded across streams, then counted once
+  +         # per session, because the question is "did this session end on a
+  +         # give-up", not "how many give-up lines were printed".
+  +         session_terminal = False
+            for stream in streams:
+  -             h, pr, ur, un = _scan_provider_stream(stream)
+  +             h, pr, ur, un, tm = _scan_provider_stream(stream)
+  ... (10 more lines)
+  2 tools completed in 2m 50s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 9 lines)
+        return ProviderScan(
+  -         sessions, hits, prose_rejected, tuple(names), unanchored_rejected, unread
+  +         sessions,
+  +         hits,
+  +         prose_rejected,
+  +         tuple(names),
+  +         unanchored_rejected,
+  +         unread,
+  +         terminal_sessions,
+        )
+ ✓ (1m 21s)
+        return ProviderScan(
+  -         sessions, hits, prose_rejected, tuple(names), unanchored_rejected, unread
+  +         sessions,
+  +         hits,
+  +         prose_rejected,
+  +         tuple(names),
+  +         unanchored_rejected,
+  +         unread,
+  +         terminal_sessions,
+        )
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the render signature and clause:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 4 lines)
+        unanchored_rejected: int = 0,
+        unread_streams: int = 0,
+  +     terminal_sessions: int = 0,
+    ) -> str:
+ ✓ (1m 20s)
+        unanchored_rejected: int = 0,
+        unread_streams: int = 0,
+  +     terminal_sessions: int = 0,
+    ) -> str:
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 21 lines)
+  +     # Day 197: the SPLIT, and the `== 0` case is the whole point of the clause.
+  +     # `hits` is per-LINE and `terminal_sessions` is per-SESSION, so they are
+  +     # never summed and never rendered as one number. A window of 69 hits with
+  +     # `0 terminal` is the ACTIONABLE reading — every one of those lines was
+  +     # retried and recovered — and saying it out loud is what stops the count
+  +     # reading as an alarm. Sessions whose streams could not be read are in
+  +     # NEITHER count; the `unread_streams` clause above owns that fact.
+  +     if terminal_sessions == 0:
+  +         split = (
+  +             " 0 session(s) ended on a terminal give-up — every hit above was "
+  +             "retried (survived, not died)."
+  +         )
+  +     else:
+  +         split = (
+  +             f" {terminal_sessions} session(s) ended on a terminal give-up "
+  +             f"(the retry machinery STOPPED); the rest were retried."
+  +         )
+        return (
+            f"## Provider/API health\n{sessions} sessions, {hits} provider error "
+  -         f"hit(s){scanned}.{tail}"
+  ... (2 more lines)
+ ✓ (1m 19s)
+  +     # Day 197: the SPLIT, and the `== 0` case is the whole point of the clause.
+  +     # `hits` is per-LINE and `terminal_sessions` is per-SESSION, so they are
+  +     # never summed and never rendered as one number. A window of 69 hits with
+  +     # `0 terminal` is the ACTIONABLE reading — every one of those lines was
+  +     # retried and recovered — and saying it out loud is what stops the count
+  +     # reading as an alarm. Sessions whose streams could not be read are in
+  +     # NEITHER count; the `unread_streams` clause above owns that fact.
+  +     if terminal_sessions == 0:
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now update limit 1 in the docstring (recording the superseded claim) and wire the main call site:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (5 → 10 lines)
+  -     1. IT DETECTS A LINE, NOT AN OUTAGE. A hit means the harness printed a
+  -        provider-error line, never that the provider was actually down, and
+  -        never that the session failed to recover — a run that hit one 429,
+  -        retried and finished green scores identically to the 7 dead day-195
+  -        sessions. The count is evidence to read, not a verdict.
+  +     1. IT DETECTS A LINE, NOT AN OUTAGE — and Day 197 narrowed this by exactly
+  +        one step, no further. SUPERSEDED CLAUSE, recorded rather than erased:
+  +        this limit used to end "a run that hit one 429, retried and finished
+  +        green scores identically to the 7 dead day-195 sessions", and that is
+  +        no longer true of the RENDER, which now splits survived from died. What
+  +        is still true, and is the reason the limit stays: a terminal line means
+  +        the retry machinery said it was STOPPING, never that the session was
+  +        lost — the harness runs every phase after one and still files
+  +        `tasks N/N ✅`. And `terminal_sessions` says NOTHING about a session
+  +        whose streams could not be read; those are in neither count.
+ ✓ (1m 20s)
+  -     1. IT DETECTS A LINE, NOT AN OUTAGE. A hit means the harness printed a
+  -        provider-error line, never that the provider was actually down, and
+  -        never that the session failed to recover — a run that hit one 429,
+  -        retried and finished green scores identically to the 7 dead day-195
+  -        sessions. The count is evidence to read, not a verdict.
+  +     1. IT DETECTS A LINE, NOT AN OUTAGE — and Day 197 narrowed this by exactly
+  +        one step, no further. SUPERSEDED CLAUSE, recorded rather than erased:
+  +        this limit used to end "a run that hit one 429, retried and finished
+  ... (7 more lines)
+

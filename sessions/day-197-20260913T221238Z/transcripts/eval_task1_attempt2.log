@@ -1,0 +1,70 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff. Let me start by checking the key claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat && echo "…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '310,325p' src/prompt_ret… ✓ (2ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.4s (2 ✓)
+
+Two red flags already. Let me verify the commit range and the required self-tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== recent commits ===" &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== terminal self-tests pr… ✓ (3ms)
+ ✓ (9ms)
+  2 tools completed in 9ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two critical findings so far. Let me confirm the strongest one before writing the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== callers of the new fn … ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed. I have decisive evidence on three axes. Writing the verdict.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 19s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My evaluation is complete and the verdict is written. Let me do one final format check, since the harness parses these lines strictly and a malformed verdict counts as UNANSWERED.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== leftover placeholders … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written and format-verified: 0 leftover placeholders, all 6 required lines present and parsing.
+
+## Verdict: FAIL
+
+What's good in the diff — I want to be fair, because the core mechanism is largely right:
+• Step 0 was done honestly. I read src/prompt_retry_limits.rs:317 and confirmed the comment's quote of rate_limit_giveup_message matches the real source, including its correct note that CLAUDE.md truncates the sentence at ~10h 49m.
+• The three states are genuinely kept distinct: terminal_sessions is per-session, hits is per-line, they're never summed, and unread_streams stays a separate third bucket rather than being folded into "recovered."
+• The clean branch appends nothing, so it should be byte-identical.
+• The `no_fallback`-is-not-terminal decision is a conservative call, stated out loud rather than hidden.
+
+Why it fails anyway — three independent axes:
+
+1. **forgotten_touchpoints (the decisive one).** `classify_provider_terminal_line` is defined at line 1385 and grep returns *only that line* across the whole file. Zero callers. The production fold at :1530 bypasses it, inlining classify_provider_error + TERMINAL_PROVIDER_MARKERS instead. This is exactly the #618/#653/#658 revert class flagged as "first among equals" — it survived the build only because Python doesn't fail on an unused function the way clippy -D warnings fails on dead Rust.
+
+2. **The dead function carries a false claim. Its docstring says *"INVARIANT, asserted by self-test"* while the diff adds zero** self-tests. That's a false authoritative statement in source — the same class CLAUDE.md records as having cost eight sessions on `src/gasp.rs`. Every guard STEP 1 marked "required, not optional" is absent: anti-vacuous, clean-render near-miss, prose near-miss, and the positive control with its WIDTH and sorted-green reporting.
+
+3. **doc_sync.** `git diff HEAD~2 --stat` shows one file changed across both commits. CLAUDE.md is untouched, despite being named in the task's `Files:` line and being the entirety of STEP 2 (both this change's write-up and #917's prose-only discharge). The task file explicitly predicted this failure mode — "`cargo test` cannot fail for a missing sentence" — and it happened anyway.
+
+product_surface is N/A: the diff touches only a harness-side reader feeding the planner prompt, no config default, flag, wizard, or startup path, so #448 doesn't apply.
+
+The remedy is small and well-scoped for a follow-up: route scan_provider_lines through the new function (or delete it and drop the false docstring claim), add the four required guards, and write the two CLAUDE.md sections. Stopping here without modifying code, as instructed.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

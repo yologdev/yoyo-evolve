@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what the self-tests actually fail on, and what's in the diff so far.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -3 --name-only --oneline…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (10ms)
+ ✓ (84ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.3s (2 ✓)
+
+Self-tests exit 1 with 2 failures. Let me find them.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (80ms)
+ ✓ (81ms)
+  2 tools completed in 81ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me re-orient on the current state and look at the two failing assertions and the render function.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -3 --oneline --name-only…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def render_provider_hea… ✓ (3ms)
+ ✓ (85ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1741,1830p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "names no stream when th… ✓ (4ms)
+ ✓ (4ms)
+  4 tools completed in 8.4s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5020,5075p' scripts/extr… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both failures are hit-branch renders pinning the pre-change string. Their real properties (no-stream-clause; default arg reachable) are orthogonal to the new clause, so they get updated in place with the superseded expectation recorded — never deleted (Day 148).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (5 → 15 lines)
+  +     # SUPERSEDED EXPECTATION, updated rather than deleted (Day 197). This row
+  +     # used to want `...3 provider error hit(s).` with nothing after it; the hit
+  +     # branch now always carries the survived-vs-died clause, and the `== 0`
+  +     # shape below IS the actionable reading this task exists to surface. The
+  +     # PROPERTY under test is unchanged and is the reason the row survives: with
+  +     # an empty `streams` the sentence must name NO stream. Asserted as a WHOLE
+  +     # string rather than a `contains`, so a stream clause leaking back in still
+  +     # reddens it.
+        assert_eq(
+            "OK with hits names no stream when the caller recorded none",
+            render_provider_health(7, 3, AUDIT_DIR_OK),
+  -         "## Provider/API health\n7 sessions, 3 provider error hit(s).",
+  +         "## Provider/API health\n7 sessions, 3 provider error hit(s). "
+  +         "0 session(s) ended on a terminal give-up — every hit above was "
+  +         "retried (survived, not died).",
+        )
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 11 lines)
+  +     # SUPERSEDED EXPECTATION, updated rather than deleted (Day 197), same
+  +     # reason as the row above. The PROPERTY under test is the DEFAULT argument
+  +     # list staying reachable — `terminal_sessions` defaults to 0, so this row
+  +     # is also the one that pins the default's own rendered shape.
+        assert_eq(
+            "default state argument keeps every existing call site reachable",
+  -         render_provider_health(4, 1), "## Provider/API health\n4 sessions, 1 provider error hit(s).",
+  +         render_provider_health(4, 1),
+  +         "## Provider/API health\n4 sessions, 1 provider error hit(s). "
+  +         "0 session(s) ended on a terminal give-up — every hit above was "
+  +         "retried (survived, not died).",
+        )
+ ✓ (1m 31s)
+  +     # SUPERSEDED EXPECTATION, updated rather than deleted (Day 197). This row
+  +     # used to want `...3 provider error hit(s).` with nothing after it; the hit
+  +     # branch now always carries the survived-vs-died clause, and the `== 0`
+  +     # shape below IS the actionable reading this task exists to surface. The
+  +     # PROPERTY under test is unchanged and is the reason the row survives: with
+  +     # an empty `streams` the sentence must name NO stream. Asserted as a WHOLE
+  +     # string rather than a `contains`, so a stream clause leaking back in still
+  +     # reddens it.
+  ... (8 more lines)
+ ✓ (3m 3s)
+  +     # SUPERSEDED EXPECTATION, updated rather than deleted (Day 197), same
+  +     # reason as the row above. The PROPERTY under test is the DEFAULT argument
+  +     # list staying reachable — `terminal_sessions` defaults to 0, so this row
+  +     # is also the one that pins the default's own rendered shape.
+        assert_eq(
+            "default state argument keeps every existing call site reachable",
+  -         render_provider_health(4, 1), "## Provider/API health\n4 sessions, 1 provider error hit(s).",
+  +         render_provider_health(4, 1),
+  ... (4 more lines)
+  2 tools completed in 3m 3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (81ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (81ms)
+  2 tools completed in 5.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The want is still the old string — there must be a second copy of that assertion.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "OK with hits names no s… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5024,5048p' scripts/extr… ✓ (3ms)
+  2 tools completed in 5.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The two edit_file calls raced in one parallel block — the second overwrote the first. That's the same hazard CLAUDE.md documents for positive controls, landing on file edits. Redoing serially.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (5 → 15 lines)
+  +     # SUPERSEDED EXPECTATION, updated rather than deleted (Day 197). This row
+  +     # used to want `...3 provider error hit(s).` with nothing after it; the hit
+  +     # branch now always carries the survived-vs-died clause, and the `== 0`
+  +     # shape below IS the actionable reading this task exists to surface. The
+  +     # PROPERTY under test is unchanged and is the reason the row survives: with
+  +     # an empty `streams` the sentence must name NO stream. Asserted as a WHOLE
+  +     # string rather than a `contains`, so a stream clause leaking back in still
+  +     # reddens it.
+        assert_eq(
+            "OK with hits names no stream when the caller recorded none",
+            render_provider_health(7, 3, AUDIT_DIR_OK),
+  -         "## Provider/API health\n7 sessions, 3 provider error hit(s).",
+  +         "## Provider/API health\n7 sessions, 3 provider error hit(s). "
+  +         "0 session(s) ended on a terminal give-up — every hit above was "
+  +         "retried (survived, not died).",
+        )
+ ✓ (1m 32s)
+  +     # SUPERSEDED EXPECTATION, updated rather than deleted (Day 197). This row
+  +     # used to want `...3 provider error hit(s).` with nothing after it; the hit
+  +     # branch now always carries the survived-vs-died clause, and the `== 0`
+  +     # shape below IS the actionable reading this task exists to surface. The
+  +     # PROPERTY under test is unchanged and is the reason the row survives: with
+  +     # an empty `streams` the sentence must name NO stream. Asserted as a WHOLE
+  +     # string rather than a `contains`, so a stream clause leaking back in still
+  +     # reddens it.
+  ... (8 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (79ms)
+  2 tools completed in 1m 38s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

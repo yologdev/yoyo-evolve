@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -12 | cat ✓ (4ms)
+  3 tools completed in 4.0s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat fa28e5c5..HEAD |…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff fa28e5c5..HEAD -- CLAUD… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (82ms)
+  3 tools completed in 22.2s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 31s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+The code half is good. STEP 1 is implemented faithfully:
+• `classify_provider_terminal_line **delegates** to classify_provider_error rather than restating the pattern, so the loose regex, the anchor and is_provider_prose` each keep exactly one statement and cannot drift from the counter they split.
+• `terminal_sessions counts **sessions** (OR-folded across a session's streams) beside per-**line** hits`, never summed; unread streams land in neither.
+• The clean branch is byte-identical; the hit branch gains the == 0 "survived, not died" clause that is the actual point of the task.
+• Guards are real: anti-vacuous asserted first, recovered-only near-miss, the terminal <= hits invariant, four prose shapes rejected and counted, both render directions as whole strings, and a runtime-assembled wiring guard for the one production call site every other test is structurally blind to (that guard is the sharpest thing in the diff — it catches exactly the = 0 default silently fabricating a clean bill).
+• `python3 scripts/extract_trajectory.py --test → ALL PASSED`, exit 0.
+
+Why it fails anyway: git diff fa28e5c5..HEAD --stat shows one file — CLAUDE.md was never touched. STEP 2 required two write-ups, CLAUDE.md is in the task's Files: line, and STEP 2b is issue #917, which the task itself describes as "doc half only" and as the shape "CLAUDE.md already records twice as evaluator-rejected." The rendered section changed and the code's own docstring now says limit 1 is superseded — while the CLAUDE.md bullet describing that section still says hits only, in the one file re-injected as authoritative context every session. STEP 3's reachability measurement is likewise unrecorded.
+
+cargo test cannot fail for a missing sentence, which is precisely the argument the task made for scheduling it — and the diff reproduced the defect a third time.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

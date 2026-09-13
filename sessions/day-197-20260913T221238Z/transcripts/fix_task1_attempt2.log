@@ -1,0 +1,162 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the code to understand what was landed and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_provider_termi… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.1s (2 ✓)
+
+The evaluator is right on all four counts. Let me read the relevant code sections.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1290,1440p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1440,1560p' scripts/extr… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Re-establishing context. The evaluator found four failures: dead function, zero self-tests, a false "asserted by self-test" docstring claim, and CLAUDE.md untouched. Let me read the remaining sites.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1515,1545p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1610,1680p' scripts/extr… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1700,1815p' scripts/extr… ✓ (4ms)
+  3 tools completed in 4.3s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four defects confirmed. Let me fix the wiring first, then add the guards.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "provider" scripts/extra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def run_self_tests\|^  … ✓ (5ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.4s (2 ✓)
+
+The existing self-tests unpack a 3-tuple from scan_provider_lines, which now returns 4. Let me verify the current state.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (154ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Bigger finding than reported: `python3 scripts/extract_trajectory.py --test` is currently BROKEN — a ValueError crash plus two pre-existing FAILs. cargo test passes (Rust), so nothing caught it. Let me fix the wiring first.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (7 → 14 lines)
+            marker, reason = classify_provider_error(line)
+            if marker is not None:
+                hits += 1
+  -             if marker in TERMINAL_PROVIDER_MARKERS:
+  +             # The terminal question has exactly ONE statement, and it is the
+  +             # function — never `marker in TERMINAL_PROVIDER_MARKERS` inlined
+  +             # here. An inlined copy agrees the day it is written and diverges
+  +             # forever after, and it would leave the function with no consumer
+  +             # at all, which is the #618/#653/#658 shape (Python does not fail
+  +             # on dead code the way `clippy -D warnings` does, so it would sit
+  +             # here unread).
+  +             if classify_provider_terminal_line(line) is not None:
+                    terminal += 1
+            elif reason == PROVIDER_REJECT_PROSE:
+ ✓ (1m 20s)
+            marker, reason = classify_provider_error(line)
+            if marker is not None:
+                hits += 1
+  -             if marker in TERMINAL_PROVIDER_MARKERS:
+  +             # The terminal question has exactly ONE statement, and it is the
+  +             # function — never `marker in TERMINAL_PROVIDER_MARKERS` inlined
+  +             # here. An inlined copy agrees the day it is written and diverges
+  +             # forever after, and it would leave the function with no consumer
+  ... (6 more lines)
+
+Now the three broken unpack sites and the two superseded fixtures:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5060,5180p' scripts/extr… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the full picture. Let me fix the four broken unpack sites and update the superseded fixtures, adding the new guards inline.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (6 → 91 lines)
+  -     anti_hits, anti_prose, anti_unanchored = scan_provider_lines([real_rate_limit])
+  +     anti_hits, anti_prose, anti_unanchored, anti_term = scan_provider_lines(
+  +         [real_rate_limit]
+  +     )
+        assert_eq(
+            "ANTI-VACUOUS: a genuine unquoted rate-limit line really is detected",
+            f"hits={anti_hits} prose={anti_prose} unanchored={anti_unanchored}",
+            "hits=1 prose=0 unanchored=0",
+  +     )
+  + 
+  +     # --- Day 197: terminal give-up vs retried-and-recovered ----------------
+  +     #
+  +     # (T1) ANTI-VACUOUS, ASSERTED FIRST, and it is the row every "must be
+  +     # zero" assertion below depends on: a genuine terminal give-up line must
+  +     # be DETECTED. A classifier that finds nothing satisfies every near-miss
+  +     # row by having nothing to count — this defect wearing the opposite sign,
+  +     # and quieter than the bug.
+  +     assert_eq(
+  +         "ANTI-VACUOUS: the real give-up emission is classified terminal",
+  +         str(classify_provider_terminal_line(real_giveup)),
+  ... (72 more lines)
+ ✓ (1m 20s)
+  -     anti_hits, anti_prose, anti_unanchored = scan_provider_lines([real_rate_limit])
+  +     anti_hits, anti_prose, anti_unanchored, anti_term = scan_provider_lines(
+  +         [real_rate_limit]
+  +     )
+        assert_eq(
+            "ANTI-VACUOUS: a genuine unquoted rate-limit line really is detected",
+            f"hits={anti_hits} prose={anti_prose} unanchored={anti_unanchored}",
+            "hits=1 prose=0 unanchored=0",
+  ... (13 more lines)
+
+Now the remaining three unpack sites and the superseded hit-branch fixtures:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (7 → 10 lines)
+  -     h, pr, ur = scan_provider_lines([real_rate_limit, real_giveup, real_no_fallback])
+  +     h, pr, ur, _htm = scan_provider_lines(
+  +         [real_rate_limit, real_giveup, real_no_fallback]
+  +     )
+        assert_eq(
+            "all three real shapes reach the rendered line as hits",
+            render_provider_health(1, h, AUDIT_DIR_OK, pr, ("transcripts/*.log",), ur),
+            "## Provider/API health\n1 sessions, 3 provider error hit(s) in "
+  -         "transcripts/*.log.",
+  +         "transcripts/*.log. 0 session(s) ended on a terminal give-up — every "
+  +         "hit above was retried (survived, not died).",
+        )
+ ✓ (1m 19s)
+  -     h, pr, ur = scan_provider_lines([real_rate_limit, real_giveup, real_no_fallback])
+  +     h, pr, ur, _htm = scan_provider_lines(
+  +         [real_rate_limit, real_giveup, real_no_fallback]
+  +     )
+        assert_eq(
+            "all three real shapes reach the rendered line as hits",
+            render_provider_health(1, h, AUDIT_DIR_OK, pr, ("transcripts/*.log",), ur),
+            "## Provider/API health\n1 sessions, 3 provider error hit(s) in "
+  ... (4 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (26ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the two superseded hit-branch fixtures — updated, not deleted (Day 148):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5022,5035p' scripts/extr… ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
