@@ -5744,7 +5744,12 @@ src/commands_config.rs
 
     # THE REAL STREAK, as a fixture. Day 195 ran five sessions, every instrument
     # reported success, and `git log` carries no Day-195 task commit at all.
-    streak = classify_productivity({194: 4, 195: 5}, {194})
+    # The third argument is the EVIDENCE half (Day 197, #912): the window did
+    # carry task commits -- four of them -- and every one is labelled day-194,
+    # which is exactly the artifact shape the clause exists to name. Passing it
+    # is what makes the fixture genuinely carry a count rather than leaving the
+    # clause on its no-count floor.
+    streak = classify_productivity({194: 4, 195: 5}, {194}, 4)
     assert_true(
         "the measured streak: {195: 5} claimed vs {194} observed is IDLE naming day 195",
         streak.state == PRODUCTIVITY_IDLE
