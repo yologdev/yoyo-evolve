@@ -1148,13 +1148,32 @@ async fn task_result_in<S: EventStore>(
             EvalResult {
                 id: EvalId::new(format!("eval_{suffix}")),
                 command: eval_command.into(),
-                status: if promoted {
-                    EvalStatus::Passed
-                } else {
-                    EvalStatus::Failed
+                // #915, BRANCH A: `EvalStatus` carries `Skipped` (measured on
+                // yoagent-state 0.5.2 — `Started, Passed, Failed, Error,
+                // Skipped`), so "no oracle ran" is expressible AT THE STATUS
+                // LEVEL and does not have to hide in a reason string.
+                //
+                // `Failed` would be wrong and `Passed` is the lie #915 is about:
+                // the eval did not fail, it did not RUN. Three verdicts, three
+                // statuses, none folded into a neighbour.
+                status: match verdict {
+                    TaskVerdict::Promoted => EvalStatus::Passed,
+                    TaskVerdict::Unverified => EvalStatus::Skipped,
+                    TaskVerdict::Rejected => EvalStatus::Failed,
                 },
-                score: Some(if promoted { 1.0 } else { 0.0 }),
-                metadata: serde_json::json!({ "reason": reason }),
+                // `None`, never `0.0`, on the unverified path: a score of zero
+                // is a MEASUREMENT and would read as "the oracle looked and gave
+                // it nothing". Absence gets its own name (Day 144).
+                score: match verdict {
+                    TaskVerdict::Promoted => Some(1.0),
+                    TaskVerdict::Unverified => None,
+                    TaskVerdict::Rejected => Some(0.0),
+                },
+                // `oracle_ran` rides along as a machine-readable flag beside the
+                // prose reason, so a consumer can answer "did anything check
+                // this?" without string-matching the status vocabulary — the
+                // same reader-facing axis #895 added to `--output-format json`.
+                metadata: serde_json::json!({ "reason": reason, "oracle_ran": oracle_ran }),
             },
             Some(patch_id.clone()),
         )
@@ -1165,15 +1184,25 @@ async fn task_result_in<S: EventStore>(
             actor.clone(),
             Decision {
                 id: DecisionId::new(format!("decision_{suffix}")),
-                status: if promoted {
+                // The code landed and stayed on BOTH promoted and unverified, so
+                // the decision really is `Approved` on both — saying otherwise
+                // would be a second lie in the opposite direction.
+                status: if landed {
                     DecisionStatus::Approved
                 } else {
                     DecisionStatus::Rejected
                 },
-                reason: if promoted {
-                    format!("oracle passed ({eval_command}); kept")
-                } else {
-                    format!("reverted to {pre_sha}: {reason}")
+                // ...but the REASON must not claim an oracle passed when none
+                // ran. The unverified arm carries the harness's `--reason`
+                // verbatim, which is what closes the parsed-but-ignored flag:
+                // before #915 this branch hardcoded `oracle passed (…)` and
+                // dropped `reason` on the floor.
+                reason: match verdict {
+                    TaskVerdict::Promoted => format!("oracle passed ({eval_command}); kept"),
+                    TaskVerdict::Unverified => {
+                        format!("kept UNVERIFIED: no evaluator ran; {reason}")
+                    }
+                    TaskVerdict::Rejected => format!("reverted to {pre_sha}: {reason}"),
                 },
                 decided_by: actor.clone(),
                 metadata: serde_json::json!({}),
@@ -1184,7 +1213,10 @@ async fn task_result_in<S: EventStore>(
     state
         .update_patch_status(
             patch_id,
-            if promoted {
+            // `landed`, not `oracle_ran`: the patch IS on main after an
+            // unverified accept, so `Promoted` stays correct here. #915 changes
+            // what the EVAL claims, never where the code is.
+            if landed {
                 PatchStatus::Promoted
             } else {
                 PatchStatus::Rejected
@@ -1193,7 +1225,11 @@ async fn task_result_in<S: EventStore>(
         )
         .await?;
 
-    if !promoted {
+    // A failure node is recorded only when the code did NOT stay. An
+    // unverified accept kept its code, so it records no failure — the thing
+    // that is missing is the oracle, and that is already said by
+    // `EvalStatus::Skipped` above.
+    if !landed {
         state
             .record_failure(
                 actor.clone(),
