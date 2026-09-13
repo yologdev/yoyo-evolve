@@ -6130,17 +6130,35 @@ src/commands_config.rs
         sess.mkdir()
         empty = collect_provider_errors(sess)
         assert_eq("a zero-session walk examines zero sessions", empty.sessions, 0)
+        empty_line = render_provider_health(
+            empty.sessions,
+            empty.hits,
+            AUDIT_DIR_OK,
+            empty.prose_rejected,
+            empty.streams,
+            empty.unanchored_rejected,
+            empty.unread_streams,
+        )
+        # Asserted against the REAL emission, captured by RUNNING it, never a
+        # token I imagined. The first draft of this test asserted
+        # `"REFUSAL" in ....upper()`, which is the idiom `render_productivity`'s
+        # refusal genuinely uses -- but THIS renderer refuses in SUBSTANCE with
+        # different words, so the assertion was red against correct production
+        # code. Transfer the MECHANISM (it must refuse), never the SURFACE
+        # FEATURE (one sibling renderer's literal token).
+        # The two PRESENCE assertions carry the evidence; the ABSENCE one is a
+        # boundary pin, since a renderer emitting nothing satisfies it too.
         assert_true(
-            "the zero-session branch REFUSES, it does not render a clean bill",
-            "REFUSAL" in render_provider_health(
-                empty.sessions,
-                empty.hits,
-                AUDIT_DIR_OK,
-                empty.prose_rejected,
-                empty.streams,
-                empty.unanchored_rejected,
-                empty.unread_streams,
-            ).upper(),
+            "the zero-session branch says outright it did NOT check",
+            "not checked" in empty_line,
+        )
+        assert_true(
+            "the zero-session branch disclaims the clean reading in words",
+            "This is not 'no provider errors'" in empty_line,
+        )
+        assert_true(
+            "the zero-session branch renders no clean-bill wording",
+            "no provider-error lines" not in empty_line,
         )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
