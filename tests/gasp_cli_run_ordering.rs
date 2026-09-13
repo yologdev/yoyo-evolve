@@ -299,6 +299,249 @@ fn promoted_verdict_still_records_the_commit_artifact() {
     );
 }
 
+/// The payload of the one `eval.finished` this session recorded.
+///
+/// **Anti-vacuous, and this is the half that matters for #915:** it panics
+/// unless exactly one such event exists, so a session that recorded *no*
+/// evaluation can never satisfy "the status is not `Passed`" by having no
+/// status at all. A test that finds nothing and passes is this defect wearing
+/// the opposite sign.
+fn sole_eval_payload(state_dir: &Path) -> serde_json::Value {
+    let evals: Vec<serde_json::Value> = domain_events(state_dir)
+        .into_iter()
+        .filter(|(k, _)| k == "eval.finished")
+        .map(|(_, p)| p)
+        .collect();
+    assert_eq!(
+        evals.len(),
+        1,
+        "expected exactly one `eval.finished` — zero would make every \
+         assertion below pass vacuously: {evals:?}"
+    );
+    evals.into_iter().next().unwrap()
+}
+
+/// The payload of the one `decision.created` this session recorded.
+///
+/// Anti-vacuous for the same reason as [`sole_eval_payload`]: the decision
+/// assertions below are about *what the reason says*, and a missing decision
+/// would satisfy "does not claim the oracle passed" by saying nothing at all.
+fn sole_decision_payload(state_dir: &Path) -> serde_json::Value {
+    let decisions: Vec<serde_json::Value> = domain_events(state_dir)
+        .into_iter()
+        .filter(|(k, _)| k == "decision.created")
+        .map(|(_, p)| p)
+        .collect();
+    assert_eq!(
+        decisions.len(),
+        1,
+        "expected exactly one `decision.created`: {decisions:?}"
+    );
+    decisions.into_iter().next().unwrap()
+}
+
+/// The `status` of the one `patch.status_changed` this session recorded.
+///
+/// Anti-vacuous in the same shape: no status change at all would let
+/// "the patch is still Promoted" pass by never having been judged.
+fn sole_patch_status(state_dir: &Path) -> String {
+    let changes: Vec<serde_json::Value> = domain_events(state_dir)
+        .into_iter()
+        .filter(|(k, _)| k == "patch.status_changed")
+        .map(|(_, p)| p)
+        .collect();
+    assert_eq!(
+        changes.len(),
+        1,
+        "expected exactly one `patch.status_changed`: {changes:?}"
+    );
+    changes[0]
+        .get("status")
+        .and_then(|s| s.as_str())
+        .unwrap_or_else(|| panic!("patch.status_changed has no string status: {}", changes[0]))
+        .to_string()
+}
+
+/// The sentence `scripts/evolve.sh` emits when it accepts a task whose
+/// evaluator never produced a verdict. Carried verbatim into the eval record,
+/// because on this path the reason string is the only place the truth lives.
+const UNVERIFIED_REASON: &str =
+    "accepted UNVERIFIED: evaluator produced no verdict; build+test only";
+
+/// #915 — an UNVERIFIED accept is recorded as `Skipped`, never `Passed`.
+///
+/// The defect: `verdict` was two-valued (`let promoted = verdict == "promoted"`),
+/// so the harness's fail-open accept — build+test green, evaluator never ran —
+/// was written into the append-only record as `eval.finished Passed`. That is
+/// `"could not check"` reading as `"checked; clean"`, in the one place a
+/// dashboard reads. Five Day-195 sessions rendered `5/5 promoted` with zero
+/// task commits.
+///
+/// Asserted on the **emitted event payload**, never on `Ok`: `task_result`
+/// returning success says nothing about which status reached the log.
+#[test]
+fn unverified_verdict_records_skipped_and_never_passed() {
+    let tmp = run_task_result_with_reason(
+        "unverified",
+        "run_gasp_eval_unverified",
+        UNVERIFIED_REASON,
+    );
+    // Anti-vacuous first: one eval exists to be judged.
+    let eval = sole_eval_payload(tmp.path());
+
+    let status = eval
+        .get("status")
+        .and_then(|s| s.as_str())
+        .unwrap_or_else(|| panic!("eval.finished has no string status: {eval}"));
+
+    // The whole of #915, stated as the thing that must never be true.
+    assert_ne!(
+        status, "Passed",
+        "an accept where NO evaluator ran must not be recorded as `Passed` — \
+         that is \"could not check\" reading as \"checked; clean\" in the \
+         append-only record: {eval}"
+    );
+    // BRANCH A: the resolved yoagent-state carries `Skipped`, so the graph can
+    // say "not run" at the status level rather than only in prose.
+    assert_eq!(
+        status, "Skipped",
+        "the unverified path must use EvalStatus::Skipped: {eval}"
+    );
+
+    // `Failed` would be the other wrong answer: the eval did not fail, it did
+    // not run. Pinned explicitly so a later "simplification" cannot land it.
+    assert_ne!(
+        status, "Failed",
+        "the evaluator did not fail, it never ran: {eval}"
+    );
+
+    // A score would assert a measurement nobody took.
+    assert!(
+        eval.get("score").map(|s| s.is_null()).unwrap_or(false),
+        "an eval that never ran has no score: {eval}"
+    );
+
+    // The harness's own sentence, verbatim — this is what closes the
+    // parsed-but-ignored `--reason` flag on the landed path.
+    assert_eq!(
+        eval.pointer("/metadata/reason").and_then(|r| r.as_str()),
+        Some(UNVERIFIED_REASON),
+        "the eval reason must carry the harness string verbatim: {eval}"
+    );
+}
+
+/// #915 — the code LANDED, so the patch stays `Promoted` and the decision
+/// stays `Approved`; only the oracle claim changes.
+///
+/// The two questions have different answers and must not be folded: *did the
+/// code land and stay?* (yes — it is on main, and saying otherwise would be a
+/// second lie) versus *did an oracle look at it?* (no). This test pins the
+/// first half; the one above pins the second.
+#[test]
+fn unverified_verdict_still_promotes_the_patch_and_approves_the_decision() {
+    let tmp = run_task_result_with_reason(
+        "unverified",
+        "run_gasp_landed_unverified",
+        UNVERIFIED_REASON,
+    );
+
+    assert_eq!(
+        sole_patch_status(tmp.path()),
+        "Promoted",
+        "the commit is on main, so the patch status must stay Promoted"
+    );
+
+    let decision = sole_decision_payload(tmp.path());
+    assert_eq!(
+        decision.get("status").and_then(|s| s.as_str()),
+        Some("Approved"),
+        "the change was kept, so the decision stays Approved: {decision}"
+    );
+
+    let reason = decision
+        .get("reason")
+        .and_then(|r| r.as_str())
+        .unwrap_or_else(|| panic!("decision has no string reason: {decision}"));
+
+    // The decision reason used to hardcode `oracle passed (<cmd>); kept`, which
+    // is the same false claim one node over.
+    assert!(
+        !reason.contains("oracle passed"),
+        "the decision reason must not claim an oracle passed when none ran: \
+         {reason:?}"
+    );
+    assert!(
+        reason.contains("unverified"),
+        "the decision reason must name the state, so a consumer can tell \
+         \"the oracle passed\" from \"nobody looked\": {reason:?}"
+    );
+
+    // The artifact half is unchanged: the code landed, so the commit is
+    // recorded exactly as on the promoted path.
+    let artifacts = sole_patch_artifacts(tmp.path());
+    assert_eq!(
+        artifacts.len(),
+        1,
+        "an unverified accept still landed a commit: {artifacts:?}"
+    );
+    assert_eq!(
+        artifacts[0].get("hash").and_then(|h| h.as_str()),
+        Some(POST_SHA),
+        "the artifact must carry the post-task sha: {}",
+        artifacts[0]
+    );
+}
+
+/// The near-miss guard, and it is the entire regression surface.
+///
+/// Every existing session's row is on the promoted path, so this asserts the
+/// **whole** eval payload shape — status, score and reason together — rather
+/// than a `contains`. A discriminator tested only on the side that fires is
+/// vacuous green, and the three-way split must leave this byte-identical.
+#[test]
+fn promoted_verdict_still_records_passed_byte_identically() {
+    let tmp = run_task_result_with_reason(
+        "promoted",
+        "run_gasp_eval_promoted",
+        "oracle reason passthrough",
+    );
+    let eval = sole_eval_payload(tmp.path());
+
+    assert_eq!(
+        eval.get("status").and_then(|s| s.as_str()),
+        Some("Passed"),
+        "a promoted verdict must still record Passed: {eval}"
+    );
+    assert_eq!(
+        eval.get("score").and_then(|s| s.as_f64()),
+        Some(1.0),
+        "a promoted verdict must still score 1.0: {eval}"
+    );
+    assert_eq!(
+        eval.pointer("/metadata/reason").and_then(|r| r.as_str()),
+        Some("oracle reason passthrough"),
+        "the promoted path now consumes --reason too: {eval}"
+    );
+
+    // And the landed half is unchanged on this path as well.
+    assert_eq!(sole_patch_status(tmp.path()), "Promoted");
+    let decision = sole_decision_payload(tmp.path());
+    assert_eq!(
+        decision.get("status").and_then(|s| s.as_str()),
+        Some("Approved"),
+        "{decision}"
+    );
+    assert!(
+        decision
+            .get("reason")
+            .and_then(|r| r.as_str())
+            .unwrap_or_default()
+            .contains("oracle passed"),
+        "the promoted decision reason is unchanged and still names the oracle: \
+         {decision}"
+    );
+}
+
 /// The `id` of every task node created, in file order.
 fn task_created_ids(state_dir: &Path) -> Vec<String> {
     domain_events(state_dir)
