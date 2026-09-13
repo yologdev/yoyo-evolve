@@ -1,0 +1,228 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by measuring the actual exit-code path before touching anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "process::exit\|ExitCode…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn main\|fn run_single_… ✓ (2ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '240,360p' src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '400,520p' src/main.rs ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 2.8s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '544,600p' src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,790p' src/main.rs ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,700p' src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn try_fallback_prompt… ✓ (3ms)
+ ✓ (9ms)
+  4 tools completed in 4.0s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1400,1500p' src/agent_bu… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "should_exit_error" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=625 && NR<=640' src/mai… ✓ (2ms)
+ ✓ (5ms)
+  3 tools completed in 17.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Measurement settled. Branch A fired, narrowly. Let me confirm the exact shape and write the test first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/main_tests.rs && ec… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the fix. First the pure decision function in main.rs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '228,250p' src/main.rs ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (1 → 37 lines)
+  + /// The process exit code for a finished non-interactive run.
+  + ///
+  + /// One statement of the exit ladder, read by both `run_single_prompt` and
+  + /// `run_piped_mode`, so the two cannot answer "how did this run end" with two
+  + /// different ladders that agree the day they are written and diverge forever
+  + /// after.
+  + ///
+  + /// `run_failed` is the *already-computed* `is_error` value — the same bool
+  + /// `emit_output` and `build_json_output` are handed — never a second derivation
+  + /// from the outcome. That is the whole point: before Day 197 the piped path
+  + /// derived it once from the **initial** turn and never revisited it, so a
+  + /// continuation turn that died on a terminal API error set
+  + /// `response.last_api_error` while the exit code still said 0.
+  + ///
+  + /// **1, not 2, and the reason is collision rather than taste:** 2 is already
+  + /// taken twice in this binary — the Day-165 bare-word near-miss guard exits 2,
+  + /// and `yoyo gasp` on a default build exits 2 — and `CHECKPOINT_TRIGGERED`
+  + /// claims it here. 1 is the conventional "the thing you asked for failed".
+  + ///
+  + /// Precedence is unchanged and is deliberate: a failed run or a failed
+  ... (17 more lines)
+ ✓ (12.9s)
+  + /// The process exit code for a finished non-interactive run.
+  + ///
+  + /// One statement of the exit ladder, read by both `run_single_prompt` and
+  + /// `run_piped_mode`, so the two cannot answer "how did this run end" with two
+  + /// different ladders that agree the day they are written and diverge forever
+  + /// after.
+  + ///
+  + /// `run_failed` is the *already-computed* `is_error` value — the same bool
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the no-definition-without-a-consumer rule firing. Wiring both call sites now:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (33 → 43 lines)
+  +     // ONE statement of "did this run fail", computed after the auto-continue
+  +     // loop rather than before it. `should_exit_error` answers only "did the
+  +     // INITIAL turn fail" — the loop below it overwrites
+  +     // `response.last_api_error` and never revisited that flag, so a
+  +     // continuation turn killed by a terminal API error exited 0 while
+  +     // `--output-format json` reported `is_error: false`. Both read this now.
+  +     let run_failed = should_exit_error || response.last_api_error.is_some();
+  + 
+        // Run watch command after prompt if active (auto lint/test loop)
+  -     if !should_exit_error {
+  +     if !run_failed {
+            run_watch_after_prompt(
+                agent,
+                &mut session_total,
+  ···
+            &response,
+            &agent_config.model,
+            &session_total,
+  -         should_exit_error,
+  +         run_failed,
+  ... (20 more lines)
+ ✓ (1m 35s)
+  +     // ONE statement of "did this run fail", computed after the auto-continue
+  +     // loop rather than before it. `should_exit_error` answers only "did the
+  +     // INITIAL turn fail" — the loop below it overwrites
+  +     // `response.last_api_error` and never revisited that flag, so a
+  +     // continuation turn killed by a terminal API error exited 0 while
+  +     // `--output-format json` reported `is_error: false`. Both read this now.
+  +     let run_failed = should_exit_error || response.last_api_error.is_some();
+  + 
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now run_single_prompt's tail shares the same ladder:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (8 → 13 lines)
+        // A failed `--output` write is a failed run, whatever the model said (#766).
+  -     if output_write_failed {
+  -         std::process::exit(1);
+  -     }
+  -     if CHECKPOINT_TRIGGERED.load(Ordering::SeqCst) {
+  -         std::process::exit(2);
+  +     // `run_failed: false` is honest rather than a placeholder: every API-error
+  +     // path in this function has already exited 1 above, so by here the run
+  +     // succeeded. Sharing the ladder is what keeps the two modes from drifting.
+  +     let code = exit_code_for_outcome(
+  +         false,
+  +         output_write_failed,
+  +         CHECKPOINT_TRIGGERED.load(Ordering::SeqCst),
+  +     );
+  +     if code != 0 {
+  +         std::process::exit(code);
+        }
+    }
+ ✓ (1m 38s)
+        // A failed `--output` write is a failed run, whatever the model said (#766).
+  -     if output_write_failed {
+  -         std::process::exit(1);
+  -     }
+  -     if CHECKPOINT_TRIGGERED.load(Ordering::SeqCst) {
+  -         std::process::exit(2);
+  +     // `run_failed: false` is honest rather than a placeholder: every API-error
+  +     // path in this function has already exited 1 above, so by here the run
+  ... (10 more lines)
+
+Now the tests — the ladder table plus the source-level guard that the piped path reads the post-loop value:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/m… (142 lines) ✓ (4ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.17 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: redundant reference in `assert!` argument[0m
+    [1m[94m--> [0msrc/main_tests.rs:1315:9
+     [1m[94m|[0m
+[1m[94m1315[0m [1m[94m|[0m         &stale_flag
+     [1m[94m|[0m         [1m[91m^^^^^^^^^^^[0m [1m[91mhelp: remove the redundant `&`: `stale_flag`[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#useless_borrows_in_formatting
+     [1m[94m= [0m[1mnote[0m: `-D clippy::useless-borrows-in-formatting` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::useless_borrows_in_formatting)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main_tests.rs (2 → 2 lines)
+            "the tail must not still read the pre-loop flag: {}",
+  -         &stale_flag
+  +         stale_flag
+ ✓ (1m 24s)
+            "the tail must not still read the pre-loop flag: {}",
+  -         &stale_flag
+  +         stale_flag
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo main_tests… ✓ (145ms)
+  2 tools completed in 1m 30s (2 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The guard fired correctly — my slice started at the run_failed binding, whose right-hand side legitimately folds in the old flag. The boundary is what's wrong, not the intent:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main_tests.rs (16 → 24 lines)
+        // Direction 2: the exit decision goes through the shared ladder, and the
+  -     // stale flag is gone from the tail. A guard checking only the first passes
+  -     // on a tail carrying BOTH, which is how a half-applied edit reads as done.
+  +     // stale flag is gone from everything AFTER the one statement. A guard
+  +     // checking only the first passes on a tail carrying BOTH, which is how a
+  +     // half-applied edit reads as done. The slice starts past the end of the
+  +     // `run_failed` binding, because that binding's own right-hand side folds
+  +     // the pre-loop flag in on purpose — that is the fix, not a leftover.
+        let ladder_at = body
+            .find(&ladder)
+            .expect("the piped path must decide its exit code via the shared ladder");
+  ···
+            run_failed_at < ladder_at,
+            "run_failed must be computed before it is handed to the ladder"
+        );
+  -     let tail = &body[run_failed_at..];
+  +     let binding_end = run_failed_at
+  +         + body[run_failed_at..]
+  +             .find(";\n")
+  +             .expect("anti-vacuous: the run_failed binding must terminate")
+  ... (8 more lines)
+ ✓ (1m 35s)
+        // Direction 2: the exit decision goes through the shared ladder, and the
+  -     // stale flag is gone from the tail. A guard checking only the first passes
+  -     // on a tail carrying BOTH, which is how a half-applied edit reads as done.
+  +     // stale flag is gone from everything AFTER the one statement. A guard
+  +     // checking only the first passes on a tail carrying BOTH, which is how a
+  +     // half-applied edit reads as done. The slice starts past the end of the
+  +     // `run_failed` binding, because that binding's own right-hand side folds
+  +     // the pre-loop flag in on purpose — that is the fix, not a leftover.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo main_tests… ✓ (160ms)
+  2 tools completed in 1m 37s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 2)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

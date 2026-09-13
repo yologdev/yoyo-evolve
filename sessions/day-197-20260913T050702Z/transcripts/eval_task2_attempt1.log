@@ -1,0 +1,36 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task. Let me look at the key pieces.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RESTRICTED_REMOVED_TOOL…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1860,1910p' src/cli.rs ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "OVER-disclosure and was… ✓ (5ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "The \`(#887)\` clause i…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '245,262p' src/help.rs ✓ (2ms)
+ ✓ (5ms)
+  6 tools completed in 26.8s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evidence gathered. The code half is sound; the documentation half was not landed.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 12s)
+
+Verdict: FAIL — written to session_plan/eval_task_2.md.
+
+The code half is genuinely good:
+• Both surfaces corrected in one diff (restricted_mode_note in cli.rs, the --restricted entry in help.rs) — no "two doors, one deaf".
+• Tool names still interpolated from RESTRICTED_REMOVED_TOOLS via {removed}, never re-typed.
+• The new wording avoids the over-claim: it keeps "NOT a sandbox", keeps "file tools remain — use --read to stop writes", and says only that the child inherits the disallow list.
+• No confinement behaviour changed: const still ["bash"], restricted_disallowed_tools untouched, tools.rs/agent_builder.rs untouched.
+• The drift guard is properly shaped — anti-vacuous assertion first, both directions against the const, whole-token matching (so sub_agent can't read as agent), presence rather than absence assertions, and a stated limit in its doc comment.
+• Register line 7146 matches actual wc -l.
+
+What fails it: git show --stat HEAD lists only src/cli.rs, src/help.rs, tests/module_size.rs. CLAUDE.md still says the (#887) clause "is now an OVER-disclosure and was deliberately NOT edited ... it still tells the user command execution is one sub_agent hop away" — a false description of the code as of this commit, sitting in the one file re-injected as authoritative context every session. That's the exact stale-authoritative-claim class this task existed to fix, reproduced one layer up, and the task listed the CLAUDE.md correction as a required deliverable.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

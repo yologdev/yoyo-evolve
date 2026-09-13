@@ -1,0 +1,70 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1860,1910p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RESTRICTED_REMOVED_TOOL… ✓ (5ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.0s (2 ✓)
+
+Const untouched at ["bash"]. Let me verify both user-facing surfaces actually render correctly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (6ms)
+ ✓ (188ms)
+  2 tools completed in 189ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Help text renders correctly and all 10 restricted tests pass. One fast check on the register number, then verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli.rs src/help.rs && … ✓ (141ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All checks green: src/cli.rs is exactly 7146 lines (matching the pasted register number), module_size passes 28/28 with zero warnings, and src/help.rs is net-zero lines so owed no register edit.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 12s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The verdict file is written. Let me confirm it parses cleanly against the harness's format rules.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== placeholder check (mus… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict file parses cleanly: no leftover placeholders, exactly 4 Checked: lines, all PASS.
+
+## Evaluation complete — **PASS**
+
+What I verified (not just read):
+
+| Check | Evidence |
+|---|---|
+| Both surfaces corrected | src/cli.rs:1876-1890 — stale (#887) "one sub_agent hop away" clause gone from both the plain (:) and non-plain (em dash) branches; ran ./target/debug/yoyo --help and saw the corrected --restricted entry live |
+| No behaviour moved | grep RESTRICTED_REMOVED_TOOLS src/cli.rs → line 1766 still &["bash"]; restricted_disallowed_tools and restricted_mode_effects untouched |
+| Not an over-claim | Note says outright sub_agent is not removed, so it never reads as command execution is impossible — the one direction the task forbade |
+| Guard is real | New restricted_note_claims_removal_of_exactly_the_const reads the const, anti-vacuous assertion first, both directions, whole-token matching (names_whole_token), limit stated in its own doc comment |
+| Tests | cargo test --bin yoyo restricted → 10 passed, 0 failed |
+| Register number | wc -l src/cli.rs = 7146, matching the pasted 7023 → 7146; cargo test --test module_size → 28/28, zero warnings. src/help.rs is net-zero lines, so owed no entry |
+| Docs | CLAUDE.md records the superseded clause rather than erasing it, and states plainly that this changes no confinement behaviour |
+
+Forgotten touchpoints — the one I looked hardest at, given #618/#653/#658: the only new definitions are the #[test] fn (self-consuming) and the nested names_whole_token helper called three times inside it. No enum variants, no renames, no signature changes; {removed} was already bound at both edited format strings.
+
+Product surface — product-kind task, disclosure-only. --restricted stays opt-in and off by default, so #448's red flag does not fire.
+
+One small note for the record rather than a defect: the interpolated {removed} in the new sandbox clause reads naturally at one element (cannot rebuild bash) but would render as cannot rebuild bash, sh if the const ever grew — the guard would still pass, since it only checks each name is present. Not worth failing over, and arguably correct either way.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,189 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code to establish the facts before touching any wording.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RESTRICTED_REMOVED_TOOL…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restricted" src/help.rs… ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1680,1930p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '240,260p' src/help.rs ✓ (2ms)
+ ✓ (4ms)
+  4 tools completed in 3.4s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: I'd established RESTRICTED_REMOVED_TOOLS = &["bash"] and located the stale clause in both files. Now verifying the wiring claim before touching wording.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent_child_tools\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5375,5525p' src/cli.rs ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2752,2762p' src/cli.rs; … ✓ (6ms)
+  3 tools completed in 7.2s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 1 is complete. Measured verbatim, and item (2) is TRUE — the note is stale:
+
+1. `src/cli.rs:1766 — RESTRICTED_REMOVED_TOOLS: &[&str] = &["bash"]; sub_agent` deliberately absent (pinned by an existing test).
+2. The chain: cli.rs:2755-2758 folds bash into config.disallowed_tools → tools.rs:1503-1507 clones that into child_disallowed → tools.rs:1459 retains via agent_builder::tool_name_disallowed (d == name, whole-name). A dispatched child gets no `bash` under `--restricted`.
+3. Three stale sentences: cli.rs clause D (plain + non-plain branches), help.rs:256.
+
+Now correcting both surfaces in one diff.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (11 → 11 lines)
+            msg.push_str(&format!(
+  -             "\n{bullet} NOT a sandbox: a dispatched sub_agent builds its own bash, so command execution is still one sub_agent hop away (#887)"
+  +             "\n{bullet} NOT a sandbox: sub_agent is not removed, but a dispatched child inherits this disallow list, so it cannot rebuild {removed}"
+            ));
+        } else {
+            msg.push_str(&format!(
+                "\n{bullet} command-running tools removed from this agent — {removed} (file tools remain; use --read to stop writes)"
+            ));
+            msg.push_str(&format!(
+  -             "\n{bullet} NOT a sandbox — a dispatched sub_agent builds its own bash, so command execution is still one sub_agent hop away (#887)"
+  +             "\n{bullet} NOT a sandbox — sub_agent is not removed, but a dispatched child inherits this disallow list, so it cannot rebuild {removed}"
+            ));
+        }
+ ✓ (1m 34s)
+            msg.push_str(&format!(
+  -             "\n{bullet} NOT a sandbox: a dispatched sub_agent builds its own bash, so command execution is still one sub_agent hop away (#887)"
+  +             "\n{bullet} NOT a sandbox: sub_agent is not removed, but a dispatched child inherits this disallow list, so it cannot rebuild {removed}"
+            ));
+        } else {
+            msg.push_str(&format!(
+                "\n{bullet} command-running tools removed from this agent — {removed} (file tools remain; use --read to stop writes)"
+            ));
+  ... (5 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (5 → 5 lines)
+  -         "                    agent. NOT a sandbox — a sub_agent builds its own bash. File"
+  +         "                    agent. A dispatched sub_agent inherits that removal. NOT a"
+        );
+        let _ = writeln!(
+            s,
+  -         "                    tools remain — use --read to stop writes"
+  +         "                    sandbox: file tools remain — use --read to stop writes"
+ ✓ (1m 34s)
+  -         "                    agent. NOT a sandbox — a sub_agent builds its own bash. File"
+  +         "                    agent. A dispatched sub_agent inherits that removal. NOT a"
+        );
+        let _ = writeln!(
+            s,
+  -         "                    tools remain — use --read to stop writes"
+  +         "                    sandbox: file tools remain — use --read to stop writes"
+  2 tools completed in 3m 12s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both surfaces corrected. Now step 3 — the drift guard, which is the durable half.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn restricted_is_a_know… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5514,5522p' src/cli.rs ✓ (3ms)
+  2 tools completed in 2.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (6 → 129 lines)
+                assert!(note.is_ascii(), "plain output must be plain ASCII: {note}");
+  +         }
+  +     }
+  + 
+  +     /// Does the note's removal claim agree with `RESTRICTED_REMOVED_TOOLS`?
+  +     ///
+  +     /// **Why this guard exists (Day 197).** Until this test landed, the note
+  +     /// carried a `(#887)` clause telling the user a dispatched `sub_agent`
+  +     /// "builds its own bash, so command execution is still one sub_agent hop
+  +     /// away". That stopped being true on Day 189: slice 2 passed
+  +     /// `&config.disallowed_tools` into `sub_agent_child_tools`, so the child
+  +     /// inherits the parent's disallow list and cannot rebuild `bash`. A
+  +     /// doc-side repair of a doc/code mismatch deletes the only detector while
+  +     /// leaving everything demonstrably honest (Day 164), so the corrected
+  +     /// claim is tied to the const here rather than merely re-typed.
+  +     ///
+  +     /// **STATED LIMIT:** this proves the note is *consistent with*
+  +     /// `RESTRICTED_REMOVED_TOOLS`, never that the confinement it describes is
+  +     /// *correct*. Presence of a name is mechanically checkable; the soundness
+  +     /// of a fence is not — the same limit `tests/blind_round_grades.rs` states
+  ... (107 more lines)
+ ✓ (1m 34s)
+                assert!(note.is_ascii(), "plain output must be plain ASCII: {note}");
+  +         }
+  +     }
+  + 
+  +     /// Does the note's removal claim agree with `RESTRICTED_REMOVED_TOOLS`?
+  +     ///
+  +     /// **Why this guard exists (Day 197).** Until this test landed, the note
+  +     /// carried a `(#887)` clause telling the user a dispatched `sub_agent`
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo restricted… ✓ (157ms)
+  2 tools completed in 1m 36s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 10 restricted tests pass. But the auto-check flagged something — let me find it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (59.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 5608 unit tests pass. The module-size gate fired, as expected — src/cli.rs grew. Running cargo fmt before reading it (a format pass after the final edit is what makes a pasted number stale in the shrinking direction):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test m… ✓ (1.2s)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5609 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::effective_disallowed_tools_pairs_shared_state_with_sub_agent ... ok
+test agent_builder::tests::every_connect_failure_arm_reports_the_error_it_was_handed ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::every_connect_failure_arm_escapes_the_values_it_interpolates ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::external_servers_json_table ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_bui...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate printed its own pasteable remedy. Applying it verbatim rather than hand-typing (#884 was reverted for exactly that class):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/cli.rs"' tests/mod… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/cli.rs", 7023), // Day 196: +1 line wiring the .yoyo/commands/ trust grant.
+  +     ("src/cli.rs", 7146), // Day 197: the restricted-note drift guard (#887 residue).
+ ✓ (59.9s)
+  -     ("src/cli.rs", 7023), // Day 196: +1 line wiring the .yoyo/commands/ trust grant.
+  +     ("src/cli.rs", 7146), // Day 197: the restricted-note drift guard (#887 residue).
+  2 tools completed in 1m 2s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

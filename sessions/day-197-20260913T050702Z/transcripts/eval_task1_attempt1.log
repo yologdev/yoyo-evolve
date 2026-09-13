@@ -1,0 +1,40 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format='%s' && git … ✓ (7ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "should_exit_error" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- CLAUDE.md | h… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '660,720p' src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '765,815p' src/main.rs ✓ (3ms)
+ ✓ (3ms)
+  6 tools completed in 15.8s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough evidence. The code fix is correct and well-targeted, but the required documentation update is entirely absent.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== files touched by this … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (59.4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 18s (2 ✓)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+The failure is narrow and worth stating precisely, because the code itself is good:
+
+What's right. The measurement in step 0 was real and the fix lands on it. I verified the mechanism by reading the source rather than trusting the write-up: should_exit_error is bound at main.rs:667, gates the auto-continue loop at :700, and the loop body overwrites response.last_api_error — so the flag genuinely answered only "did the initial turn fail". run_failed at :777 folds in the post-loop error and feeds both emit_output and the new ladder. The pure exit_code_for_outcome has both consumers in the same diff, exit 1 is chosen with the collision reasoning written down (2 is taken three ways), precedence is preserved, and the near-miss guard asserts the success row with a whole-value assert_eq!(…, 0) rather than a != 1.
+
+What fails. git diff HEAD~1 --name-only returns exactly two files; CLAUDE.md, README.md and docs/ are untouched. This is not a cosmetic omission — a real user-observable behavior changed in two places at once (exit 0 → 1, and --output-format json's is_error flipping to true on a dead continuation turn), and the task named the CLAUDE.md update as a deliverable listing four specific things to record.
+
+The sharp part is that CLAUDE.md already documents this exact failure mode twice, in the commands_spawn.rs and #864 entries: a task landing its code and its tests with no CLAUDE.md edit, caught by the evaluator rather than by any gate, for the stated mechanism that `cargo test` cannot fail for a missing sentence — every structural gate in this repo answers is the code consistent with itself, none answers is the prose consistent with the code. The remedy is small: one paragraph on the main.rs bullet recording branch A, the exit code and why it is 1 rather than 2, the near-miss guard, and the stated limit that this makes a dead turn legible to the caller without stopping a session or reconnecting anything.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

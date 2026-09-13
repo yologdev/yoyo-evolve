@@ -1,0 +1,43 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff focused on the task requirements.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '760,820p' src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "should_exit_error" src/… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '695,705p' src/main.rs &&… ✓ (3ms)
+ ✓ (11ms)
+  4 tools completed in 6.9s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (149ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (59.9s)
+  2 tools completed in 1m 14s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md.
+
+Verdict: PASS
+
+What I verified (not re-running the full suite — the harness already showed build/tests green):
+
+1. **The fix is real and is where the task asked.** `src/main.rs:230-266` adds the pure `exit_code_for_outcome(run_failed, output_write_failed, checkpoint_triggered) -> i32`, and both non-interactive exit sites consume it. The piped path's key change is let run_failed = should_exit_error || response.last_api_error.is_some(); computed after the auto-continue loop — that is precisely the branch-A defect the task's step 0 asked to measure, and the same bool now feeds the watch gate, emit_output's is_error, and the ladder, so no second derivation exists.
+
+2. **No dangling definition** (the `forgotten_touchpoints` trap from #618/#653/#658): the one new `fn` has two call sites in the same diff. `should_exit_error` is deliberately *kept* — still gating the auto-continue loop at :700 — and the wiring guard asserts it is absent only from the tail after the run_failed binding, which is the correct narrow claim.
+
+3. **Tests run clean**: `cargo test --bin yoyo main_tests` → 48 passed, 0 failed (45 pre-existing + 3 new). The success row is asserted with a whole-value `assert_eq!(…, 0) rather than != 1`, which is the regression surface the task named.
+
+4. **Docs landed in the same commit**: CLAUDE.md's `main.rs` bullet records the measured branch, the exit-code choice (1, with the 2-is-taken-three-times collision reason also in the function's own doc comment), the positive-control receipt, the Day-190 width reading and the Day-191 green sorting, and the two stated limits.
+
+5. **Product surface**: the exit-code change *is* the product fix rather than an evolve convenience defaulted on — it makes the exit code agree with what `--output-format json` already claimed since #895 — and the script-breaking risk is stated rather than smuggled past. #448 does not apply.
+
+Both files (src/main.rs 1183, src/main_tests.rs 1325) are under MAX_MODULE_LINES = 2000 and un-listed, so no register line was owed.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
