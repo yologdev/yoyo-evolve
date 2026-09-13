@@ -1350,6 +1350,63 @@ def classify_provider_error(line: str) -> tuple[str | None, str | None]:
     return (marker, None)
 
 
+# Which markers mean the code STOPPED rather than retried.
+#
+# STEP-0 FINDING (Day 197), and it corrects this task's own premise: the
+# discriminator was ALREADY on disk. `retry_giveup` has carried a loose AND an
+# anchored pattern in `_PROVIDER_MARKER_PATTERNS` since Day 196, and a self-test
+# already pinned it — so nothing had to be taught to see the line. What was
+# missing is that every marker was folded into ONE per-line `hits` counter, so a
+# 429 that was retried and a give-up that ended the run were the same number.
+#
+# Verified by reading the source, never by trusting the quote in CLAUDE.md:
+#   src/prompt_retry_limits.rs:317  rate_limit_giveup_message() emits
+#     "stopped retrying on purpose: the provider says its rate limit resets in
+#      ~{d}. Retrying now cannot succeed — this is not a transient error.
+#      Try again after the limit resets."
+#   src/prompt.rs:1302 and :1694     eprintln!("{YELLOW}  ⏳ {}{RESET}", ...)
+# CLAUDE.md quotes that sentence TRUNCATED at "~10h 49m." — it continues. The
+# anchor ends `.*$` so it matches either way, but a fixture hand-copied from the
+# doc would have pinned my belief about the input rather than the input (Day
+# 147). REACHABILITY was the other half of step 0 (Day 196 cost 17 days to two
+# correct functions composing into a dead announcement): it is stderr, which
+# `evolve.sh` tees into `transcripts/*.log`, which this reader has scanned since
+# Day 196. Producer and consumer genuinely meet.
+#
+# `no_fallback` is DELIBERATELY NOT TERMINAL, and that is the conservative
+# direction stated rather than hidden. Its text says "Exiting." and it is
+# emitted per-PROMPT (src/agent_builder.rs:1446), while `scripts/evolve.sh`'s
+# `run_agent_with_fallback` may retry the phase around it — so whether it ends a
+# SESSION is unverified, and I only counted what I read. The cost is that
+# `terminal_sessions` is a FLOOR, never a ceiling; limit 4 says so out loud.
+TERMINAL_PROVIDER_MARKERS = frozenset({"retry_giveup"})
+
+
+def classify_provider_terminal_line(line: str) -> str | None:
+    """Marker name when this line says the retry machinery STOPPED, else None.
+
+    DELEGATES to `classify_provider_error` rather than restating the pattern.
+    That is the whole design, not a shortcut: the candidate regex, the prose
+    filter and the anchor are ONE statement each, so this cannot drift from the
+    hit counter it is splitting (the `significant_braces` precedent — two copies
+    of a rule agree the day they are written and diverge forever after). It also
+    means the two-part discipline is inherited rather than re-implemented, so a
+    give-up sentence inside a markdown table, in backticks, behind a `path:NNN:`
+    grep prefix or after a leading `>` is rejected here for free — load-bearing,
+    because CLAUDE.md, this script's own comments and my transcripts all quote
+    that sentence verbatim, and the contamination grows every session I write
+    about it.
+
+    INVARIANT, asserted by self-test: a terminal line is always ALSO a hit, so
+    `terminal > 0` implies `hits > 0` and the clean branch can never carry a
+    terminal clause.
+    """
+    marker, _reason = classify_provider_error(line)
+    if marker is not None and marker in TERMINAL_PROVIDER_MARKERS:
+        return marker
+    return None
+
+
 @dataclass
 class ProviderScan:
     """What the provider-health walk actually observed.
@@ -1378,6 +1435,14 @@ class ProviderScan:
     # The direction matters: a terminal rate limit lands at the END of a
     # transcript, which is exactly the half a head-bounded read drops.
     unread_streams: int = 0
+    # Day 197: a count of SESSIONS, not of lines. NEVER summed with `hits` —
+    # they count different things, and summing them is the mislabelling this
+    # field exists to undo. A session is terminal when ANY of its streams
+    # carries an anchored give-up line; a session with error lines and no
+    # give-up is recovered; a session whose streams could not be read is
+    # NEITHER and keeps its own name in `unread_streams`, because "could not
+    # check" must not read as "checked; survived".
+    terminal_sessions: int = 0
 
 
 # Three states for the audit-log directory, and none of them may be folded into
@@ -1443,30 +1508,36 @@ def resolve_audit_dir(raw) -> tuple[str, Path | None]:
     return state, (Path(str(raw)) if state == AUDIT_DIR_OK else None)
 
 
-def scan_provider_lines(lines) -> tuple[int, int, int]:
-    """Fold a stream of lines into (hits, prose_rejected, unanchored_rejected).
+def scan_provider_lines(lines) -> tuple[int, int, int, int]:
+    """Fold a stream into (hits, prose_rejected, unanchored_rejected, terminal).
 
     Pure — this is the ONE statement of the fold, so the self-tests drive the
     same rule `_scan_provider_stream` runs over a real file rather than a
     second copy of it that agrees the day it is written and diverges forever
     after (the `significant_braces` precedent).
+
+    `terminal` is a per-LINE count within this stream; the caller folds it up
+    into a per-SESSION boolean. The two are never summed (Day 197).
     """
     hits = 0
     prose = 0
     unanchored = 0
+    terminal = 0
     for line in lines:
         marker, reason = classify_provider_error(line)
         if marker is not None:
             hits += 1
+            if marker in TERMINAL_PROVIDER_MARKERS:
+                terminal += 1
         elif reason == PROVIDER_REJECT_PROSE:
             prose += 1
         elif reason == PROVIDER_REJECT_UNANCHORED:
             unanchored += 1
-    return hits, prose, unanchored
+    return hits, prose, unanchored, terminal
 
 
-def _scan_provider_stream(path: Path) -> tuple[int, int, int, int]:
-    """Scan one file. Returns (hits, prose, unanchored, unread).
+def _scan_provider_stream(path: Path) -> tuple[int, int, int, int, int]:
+    """Scan one file. Returns (hits, prose, unanchored, unread, terminal).
 
     Bounded by the existing AUDIT_FILE_SIZE_CAP — no new budget was invented.
     Fail-soft: an OSError warns and contributes nothing, because this
@@ -1478,6 +1549,9 @@ def _scan_provider_stream(path: Path) -> tuple[int, int, int, int]:
     judged, an unread file was never judged at all, and rendering the second
     as the first is "could not check" reading as "checked; clean" — the exact
     refusal the pre-push hook and `CiScan`'s could-not-run branch already make.
+
+    `terminal` (Day 197) rides the same single pass — no second read of the
+    file, and no second statement of the rule.
     """
     try:
         size = path.stat().st_size
@@ -1494,11 +1568,11 @@ def _scan_provider_stream(path: Path) -> tuple[int, int, int, int]:
                 yield line
 
         with path.open(encoding="utf-8", errors="replace") as f:
-            h, pr, ur = scan_provider_lines(_bounded(f))
-        return h, pr, ur, (1 if capped else 0)
+            h, pr, ur, tm = scan_provider_lines(_bounded(f))
+        return h, pr, ur, (1 if capped else 0), tm
     except OSError as e:
         warn(f"skipped {path}: {e}")
-        return 0, 0, 0, 1
+        return 0, 0, 0, 1, 0
 
 
 def collect_provider_errors(audit_dir: Path) -> ProviderScan:
