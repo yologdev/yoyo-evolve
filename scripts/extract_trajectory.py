@@ -3207,6 +3207,15 @@ def main() -> int:
         streams=provider_scan.streams,
         unanchored_rejected=provider_scan.unanchored_rejected,
         unread_streams=provider_scan.unread_streams,
+        # Day 197: the ONLY production reader of `terminal_sessions`. Omitting
+        # it does not fail — the parameter defaults to 0 — so the renderer
+        # would print "0 session(s) ended on a terminal give-up" over a window
+        # that was never asked, which is a FABRICATED clean bill on the exact
+        # number this split exists to make honest. Pinned by
+        # `the_provider_render_is_handed_the_terminal_count` below, because
+        # every self-test supplies this argument explicitly and so the suite
+        # is structurally blind to the call site.
+        terminal_sessions=provider_scan.terminal_sessions,
     )
     # Same rule as `ci_unknown` above: a "could not check" provider note is
     # honest, but it is not trajectory DATA and must not suppress the global
@@ -5195,6 +5204,33 @@ src/commands_config.rs
         "## Provider/API health\n10 sessions, 69 provider error hit(s) in "
         "audit.jsonl. 7 session(s) ended on a terminal give-up (the retry "
         "machinery STOPPED); the rest were retried.",
+    )
+
+    # (T6) THE WIRING, and it is the one thing T1-T5 structurally cannot see.
+    # Every test above hands `render_provider_health` its terminal count
+    # explicitly, so the whole split stayed green while the ONE production call
+    # site omitted the argument and fell through to the `= 0` default —
+    # rendering "0 session(s) ended on a terminal give-up" over a window it
+    # never asked about. That is the #618/#653/#658 definition-without-its-
+    # consumer shape, and a suite that supplies the argument itself can never
+    # fail for it. Deliberately WEAK and source-level: it proves the argument
+    # is POSITIONED at the live call site, never that a count was right.
+    # Needles are assembled at runtime so this test cannot match its own source.
+    src = Path(__file__).read_text(encoding="utf-8")
+    call_at = src.find("s = " + "render_provider_health(\n")
+    # ANTI-VACUOUS, asserted FIRST: a slice that found nothing satisfies every
+    # "the argument is present" check by having nothing to search.
+    assert_eq(
+        "ANTI-VACUOUS: the production render call site was actually located",
+        str(call_at > 0),
+        "True",
+    )
+    call_site = src[call_at : src.find("\n    )", call_at)]
+    assert_eq(
+        "WIRING: the live call site hands the renderer its terminal count",
+        str(("terminal_" + "sessions=provider_scan.terminal_" + "sessions")
+            in call_site),
+        "True",
     )
 
     # (1) All three real shapes detected, each by its own marker, so a regex
