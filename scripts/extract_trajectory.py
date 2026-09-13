@@ -5752,16 +5752,35 @@ src/commands_config.rs
         and streak.idle_claimed == 5,
     )
     streak_render = render_productivity(streak)
+    # SUPERSEDED FIXTURE, updated rather than deleted (Day 148: a fixture
+    # pinning a replaced convention that outlives its replacement converts a
+    # defect into a green invariant). This asserted `"outcome rows above" in
+    # streak_render` until Day 197. That clause was a BARE NEGATIVE -- it
+    # restated which rows the alarm contradicts and said nothing about the
+    # evidence the verdict was computed from -- and #912 replaced it with the
+    # observed-label clause. The half worth keeping is that the line still
+    # names the day and the claimed total.
     assert_true(
-        "the IDLE line names the day, the claimed total, and the rows it contradicts",
+        "the IDLE line names the day, the claimed total, and the evidence it used",
         "day-195" in streak_render
         and "5 success(es)" in streak_render
         and "ZERO task commits" in streak_render
-        and "outcome rows above" in streak_render,
+        and "task commit(s) in this window carry" in streak_render,
     )
+    # SUPERSEDED FIXTURE, and this one is SCOPED rather than merely reworded.
+    # It asserted `"day-194" not in streak_render` over the WHOLE string until
+    # Day 197. Day-194 is now legitimately named by the evidence clause as an
+    # OBSERVED label, so the whole-string form would forbid the very fact the
+    # clause exists to report. The property actually worth guarding is
+    # narrower and survives intact: day-194 must not be named as IDLE. Scoping
+    # to the text before the em dash pins that directly, which is strictly
+    # stronger than the old bare `not in` -- it fails if a committing day is
+    # ever dragged into the alarm half, and cannot be satisfied by the clause
+    # simply going silent.
+    idle_clause = streak_render.split("—")[0]
     assert_true(
-        "a claiming day that DID commit is not dragged into the alarm",
-        "day-194" not in streak_render,
+        "a claiming day that DID commit is not dragged into the alarm half",
+        "day-194" not in idle_clause and "day-195" in idle_clause,
     )
     multi = classify_productivity({193: 1, 194: 2, 195: 5}, {194})
     assert_true(
