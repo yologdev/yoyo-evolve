@@ -5843,6 +5843,88 @@ src/commands_config.rs
         and "REFUSAL" not in no_claims_render,
     )
 
+    print("\n=== observed_label_clause self-tests (Day 197, #912) ===\n")
+
+    # ANTI-VACUOUS, AND IT IS ASSERTED FIRST. Both halves of the join must be
+    # genuinely non-empty in the fixture, or a dead join passes by having
+    # nothing on either side to disagree about — this defect wearing the
+    # opposite sign, and quieter than the bug.
+    artifact = classify_productivity({195: 5}, {196}, 4)
+    assert_true(
+        "ANTI-VACUOUS: the fixture really carries a claims row AND >=1 observed commit",
+        artifact.idle_days == (195,)
+        and artifact.observed_days == (196,)
+        and artifact.observed_commits == 4,
+    )
+
+    # SHAPE 1 — THE ARTIFACT. Claims on day 195, commits labelled day 196. The
+    # clause must NAME the label the window's commits actually carried, so a
+    # reader can tell "no commits at all" from "commits under another label".
+    artifact_render = render_productivity(artifact)
+    assert_true(
+        "artifact shape: the IDLE clause NAMES day-196, the label the commits carried",
+        "day-196" in artifact_render
+        and "4 task commit(s) in this window carry" in artifact_render,
+    )
+    assert_true(
+        "artifact shape: the alarm still names the idle day and its claimed total",
+        "day-195" in artifact_render and "5 success(es)" in artifact_render,
+    )
+
+    # SHAPE 2 — GENUINELY IDLE. No task commits anywhere in the window. The
+    # clause must say THAT, explicitly, and NAME NO DAY — naming a phantom day
+    # is the bare negative this whole change exists to remove. Driven at
+    # `observed_label_clause` directly because it is the RENDERER'S FLOOR:
+    # routed through the classifier this shape resolves to COULD_NOT_CHECK
+    # (the anti-vacuous branch fires first), so the floor is unreachable from
+    # production today and is pinned so a future classifier change cannot emit
+    # an alarm naming a day that was never observed.
+    empty_clause = observed_label_clause((), None)
+    assert_true(
+        "genuinely-idle shape: the clause says there are NO task commits at all",
+        "NO task commits in this window at all" in empty_clause,
+    )
+    assert_true(
+        "genuinely-idle shape: the clause names NO day — never a phantom label",
+        "day-" not in empty_clause,
+    )
+
+    # THE TWO SHAPES ARE NEVER FOLDED INTO ONE SENTENCE. Different facts,
+    # different remedies.
+    assert_true(
+        "the two shapes render different sentences, never one hedged clause",
+        observed_label_clause((196,), 4) != empty_clause,
+    )
+
+    # TABLE: the span form, the singular form, and the unknown-count form.
+    assert_eq(
+        "a single observed label renders bare, with no ..span and no distinct count",
+        observed_label_clause((196,), 4),
+        "the 4 task commit(s) in this window carry day-196",
+    )
+    assert_eq(
+        "several observed labels render as first..last plus a DISTINCT count",
+        observed_label_clause((183, 190, 197), 61),
+        "the 61 task commit(s) in this window carry day-183..day-197 (3 distinct)",
+    )
+    assert_eq(
+        "an unknown commit count keeps its own name rather than rendering as a literal 0",
+        observed_label_clause((196,), None),
+        "the task commits in this window carry day-196",
+    )
+
+    # NEAR-MISS GUARD — THE ENTIRE REGRESSION SURFACE. Every session that is
+    # NOT idle renders on this path, so it is asserted as a WHOLE STRING with
+    # `==` against output captured from the pre-change code (commit 15fac133),
+    # never a substring check: the evidence clause must reach the IDLE line and
+    # NOTHING ELSE.
+    assert_eq(
+        "near-miss: a healthy window renders BYTE-IDENTICALLY to the pre-change code",
+        render_productivity(classify_productivity({194: 4, 195: 2}, {194, 195}, 6)),
+        "## Productivity\nAll 2 claiming day(s) produced >=1 task commit. "
+        "Says work LANDED, never that it was GOOD.",
+    )
+
     # The join key is the DAY NUMBER. Session dir stamps are written at audit
     # PUSH time and commit subjects carry SESSION_TIME from the start, so the
     # two never match and must never be compared.
