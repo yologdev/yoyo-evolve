@@ -2312,6 +2312,13 @@ class Productivity:
     idle_claimed: int = 0
     claiming_days: int = 0
     days_observed: int = 0
+    # The EVIDENCE half (Day 197, #912). `days_observed` is a bare count and so
+    # cannot tell a reader WHICH labels the window's commits carried -- which is
+    # the one fact that separates a real idle day from a window too narrow to
+    # have seen it. `observed_commits` is None when the caller did not supply a
+    # count; absence keeps its own name rather than rendering as a literal 0.
+    observed_days: tuple[int, ...] = ()
+    observed_commits: int | None = None
 
 
 def claims_by_day(outcomes: list[dict]) -> dict[int, int]:
@@ -2336,8 +2343,53 @@ def claims_by_day(outcomes: list[dict]) -> dict[int, int]:
     return claims
 
 
+def observed_label_clause(
+    observed_days: tuple[int, ...], observed_commits: int | None
+) -> str:
+    """Pure: what day labels did the git window's task commits ACTUALLY carry?
+
+    TWO SHAPES, NEVER FOLDED INTO ONE SENTENCE -- they are different facts
+    with different remedies, and an IDLE line that cannot tell them apart is
+    asserting a bare negative:
+
+      * commits exist under other labels -> NAME THE SPAN, so a reader can see
+        how far back the window reaches. A window carrying only `day-196`
+        cannot prove `day-195` idle; one carrying `day-183..day-197` can.
+      * no task commits at all -> say THAT, explicitly, rather than naming a
+        phantom day.
+
+    The span is rendered as first..last plus a DISTINCT COUNT rather than a
+    full list, for two reasons: the 2-line cap (14 labels spelled out is a
+    paragraph), and because the count is what makes the span honest -- a
+    reader seeing `day-183..day-197 (14 distinct)` can tell 15 numbers span 14
+    present labels and that the IDLE line names the missing one.
+
+    REACHABILITY, STATED RATHER THAN IMPLIED: routed through
+    `classify_productivity`, the empty shape resolves to COULD_NOT_CHECK and
+    never reaches an IDLE line, because that classifier's anti-vacuous branch
+    fires first. The empty clause is kept as the RENDERER'S FLOOR so a
+    hand-built `Productivity` -- or a future classifier change -- cannot emit
+    an alarm naming a phantom day. It is a floor, not a live branch, and
+    calling it coverage would be the over-claim this reader exists to avoid.
+    """
+    if not observed_days:
+        return "there are NO task commits in this window at all"
+    if len(observed_days) == 1:
+        span = f"day-{observed_days[0]}"
+    else:
+        span = (
+            f"day-{observed_days[0]}..day-{observed_days[-1]} "
+            f"({len(observed_days)} distinct)"
+        )
+    if observed_commits is None:
+        return f"the task commits in this window carry {span}"
+    return f"the {observed_commits} task commit(s) in this window carry {span}"
+
+
 def classify_productivity(
-    day_claims: dict[int, int], days_with_task_commits: set[int]
+    day_claims: dict[int, int],
+    days_with_task_commits: set[int],
+    task_commit_count: int | None = None,
 ) -> Productivity:
     """Pure: does every day that CLAIMED a success have a task commit?
 
@@ -2365,12 +2417,15 @@ def classify_productivity(
             days_observed=0,
             claiming_days=sum(1 for n in day_claims.values() if n > 0),
         )
+    observed = tuple(sorted(days_with_task_commits))
     claiming = {day: n for day, n in day_claims.items() if n > 0}
     if not claiming:
         return Productivity(
             state=PRODUCTIVITY_NO_CLAIMS,
             claiming_days=0,
             days_observed=len(days_with_task_commits),
+            observed_days=observed,
+            observed_commits=task_commit_count,
         )
     idle = sorted(day for day in claiming if day not in days_with_task_commits)
     if idle:
@@ -2380,11 +2435,15 @@ def classify_productivity(
             idle_claimed=sum(claiming[day] for day in idle),
             claiming_days=len(claiming),
             days_observed=len(days_with_task_commits),
+            observed_days=observed,
+            observed_commits=task_commit_count,
         )
     return Productivity(
         state=PRODUCTIVITY_OK,
         claiming_days=len(claiming),
         days_observed=len(days_with_task_commits),
+        observed_days=observed,
+        observed_commits=task_commit_count,
     )
 
 
@@ -2428,11 +2487,11 @@ def render_productivity(prod: Productivity) -> str:
         )
     if prod.state == PRODUCTIVITY_IDLE:
         days = ", ".join(f"day-{d}" for d in prod.idle_days)
+        evidence = observed_label_clause(prod.observed_days, prod.observed_commits)
         return (
             "## Productivity\n"
             f"IDLE: {days} claimed {prod.idle_claimed} success(es) and produced "
-            f"ZERO task commits — the outcome rows above report those days as "
-            f"successes, and they shipped nothing."
+            f"ZERO task commits — {evidence}."
         )
     return (
         "## Productivity\n"
@@ -3101,7 +3160,7 @@ def main() -> int:
     # but is not trajectory DATA and must not suppress the global
     # "(no trajectory data yet)" state below.
     productivity = classify_productivity(
-        claims_by_day(outcomes), {day for day, _ in tasks}
+        claims_by_day(outcomes), {day for day, _ in tasks}, len(tasks)
     )
     s = render_productivity(productivity)
     productivity_unknown = bool(s) and productivity.state == PRODUCTIVITY_COULD_NOT_CHECK
