@@ -5031,10 +5031,20 @@ src/commands_config.rs
     # is the same fabrication one clause over. Updated, not deleted: a fixture
     # pinning a superseded convention that outlives its replacement converts a
     # defect into a green invariant (Day 148).
+    # SUPERSEDED EXPECTATION, updated rather than deleted (Day 197). This row
+    # used to want `...3 provider error hit(s).` with nothing after it; the hit
+    # branch now always carries the survived-vs-died clause, and the `== 0`
+    # shape below IS the actionable reading this task exists to surface. The
+    # PROPERTY under test is unchanged and is the reason the row survives: with
+    # an empty `streams` the sentence must name NO stream. Asserted as a WHOLE
+    # string rather than a `contains`, so a stream clause leaking back in still
+    # reddens it.
     assert_eq(
         "OK with hits names no stream when the caller recorded none",
         render_provider_health(7, 3, AUDIT_DIR_OK),
-        "## Provider/API health\n7 sessions, 3 provider error hit(s).",
+        "## Provider/API health\n7 sessions, 3 provider error hit(s). "
+        "0 session(s) ended on a terminal give-up — every hit above was "
+        "retried (survived, not died).",
     )
     assert_eq(
         "OK with no hits says what was READ, never that the provider was fine",
@@ -5056,9 +5066,16 @@ src/commands_config.rs
         "no session directories, so nothing was scanned. This is not 'no "
         "provider errors'.",
     )
+    # SUPERSEDED EXPECTATION, updated rather than deleted (Day 197), same
+    # reason as the row above. The PROPERTY under test is the DEFAULT argument
+    # list staying reachable — `terminal_sessions` defaults to 0, so this row
+    # is also the one that pins the default's own rendered shape.
     assert_eq(
         "default state argument keeps every existing call site reachable",
-        render_provider_health(4, 1), "## Provider/API health\n4 sessions, 1 provider error hit(s).",
+        render_provider_health(4, 1),
+        "## Provider/API health\n4 sessions, 1 provider error hit(s). "
+        "0 session(s) ended on a terminal give-up — every hit above was "
+        "retried (survived, not died).",
     )
 
     # The I/O half must hand back NO path for the two refusals — the whole of
