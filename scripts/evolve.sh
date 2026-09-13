@@ -1874,6 +1874,37 @@ work_state_fingerprint() {
         "$(printf '%s' "$diff" | cksum)"
 }
 
+# task_landed_changes PRE_SHA — did the task leave any committed change behind?
+# Prints "yes" or "no"; returns non-zero when git could not answer, and the
+# caller MUST treat that as its own state, never as "no changes": a task that
+# cannot be measured is not a task that did nothing.
+#
+# Day 195 (2026-09-11): the LLM provider refused every call for two days. The
+# impl agent exited 1 having changed nothing; build+test passed on the untouched
+# tree (trivially); the evaluator was refused too and produced no verdict; the
+# fail-open accept fired; and gasp_task_result recorded "promoted" with a
+# passing eval. Five sessions, 5/5 promoted, $0.00, zero task commits — plus
+# two on Day 194. Every headline signal said success while the only honest
+# number was the dollar figure. Nothing between the impl agent and the promoted
+# verdict ever asked whether a diff existed. This is that question. It is the
+# rule the evaluator already applies when it runs ("empty diff -> FAIL", the
+# #763..#789 receipts); it just no longer depends on the evaluator being able
+# to run.
+task_landed_changes() {
+    local pre="$1" head rc
+    head=$(git rev-parse HEAD 2>/dev/null) || return 1
+    if [ "$head" = "$pre" ]; then printf 'no'; return 0; fi
+    # HEAD moved, but a moved HEAD can still carry an empty tree diff (a commit
+    # that added and then removed the same lines). --quiet: 0 = identical,
+    # 1 = differs, anything else = git could not answer.
+    git diff --quiet "$pre" HEAD 2>/dev/null; rc=$?
+    case $rc in
+        0) printf 'no' ;;
+        1) printf 'yes' ;;
+        *) return 1 ;;
+    esac
+}
+
 safety_commit() {
     local msg="$1" staged_protected commit_out
     git add -A 2>/dev/null || true
@@ -2422,6 +2453,25 @@ BFIXEOF
     EVAL_OVERRIDE_REASON=""  # set when a Checked FAIL overrides a summary PASS
     UNVERIFIED_REASON=""
     UNVERIFIED_FEEDBACK=""
+
+    # ── Empty-diff gate: nothing landed is not a promotion ──
+    # Sits AFTER the safety commit (green uncommitted work has been committed
+    # by now, so an empty diff here means the task genuinely produced nothing)
+    # and BEFORE the evaluator (there is nothing to evaluate — and an evaluator
+    # that cannot run fails OPEN, which is exactly how Day 195's empty patches
+    # became promoted ones). Three outcomes, none folded into another: the
+    # measurement failing is its own state and proceeds to the evaluator on
+    # the raw diff rather than reading as "no changes" or as a pass.
+    if [ "$TASK_OK" = true ]; then
+        if ! LANDED=$(task_landed_changes "$PRE_TASK_SHA"); then
+            echo "    WARNING: could not determine whether Task $TASK_NUM landed changes (git failed) — proceeding to the evaluator on the raw diff."
+        elif [ "$LANDED" = no ]; then
+            TASK_OK=false
+            REVERT_CLASS=" (no changes landed)"
+            REVERT_REASON="No changes landed: HEAD is still at PRE_TASK_SHA ${PRE_TASK_SHA:0:8} after the implementation agent (exit code ${TASK_EXIT:-unknown}). An empty diff is not a promotion: there is nothing to evaluate, so the evaluator was not run, and this task counts as NOT succeeded. Day 195 recorded five of these as promoted patches with a passing eval."
+            echo "    Task $TASK_NUM: NO CHANGES LANDED (impl agent exit ${TASK_EXIT:-unknown}; diff ${PRE_TASK_SHA:0:8}..HEAD is empty). Not a promotion — skipping the evaluator."
+        fi
+    fi
     while [ "$TASK_OK" = true ] && [ "$EVAL_ATTEMPT" -lt "$MAX_EVAL_ATTEMPTS" ]; do
         EVAL_ATTEMPT=$((EVAL_ATTEMPT + 1))
 

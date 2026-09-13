@@ -453,5 +453,44 @@ check "expiry: empty age keeps"               "$(expires '' 14)" "no"
 check "expiry: non-numeric age keeps"         "$(expires abc 14)" "no"
 rm -f "$FIXTURE"
 
+# ── empty-diff gate (Day 195: 5/5 promoted, 0 task commits) ─────────────
+# Extracts the REAL decision function and drives it against a scratch git
+# repo, never this one. The block that consumes it is inline glue; a weak
+# source-level guard below pins that the glue still calls it.
+TL_FN=$(awk '/^task_landed_changes\(\) \{/,/^\}/' "$SCRIPT")
+if require "task_landed_changes extracted" "$TL_FN"; then
+    tl_case() { # $1 = untouched | committed | moved-empty
+        ( set -uo pipefail
+          eval "$TL_FN"
+          d=$(mktemp -d) && cd "$d" || exit 1
+          git init -q . && git config user.email t@t && git config user.name t
+          echo a > f && git add f && git commit -qm base
+          pre=$(git rev-parse HEAD)
+          case "$1" in
+            committed)   echo b >> f && git commit -qam change ;;
+            moved-empty) git commit -q --allow-empty -m nothing ;;
+          esac
+          out=$(task_landed_changes "$pre"); rc=$?
+          printf '%s/%s' "$out" "$rc"
+          cd / && rm -rf "$d"
+        ) 2>/dev/null | tail -1
+    }
+    check "landed: untouched tree -> no"                "$(tl_case untouched)"   "no/0"
+    check "landed: a real commit -> yes"                "$(tl_case committed)"   "yes/0"
+    # HEAD moved but the tree did not: still nothing to promote.
+    check "landed: HEAD moved, empty tree diff -> no"   "$(tl_case moved-empty)" "no/0"
+    # Could not measure. Must be its own state: non-zero and NO answer printed,
+    # so a caller cannot mistake it for "no changes".
+    TL_FAIL=$( ( set -uo pipefail; eval "$TL_FN"; git() { return 128; }
+                 task_landed_changes deadbeef; printf '/%s' "$?" ) 2>/dev/null )
+    check "landed: git failure -> non-zero, prints nothing" "$TL_FAIL" "/1"
+    # Weak source-level guard: the gate calls the function on PRE_TASK_SHA and
+    # sets TASK_OK=false on "no". Proves the wiring is PRESENT, not that it fires.
+    check "landed: gate is wired before the evaluator" \
+        "$(grep -c 'LANDED=$(task_landed_changes "$PRE_TASK_SHA")' "$SCRIPT")" "1"
+    check "landed: gate refuses on no" \
+        "$(awk '/LANDED=\$\(task_landed_changes/,/^    fi$/' "$SCRIPT" | grep -c 'TASK_OK=false')" "1"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
