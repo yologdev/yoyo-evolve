@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual state of the code to understand both failures precisely.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (7ms)
+ ✓ (93ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+Two concrete defects. Let me read the actual code for both.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def collect_provider_er…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def render_provider_hea… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: two concrete defects to fix. Let me read the exact render output and the test block I added.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1638,1700p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "collect_provider_errors… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5900,6080p' scripts/extr… ✓ (5ms)
+  3 tools completed in 2.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6080,6160p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^def session_sort_key" … ✓ (4ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.1s (2 ✓)
+
+Both defects are now precisely located. Before writing, let me verify the fixture would actually discriminate — shipping a second test that cannot fail is the exact defect here.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (52ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The probe confirms the fixture does discriminate at 11 sessions. Now the surgical edits — let me get exact line boundaries.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "The lexicographic trap … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6005,6044p' scripts/extr… ✓ (4ms)
+  2 tools completed in 2.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the surgical replacement of the first fixture block (lines 6005–6043) by line number:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (79 lines) ✓ (33ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now defect 1 — the zero-session assertion greps for wording that does not exist:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "the zero-session branch… ✓ (3ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6126,6148p' scripts/extr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (54 lines) ✓ (231ms)
+  2 tools completed in 11.6s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

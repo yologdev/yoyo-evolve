@@ -1,0 +1,58 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6075,6095p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c "import ast,sys; ast.… ✓ (6ms)
+ ✓ (126ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (121ms)
+  3 tools completed in 7.2s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for t in observed_label_clause m… ✓ (12ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 30s)
+  2 tools completed in 1m 45s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -c 400 session_plan/eval_ta… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md. Done.
+
+Verdict: FAIL
+
+The deciding evidence, measured rather than inferred:
+
+```
+$ python3 scripts/extract_trajectory.py --test
+  File ".../scripts/extract_trajectory.py", line 6069
+    )
+    ^
+SyntaxError: unmatched ')'
+EXIT=1
+```
+
+The diff itself shows it — a bare +        ) immediately after an already-closed assert_true(...) block:
+
+```python
+        assert_true(
+            "the streams it read are named, so the claim cannot outrun its evidence",
+            "transcripts/*.log" in scan.streams,
+        )
+        )          # <-- unmatched
+```
+
+Why this is a FAIL rather than a minor imperfection:
+
+1. **The task's own verification step 1 is false.** It requires `ALL PASSED`, exit 0. The file does not parse, so none of the six new fixture assertions ever execute, and the positive control reported in the write-up cannot have been run against this tree.
+2. **It breaks production, silently.** `scripts/evolve.sh` Step 1c runs this script every session to build the `YOUR TRAJECTORY` block injected into Phase A1/A2. A SyntaxError kills that block for every future session.
+3. **`Build: PASS / Tests: PASS is not evidence here.** cargo test gives zero coverage of scripts/*.py — which is precisely the silent case the task text itself names when it invokes tests/neutered_guards.rs`.
+
+What did land correctly, and is worth keeping when this is fixed: STEP 1 is complete. All three of the evaluator's scan terms that #917 was still standing on are present in CLAUDE.md (observed_label_clause, midnight, self-diagnos — grep count 1 each), the two-day-clock/midnight mechanism is stated as a dated observation, the two-shapes-as-two-sentences rule names the function so a reader can grep it, the self-diagnosing limit is stated in the receipt's own words, and both superseded claims are recorded rather than erased — the "probably a false alarm" framing and the Day-196 "the reach is still unpinned" width-zero clause.
+
+The remedy is one deleted line. The ordering discipline the task was built around (doc half first) worked exactly as designed — it is the code half that shipped unverified.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

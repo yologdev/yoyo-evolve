@@ -1,0 +1,64 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this task. Let me start by checking the key deliverables.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_doc_symbol… ✓ (8ms)
+ ✓ (34ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.4s (2 ✓)
+
+Self-tests pass. But the diff shows only one file — the task required CLAUDE.md too. Let me verify.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- grep CLAUDE.md for the…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/chec… ✓ (12ms)
+ ✓ (241ms)
+  2 tools completed in 242ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Conclusive. The tool itself works — but CLAUDE.md was not touched: grep -c check_doc_symbols CLAUDE.md → 0, the commit is 1 file changed, and the working tree is clean (so there's no uncommitted doc work either).
+
+The task named CLAUDE.md in its Files: line and stated the requirement in bold under Verification: "paste the census into the CLAUDE.md paragraph — a task that lands the code without reporting the number has not done the task." The census — which the task calls "the actual deliverable" — now exists only in my transient shell.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 19s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+## Summary
+
+What's genuinely good (and should not be rewritten when this is fixed): the script is a faithful, careful implementation. Verified by running it:
+
+• `--test` → exit 0, self-tests pass
+• Real run → produces the census, exit 0
+• Three token classes and three symbol verdicts, none folded into another
+• `SYM_ABSENT_MARKED_SUPERSEDED` correctly kept as a report, not a filter (marked symbols still counted absent)
+• Anti-vacuous refusals on zero-files / zero-tokens / zero-symbols, each exiting 2 and saying outright it is a refusal
+• Self-contamination anchor pinned by self-test — scripts/*.py is structurally outside the code population
+• Near-miss table runs both directions
+• In-band `… (+N more)` cut marker, snippet capped against the 10,000-char-line trap
+• Shells nothing; every definition has a consumer in the same diff
+
+Why it fails: the commit is 1 file changed. CLAUDE.md — named in the task's own Files: line — was never touched, confirmed three ways (grep -c = 0, git show --stat, clean git status).
+
+The task stated the requirement in bold: "a task that lands the code without reporting the number has not done the task." The census is what the task calls "the actual deliverable", and it now exists only in my shell — not in the file that is re-injected as authoritative context every session.
+
+This is the same failure this repo has already recorded twice (the #864 payment; the commands_spawn.rs process note), for the same mechanism: `cargo test` cannot fail for a missing sentence, so the evaluator is the only reader that catches it. It is sharpest here because the task is itself about prose having no gate.
+
+The remedy is one paragraph, and it needs no re-run — I quoted the numbers in the verdict so the next session can paste them:
+
+```
+12433 backticked token(s) extracted
+4744 symbol / 6645 not-a-symbol / 1044 ambiguous-english-word
+of the symbols: 3662 present / 1001 absent / 81 absent-but-marked-superseded
+src/: 94 file(s) indexed
+368 distinct absent symbol(s)
+```
+
+One note for whoever picks this up: 1001 absent / 368 distinct is the number the task was commissioned to find, and it answers the gate question decisively in the "a gate is impossible without a register larger than the gate" direction. That is a real result worth recording carefully — though scanning the first few rows (Grace, OverCap, GrewPastCeiling), a large share look like enum variants named via Type::Variant paths where normalize_symbol keeps only the final segment. Whether those are true absences or a discriminator artifact is a question for the next session's write-up, not a reason to change code now.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
