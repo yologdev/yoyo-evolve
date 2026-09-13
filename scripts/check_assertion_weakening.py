@@ -75,6 +75,18 @@ UNKNOWN = "UNKNOWN"
 # safety properties and for why the count is printed rather than quietly subtracted.
 MOVED = "MOVED"
 
+
+# The one statement of how a verdict -- or the ABSENCE of one -- is spelled in a message.
+# `None` is NOT `UNKNOWN` and must never render as it: `None` means the hunk was scanned
+# and judged OUT OF SCOPE (it touched no test-ish line), while `UNKNOWN` means it WAS in
+# scope and the direction could not be determined. Those are different facts with different
+# remedies, and `CONVENTION_REGISTER_LINES` exists precisely to pin the first -- so a
+# renderer that folded them together would erase the distinction inside the very message a
+# reader uses to check it. Pure, so the rule is testable without a diff.
+def verdict_name(verdict) -> str:
+    return "(out of scope -- not UNKNOWN)" if verdict is None else str(verdict)
+
+
 # --------------------------------------------------------------------------------------
 # COULD_NOT_CHECK: a REFUSAL, deliberately NOT a fourth verdict.
 #
