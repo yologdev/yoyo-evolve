@@ -253,11 +253,11 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
-        "                    agent. NOT a sandbox — a sub_agent builds its own bash. File"
+        "                    agent. A dispatched sub_agent inherits that removal. NOT a"
     );
     let _ = writeln!(
         s,
-        "                    tools remain — use --read to stop writes"
+        "                    sandbox: file tools remain — use --read to stop writes"
     );
     let _ = writeln!(
         s,

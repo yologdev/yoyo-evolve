@@ -1885,14 +1885,14 @@ pub(crate) fn restricted_mode_note(effects: &RestrictedEffects, plain: bool) -> 
             "\n{bullet} command-running tools removed from this agent: {removed} (file tools remain; use --read to stop writes)"
         ));
         msg.push_str(&format!(
-            "\n{bullet} NOT a sandbox: a dispatched sub_agent builds its own bash, so command execution is still one sub_agent hop away (#887)"
+            "\n{bullet} NOT a sandbox: sub_agent is not removed, but a dispatched child inherits this disallow list, so it cannot rebuild {removed}"
         ));
     } else {
         msg.push_str(&format!(
             "\n{bullet} command-running tools removed from this agent — {removed} (file tools remain; use --read to stop writes)"
         ));
         msg.push_str(&format!(
-            "\n{bullet} NOT a sandbox — a dispatched sub_agent builds its own bash, so command execution is still one sub_agent hop away (#887)"
+            "\n{bullet} NOT a sandbox — sub_agent is not removed, but a dispatched child inherits this disallow list, so it cannot rebuild {removed}"
         ));
     }
 
@@ -5514,6 +5514,129 @@ command = "server-two"
             assert!(!note.contains('🔒'), "marker glyph in plain output: {note}");
             assert!(!note.contains('—'), "em dash in plain output: {note}");
             assert!(note.is_ascii(), "plain output must be plain ASCII: {note}");
+        }
+    }
+
+    /// Does the note's removal claim agree with `RESTRICTED_REMOVED_TOOLS`?
+    ///
+    /// **Why this guard exists (Day 197).** Until this test landed, the note
+    /// carried a `(#887)` clause telling the user a dispatched `sub_agent`
+    /// "builds its own bash, so command execution is still one sub_agent hop
+    /// away". That stopped being true on Day 189: slice 2 passed
+    /// `&config.disallowed_tools` into `sub_agent_child_tools`, so the child
+    /// inherits the parent's disallow list and cannot rebuild `bash`. A
+    /// doc-side repair of a doc/code mismatch deletes the only detector while
+    /// leaving everything demonstrably honest (Day 164), so the corrected
+    /// claim is tied to the const here rather than merely re-typed.
+    ///
+    /// **STATED LIMIT:** this proves the note is *consistent with*
+    /// `RESTRICTED_REMOVED_TOOLS`, never that the confinement it describes is
+    /// *correct*. Presence of a name is mechanically checkable; the soundness
+    /// of a fence is not — the same limit `tests/blind_round_grades.rs` states
+    /// about grades.
+    #[test]
+    fn restricted_note_claims_removal_of_exactly_the_const() {
+        use std::path::Path;
+
+        // Whole tokens, never `contains`: `sub_agent` contains `agent`, and
+        // these names are prefix-prone, so a substring scan would read a line
+        // that only mentions `sub_agent` as naming `agent`. Byte-indexed on
+        // purpose and panic-free — `get` on a missing neighbour yields the
+        // boundary answer, and a multi-byte continuation byte (the note
+        // carries `•` and `—`) is neither alphanumeric nor `_`, so it reads as
+        // a boundary too.
+        fn names_whole_token(hay: &str, needle: &str) -> bool {
+            hay.match_indices(needle).any(|(start, m)| {
+                let bytes = hay.as_bytes();
+                let left_ok = bytes
+                    .get(start.wrapping_sub(1))
+                    .is_none_or(|b| !b.is_ascii_alphanumeric() && *b != b'_');
+                let right_ok = bytes
+                    .get(start + m.len())
+                    .is_none_or(|b| !b.is_ascii_alphanumeric() && *b != b'_');
+                left_ok && right_ok
+            })
+        }
+
+        // ANTI-VACUOUS, asserted FIRST: an empty const would satisfy every
+        // "every name is claimed" loop below by having nothing to count, which
+        // is this defect wearing the opposite sign and quieter than the bug.
+        assert!(
+            !RESTRICTED_REMOVED_TOOLS.is_empty(),
+            "the const is the authority this test reads; an empty one makes \
+             every assertion below vacuous"
+        );
+
+        let fenced = restricted_mode_effects(&[], Some(Path::new("/work/proj")));
+        let already = restricted_mode_effects(&["/a".to_string()], Some(Path::new("/work/proj")));
+        let unresolved = restricted_mode_effects(&[], None);
+
+        for effects in [&fenced, &already, &unresolved] {
+            for plain in [false, true] {
+                let note = restricted_mode_note(effects, plain);
+                assert!(!note.is_empty(), "the note must render something to check");
+
+                // The line that makes the removal CLAIM. Scoping to it is what
+                // lets the note MENTION `sub_agent` — it must, to say the child
+                // inherits the removal — without that mention reading as a
+                // claim that `sub_agent` itself was removed.
+                let removed_line = note
+                    .lines()
+                    .find(|l| l.contains("removed from this agent"))
+                    .unwrap_or_else(|| panic!("no removal-claim line in the note: {note}"));
+
+                // Direction 1: every name in the const is claimed removed, so
+                // growing the const without naming it here fails.
+                for tool in RESTRICTED_REMOVED_TOOLS {
+                    assert!(
+                        names_whole_token(removed_line, tool),
+                        "`{tool}` is in RESTRICTED_REMOVED_TOOLS but the removal line \
+                         does not name it: {removed_line}"
+                    );
+                }
+
+                // Direction 2, and the half that matters, since a discriminator
+                // tested only on the side that fires is vacuous green: a tool
+                // the const does NOT remove must never be claimed as removed.
+                // `sub_agent` is the live example — it stays available on
+                // purpose, so claiming otherwise would be a FALSE SECURITY
+                // CLAIM, the one direction that must never happen.
+                for kept in ["sub_agent", "read_file", "write_file", "web_search"] {
+                    assert!(
+                        !RESTRICTED_REMOVED_TOOLS.contains(&kept),
+                        "fixture drift: `{kept}` is now in the const, so it is no longer \
+                         a valid must-not-be-claimed example"
+                    );
+                    assert!(
+                        !names_whole_token(removed_line, kept),
+                        "`{kept}` is not in RESTRICTED_REMOVED_TOOLS but the removal line \
+                         claims it was removed: {removed_line}"
+                    );
+                }
+
+                // PRESENCE, not absence, and deliberately so (Day 191): a
+                // `!contains("builds its own bash")` would be satisfied
+                // identically by a note that renders nothing, making it a
+                // boundary pin rather than a guard. Asserting what the note
+                // MUST say is what reddens when the stale wording returns.
+                let sandbox_line = note
+                    .lines()
+                    .find(|l| l.contains("NOT a sandbox"))
+                    .unwrap_or_else(|| panic!("no sandbox-bound line in the note: {note}"));
+                assert!(
+                    sandbox_line.contains("inherits"),
+                    "the note must say a dispatched child INHERITS the disallow list — \
+                     until Day 197 it said the child builds its own bash, which stopped \
+                     being true on Day 189: {sandbox_line}"
+                );
+                for tool in RESTRICTED_REMOVED_TOOLS {
+                    assert!(
+                        names_whole_token(sandbox_line, tool),
+                        "the inheritance clause must name what the child cannot rebuild, \
+                         read from the const rather than re-typed: {sandbox_line}"
+                    );
+                }
+            }
         }
     }
 
