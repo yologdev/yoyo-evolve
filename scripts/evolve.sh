@@ -1508,13 +1508,21 @@ $SELF_ISSUES
 ${RECENT_REVERTS:+
 === RECENTLY REVERTED (auto-filed receipts, not your backlog) ===
 Tasks the verification gate reverted. Nobody wrote these — the harness files them.
-This block lists titles only. The title carries the revert CLASS, and the two
-classes want OPPOSITE responses — do not apply one to the other:
+This block lists titles only. The title carries the revert CLASS, and the four
+classes want DIFFERENT responses — do not apply one to another:
   "Task reverted: X"
       the task was too large or wrong. Plan it SMALLER than last time.
   "Task reverted (no progress — likely blocked, NOT too large): X"
       the agent exited without a diff. A smaller version stalls identically.
       Name the blocker BEFORE re-planning anything like it.
+  "Task reverted (no changes landed): X"
+      the agent produced no commits at all — most often the provider refused
+      every call. Check Provider/API health in YOUR TRAJECTORY before
+      re-planning; the task itself is not the problem, so neither shrink nor
+      re-scope it.
+  "Task reverted (could not be measured): X"
+      git could not read the task diff and the evaluator did not judge it. The
+      runner was broken, not the task. Do not re-scope; re-plan it as is.
 The receipt BODY holds what a title cannot: the evaluator verdict with its
 per-check reasons, the error details, and the original task spec. If you are about
 to plan anything resembling one of these, read it first — it usually names the exact
@@ -1714,6 +1722,10 @@ TASK SIZING RULES — follow these strictly:
   "(no progress — likely blocked, NOT too large)" — shrinking it changes nothing, because the last
   attempt produced no diff at all. Read the receipt body (gh issue view <number> — not --comments, which hides it), then
   either name the blocker in the task file and attack that, or plan something else.
+  "(no changes landed)" — the agent produced no commits at all, usually because the provider refused every
+  call. Check Provider/API health above before re-planning; the task itself is not the problem.
+  "(could not be measured)" — git could not read the diff and the evaluator did not judge it; the runner
+  was broken, not the task. Re-plan it as is.
 - Prefer tasks that add/modify one thing and can be verified with cargo build && cargo test.
 
 Also create session_plan/issue_responses.md with your planned response for each issue:
@@ -1875,29 +1887,41 @@ work_state_fingerprint() {
 }
 
 # task_landed_changes PRE_SHA — did the task leave any committed change behind?
-# Prints "yes" or "no"; returns non-zero when git could not answer, and the
-# caller MUST treat that as its own state, never as "no changes": a task that
-# cannot be measured is not a task that did nothing.
+# Prints "yes" or "no"; returns non-zero (printing nothing) when git could not
+# answer, and the caller MUST treat that as its own state, never as "no
+# changes": a task that cannot be measured is not a task that did nothing.
+# "no" covers both HEAD unmoved and HEAD moved with an empty tree diff; the
+# caller words its reason on the fact established (the committed diff is
+# empty), never on which of the two produced it.
 #
-# Day 195 (2026-09-11): the LLM provider refused every call for two days. The
-# impl agent exited 1 having changed nothing; build+test passed on the untouched
-# tree (trivially); the evaluator was refused too and produced no verdict; the
-# fail-open accept fired; and gasp_task_result recorded "promoted" with a
-# passing eval. Five sessions, 5/5 promoted, $0.00, zero task commits — plus
-# two on Day 194. Every headline signal said success while the only honest
-# number was the dollar figure. Nothing between the impl agent and the promoted
-# verdict ever asked whether a diff existed. This is that question. It is the
-# rule the evaluator already applies when it runs ("empty diff -> FAIL", the
-# #763..#789 receipts); it just no longer depends on the evaluator being able
-# to run.
+# Measured 2026-09-10/11 (graph, audit-log, git log, receipts): the LLM
+# provider refused every call for ~27h across 7 consecutive sessions — 2 on
+# Day 194 from 20:36Z, 5 on Day 195. Each time the impl agent exited 1 having
+# changed nothing; build+test passed on the untouched tree (trivially); the
+# evaluator was refused too and produced no verdict; the fail-open accept
+# fired; and gasp_task_result recorded "promoted" with a passing eval. The
+# dashboard read 5 sessions, 5/5 promoted, $0.00 — the dollar figure was the
+# only honest number (usage records: 0 tokens, is_error true) and zero task
+# commits landed. Nothing between the impl agent and the promoted verdict
+# ever asked whether a diff existed. This is that question. The evaluator
+# already applies it when it runs — its prompt says "If it clearly misses
+# (empty, wrong file, unrelated), write FAIL now", and receipts #763, #765,
+# #782, #787 and #789 are exactly that verdict — so this only stops the rule
+# depending on the evaluator being able to run.
 task_landed_changes() {
-    local pre="$1" head rc
-    head=$(git rev-parse HEAD 2>/dev/null) || return 1
-    if [ "$head" = "$pre" ]; then printf 'no'; return 0; fi
-    # HEAD moved, but a moved HEAD can still carry an empty tree diff (a commit
-    # that added and then removed the same lines). --quiet: 0 = identical,
-    # 1 = differs, anything else = git could not answer.
-    git diff --quiet "$pre" HEAD 2>/dev/null; rc=$?
+    local pre="$1" rc=0
+    # rev-parse FIRST, and the order is load-bearing: outside a git repo
+    # `git diff --quiet A B` exits 1, which would read as "yes, changes
+    # landed" — fail-open toward promotion. No HEAD means "cannot answer".
+    git rev-parse --verify -q HEAD >/dev/null 2>&1 || return 1
+    # --quiet: 0 = identical trees, 1 = they differ, anything else = git could
+    # not answer (bad ref, corrupt object). Captured with `|| rc=$?`, this
+    # file's idiom, so it is safe under set -e in ANY calling context — not
+    # only inside a command substitution, which happens to drop errexit.
+    # stderr is deliberately NOT discarded: on the yes/no paths git prints
+    # nothing, and on the cannot-answer path its message is the only cause
+    # the harness log will ever carry.
+    git diff --quiet "$pre" HEAD || rc=$?
     case $rc in
         0) printf 'no' ;;
         1) printf 'yes' ;;
@@ -1919,7 +1943,7 @@ safety_commit() {
     elif commit_out=$(git commit -m "$msg" 2>&1); then
         echo "    Safety commit created ($msg)"
     else
-        echo "    WARNING: safety commit FAILED — evaluator will see an empty/partial diff:"
+        echo "    WARNING: safety commit FAILED — the tree stays dirty, so the empty-diff gate will NOT read this as a no-op; the evaluator will see an empty/partial diff:"
         echo "$commit_out" | tail -5 | sed 's/^/      /'
         git reset -q 2>/dev/null || true
     fi
@@ -2016,6 +2040,7 @@ for TASK_FILE in session_plan/task_*.md; do
     CHECKPOINT_SECTION=""
     API_ERROR_ABORT=false
 
+    TASK_LOG_TAIL=""   # last lines of the final attempt, for the empty-diff receipt
     for ATTEMPT in 1 2; do
         TASK_PROMPT=$(mktemp)
         cat > "$TASK_PROMPT" <<TEOF
@@ -2161,6 +2186,7 @@ ${FILED_SECTION}"
         fi
 
         # Not interrupted, or no progress, or already retried — proceed
+        TASK_LOG_TAIL=$(tail -n 12 "$TASK_LOG" 2>/dev/null || true)
         rm -f "$TASK_LOG"
         break
     done
@@ -2422,7 +2448,9 @@ BFIXEOF
     # Agents sometimes finish valid work (or get cut off mid-search) without
     # committing. The evaluator only sees COMMITTED changes (git diff
     # PRE_TASK_SHA..HEAD), so green-but-uncommitted work reads as an empty
-    # diff → FAIL → revert (this silently ate multiple sessions, Days 122-124).
+    # diff — which the empty-diff gate below rejects before any evaluator runs
+    # (before that gate the evaluator FAILed it; either way this silently ate
+    # multiple sessions, Days 122-124).
     # Protected-file and build+test checks have already passed at this point;
     # commit on the agent's behalf with the same message it was instructed to
     # use. The evaluator still judges the committed diff on its merits.
@@ -2454,22 +2482,36 @@ BFIXEOF
     UNVERIFIED_REASON=""
     UNVERIFIED_FEEDBACK=""
 
-    # ── Empty-diff gate: nothing landed is not a promotion ──
-    # Sits AFTER the safety commit (green uncommitted work has been committed
-    # by now, so an empty diff here means the task genuinely produced nothing)
-    # and BEFORE the evaluator (there is nothing to evaluate — and an evaluator
-    # that cannot run fails OPEN, which is exactly how Day 195's empty patches
-    # became promoted ones). Three outcomes, none folded into another: the
-    # measurement failing is its own state and proceeds to the evaluator on
-    # the raw diff rather than reading as "no changes" or as a pass.
+    # ── Empty-diff gate: nothing landed is not a promotion (Day 195, 2026-09-11) ──
+    # Sits AFTER the safety commit and BEFORE the evaluator loop: there is
+    # nothing to evaluate, and an evaluator that cannot run fails OPEN, which
+    # is exactly how Day 195's empty patches became promoted ones. Four
+    # states, none folded into another:
+    #   dirty tree — the safety commit did not land the work (it ABORTS on a
+    #     staged protected file and can FAIL outright). That is uncommitted
+    #     green work, NOT "nothing produced": rejecting here would run the
+    #     revert path's reset --hard + clean -fd over it. Proceed as before.
+    #   could not measure — git failed to answer. Its own state: proceed to
+    #     the evaluator, and REMEMBER it (LANDED_UNKNOWN). If the evaluator
+    #     then judges the diff, that is evidence of work and the task may
+    #     promote; if it cannot run either, nothing has established that any
+    #     work exists, and the check after the eval loop refuses to promote.
+    #   no — the committed diff is empty. Not a promotion.
+    #   yes — proceed.
+    LANDED_UNKNOWN=""
     if [ "$TASK_OK" = true ]; then
-        if ! LANDED=$(task_landed_changes "$PRE_TASK_SHA"); then
-            echo "    WARNING: could not determine whether Task $TASK_NUM landed changes (git failed) — proceeding to the evaluator on the raw diff."
+        if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+            echo "    WARNING: uncommitted changes remain after the safety commit — not a no-op; proceeding to the evaluator (it judges the committed diff only)."
+        elif ! LANDED=$(task_landed_changes "$PRE_TASK_SHA"); then
+            LANDED_UNKNOWN=true
+            echo "    WARNING: could not determine whether Task $TASK_NUM landed changes (git failed; see its message above) — proceeding to the evaluator. If it cannot judge the diff either, this task will NOT be promoted."
         elif [ "$LANDED" = no ]; then
             TASK_OK=false
             REVERT_CLASS=" (no changes landed)"
-            REVERT_REASON="No changes landed: HEAD is still at PRE_TASK_SHA ${PRE_TASK_SHA:0:8} after the implementation agent (exit code ${TASK_EXIT:-unknown}). An empty diff is not a promotion: there is nothing to evaluate, so the evaluator was not run, and this task counts as NOT succeeded. Day 195 recorded five of these as promoted patches with a passing eval."
-            echo "    Task $TASK_NUM: NO CHANGES LANDED (impl agent exit ${TASK_EXIT:-unknown}; diff ${PRE_TASK_SHA:0:8}..HEAD is empty). Not a promotion — skipping the evaluator."
+            REVERT_REASON="No changes landed: the committed diff ${PRE_TASK_SHA:0:8}..HEAD ($(git rev-parse --short HEAD 2>/dev/null || echo unknown)) is empty after the implementation and any build-fix agents (last exit code ${TASK_EXIT:-unknown}). An empty diff is not a promotion: there is nothing to evaluate, so the evaluator was not run, and this task counts as NOT succeeded."
+            REVERT_DETAILS="Last agent exit code: ${TASK_EXIT:-unknown}. Tail of the implementation agent log (the cause, e.g. a provider refusal, is usually here):
+${TASK_LOG_TAIL:-not captured}"
+            echo "    Task $TASK_NUM: NO CHANGES LANDED (last agent exit ${TASK_EXIT:-unknown}; diff ${PRE_TASK_SHA:0:8}..HEAD is empty). Not a promotion — skipping the evaluator."
         fi
     fi
     while [ "$TASK_OK" = true ] && [ "$EVAL_ATTEMPT" -lt "$MAX_EVAL_ATTEMPTS" ]; do
@@ -2833,7 +2875,15 @@ $(echo "$CLIPPY_OUT" | tail -30)
                         # gate above would have accepted this task UNVERIFIED a few
                         # attempts later. Stopping earlier must not silently convert
                         # that accept into a `git reset --hard`.
-                        if git diff --quiet "$PRE_TASK_SHA" HEAD 2>/dev/null; then
+                        # Same question the empty-diff gate asks, same function —
+                        # one statement of the rule, three answers. "Could not
+                        # measure" keeps the work (like non-empty) but is
+                        # remembered, so the post-loop check refuses to promote
+                        # an unmeasured diff nobody judged.
+                        if ! NP_LANDED=$(task_landed_changes "$PRE_TASK_SHA"); then
+                            NP_LANDED=unknown; LANDED_UNKNOWN=true
+                        fi
+                        if [ "$NP_LANDED" = no ]; then
                             # Empty diff — the Day 166 case. Nothing to lose.
                             TASK_OK=false
                             REVERT_CLASS=" (no progress — likely blocked, NOT too large)"
@@ -2903,6 +2953,21 @@ $(cat "session_plan/eval_task_${TASK_NUM}.md" 2>/dev/null || echo 'no eval file 
         rm -f "$EVAL_LOG"
     done
     rm -f "${EVAL_LOG:-}" 2>/dev/null
+
+    # An unverified accept is justified by "green build+test on real work".
+    # If the empty-diff gate could not establish that any work exists
+    # (LANDED_UNKNOWN) and the evaluator did not judge the diff either (any
+    # unverified state, including a rendered-no-verdict evaluator), that
+    # justification is gone — this is the Day 195 chain with one more
+    # failure stacked on it. Refuse to promote; the revert path below then
+    # handles it like any other failed task. A verified PASS IS evidence the
+    # diff was read, and promotes as before.
+    if [ "$TASK_OK" = true ] && [ "${LANDED_UNKNOWN:-}" = true ]         && { [ -n "$BUDGET_UNVERIFIED" ] || [ -n "$EVAL_INFRA_WHY" ]; }; then
+        TASK_OK=false
+        REVERT_CLASS=" (could not be measured)"
+        REVERT_REASON="The task diff could not be measured (git failed at the empty-diff gate) and the evaluator did not judge it (${EVAL_INFRA_WHY:-$BUDGET_UNVERIFIED}). Neither the diff nor the evaluator produced evidence that any work exists, so this is not a promotion."
+        echo "    Task $TASK_NUM: diff unmeasured AND evaluator did not judge it — refusing to promote."
+    fi
 
     # Revert task if verification or evaluation failed
     if [ "$TASK_OK" = false ]; then

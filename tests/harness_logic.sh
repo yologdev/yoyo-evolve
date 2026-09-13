@@ -332,6 +332,8 @@ np_step() {
     ( set -uo pipefail
       _FP_NOW="$3"; _DIFF_EMPTY="$4"   # captured OUT: "$3" inside a stub is the STUB's $3
       work_state_fingerprint() { [ "$_FP_NOW" = FAIL ] && return 1; printf '%s' "$_FP_NOW"; }
+      # The block asks task_landed_changes (yes | no | cannot answer), not git directly.
+      task_landed_changes() { case "$_DIFF_EMPTY" in yes) printf 'no';; no) printf 'yes';; *) return 1;; esac; }
       # Intercept only the one git call the block makes; anything else is a bug.
       git() { case "$*" in "diff --quiet"*) [ "$_DIFF_EMPTY" = yes ] && return 0 || return 1;;
                            *) return 0;; esac; }
@@ -351,6 +353,10 @@ if require "no-progress block extracted" "$NP_BLOCK" && [ -n "$NP_MAX" ]; then
     # Empty diff — the Day 166 case. Nothing to keep, so reverting is free.
     check "no-progress: at threshold with an EMPTY diff, revert" \
         "$(np_step $(( NP_MAX - 1 )) same same yes)" "$NP_MAX false none"
+    # Could not measure the diff: keep the work like a non-empty diff (never
+    # reset --hard on a guess) — the post-loop check refuses to PROMOTE it.
+    check "no-progress: at threshold with an UNMEASURABLE diff, keep it UNVERIFIED" \
+        "$(np_step $(( NP_MAX - 1 )) same same fail)" "$NP_MAX true no_progress"
     # Non-empty diff — green work exists. Must NOT convert the harness's
     # fail-open accept into a git reset --hard.
     check "no-progress: at threshold with a NON-EMPTY diff, keep it UNVERIFIED" \
@@ -453,43 +459,105 @@ check "expiry: empty age keeps"               "$(expires '' 14)" "no"
 check "expiry: non-numeric age keeps"         "$(expires abc 14)" "no"
 rm -f "$FIXTURE"
 
-# ── empty-diff gate (Day 195: 5/5 promoted, 0 task commits) ─────────────
-# Extracts the REAL decision function and drives it against a scratch git
-# repo, never this one. The block that consumes it is inline glue; a weak
-# source-level guard below pins that the glue still calls it.
+# ── empty-diff gate (Day 195, 2026-09-11: 5/5 promoted, 0 task commits) ──
+# Extracts the REAL decision function and the REAL gate blocks and drives them
+# with stubs and scratch repos — never restating the logic, never this repo.
 TL_FN=$(awk '/^task_landed_changes\(\) \{/,/^\}/' "$SCRIPT")
 if require "task_landed_changes extracted" "$TL_FN"; then
-    tl_case() { # $1 = untouched | committed | moved-empty
+    tl_case() { # $1 = untouched | committed | moved-empty | bad-ref
         ( set -uo pipefail
+          export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null  # ambient gpgsign etc. must not shape the answer
           eval "$TL_FN"
           d=$(mktemp -d) && cd "$d" || exit 1
           git init -q . && git config user.email t@t && git config user.name t
           echo a > f && git add f && git commit -qm base
           pre=$(git rev-parse HEAD)
+          [ -n "$pre" ] || { printf 'fixture-broken'; exit 1; }   # anti-vacuous: a broken fixture fails as ITSELF
           case "$1" in
             committed)   echo b >> f && git commit -qam change ;;
             moved-empty) git commit -q --allow-empty -m nothing ;;
+            bad-ref)     pre=not-a-ref ;;
           esac
           out=$(task_landed_changes "$pre"); rc=$?
           printf '%s/%s' "$out" "$rc"
           cd / && rm -rf "$d"
         ) 2>/dev/null | tail -1
     }
-    check "landed: untouched tree -> no"                "$(tl_case untouched)"   "no/0"
-    check "landed: a real commit -> yes"                "$(tl_case committed)"   "yes/0"
-    # HEAD moved but the tree did not: still nothing to promote.
-    check "landed: HEAD moved, empty tree diff -> no"   "$(tl_case moved-empty)" "no/0"
-    # Could not measure. Must be its own state: non-zero and NO answer printed,
-    # so a caller cannot mistake it for "no changes".
-    TL_FAIL=$( ( set -uo pipefail; eval "$TL_FN"; git() { return 128; }
-                 task_landed_changes deadbeef; printf '/%s' "$?" ) 2>/dev/null )
-    check "landed: git failure -> non-zero, prints nothing" "$TL_FAIL" "/1"
-    # Weak source-level guard: the gate calls the function on PRE_TASK_SHA and
-    # sets TASK_OK=false on "no". Proves the wiring is PRESENT, not that it fires.
-    check "landed: gate is wired before the evaluator" \
-        "$(grep -c 'LANDED=$(task_landed_changes "$PRE_TASK_SHA")' "$SCRIPT")" "1"
-    check "landed: gate refuses on no" \
-        "$(awk '/LANDED=\$\(task_landed_changes/,/^    fi$/' "$SCRIPT" | grep -c 'TASK_OK=false')" "1"
+    check "landed: untouched tree -> no"                       "$(tl_case untouched)"   "no/0"
+    check "landed: a real commit -> yes"                       "$(tl_case committed)"   "yes/0"
+    check "landed: HEAD moved, empty tree diff -> no"          "$(tl_case moved-empty)" "no/0"
+    # Could not answer: its own state — non-zero and NOTHING printed, so a
+    # caller cannot mistake it for an answer. Each arm that can produce it:
+    check "landed: bad ref -> cannot answer (diff exit 128)"   "$(tl_case bad-ref)"     "/1"
+    TL_NOHEAD=$( ( set -uo pipefail; eval "$TL_FN"; git() { return 128; }
+                   task_landed_changes deadbeef; printf '/%s' "$?" ) 2>/dev/null )
+    check "landed: no HEAD -> cannot answer (rev-parse arm)"   "$TL_NOHEAD" "/1"
+    TL_DIFF128=$( ( set -uo pipefail; eval "$TL_FN"
+                    git() { case "$1" in diff) return 128;; *) return 0;; esac; }
+                    task_landed_changes deadbeef; printf '/%s' "$?" ) 2>/dev/null )
+    check "landed: diff exit 128 -> cannot answer (case arm)"  "$TL_DIFF128" "/1"
+    # The harness runs under set -e. A BARE call (not inside an `if`, which
+    # happens to suppress errexit) must survive the common path, where
+    # `git diff --quiet` exits 1 for a real change.
+    TL_ERREXIT=$( ( export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+                    fnf=$(mktemp) && printf '%s\n' "$TL_FN" > "$fnf"
+                    d=$(mktemp -d) && cd "$d" && git init -q . && git config user.email t@t && git config user.name t \
+                    && echo a > f && git add f && git commit -qm base && pre=$(git rev-parse HEAD) \
+                    && echo b >> f && git commit -qam change \
+                    && bash -c "set -euo pipefail; source '$fnf'; task_landed_changes '$pre'; printf '/%s' \$?"
+                    cd / && rm -rf "$d" "$fnf" ) 2>/dev/null | tail -1 )
+    check "landed: survives set -e on a bare call with a real change" "$TL_ERREXIT" "yes/0"
+
+    # Position, not presence: the gate banner must sit AFTER the impl-agent
+    # safety commit and BEFORE the evaluator loop opener.
+    TL_GATE=$(grep -nF '# ── Empty-diff gate' "$SCRIPT" | head -1 | cut -d: -f1)
+    TL_SAFE=$(grep -nF 'safety_commit "Day $DAY ($SESSION_TIME): $task_title (Task $TASK_NUM)"' "$SCRIPT" | head -1 | cut -d: -f1)
+    TL_EVAL=$(grep -nF 'while [ "$TASK_OK" = true ] && [ "$EVAL_ATTEMPT" -lt "$MAX_EVAL_ATTEMPTS" ]; do' "$SCRIPT" | head -1 | cut -d: -f1)
+    check "gate: sits after the safety commit and before the evaluator" \
+        "$( [ -n "$TL_GATE" ] && [ -n "$TL_SAFE" ] && [ -n "$TL_EVAL" ] && [ "$TL_SAFE" -lt "$TL_GATE" ] && [ "$TL_GATE" -lt "$TL_EVAL" ] \
+             && echo ordered || echo "gate=$TL_GATE safe=$TL_SAFE eval=$TL_EVAL")" "ordered"
+
+    # The gate block itself, banner to its outer `fi`, driven with a stubbed
+    # decision function and stubbed git. Pins polarity, the outer TASK_OK guard,
+    # the dirty-tree state and the LANDED_UNKNOWN memo — none visible to a grep.
+    TL_BLOCK=$(awk '/^    # ── Empty-diff gate/{p=1} p{print} p && /^    fi$/{exit}' "$SCRIPT")
+    tl_gate() { # $1 = stub answer (yes|no|fail)  $2 = porcelain output  $3 = TASK_OK in
+        ( set -uo pipefail
+          _A="$1"; _P="$2"
+          task_landed_changes() { [ "$_A" = fail ] && return 1; printf '%s' "$_A"; }
+          git() { case "$*" in "status --porcelain") printf '%s' "$_P";; "rev-parse --short HEAD") echo abc1234;; *) return 0;; esac; }
+          TASK_OK="$3"; PRE_TASK_SHA=deadbeefcafe; TASK_NUM=1; TASK_EXIT=1; TASK_LOG_TAIL="log tail"
+          REVERT_CLASS=""; REVERT_REASON="prior reason"; REVERT_DETAILS=""
+          eval "$TL_BLOCK" >/dev/null
+          printf '%s|%s|%s|%s' "$TASK_OK" "$REVERT_CLASS" "${REVERT_REASON:0:18}" "$LANDED_UNKNOWN"
+        ) 2>/dev/null | tail -1
+    }
+    if require "gate block extracted" "$TL_BLOCK"; then
+        check "gate: landed yes -> untouched"                    "$(tl_gate yes '' true)"    "true||prior reason|"
+        check "gate: landed no -> rejected, classed, detailed"   "$(tl_gate no '' true)"     "false| (no changes landed)|No changes landed:|"
+        check "gate: could not measure -> untouched, remembered" "$(tl_gate fail '' true)"   "true||prior reason|true"
+        check "gate: dirty tree -> NOT a no-op"                  "$(tl_gate no ' M f' true)" "true||prior reason|"
+        check "gate: already-failed task keeps its own reason"   "$(tl_gate no '' false)"    "false||prior reason|"
+    fi
+
+    # The post-loop refusal: unmeasured diff + no evaluator judgment = no
+    # evidence of work. Extracted from its comment to its `fi`; no git.
+    TL_REFUSE=$(awk '/^    # An unverified accept is justified/{p=1} p{print} p && /^    fi$/{exit}' "$SCRIPT")
+    tl_refuse() { # $1 = TASK_OK  $2 = LANDED_UNKNOWN  $3 = BUDGET_UNVERIFIED  $4 = EVAL_INFRA_WHY
+        ( set -uo pipefail
+          TASK_OK="$1"; LANDED_UNKNOWN="$2"; BUDGET_UNVERIFIED="$3"; EVAL_INFRA_WHY="$4"
+          TASK_NUM=1; REVERT_CLASS=""; REVERT_REASON="prior reason"
+          eval "$TL_REFUSE" >/dev/null
+          printf '%s|%s' "$TASK_OK" "$REVERT_CLASS"
+        ) 2>/dev/null | tail -1
+    }
+    if require "post-loop refusal extracted" "$TL_REFUSE"; then
+        check "refuse: unmeasured + evaluator no verdict -> not promoted"  "$(tl_refuse true true eval_infra 'no verdict')" "false| (could not be measured)"
+        check "refuse: unmeasured + budget-skipped evaluator -> not promoted" "$(tl_refuse true true skipped '')"          "false| (could not be measured)"
+        check "refuse: unmeasured + evaluator PASSED -> promotes"          "$(tl_refuse true true '' '')"                 "true|"
+        check "refuse: measured + unverified -> today's behaviour"         "$(tl_refuse true '' eval_infra 'no verdict')" "true|"
+        check "refuse: already-failed task untouched"                      "$(tl_refuse false true eval_infra 'x')"       "false|"
+    fi
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
