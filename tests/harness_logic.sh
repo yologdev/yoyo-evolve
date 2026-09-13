@@ -560,5 +560,21 @@ if require "task_landed_changes extracted" "$TL_FN"; then
     fi
 fi
 
+# ── accept verdict word (#915) ─────────────────────────────────────────────
+AV_FN=$(awk '/^gasp_accept_verdict\(\) \{/,/^\}/' "$SCRIPT")
+if require "gasp_accept_verdict extracted" "$AV_FN"; then
+    av() { ( set -uo pipefail; eval "$AV_FN"; gasp_accept_verdict "$1" ) 2>/dev/null; }
+    check "accept verdict: verified PASS -> promoted"            "$(av '')"          "promoted"
+    check "accept verdict: evaluator no verdict -> unverified"   "$(av eval_infra)"  "unverified"
+    check "accept verdict: evaluator FAILed out -> unverified"   "$(av eval_failed)" "unverified"
+    check "accept verdict: no progress -> unverified"            "$(av no_progress)" "unverified"
+    check "accept verdict: budget-skipped -> unverified"         "$(av skipped)"     "unverified"
+    # The producer must pass the decided word, never the old literal.
+    check "accept verdict: producer passes the decided word" \
+        "$(grep -cF '"$task_title" "$GASP_ACCEPT_VERDICT" "$PRE_TASK_SHA"' "$SCRIPT")" "1"
+    check "accept verdict: the fixed 'promoted' literal is gone from the producer" \
+        "$(grep -cF '"$task_title" promoted "$PRE_TASK_SHA"' "$SCRIPT")" "0"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

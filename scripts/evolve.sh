@@ -1929,6 +1929,18 @@ task_landed_changes() {
     esac
 }
 
+# gasp_accept_verdict BUDGET_UNVERIFIED — the word the graph gets for an
+# ACCEPTED task. Three words exist since #915 (promoted / unverified /
+# rejected); this picks between the first two. Any unverified state — the
+# evaluator FAILed N times, made no progress, rendered no verdict, or was
+# budget-skipped — means no oracle passed this diff, and recording that as
+# "promoted" was how Day 195's empty patches got `eval.finished Passed`.
+# "unverified" keeps the patch Promoted (the code really is on main) and
+# marks the eval Skipped with no score — see src/gasp_cli.rs::classify_verdict.
+gasp_accept_verdict() {
+    if [ -n "${1:-}" ]; then printf 'unverified'; else printf 'promoted'; fi
+}
+
 safety_commit() {
     local msg="$1" staged_protected commit_out
     git add -A 2>/dev/null || true
@@ -3176,8 +3188,16 @@ $UNVERIFIED_VERDICT_BODY
                 rm -f "$LANDED_ERR_F"
             fi
         fi
-        GASP_TASK_KIND="$task_kind" gasp_task_result "$TASK_NUM" "$task_title" promoted "$PRE_TASK_SHA" \
-            "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+        # #915: say which of the two accept words this is, and why. A verified
+        # PASS stays "promoted"; every unverified arm above is "unverified", with
+        # the harness's own reason carried so the decision node names it.
+        GASP_ACCEPT_VERDICT=$(gasp_accept_verdict "$BUDGET_UNVERIFIED")
+        GASP_ACCEPT_REASON=""
+        if [ "$GASP_ACCEPT_VERDICT" = unverified ]; then
+            GASP_ACCEPT_REASON="accepted UNVERIFIED: ${UNVERIFIED_WHY:-budget exhausted}; build+test passed, ${UNVERIFIED_STATE:-evaluator skipped}"
+        fi
+        GASP_TASK_KIND="$task_kind" gasp_task_result "$TASK_NUM" "$task_title" "$GASP_ACCEPT_VERDICT" "$PRE_TASK_SHA" \
+            "$(git rev-parse HEAD 2>/dev/null || echo unknown)" "$GASP_ACCEPT_REASON"
         # evolve tasks can legitimately touch skills/ too — keep the state
         # repo's skill tree in sync (full-tree sync; no-op when unchanged)
         gasp_mirror_skills
