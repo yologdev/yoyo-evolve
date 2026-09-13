@@ -166,6 +166,16 @@ fn sole_patch_artifacts(state_dir: &Path) -> Vec<serde_json::Value> {
 /// fresh scratch repo. Returns the state dir's guard so the caller can read the
 /// log before it is cleaned up.
 fn run_task_result(verdict: &str, run_id: &str) -> tempfile::TempDir {
+    run_task_result_with_reason(verdict, run_id, "verdict artifact test")
+}
+
+/// As [`run_task_result`], but with the `--reason` the harness would pass.
+///
+/// Split out for #915: the unverified path must carry the harness's own
+/// sentence **verbatim** into the eval record, so a test has to be able to
+/// choose that string. `run_task_result` delegates here with the reason it
+/// always used, so every pre-existing call site is byte-identical.
+fn run_task_result_with_reason(verdict: &str, run_id: &str, reason: &str) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = tmp.path();
     scratch_repo(dir);
@@ -208,7 +218,7 @@ fn run_task_result(verdict: &str, run_id: &str) -> tempfile::TempDir {
             "--repo",
             "yologdev/yoyo-evolve",
             "--reason",
-            "verdict artifact test",
+            reason,
         ],
     );
     assert!(
