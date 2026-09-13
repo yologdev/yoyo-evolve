@@ -252,6 +252,87 @@ WEAKENING_SHAPES = (
 )
 
 # --------------------------------------------------------------------------------------
+# MY OWN WRITTEN CONVENTIONS, AND WHAT EACH SCORES AS (Day 196 census).
+#
+# WHY THIS BLOCK EXISTS. Day 189: "a detector over my own history has false positives
+# that ARE my own disciplines... I can PREDICT the contamination instead of discovering
+# it." Until Day 196 I had only ever discovered it, one false positive per session -- the
+# `MOVED` verdict was built (Day 191) *after* a pure file-move refactor scored 3 x
+# WEAKENED on a diff whose tree-wide assertion count was conserved at 5062 -> 5062.
+#
+# So this is the prediction pass, pre-registered before the census ran. A convention is a
+# repeated *behavioural* signature, and a detector fires on signatures -- so following a
+# rule deliberately is a confound, and it is worse hidden than the vocabulary half
+# (my prose matching my own patterns) because obeying a rule feels virtuous and never
+# registers as contamination.
+#
+# Each entry is (name, measured verdict, note). The verdict column is what the classifier
+# ACTUALLY returns, measured -- not what I hoped. One of the four falsified its own
+# prediction, and that row is the finding rather than the tally; see the note on
+# CONVENTION_REGISTER_PAYOFF and issue #914.
+#
+# THIS IS AN ENUMERATION OF CONVENTIONS I HAVE WRITTEN DOWN. A convention I follow
+# without ever having named it is still invisible to this block and to the census, so the
+# list is a floor on my contamination, never a ceiling.
+# --------------------------------------------------------------------------------------
+
+CONVENTION_MODULE_SPLIT = "module-split"
+CONVENTION_FILE_RENAME = "whole-file-test-rename"
+CONVENTION_CHARACTERIZATION_INVERSION = "characterization-inversion"
+CONVENTION_REGISTER_LINES = "register-lines-only"
+CONVENTION_REGISTER_PAYOFF = "register-paid-to-empty"
+
+WRITTEN_CONVENTIONS = (
+    (
+        CONVENTION_MODULE_SPLIT,
+        MOVED,
+        "module-size gate pressure forces pure moves; #[test] fns leave A and arrive in B "
+        "and `git diff` is per-file. Handled by reconcile_moved_tests (Day 191).",
+    ),
+    (
+        CONVENTION_FILE_RENAME,
+        MOVED,
+        "same as module-split at file granularity. In --per-commit mode a whole-file "
+        "delete never reaches the classifier at all: git_diff_one_commit passes "
+        "--diff-filter=d. So this is handled by EXCLUSION there and by MOVED in the net "
+        "scan -- two different mechanisms, which the Day-196 prediction got wrong by "
+        "naming only the second.",
+    ),
+    (
+        CONVENTION_CHARACTERIZATION_INVERSION,
+        UNKNOWN,
+        "Day 148: a fixture asserting a known-wrong output that outlives its fix converts "
+        "a defect into a green invariant, so I invert them deliberately and rename them. "
+        "An exact expectation that merely CHANGED is neither weakened nor strengthened -- "
+        "it is a different claim, and calling it weakening would be a confident wrong "
+        "verdict. Lands in UNKNOWN, which is counted and reported rather than dropped.",
+    ),
+    (
+        CONVENTION_REGISTER_LINES,
+        None,
+        "a debt-register literal line -- ('src/x.rs', 4307) -- carries no assert macro and "
+        "no .unwrap(), so is_assertion_line is false and the hunk is NOT IN SCOPE. `None` "
+        "is deliberately not UNKNOWN: out-of-scope and unjudgeable are different facts.",
+    ),
+    (
+        CONVENTION_REGISTER_PAYOFF,
+        WEAKENED,
+        "THE FALSIFIED PREDICTION. When a register is paid off to EMPTY, the anti-vacuous "
+        "assert!(!REGISTER.is_empty()) guarding it becomes a claim about an impossible "
+        "state and is deleted in the same diff -- a convention CLAUDE.md states verbatim. "
+        "That deletion is a real assert! line removed with none added back, so it scores "
+        "WEAKENED (assertion-deleted), and it is the ONE weakened row in the Day-196 "
+        "census. Pinned as WEAKENED on purpose: the verdict is arguably CORRECT, because a "
+        "guard really was deleted and its innocence rests on an impossibility argument "
+        "that stops holding the moment a register entry is re-added. Downgrading it would "
+        "manufacture a clean bill over a real coverage reduction, which is the one thing "
+        "the reconciler contract forbids. Filed as #914, deliberately NOT adjudicated "
+        "here -- hand-reading an unflattering verdict into innocence is the exact move "
+        "DREAM.md distrusts, and mechanising that hand-read does not make it evidence.",
+    ),
+)
+
+# --------------------------------------------------------------------------------------
 # Line predicates. Pure.
 # --------------------------------------------------------------------------------------
 
