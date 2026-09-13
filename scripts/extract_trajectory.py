@@ -6123,7 +6123,12 @@ src/commands_config.rs
         "a claiming day that DID commit is not dragged into the alarm half",
         "day-194" not in idle_clause and "day-195" in idle_clause,
     )
-    multi = classify_productivity({193: 1, 194: 2, 195: 5}, {194})
+    # SUPERSEDED FIXTURE, same reason and same repair as `streak` above: the
+    # observed set was `{194}`, which puts BOTH 193 and 195 outside the span,
+    # so this was asserting a multi-day alarm over days the slice never
+    # covered. Widened to 192..196 so both idle days are interior and the
+    # summing rule is tested on genuine idles.
+    multi = classify_productivity({193: 1, 194: 2, 195: 5}, {192, 194, 196})
     assert_true(
         "several idle days are listed in order and their claims summed, never averaged",
         multi.idle_days == (193, 195) and multi.idle_claimed == 6,
@@ -6190,10 +6195,18 @@ src/commands_config.rs
     # genuinely non-empty in the fixture, or a dead join passes by having
     # nothing on either side to disagree about — this defect wearing the
     # opposite sign, and quieter than the bug.
+    # SUPERSEDED FIXTURE, recorded rather than deleted. This shape -- claims on
+    # day-195, commits labelled day-196 -- was written as an IDLE artifact and
+    # is in fact the LIVE OUT_OF_RANGE case: the claiming day is OLDER than
+    # every observed day, so the git slice never spanned it. It keeps its
+    # anti-vacuous role (both halves of the join are genuinely present) and now
+    # pins the range verdict instead of the alarm.
     artifact = classify_productivity({195: 5}, {196}, 4)
     assert_true(
         "ANTI-VACUOUS: the fixture really carries a claims row AND >=1 observed commit",
-        artifact.idle_days == (195,)
+        artifact.state == PRODUCTIVITY_OUT_OF_RANGE
+        and artifact.out_of_range_days == (195,)
+        and artifact.idle_days == ()
         and artifact.observed_days == (196,)
         and artifact.observed_commits == 4,
     )
