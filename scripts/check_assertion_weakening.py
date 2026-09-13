@@ -1976,6 +1976,217 @@ def run_self_tests():
     check("honesty clause disclaims self-reference", "SELF-REFERENCE" in PAIRING_HONESTY.upper())
     check("honesty clause denies being an oracle", "not an external oracle" in PAIRING_HONESTY)
 
+    # -- CONVENTION FIXTURES: one per row of WRITTEN_CONVENTIONS ---------------------------
+    # Deliverable 2 of the #914 contamination census. Until this block existed the five
+    # CONVENTION_* constants named verdicts that NOTHING measured -- a claim about my own
+    # detector's behaviour, asserted in prose, with no consumer that could fail. Every
+    # fixture below was captured by running the real scan_diff and pasting what it printed,
+    # never hand-typed from the constant it pins: a fixture transcribed FROM the claim it
+    # checks agrees with that claim by construction and grades nothing.
+    #
+    # The table is keyed BY CONVENTION NAME and the expected verdict is read from
+    # WRITTEN_CONVENTIONS rather than re-typed here, so the enumeration has exactly one
+    # statement. A second hand-written copy would agree the day it was written and diverge
+    # forever after -- which is the defect this whole tool is about, wearing its clothes.
+    conv_fixtures = {
+        CONVENTION_MODULE_SPLIT: (
+            "src/format/highlight.rs",
+            "\n".join(
+                [
+                    "diff --git a/src/format/highlight.rs b/src/format/highlight.rs",
+                    "--- a/src/format/highlight.rs",
+                    "+++ b/src/format/highlight.rs",
+                    "@@ -1700,6 +1700,0 @@ mod tests {",
+                    "-    #[test]",
+                    "-    fn lang_keywords_covers_rust() {",
+                    '-        assert_eq!(lang_keywords("rust").len(), 42);',
+                    "-    }",
+                    "diff --git a/src/format/highlight_lang.rs b/src/format/highlight_lang.rs",
+                    "--- /dev/null",
+                    "+++ b/src/format/highlight_lang.rs",
+                    "@@ -0,0 +1,6 @@",
+                    "+    #[test]",
+                    "+    fn lang_keywords_covers_rust() {",
+                    '+        assert_eq!(lang_keywords("rust").len(), 42);',
+                    "+    }",
+                ]
+            ),
+        ),
+        CONVENTION_FILE_RENAME: (
+            "tests/gasp_doc_version.rs",
+            "\n".join(
+                [
+                    "diff --git a/tests/gasp_doc_version.rs b/tests/gasp_doc_version.rs",
+                    "--- a/tests/gasp_doc_version.rs",
+                    "+++ /dev/null",
+                    "@@ -1,8 +0,0 @@",
+                    "-    #[test]",
+                    "-    fn marker_agrees_with_cargo_lock() {",
+                    "-        assert_eq!(claimed, resolved);",
+                    "-    }",
+                    "diff --git a/tests/doc_version_claims.rs b/tests/doc_version_claims.rs",
+                    "--- /dev/null",
+                    "+++ b/tests/doc_version_claims.rs",
+                    "@@ -0,0 +1,8 @@",
+                    "+    #[test]",
+                    "+    fn marker_agrees_with_cargo_lock() {",
+                    "+        assert_eq!(claimed, resolved);",
+                    "+    }",
+                ]
+            ),
+        ),
+        CONVENTION_CHARACTERIZATION_INVERSION: (
+            "src/commands_risk_epistemic_tests.rs",
+            "\n".join(
+                [
+                    "diff --git a/src/commands_risk_epistemic_tests.rs"
+                    " b/src/commands_risk_epistemic_tests.rs",
+                    "--- a/src/commands_risk_epistemic_tests.rs",
+                    "+++ b/src/commands_risk_epistemic_tests.rs",
+                    "@@ -340,3 +340,3 @@",
+                    "-        assert_eq!(ranking.len(), 0);",
+                    "+        assert_eq!(ranking.len(), 1);",
+                ]
+            ),
+        ),
+        CONVENTION_REGISTER_LINES: (
+            "tests/module_size.rs",
+            "\n".join(
+                [
+                    "diff --git a/tests/module_size.rs b/tests/module_size.rs",
+                    "--- a/tests/module_size.rs",
+                    "+++ b/tests/module_size.rs",
+                    "@@ -40,3 +40,3 @@",
+                    '-    ("src/commands_search.rs", 4174),',
+                    '+    ("src/commands_search.rs", 4307),',
+                ]
+            ),
+        ),
+        CONVENTION_REGISTER_PAYOFF: (
+            "tests/git_chokepoint.rs",
+            "\n".join(
+                [
+                    "diff --git a/tests/git_chokepoint.rs b/tests/git_chokepoint.rs",
+                    "--- a/tests/git_chokepoint.rs",
+                    "+++ b/tests/git_chokepoint.rs",
+                    "@@ -120,4 +120,1 @@",
+                    "-    assert!(!REGISTERED_GIT_BYPASSES.is_empty(), \"must not be empty\");",
+                    '-    ("src/commands_search.rs", "run_grep", "argv built incrementally"),',
+                    "+    // register is EMPTY: every bypass converted (#864)",
+                ]
+            ),
+        ),
+    }
+
+    # DRIFT GUARD, asserted before any fixture runs: every convention the tool ENUMERATES
+    # in LIMITS must have a fixture, and every fixture must name a real convention. Adding
+    # a sixth CONVENTION_* without measuring it fails HERE rather than silently shipping an
+    # unmeasured claim into a block printed on every run.
+    check(
+        "conventions: every enumerated convention has a fixture",
+        {name for name, _v, _w in WRITTEN_CONVENTIONS} == set(conv_fixtures),
+        (sorted(name for name, _v, _w in WRITTEN_CONVENTIONS), sorted(conv_fixtures)),
+    )
+
+    for conv_name, declared_verdict, _why in WRITTEN_CONVENTIONS:
+        subject_path, fixture = conv_fixtures[conv_name]
+        conv_findings, conv_rs, _conv_test = scan_diff(fixture)
+
+        # ANTI-VACUOUS, FIRST: the scanner must have SEEN the fixture. A fixture matching
+        # nothing satisfies every "expected verdict" assertion below by having nothing to
+        # count, which is this tool's own subject wearing the opposite sign -- and it is
+        # the load-bearing check for register-lines-only, whose declared verdict is
+        # literally "no finding", indistinguishable from "the diff never parsed".
+        check(
+            f"conventions[{conv_name}]: ANTI-VACUOUS -- the scanner saw the fixture",
+            conv_rs > 0,
+            f"rs_hunks={conv_rs}",
+        )
+
+        subject = [f for f in conv_findings if f.path == subject_path]
+        if declared_verdict is None:
+            # `None` is NOT `UNKNOWN`: out-of-scope and unjudgeable are different facts,
+            # so the assertion is that the subject produced NO finding at all while the
+            # hunk was still scanned (proven by the anti-vacuous check above).
+            check(
+                f"conventions[{conv_name}]: out of scope, and that is not UNKNOWN",
+                subject == [],
+                [(f.verdict, f.shapes) for f in subject],
+            )
+        else:
+            check(
+                f"conventions[{conv_name}]: exactly one finding for the subject file",
+                len(subject) == 1,
+                [(f.path, f.verdict) for f in conv_findings],
+            )
+            if len(subject) == 1:
+                check(
+                    f"conventions[{conv_name}]: scores {verdict_name(declared_verdict)}",
+                    subject[0].verdict == declared_verdict,
+                    f"declared={verdict_name(declared_verdict)} "
+                    f"actual={verdict_name(subject[0].verdict)} shapes={subject[0].shapes}",
+                )
+
+    # THE FALSIFIED ROW, pinned on its own rather than only inside the loop above.
+    # I predicted before running the detector that all five of my written conventions
+    # would score as convention-shaped noise. Four did. This one did NOT: paying a debt
+    # register down to empty deletes the anti-vacuous assert!(!REGISTER.is_empty())
+    # guarding it, and that is a real assert! line removed with none added back. It is a
+    # GENUINE loosening, not a false positive, and the verdict is arguably CORRECT --
+    # the guard's innocence rests on an impossibility argument that stops holding the
+    # moment a register entry is re-added. Asserted explicitly so a later session cannot
+    # quietly reclassify it as convention noise and manufacture a clean bill over a real
+    # coverage reduction.
+    payoff_path, payoff_fixture = conv_fixtures[CONVENTION_REGISTER_PAYOFF]
+    payoff_findings, _rs, _th = scan_diff(payoff_fixture)
+    payoff = [f for f in payoff_findings if f.path == payoff_path]
+    check(
+        "conventions: the register-paid-to-empty row is WEAKENED, not reconciled away",
+        len(payoff) == 1 and payoff[0].verdict == WEAKENED,
+        [(f.verdict, f.shapes) for f in payoff],
+    )
+    check(
+        "conventions: ... and it is a deleted assertion, not some other shape",
+        len(payoff) == 1 and S_ASSERTION_DELETED in payoff[0].shapes,
+        [f.shapes for f in payoff],
+    )
+    check(
+        "conventions: ... and MOVED never launders it -- no test fn walked next door",
+        MOVED not in [f.verdict for f in payoff_findings],
+        [(f.path, f.verdict) for f in payoff_findings],
+    )
+
+    # NEAR-MISS GUARD: an ordinary diff carrying NONE of the five convention shapes is
+    # unchanged. This is the entire regression surface -- every existing reading of this
+    # tool is on this path, and a contamination census that altered ordinary scanning
+    # would have rewritten the readings it exists to annotate.
+    ordinary_diff = "\n".join(
+        [
+            "diff --git a/tests/module_size.rs b/tests/module_size.rs",
+            "--- a/tests/module_size.rs",
+            "+++ b/tests/module_size.rs",
+            "@@ -10,3 +10,3 @@",
+            '-    assert_eq!(msg, "exact");',
+            '+    assert!(msg.contains("exa"));',
+        ]
+    )
+    ord_findings, ord_rs, ord_test = scan_diff(ordinary_diff)
+    check(
+        "conventions NEAR-MISS: an ordinary diff still scores WEAKENED unchanged",
+        [f.verdict for f in ord_findings] == [WEAKENED],
+        [(f.path, f.verdict, f.shapes) for f in ord_findings],
+    )
+    check(
+        "conventions NEAR-MISS: ... with the eq-to-contains shape, not a convention shape",
+        len(ord_findings) == 1 and ord_findings[0].shapes == [S_EQ_TO_CONTAINS],
+        [f.shapes for f in ord_findings],
+    )
+    check(
+        "conventions NEAR-MISS: ... and the hunk counts do not move",
+        (ord_rs, ord_test) == (1, 1),
+        (ord_rs, ord_test),
+    )
+
     if failures:
         print(f"SELF-TESTS FAILED ({len(failures)}):", file=sys.stderr)
         for f in failures:
