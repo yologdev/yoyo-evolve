@@ -1,0 +1,81 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task requirements.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff… ✓ (7ms)
+ ✓ (89ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.3s (2 ✓)
+
+Self-tests pass. Let me check the CLAUDE.md content (the bullet is one giant line, so the diff is unreadable) and run the real extractor.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o 'Day 197 (#912)[^.]*\.\{…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (874ms)
+ ✓ (1.0s)
+  2 tools completed in 1.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The extractor rendered no Productivity section and my CLAUDE.md grep missed. Two focused checks — what Day-197 text actually landed in CLAUDE.md, and whether the section renders.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'Day-197\|Day 197' CLAUD…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (552ms)
+ ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.8s (2 ✓)
+
+Six "Day 197" hits in CLAUDE.md but all in other bullets. Let me check precisely what landed in the productivity sub-section — that's the doc_sync question.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o 'observed_days. / .obser…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o 'midnight\|self-diagnos\… ✓ (9ms)
+ ✓ (11.5s)
+  2 tools completed in 11.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Decisive evidence. The second grep returned exit 1 — zero matches for midnight, self-diagnos, day-clock, observed-label, artifact shape anywhere in CLAUDE.md. The productivity sub-section received only a dataclass field-list parenthetical.
+
+The task's dedicated ## CLAUDE.md section named four required items; three are absent:
+
+| Required | Present? |
+|---|---|
+| Step-0 finding + midnight-spanning mechanism named | No — zero midnight hits |
+| The new clause and its two shapes | No |
+| Stated limit: self-diagnosing, does NOT reconcile the two day-clocks | No |
+| Superseded claim recorded | Partial — only the field-list count, not the "probably a false alarm" reading |
+
+The code half is genuinely good: observed_label_clause is pure and table-tested, the two shapes are never folded, the anti-vacuous row is asserted first, the near-miss guard uses whole-string == against pre-change output, superseded fixtures were updated-with-reasoning rather than deleted, and both hard constraints held (no fifth verdict state, neither clock re-keyed). But the rendered IDLE line text changed — from "the outcome rows above report those days as successes" to "the N task commit(s) in this window carry day-196" — and CLAUDE.md's description of that section reflects none of it. The step-0 measurement, which was this task's centerpiece ("MEASURE first… report the answer whichever way it comes out"), is recorded nowhere durable, so the next session re-derives it.
+
+This is the exact recurrence CLAUDE.md records twice itself: the doc half is the half with no gate — cargo test cannot fail for a missing sentence.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 35s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+## Summary
+
+What's good (and this is most of the task): the implementation is careful work. observed_label_clause is pure and table-tested; the two shapes are kept as separate sentences with the reasoning at the function; the anti-vacuous assertion genuinely fires first; the near-miss guard pins the healthy path with a whole-string == against pre-change output rather than a substring; the two superseded fixtures were updated with written reasoning instead of deleted, and the day-194 one was scoped to the pre-em-dash clause — which is strictly stronger than the bare not in it replaced. Both hard constraints held: no fifth verdict state, neither day-clock re-keyed. --test prints ALL PASSED, exit 0.
+
+Why it fails anyway: the task carried a dedicated ## CLAUDE.md section listing four items, and three are simply not there — verified by grep returning exit 1 on midnight, self-diagnos, day-clock, observed-label and artifact shape. What landed is a parenthetical about the dataclass field list, which documents the structure rather than the behaviour.
+
+That matters more than a missing sentence usually would, for two reasons specific to this repo:
+
+1. **The rendered text genuinely changed.** The IDLE line no longer says "the outcome rows above report those days as successes"; it now reports observed labels. CLAUDE.md's productivity sub-section describes neither wording, so a reader of the authoritative context has no model of what the section emits.
+
+2. **The step-0 measurement is the task's centerpiece and is now lost.** "MEASURE first… report the answer whichever way it comes out" existed precisely so a later session would not re-derive the midnight-spanning mechanism — a session starting 22:53 commits after midnight under the previous day's label, so a wall-clock --since/--until window slices differently from the subject label. That finding survives in neither CLAUDE.md nor the code comments.
+
+This is the recurrence CLAUDE.md already records twice about itself — cargo test cannot fail for a false or missing sentence, so the doc half is the half with no gate.
+
+Cleanup feedback, not a fail reason: .yoyo/applied_pattern_keys.txt was emptied of its two entries in this diff, unrelated to the task's stated Files: scope. Worth restoring or confirming it was intentional.
+
+The cheap remedy: the fix is prose-only in scripts/extract_trajectory.py's productivity sub-section — the step-0 answer with the midnight mechanism named, the two shapes, and the limit sentence ("makes an IDLE verdict self-diagnosing; does not reconcile the two day-clocks; limit 2's window mismatch is unchanged"). No code needs to move.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

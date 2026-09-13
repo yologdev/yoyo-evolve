@@ -1,0 +1,223 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by measuring — step 0 is the whole hinge here, and I must not inherit the assessment's guess.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== A: all task commits si…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== B: git window 2026-09-… ✓ (11ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.7s (2 ✓)
+
+Good — first real data. Now let me nail down both sides precisely.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== Q1… (5 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== al… (5 lines) ✓ (14ms)
+ ✓ (14ms)
+  2 tools completed in 15ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: step 0 turned up something sharper than the task file predicted — the clone is shallow at 66 commits and its earliest reachable commit is `2026-09-12T10:57`, i.e. *after all of day-195*. Let me settle that definitively before touching code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== current state ===" && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^PRODUCTIVITY_OK/,/^def… ✓ (5ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 27.0s (2 ✓)
+
+Now the renderer and call site, plus let me settle step 0 by deepening the shared object store with the tool that owns that flag.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^de… (3 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 550 python3 scripts/coun… ✓ (8ms)
+ ✓ (4.9s)
+  2 tools completed in 4.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clone deepened: 66 → 5814 commits, `shallow=no`. Now step 0 can finally be answered definitively.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== Q1… (3 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== Q2… (6 lines) ✓ (44ms)
+ ✓ (249ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 47.9s (2 ✓)
+
+STEP 0 ANSWERED DEFINITIVELY — and it falsifies the assessment's "probably a false alarm" reading. Over the complete 5814-commit history:
+
+• **Q1: day-195 genuinely produced ZERO task commits. `Day 195` appears on exactly 11 commits and not one is a task commit** — 5 × `session wrap-up`, 5 × `bump skill-evolve counter`, 1 × `update day counter`. Five sessions ran, none shipped. That is #915's rate-limit record confirmed.
+• **Q2: the window's task commits carry labels 183–194, 196, 197 — 195 is genuinely absent from a window that reaches 14 days back.**
+• **The midnight mechanism is REAL but is not the cause here:* Day 185 commits land on 09-01 and 09-02, Day 193 on 09-09 and 09-10, Day 196 on 09-12 and* 09-13.
+
+So the IDLE verdict is CORRECT — branch B. But there's a third mechanism nobody named, and it's the reason the fix matters:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== what collect_task_comm… ✓ (10ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+STEP 0 COMPLETE — and it found a *third* mechanism nobody named. The IDLE verdict is CORRECT (branch B): day-195 genuinely shipped nothing. But at session start the clone was 66 commits deep, so days_with_task_commits could only be {196, 197} — and day-194, which shipped 13 task commits, would have read IDLE on that same tree. The verdict was right on a tree where it could not have been detectably wrong. That is exactly why the clause is worth landing.
+
+Now the code. Starting with the dataclass:
+  ▶ edit scripts/extract_trajectory.py (5 → 12 lines)
+        idle_claimed: int = 0
+        claiming_days: int = 0
+        days_observed: int = 0
+  +     # The EVIDENCE half (Day 197, #912). `days_observed` is a bare count and so
+  +     # cannot tell a reader WHICH labels the window's commits carried -- which is
+  +     # the one fact that separates a real idle day from a window too narrow to
+  +     # have seen it. `observed_commits` is None when the caller did not supply a
+  +     # count; absence keeps its own name rather than rendering as a literal 0.
+  +     observed_days: tuple[int, ...] = ()
+  +     observed_commits: int | None = None
+ ✓ (1m 51s)
+        idle_claimed: int = 0
+        claiming_days: int = 0
+        days_observed: int = 0
+  +     # The EVIDENCE half (Day 197, #912). `days_observed` is a bare count and so
+  +     # cannot tell a reader WHICH labels the window's commits carried -- which is
+  +     # the one fact that separates a real idle day from a window too narrow to
+  +     # have seen it. `observed_commits` is None when the caller did not supply a
+  +     # count; absence keeps its own name rather than rendering as a literal 0.
+  +     observed_days: tuple[int, ...] = ()
+  +     observed_commits: int | None = None
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the pure clause helper plus the classifier's evidence-carrying:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (3 → 48 lines)
+  + def observed_label_clause(
+  +     observed_days: tuple[int, ...], observed_commits: int | None
+  + ) -> str:
+  +     """Pure: what day labels did the git window's task commits ACTUALLY carry?
+  + 
+  +     TWO SHAPES, NEVER FOLDED INTO ONE SENTENCE -- they are different facts
+  +     with different remedies, and an IDLE line that cannot tell them apart is
+  +     asserting a bare negative:
+  + 
+  +       * commits exist under other labels -> NAME THE SPAN, so a reader can see
+  +         how far back the window reaches. A window carrying only `day-196`
+  +         cannot prove `day-195` idle; one carrying `day-183..day-197` can.
+  +       * no task commits at all -> say THAT, explicitly, rather than naming a
+  +         phantom day.
+  + 
+  +     The span is rendered as first..last plus a DISTINCT COUNT rather than a
+  +     full list, for two reasons: the 2-line cap (14 labels spelled out is a
+  +     paragraph), and because the count is what makes the span honest -- a
+  +     reader seeing `day-183..day-197 (14 distinct)` can tell 15 numbers span 14
+  +     present labels and that the IDLE line names the missing one.
+  ... (29 more lines)
+ ✓ (1m 50s)
+  + def observed_label_clause(
+  +     observed_days: tuple[int, ...], observed_commits: int | None
+  + ) -> str:
+  +     """Pure: what day labels did the git window's task commits ACTUALLY carry?
+  + 
+  +     TWO SHAPES, NEVER FOLDED INTO ONE SENTENCE -- they are different facts
+  +     with different remedies, and an IDLE line that cannot tell them apart is
+  +     asserting a bare negative:
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now populate the evidence in the classifier's branches:
+  ▶ edit scripts/extract_trajectory.py (21 → 28 lines)
+  +     observed = tuple(sorted(days_with_task_commits))
+        claiming = {day: n for day, n in day_claims.items() if n > 0}
+        if not claiming:
+            return Productivity(
+                state=PRODUCTIVITY_NO_CLAIMS,
+                claiming_days=0,
+                days_observed=len(days_with_task_commits),
+  +             observed_days=observed,
+  +             observed_commits=task_commit_count,
+            )
+        idle = sorted(day for day in claiming if day not in days_with_task_commits)
+        if idle:
+  ···
+                idle_claimed=sum(claiming[day] for day in idle),
+                claiming_days=len(claiming),
+                days_observed=len(days_with_task_commits),
+  +             observed_days=observed,
+  +             observed_commits=task_commit_count,
+            )
+        return Productivity(
+  ... (6 more lines)
+ ✓ (1m 49s)
+  +     observed = tuple(sorted(days_with_task_commits))
+        claiming = {day: n for day, n in day_claims.items() if n > 0}
+        if not claiming:
+            return Productivity(
+                state=PRODUCTIVITY_NO_CLAIMS,
+                claiming_days=0,
+                days_observed=len(days_with_task_commits),
+  +             observed_days=observed,
+  ... (13 more lines)
+
+Now the renderer's IDLE branch and the call site:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (8 → 8 lines)
+        if prod.state == PRODUCTIVITY_IDLE:
+            days = ", ".join(f"day-{d}" for d in prod.idle_days)
+  +         evidence = observed_label_clause(prod.observed_days, prod.observed_commits)
+            return (
+                "## Productivity\n"
+                f"IDLE: {days} claimed {prod.idle_claimed} success(es) and produced "
+  -             f"ZERO task commits — the outcome rows above report those days as "
+  -             f"successes, and they shipped nothing."
+  +             f"ZERO task commits — {evidence}."
+            )
+ ✓ (1m 48s)
+        if prod.state == PRODUCTIVITY_IDLE:
+            days = ", ".join(f"day-{d}" for d in prod.idle_days)
+  +         evidence = observed_label_clause(prod.observed_days, prod.observed_commits)
+            return (
+                "## Productivity\n"
+                f"IDLE: {days} claimed {prod.idle_claimed} success(es) and produced "
+  -             f"ZERO task commits — the outcome rows above report those days as "
+  -             f"successes, and they shipped nothing."
+  +             f"ZERO task commits — {evidence}."
+            )
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Call site — pass the commit count that's already in hand:
+  ▶ edit scripts/extract_trajectory.py (3 → 3 lines)
+        productivity = classify_productivity(
+  -         claims_by_day(outcomes), {day for day, _ in tasks}
+  +         claims_by_day(outcomes), {day for day, _ in tasks}, len(tasks)
+        )
+ ✓ (1m 49s)
+        productivity = classify_productivity(
+  -         claims_by_day(outcomes), {day for day, _ in tasks}
+  +         claims_by_day(outcomes), {day for day, _ in tasks}, len(tasks)
+        )
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the self-tests. Let me see the existing block:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5700,5800p' scripts/extr… ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

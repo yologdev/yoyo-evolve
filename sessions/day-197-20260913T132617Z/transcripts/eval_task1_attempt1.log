@@ -1,0 +1,66 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the diff and checking the key claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- CLAUDE.md | h… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.4s (2 ✓)
+
+CLAUDE.md shows no diff. Let me confirm and check the rest.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- files in commit ---" &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Productivity" CLAUDE.md… ✓ (8ms)
+ ✓ (10ms)
+  2 tools completed in 10ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+CLAUDE.md was not in the commit at all. Let me do one focused check on whether the required tests were added.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== observed_label_clause … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed the critical gaps. Writing the verdict.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The verdict file is written. One quick integrity check that all required lines are present and parseable:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- line count ---" && wc … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict file is complete and well-formed: 6 lines — one Verdict, one Reason, and all four Checked lines parsing cleanly, with no angle-bracket placeholder leakage.
+
+## Verdict: FAIL
+
+What landed and is genuinely good: the observed_label_clause detector itself is solid work — pure, table-shaped, the two shapes (commits-under-other-labels vs. no-commits-at-all) deliberately kept as separate sentences, observed_commits: int | None so absence keeps its own name rather than rendering as a literal 0, and a docstring that honestly flags the empty branch as a renderer floor rather than claiming it as live coverage. The wiring is complete: every new field is populated in all three classify_productivity return arms and read by the renderer, the new parameter defaults to None so pre-existing callers keep working, and main() was updated to pass len(tasks). That's why **forgotten_touchpoints passes** — this is not the #618/#653/#658 shape.
+
+Why it fails anyway — three deliverables missing, and they are the ones this repo's own discipline treats as load-bearing:
+
+1. **The step-0 measurement is recorded nowhere.** The task's framing was explicit: measure first, be willing to land branch B, "report the answer whichever way it comes out," and name the midnight-spanning mechanism (session-label day vs. wall-clock git window). A measured "the verdict is correct" would have been a complete result. Instead there is no artifact at all, so the next session re-derives it.
+
+2. **Zero tests.** `grep` across the whole file shows `observed_label_clause` / `observed_days` / `observed_commits` appear only between lines 2318–2490 — all production code, none inside run_self_tests. The four mandated tests (anti-vacuous-first, artifact shape, genuinely-idle shape, byte-identity near-miss guard) are all absent. The changed IDLE rendering is completely unguarded. And with no new test, the required positive control had nothing to neuter, so there is no width-of-red and no sorted surviving-green reading either.
+
+3. **CLAUDE.md untouched** despite being named in the task's `Files` line and having its own required section. `git show --name-only HEAD` returns only the script and `.yoyo/applied_pattern_keys.txt. The rendered IDLE text genuinely changed, in a block injected into every Phase A1/A2 prompt — so the productivity` sub-section now describes superseded wording, which is precisely the stale-authoritative-claim shape that file records over and over.
+
+Cleanup feedback, not a fail reason: .yoyo/applied_pattern_keys.txt was emptied (two pattern keys removed) with no apparent relation to the task — looks like incidental sweep, worth restoring or explaining.
+
+The fix is narrow: add the four self-tests, run the positive control, and write the CLAUDE.md sub-section including whichever way step 0 actually came out. The detector code itself should not need to change.
+
+  watch: no files changed this turn — skipping
+
