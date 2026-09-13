@@ -6002,45 +6002,70 @@ src/commands_config.rs
             # Cheaper than writing a 10MB file to cross AUDIT_FILE_SIZE_CAP.
             (d / "transcripts" / "broken.log").mkdir(exist_ok=True)
         return d
-
     with tempfile.TemporaryDirectory() as _td:
         sess = Path(_td) / "sessions"
         sess.mkdir()
-        # The lexicographic trap itself, not a hand-invented shape:
-        #   day-9-*   sorts LARGEST of the three under a raw string sort
-        #   day-99-*  sorts above day-195-* because '9' > '1'
-        #   day-195-* is numerically NEWEST and holds the needle
-        _mk_session(sess, "day-9-20260301T120000Z", transcript="all quiet here\n")
-        _mk_session(sess, "day-99-20260501T120000Z", transcript="nothing to see\n")
+        # THE FIXTURE MUST OVERFLOW THE WINDOW OR ORDERING CANNOT MATTER.
+        # This is the defect the first version of this test shipped with, and
+        # it is the same species as the bug under test: `collect_provider_errors`
+        # truncates with `if sessions >= WINDOW_SESSIONS: break`, so a fixture
+        # planting FEWER than WINDOW_SESSIONS dirs examines all of them in any
+        # order and the sort key is unobservable. A reach test that cannot see
+        # the key is a test that cannot lose — this file's own subject.
+        #
+        # So: 10 decoy `day-9x` dirs (every one lexicographically LARGER than
+        # `day-195`, because '9' > '1') plus the needle in `day-195`, i.e. 11
+        # sessions against a window of 10. Under `session_sort_key` day-195 is
+        # numerically newest and is reached FIRST; under the raw lexicographic
+        # sort the ten decoys fill the window and day-195 is never reached at
+        # all. The two orders therefore disagree about `hits`, which is the
+        # whole discriminator.
+        for d in range(90, 100):
+            _mk_session(
+                sess, f"day-{d}-20260{d // 10}0{d % 10}01T120000Z",
+                transcript="all quiet here\n",
+            )
         _mk_session(sess, "day-195-20260911T120000Z", transcript=REAL_EMISSION + "\n")
 
         # (1) ANTI-VACUOUS, ASSERTED FIRST. A walk that reaches nothing and a
-        # needle that was never a needle AGREE ON ZERO AND PASS TOGETHER --
-        # this task's own subject wearing the opposite sign. So prove the
-        # planted line is an emission the classifier genuinely recognises
+        # needle that was never a needle agree on zero and pass together, so
+        # the fixture is asserted to genuinely carry a recognised emission
         # BEFORE asserting anything about what the walk found.
         assert_true(
             "ANTI-VACUOUS: the planted needle really is a recognised emission",
             classify_provider_error_line(REAL_EMISSION) is not None,
         )
+        # ANTI-VACUOUS (second half): the fixture must actually OVERFLOW the
+        # window, or assertion (2) silently degrades to the unobservable shape
+        # above. Pinned against the real constant, never a hand-typed 11.
+        assert_true(
+            "ANTI-VACUOUS: the fixture plants MORE sessions than the window holds",
+            len(list(sess.iterdir())) > WINDOW_SESSIONS,
+        )
 
         scan = collect_provider_errors(sess)
-        # (2) THE ASSERTION THAT WOULD HAVE FAILED ON DAY 196: the walk must
-        # reach the numerically newest dir, not the lexicographically largest.
-        assert_true(
-            "the walk REACHES the numerically newest session (day-195), not day-9",
-            scan.hits >= 1,
+        # (2) THE ASSERTION THAT WOULD HAVE FAILED ON DAY 196. With the raw
+        # lexicographic key the ten `day-9x` decoys fill the window, day-195
+        # is never opened, and this is 0.
+        assert_eq(
+            "the walk REACHES the numerically newest session (day-195), not the day-9x decoys",
+            scan.hits,
+            1,
         )
         # (3) The denominator counts what it examined, so a shrinking
-        # denominator inside my own meter stays visible.
+        # denominator inside my own meter stays visible. It is WINDOW_SESSIONS
+        # rather than 11 because the walk truncates — and it is the same under
+        # both sort orders, which is precisely why `hits` and not `sessions`
+        # is what carries the reach claim.
         assert_eq(
-            "the denominator counts every session it examined",
+            "the denominator counts every session it examined, bounded by the window",
             scan.sessions,
-            3,
+            WINDOW_SESSIONS,
         )
         assert_true(
             "the streams it read are named, so the claim cannot outrun its evidence",
             "transcripts/*.log" in scan.streams,
+        )
         )
 
     with tempfile.TemporaryDirectory() as _td:
