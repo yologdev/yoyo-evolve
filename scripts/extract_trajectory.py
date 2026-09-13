@@ -1613,6 +1613,9 @@ def collect_provider_errors(audit_dir: Path) -> ProviderScan:
     prose_rejected = 0
     unanchored_rejected = 0
     unread = 0
+    # Day 197: a count of SESSIONS, folded from a per-session boolean below.
+    # NEVER summed with `hits`, which is per-LINE — they count different things.
+    terminal_sessions = 0
     saw_audit = False
     saw_transcripts = False
     for child in sorted(
@@ -1635,12 +1638,21 @@ def collect_provider_errors(audit_dir: Path) -> ProviderScan:
             saw_audit = True
         if transcripts:
             saw_transcripts = True
+        # A session is TERMINAL when ANY of its streams carries an anchored
+        # terminal line — the OR is folded across streams, then counted once
+        # per session, because the question is "did this session end on a
+        # give-up", not "how many give-up lines were printed".
+        session_terminal = False
         for stream in streams:
-            h, pr, ur, un = _scan_provider_stream(stream)
+            h, pr, ur, un, tm = _scan_provider_stream(stream)
             hits += h
             prose_rejected += pr
             unanchored_rejected += ur
             unread += un
+            if tm > 0:
+                session_terminal = True
+        if session_terminal:
+            terminal_sessions += 1
         if sessions >= WINDOW_SESSIONS:
             break
     names = []
@@ -1649,7 +1661,13 @@ def collect_provider_errors(audit_dir: Path) -> ProviderScan:
     if saw_transcripts:
         names.append("transcripts/*.log")
     return ProviderScan(
-        sessions, hits, prose_rejected, tuple(names), unanchored_rejected, unread
+        sessions,
+        hits,
+        prose_rejected,
+        tuple(names),
+        unanchored_rejected,
+        unread,
+        terminal_sessions,
     )
 
 
@@ -1661,6 +1679,7 @@ def render_provider_health(
     streams: tuple = (),
     unanchored_rejected: int = 0,
     unread_streams: int = 0,
+    terminal_sessions: int = 0,
 ) -> str:
     """Render the provider-health section, or an honest one-line refusal.
 
@@ -1695,11 +1714,16 @@ def render_provider_health(
 
     THREE STATED LIMITS, AND LIMIT 3 IS THE ONE THAT BOUNDS THE WHOLE SECTION:
 
-    1. IT DETECTS A LINE, NOT AN OUTAGE. A hit means the harness printed a
-       provider-error line, never that the provider was actually down, and
-       never that the session failed to recover — a run that hit one 429,
-       retried and finished green scores identically to the 7 dead day-195
-       sessions. The count is evidence to read, not a verdict.
+    1. IT DETECTS A LINE, NOT AN OUTAGE — and Day 197 narrowed this by exactly
+       one step, no further. SUPERSEDED CLAUSE, recorded rather than erased:
+       this limit used to end "a run that hit one 429, retried and finished
+       green scores identically to the 7 dead day-195 sessions", and that is
+       no longer true of the RENDER, which now splits survived from died. What
+       is still true, and is the reason the limit stays: a terminal line means
+       the retry machinery said it was STOPPING, never that the session was
+       lost — the harness runs every phase after one and still files
+       `tasks N/N ✅`. And `terminal_sessions` says NOTHING about a session
+       whose streams could not be read; those are in neither count.
     2. THE HARNESS'S OWN STDOUT IS STILL UNREAD. Branch A put the rate-limit
        text in `transcripts/*.log`, which this now reads — but a session dir
        carries AGENT transcripts and not the harness's own stdout
@@ -1761,9 +1785,26 @@ def render_provider_health(
             f"## Provider/API health\n{sessions} sessions, no provider-error "
             f"lines{scanned}.{tail}"
         )
+    # Day 197: the SPLIT, and the `== 0` case is the whole point of the clause.
+    # `hits` is per-LINE and `terminal_sessions` is per-SESSION, so they are
+    # never summed and never rendered as one number. A window of 69 hits with
+    # `0 terminal` is the ACTIONABLE reading — every one of those lines was
+    # retried and recovered — and saying it out loud is what stops the count
+    # reading as an alarm. Sessions whose streams could not be read are in
+    # NEITHER count; the `unread_streams` clause above owns that fact.
+    if terminal_sessions == 0:
+        split = (
+            " 0 session(s) ended on a terminal give-up — every hit above was "
+            "retried (survived, not died)."
+        )
+    else:
+        split = (
+            f" {terminal_sessions} session(s) ended on a terminal give-up "
+            f"(the retry machinery STOPPED); the rest were retried."
+        )
     return (
         f"## Provider/API health\n{sessions} sessions, {hits} provider error "
-        f"hit(s){scanned}.{tail}"
+        f"hit(s){scanned}.{split}{tail}"
     )
 
 
