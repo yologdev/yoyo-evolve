@@ -2417,6 +2417,21 @@ PRODUCTIVITY_OK = "productivity-ok"
 PRODUCTIVITY_IDLE = "productivity-idle"
 PRODUCTIVITY_NO_CLAIMS = "productivity-no-claims"
 PRODUCTIVITY_COULD_NOT_CHECK = "productivity-could-not-check"
+# Day 197 (#917 remainder). The FIFTH value, and it is folded into NONE of the
+# four above. Measured cause: the harness checkout is SHALLOW (50 commits,
+# oldest = day-196's own wrap-up), so day-196's task commits are physically
+# outside the clone and `git log --since='14 days ago'` can never see them.
+# `days_with_task_commits` was `{197}` -- NON-EMPTY -- so the anti-vacuous
+# COULD_NOT_CHECK branch never fired and day-196 fell through to IDLE, i.e.
+# "could not look" was being reported as "looked and found nothing", which is
+# the exact collapse the pre-push hook and CiScan's could-not-run branch refuse.
+#
+# It is NOT PRODUCTIVITY_OK (that claims health), NOT PRODUCTIVITY_IDLE (that
+# accuses), and NOT PRODUCTIVITY_COULD_NOT_CHECK -- that one is a DIFFERENT FACT
+# WITH A DIFFERENT REMEDY: it means the git slice is empty *entirely*, with
+# nothing to compare against, while this means the slice is non-empty and simply
+# does not span the claiming day. Two facts, two sentences.
+PRODUCTIVITY_OUT_OF_RANGE = "productivity-out-of-range"
 
 
 @dataclass
@@ -2441,6 +2456,11 @@ class Productivity:
     # count; absence keeps its own name rather than rendering as a literal 0.
     observed_days: tuple[int, ...] = ()
     observed_commits: int | None = None
+    # The RANGE half (Day 197, #917 remainder). A claiming day OUTSIDE the
+    # observed span is carried apart from `idle_days` and is never summed into
+    # it: one is an accusation, the other is a refusal to make one.
+    out_of_range_days: tuple[int, ...] = ()
+    out_of_range_claimed: int = 0
 
 
 def claims_by_day(outcomes: list[dict]) -> dict[int, int]:
@@ -2550,15 +2570,45 @@ def classify_productivity(
             observed_commits=task_commit_count,
         )
     idle = sorted(day for day in claiming if day not in days_with_task_commits)
-    if idle:
+    # RANGE SPLIT (Day 197, #917 remainder). A claiming day with no commits is
+    # only an accusation if the git slice could have SEEN that day. The span is
+    # INCLUSIVE on both sides: a day equal to min(observed) or max(observed) is
+    # in range (we saw commits that day), one day outside either end is not. A
+    # day NEWER than max(observed) is out of range too -- the conservative
+    # direction, since the alternative accuses a day whose commits may simply
+    # not have landed in the slice yet.
+    lo, hi = observed[0], observed[-1]
+    interior = [day for day in idle if lo <= day <= hi]
+    out_of_range = [day for day in idle if not (lo <= day <= hi)]
+    oor_days = tuple(out_of_range)
+    oor_claimed = sum(claiming[day] for day in out_of_range)
+    # PRECEDENCE, STATED AT THE BRANCH SO NOBODY "SIMPLIFIES" IT LATER: a
+    # genuine interior idle WINS over any number of out-of-range days. The
+    # alarm this reader exists for (day-195's real rate-limit incident, five
+    # sessions filed N/N green against zero commits) must not be downgraded by
+    # its quieter neighbour -- but the IDLE line still NAMES the out-of-range
+    # count, so a reader can see the mixture rather than inferring it.
+    if interior:
         return Productivity(
             state=PRODUCTIVITY_IDLE,
-            idle_days=tuple(idle),
-            idle_claimed=sum(claiming[day] for day in idle),
+            idle_days=tuple(interior),
+            idle_claimed=sum(claiming[day] for day in interior),
             claiming_days=len(claiming),
             days_observed=len(days_with_task_commits),
             observed_days=observed,
             observed_commits=task_commit_count,
+            out_of_range_days=oor_days,
+            out_of_range_claimed=oor_claimed,
+        )
+    if out_of_range:
+        return Productivity(
+            state=PRODUCTIVITY_OUT_OF_RANGE,
+            claiming_days=len(claiming),
+            days_observed=len(days_with_task_commits),
+            observed_days=observed,
+            observed_commits=task_commit_count,
+            out_of_range_days=oor_days,
+            out_of_range_claimed=oor_claimed,
         )
     return Productivity(
         state=PRODUCTIVITY_OK,
@@ -2594,6 +2644,14 @@ def render_productivity(prod: Productivity) -> str:
     3. It sees TASK commits only (TASK_COMMIT_RE). A session that produced
        only a `session wrap-up` or a `cargo fmt` commit is correctly counted
        as having produced nothing.
+    4. CLONE DEPTH IS A THIRD WINDOW, and on Day 197 it was the one that
+       actually bound: the harness checkout is shallow (50 commits, ~1 day of
+       history), so `--since=14 days` never binds and a claiming day can be
+       physically outside the clone. PRODUCTIVITY_OUT_OF_RANGE reports that
+       rather than accusing the day — it does NOT deepen the clone and does
+       NOT reconcile the two day-clocks, so such a day stays UNMEASURED rather
+       than becoming measured. `counterfactual_green.py` owns `--deepen` for
+       exactly this reason; this reader has no equivalent, deliberately.
     """
     if prod.state == PRODUCTIVITY_COULD_NOT_CHECK:
         return (
@@ -2607,13 +2665,28 @@ def render_productivity(prod: Productivity) -> str:
             f"No day in the window claimed a success, so nothing is missing "
             f"({prod.days_observed} day(s) did produce task commits)."
         )
-    if prod.state == PRODUCTIVITY_IDLE:
-        days = ", ".join(f"day-{d}" for d in prod.idle_days)
+    if prod.state == PRODUCTIVITY_OUT_OF_RANGE:
+        days = ", ".join(f"day-{d}" for d in prod.out_of_range_days)
         evidence = observed_label_clause(prod.observed_days, prod.observed_commits)
         return (
             "## Productivity\n"
+            f"OUT OF RANGE: {days} claimed {prod.out_of_range_claimed} "
+            f"success(es), but {evidence} — the git slice never spanned that "
+            f"day, so this is NOT a finding about its productivity."
+        )
+    if prod.state == PRODUCTIVITY_IDLE:
+        days = ", ".join(f"day-{d}" for d in prod.idle_days)
+        evidence = observed_label_clause(prod.observed_days, prod.observed_commits)
+        mixed = (
+            f" ({len(prod.out_of_range_days)} further claiming day(s) fell "
+            f"outside that span and are NOT accused)"
+            if prod.out_of_range_days
+            else ""
+        )
+        return (
+            "## Productivity\n"
             f"IDLE: {days} claimed {prod.idle_claimed} success(es) and produced "
-            f"ZERO task commits — {evidence}."
+            f"ZERO task commits — {evidence}{mixed}."
         )
     return (
         "## Productivity\n"
