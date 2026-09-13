@@ -326,7 +326,10 @@ WRITTEN_CONVENTIONS = (
         "guard really was deleted and its innocence rests on an impossibility argument "
         "that stops holding the moment a register entry is re-added. Downgrading it would "
         "manufacture a clean bill over a real coverage reduction, which is the one thing "
-        "the reconciler contract forbids. Filed as #914, deliberately NOT adjudicated "
+        "the reconciler contract forbids. THE FINDING ITSELF IS UNFILED: issue #914 is "
+        "the harness's auto-filed UNVERIFIED receipt for the session that wrote this "
+        "block, not a filing of the finding it objects to -- 'filed' is a scheduler word "
+        "and a receipt has not earned it. Deliberately NOT adjudicated "
         "here -- hand-reading an unflattering verdict into innocence is the exact move "
         "DREAM.md distrusts, and mechanising that hand-read does not make it evidence.",
     ),
@@ -771,7 +774,7 @@ def scan_diff(text: str) -> tuple[list[Finding], int, int]:
 # The two limits. Printed on EVERY scan, including a clean one.
 # --------------------------------------------------------------------------------------
 
-LIMITS = """\
+_LIMITS_HEAD = """\
 LIMITS OF THIS READING (printed on every run, clean or not — "could not check" must never
 read as "checked; clean"):
 
@@ -798,6 +801,52 @@ read as "checked; clean"):
      count as a duration — the same shallow-clone fact that makes git_added_ts return None
      for every pre-window file in src/commands_risk_neverforecast.rs.
 """
+
+
+def render_conventions_limit(conventions=WRITTEN_CONVENTIONS) -> str:
+    """Item 5 of LIMITS, ENUMERATED FROM `WRITTEN_CONVENTIONS` rather than hand-typed.
+
+    This function is the reader that makes those five constants live code. A second,
+    hand-written list of the same conventions would agree the day it was written and
+    diverge forever after -- and this is the one tool whose whole subject is a signal
+    contaminated by its own author's habits, so a stale enumeration here would be the
+    defect wearing the instrument's clothes.
+
+    The item is printed on EVERY run, clean or not, for the same reason the four items
+    above are: a limit that speaks only when the answer is already wrong gives a reader
+    no baseline to compare against.
+    """
+    verdict_word = {
+        WEAKENED: "WEAKENED",
+        STRENGTHENED: "STRENGTHENED",
+        UNKNOWN: "UNKNOWN",
+        MOVED: "MOVED",
+        None: "not in scope",
+    }
+    lines = [
+        "  5. ITS POSITIVE SIGNAL IS CONTAMINATED BY MY OWN WRITTEN CONVENTIONS. A",
+        "     convention IS a repeated behavioural signature, and a detector fires on",
+        "     signatures -- so a WEAKENED row matching one of the shapes below is a",
+        "     CANDIDATE FOR A READ, NEVER A CONVICTION. This names the contamination; it",
+        "     does not remove it. Enumerated from WRITTEN_CONVENTIONS, never hand-typed:",
+    ]
+    for name, verdict, _why in conventions:
+        lines.append(f"       - {name} -> {verdict_word.get(verdict, str(verdict))}")
+    lines.extend(
+        [
+            f"     {CONVENTION_REGISTER_PAYOFF} is THE FALSIFIED PREDICTION and is NOT a false",
+            "     positive: paying a debt register to empty deletes the anti-vacuous guard that",
+            "     asserted it was non-empty, and that is a real assert! removed with none added",
+            "     back. It is pinned WEAKENED on purpose -- downgrading it would manufacture a",
+            "     clean bill over a genuine coverage reduction.",
+            "     And this covers only the conventions I HAVE WRITTEN DOWN -- a statement about",
+            "     my own notes, not about my behaviour.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+LIMITS = _LIMITS_HEAD + render_conventions_limit()
 
 
 def render_report(findings, commits, rust_hunks, test_hunks, window, max_findings=40):
