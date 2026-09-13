@@ -1176,3 +1176,150 @@ fn a_control_byte_in_a_server_command_is_escaped_once_by_serde() {
         "the command must round-trip verbatim, escaped exactly once"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Day 197: the process exit code for a finished non-interactive run.
+//
+// MEASURED first (branch A of the task's step 0). `run_single_prompt` and the
+// piped path both exit 1 when the INITIAL turn dies on an API error — that was
+// already correct. What was not: `should_exit_error` is computed once, before
+// the auto-continue loop, and the loop overwrites `response.last_api_error`
+// without revisiting it. So a piped run whose first turn succeeded and whose
+// CONTINUATION turn was killed by a terminal rate limit exited 0, with
+// `--output-format json` reporting `is_error: false` on the same breath.
+// ---------------------------------------------------------------------------
+
+/// The ladder, in both directions and at every boundary.
+///
+/// The success row is the entire regression surface — every user, every
+/// session — and it is asserted with a whole-value `assert_eq!` against 0
+/// rather than a `!= 1`, because "not 1" is satisfied by 2 as well.
+#[test]
+fn exit_code_for_outcome_table() {
+    // The pass-through. This row is every successful run there has ever been.
+    assert_eq!(
+        exit_code_for_outcome(false, false, false),
+        0,
+        "a clean run must still exit 0, byte-identically"
+    );
+
+    // The fix: a failed run is 1, whatever else is true.
+    assert_eq!(exit_code_for_outcome(true, false, false), 1);
+    assert_eq!(exit_code_for_outcome(true, true, false), 1);
+
+    // #766, unchanged: a failed --output write is a failed run on its own.
+    assert_eq!(exit_code_for_outcome(false, true, false), 1);
+
+    // Checkpoint keeps 2, and keeps LOSING to a failure — a checkpoint is a
+    // request to resume and a dead turn has nothing to resume from.
+    assert_eq!(exit_code_for_outcome(false, false, true), 2);
+    assert_eq!(
+        exit_code_for_outcome(true, false, true),
+        1,
+        "a failed run outranks a triggered checkpoint"
+    );
+    assert_eq!(
+        exit_code_for_outcome(false, true, true),
+        1,
+        "a failed --output write outranks a triggered checkpoint"
+    );
+}
+
+/// 1 and 2 mean different things in this binary and must not collide.
+///
+/// 2 is already spoken for twice — the Day-165 bare-word near-miss guard and
+/// `yoyo gasp` on a default build — plus `CHECKPOINT_TRIGGERED` here. A failed
+/// run must not be reported with a code a caller already reads as something
+/// else.
+#[test]
+fn a_failed_run_does_not_collide_with_the_checkpoint_code() {
+    let failed = exit_code_for_outcome(true, false, false);
+    let checkpoint = exit_code_for_outcome(false, false, true);
+    assert_ne!(
+        failed, checkpoint,
+        "a dead turn and a checkpoint must be distinguishable by exit code"
+    );
+    assert_eq!(failed, 1, "a failed run is the conventional 1");
+}
+
+/// The wiring guard: the piped path must decide from a value read AFTER the
+/// auto-continue loop, not from the pre-loop `should_exit_error`.
+///
+/// Deliberately weak, and its limit is the point: this proves the value is
+/// *positioned* after the loop, never that a process exited. `run_piped_mode`
+/// is `async` and does network I/O, so no test drives it behaviourally — the
+/// table above is what proves the ladder.
+///
+/// Every needle is assembled at runtime so the test cannot match its own
+/// source, and the anti-vacuous assertions come FIRST: a slice that found
+/// nothing satisfies every "expected N" by having nothing to count.
+#[test]
+fn the_piped_exit_decision_reads_the_post_loop_error_not_the_pre_loop_flag() {
+    let src = include_str!("main.rs");
+    let fn_marker = format!("async fn {}(", "run_piped_mode");
+    let start = src
+        .find(&fn_marker)
+        .expect("anti-vacuous: run_piped_mode must exist in main.rs");
+    let body = &src[start..];
+    let end = body
+        .find("\n}\n")
+        .map(|i| i + 3)
+        .expect("anti-vacuous: run_piped_mode's body must terminate");
+    let body = &body[..end];
+
+    // Anti-vacuous: the slice must really be the function we think it is.
+    assert!(
+        body.len() > 1000,
+        "anti-vacuous: sliced body is too small to be run_piped_mode ({} bytes)",
+        body.len()
+    );
+
+    let run_failed = format!("{}_{}", "run", "failed");
+    let stale_flag = format!("{}_{}_{}", "should", "exit", "error");
+    let post_loop_read = format!("{}.{}.is_some()", "response", "last_api_error");
+    let ladder = format!("{}_{}_{}_{}(", "exit", "code", "for", "outcome");
+
+    // Anti-vacuous: the pre-loop flag must still exist — this guard is about
+    // where the DECISION reads from, not about deleting the flag.
+    let stale_at = body
+        .find(&stale_flag)
+        .expect("anti-vacuous: should_exit_error must still be computed");
+
+    // Direction 1: the one statement exists and folds in the post-loop error.
+    let run_failed_at = body
+        .find(&run_failed)
+        .expect("the piped path must compute a single run_failed value");
+    assert!(
+        body.contains(&post_loop_read),
+        "run_failed must fold in the value the auto-continue loop overwrites"
+    );
+    assert!(
+        stale_at < run_failed_at,
+        "run_failed must be computed AFTER the initial-turn flag it widens"
+    );
+
+    // Direction 2: the exit decision goes through the shared ladder, and the
+    // stale flag is gone from everything AFTER the one statement. A guard
+    // checking only the first passes on a tail carrying BOTH, which is how a
+    // half-applied edit reads as done. The slice starts past the end of the
+    // `run_failed` binding, because that binding's own right-hand side folds
+    // the pre-loop flag in on purpose — that is the fix, not a leftover.
+    let ladder_at = body
+        .find(&ladder)
+        .expect("the piped path must decide its exit code via the shared ladder");
+    assert!(
+        run_failed_at < ladder_at,
+        "run_failed must be computed before it is handed to the ladder"
+    );
+    let binding_end = run_failed_at
+        + body[run_failed_at..]
+            .find(";\n")
+            .expect("anti-vacuous: the run_failed binding must terminate")
+        + 2;
+    let tail = &body[binding_end..];
+    assert!(
+        !tail.contains(&stale_flag),
+        "nothing after the run_failed binding may still read the pre-loop flag: {}",
+        stale_flag
+    );
+}

@@ -230,6 +230,42 @@ fn count_assistant_turns(agent: &Agent) -> usize {
         .count()
 }
 
+/// The process exit code for a finished non-interactive run.
+///
+/// One statement of the exit ladder, read by both `run_single_prompt` and
+/// `run_piped_mode`, so the two cannot answer "how did this run end" with two
+/// different ladders that agree the day they are written and diverge forever
+/// after.
+///
+/// `run_failed` is the *already-computed* `is_error` value — the same bool
+/// `emit_output` and `build_json_output` are handed — never a second derivation
+/// from the outcome. That is the whole point: before Day 197 the piped path
+/// derived it once from the **initial** turn and never revisited it, so a
+/// continuation turn that died on a terminal API error set
+/// `response.last_api_error` while the exit code still said 0.
+///
+/// **1, not 2, and the reason is collision rather than taste:** 2 is already
+/// taken twice in this binary — the Day-165 bare-word near-miss guard exits 2,
+/// and `yoyo gasp` on a default build exits 2 — and `CHECKPOINT_TRIGGERED`
+/// claims it here. 1 is the conventional "the thing you asked for failed".
+///
+/// Precedence is unchanged and is deliberate: a failed run or a failed
+/// `--output` write (#766) beats a triggered checkpoint, because a checkpoint
+/// is a *request to resume* and a dead turn has nothing to resume from.
+fn exit_code_for_outcome(
+    run_failed: bool,
+    output_write_failed: bool,
+    checkpoint_triggered: bool,
+) -> i32 {
+    if run_failed || output_write_failed {
+        1
+    } else if checkpoint_triggered {
+        2
+    } else {
+        0
+    }
+}
+
 /// Emit the final response in the appropriate output mode.
 ///
 /// Three stdout modes:
@@ -497,11 +533,16 @@ async fn run_single_prompt(
         count_assistant_turns(agent),
     );
     // A failed `--output` write is a failed run, whatever the model said (#766).
-    if output_write_failed {
-        std::process::exit(1);
-    }
-    if CHECKPOINT_TRIGGERED.load(Ordering::SeqCst) {
-        std::process::exit(2);
+    // `run_failed: false` is honest rather than a placeholder: every API-error
+    // path in this function has already exited 1 above, so by here the run
+    // succeeded. Sharing the ladder is what keeps the two modes from drifting.
+    let code = exit_code_for_outcome(
+        false,
+        output_write_failed,
+        CHECKPOINT_TRIGGERED.load(Ordering::SeqCst),
+    );
+    if code != 0 {
+        std::process::exit(code);
     }
 }
 
@@ -727,8 +768,16 @@ async fn run_piped_mode(
         }
     }
 
+    // ONE statement of "did this run fail", computed after the auto-continue
+    // loop rather than before it. `should_exit_error` answers only "did the
+    // INITIAL turn fail" — the loop below it overwrites
+    // `response.last_api_error` and never revisited that flag, so a
+    // continuation turn killed by a terminal API error exited 0 while
+    // `--output-format json` reported `is_error: false`. Both read this now.
+    let run_failed = should_exit_error || response.last_api_error.is_some();
+
     // Run watch command after prompt if active (auto lint/test loop)
-    if !should_exit_error {
+    if !run_failed {
         run_watch_after_prompt(
             agent,
             &mut session_total,
@@ -745,7 +794,7 @@ async fn run_piped_mode(
         &response,
         &agent_config.model,
         &session_total,
-        should_exit_error,
+        run_failed,
         &session_changes,
         output_path,
         json_output,
@@ -754,11 +803,13 @@ async fn run_piped_mode(
         count_assistant_turns(agent),
     );
     // A failed `--output` write is a failed run, whatever the model said (#766).
-    if should_exit_error || output_write_failed {
-        std::process::exit(1);
-    }
-    if CHECKPOINT_TRIGGERED.load(Ordering::SeqCst) {
-        std::process::exit(2);
+    let code = exit_code_for_outcome(
+        run_failed,
+        output_write_failed,
+        CHECKPOINT_TRIGGERED.load(Ordering::SeqCst),
+    );
+    if code != 0 {
+        std::process::exit(code);
     }
 }
 
