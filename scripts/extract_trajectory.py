@@ -1527,7 +1527,14 @@ def scan_provider_lines(lines) -> tuple[int, int, int, int]:
         marker, reason = classify_provider_error(line)
         if marker is not None:
             hits += 1
-            if marker in TERMINAL_PROVIDER_MARKERS:
+            # The terminal question has exactly ONE statement, and it is the
+            # function — never `marker in TERMINAL_PROVIDER_MARKERS` inlined
+            # here. An inlined copy agrees the day it is written and diverges
+            # forever after, and it would leave the function with no consumer
+            # at all, which is the #618/#653/#658 shape (Python does not fail
+            # on dead code the way `clippy -D warnings` does, so it would sit
+            # here unread).
+            if classify_provider_terminal_line(line) is not None:
                 terminal += 1
         elif reason == PROVIDER_REJECT_PROSE:
             prose += 1
@@ -5081,11 +5088,96 @@ src/commands_config.rs
     # reports a clean bill is this very defect wearing the opposite sign, and
     # it is quieter than the bug — so prove the fixture really does fire
     # before any "must be zero" row below is allowed to mean anything.
-    anti_hits, anti_prose, anti_unanchored = scan_provider_lines([real_rate_limit])
+    anti_hits, anti_prose, anti_unanchored, anti_term = scan_provider_lines(
+        [real_rate_limit]
+    )
     assert_eq(
         "ANTI-VACUOUS: a genuine unquoted rate-limit line really is detected",
         f"hits={anti_hits} prose={anti_prose} unanchored={anti_unanchored}",
         "hits=1 prose=0 unanchored=0",
+    )
+
+    # --- Day 197: terminal give-up vs retried-and-recovered ----------------
+    #
+    # (T1) ANTI-VACUOUS, ASSERTED FIRST, and it is the row every "must be
+    # zero" assertion below depends on: a genuine terminal give-up line must
+    # be DETECTED. A classifier that finds nothing satisfies every near-miss
+    # row by having nothing to count — this defect wearing the opposite sign,
+    # and quieter than the bug.
+    assert_eq(
+        "ANTI-VACUOUS: the real give-up emission is classified terminal",
+        str(classify_provider_terminal_line(real_giveup)),
+        "retry_giveup",
+    )
+
+    # (T2) NEAR-MISS, and it is the ENTIRE REGRESSION SURFACE: a session
+    # carrying only RECOVERED rate-limit traffic reports terminal = 0. All ten
+    # live sessions are this shape, so this is the row that decides whether
+    # the 69 hits read as "survived" or as an outage.
+    rec_hits, _rp, _ru, rec_term = scan_provider_lines(
+        [real_rate_limit, real_rate_limit, real_no_fallback]
+    )
+    assert_eq(
+        "NEAR-MISS: recovered-only traffic is hits>0 with ZERO terminal",
+        f"hits={rec_hits} terminal={rec_term}",
+        "hits=3 terminal=0",
+    )
+
+    # (T3) The INVARIANT the docstring claims, now actually asserted: a
+    # terminal line is ALSO a hit, so `terminal > 0` implies `hits > 0` and the
+    # clean branch can never carry a terminal clause.
+    mix_hits, _mp, _mu, mix_term = scan_provider_lines(
+        [real_rate_limit, real_giveup, real_no_fallback]
+    )
+    assert_eq(
+        "INVARIANT: a terminal line is also a hit (terminal <= hits)",
+        f"hits={mix_hits} terminal={mix_term} implies={mix_term <= mix_hits}",
+        "hits=3 terminal=1 implies=True",
+    )
+
+    # (T4) PROSE NEAR-MISS — the give-up sentence is quoted VERBATIM in
+    # CLAUDE.md, in this script's own comments and in my transcripts, so an
+    # unanchored scan reports my own writing as provider evidence and the
+    # contamination grows every session I write about it. Each shape must be
+    # REJECTED and COUNTED, never a terminal hit.
+    giveup_prose = [
+        f"| `{real_giveup.strip()}` | 7x | dead |",
+        f"The log says `{real_giveup.strip()}` here.",
+        f"scripts/extract_trajectory.py:1171:{real_giveup.strip()}",
+        f"> {real_giveup.strip()}",
+    ]
+    gp_hits, gp_prose, gp_unanchored, gp_term = scan_provider_lines(giveup_prose)
+    assert_eq(
+        "PROSE NEAR-MISS: four quoted give-ups are REJECTED and COUNTED",
+        f"hits={gp_hits} prose={gp_prose} unanchored={gp_unanchored} term={gp_term}",
+        "hits=0 prose=4 unanchored=0 term=0",
+    )
+    assert_eq(
+        "PROSE NEAR-MISS: none of the four classifies as terminal",
+        "/".join(str(classify_provider_terminal_line(x)) for x in giveup_prose),
+        "None/None/None/None",
+    )
+
+    # (T5) The RENDER, both directions. `terminal = 0` over real hits is the
+    # actionable reading this whole task exists to produce, so it is asserted
+    # as a whole string rather than by a `contains`.
+    assert_eq(
+        "RENDER: 0 terminal over real hits says survived, not died",
+        render_provider_health(
+            10, 69, AUDIT_DIR_OK, 0, ("audit.jsonl",), 0, 0, 0
+        ),
+        "## Provider/API health\n10 sessions, 69 provider error hit(s) in "
+        "audit.jsonl. 0 session(s) ended on a terminal give-up — every hit "
+        "above was retried (survived, not died).",
+    )
+    assert_eq(
+        "RENDER: a real terminal count names the machinery that STOPPED",
+        render_provider_health(
+            10, 69, AUDIT_DIR_OK, 0, ("audit.jsonl",), 0, 0, 7
+        ),
+        "## Provider/API health\n10 sessions, 69 provider error hit(s) in "
+        "audit.jsonl. 7 session(s) ended on a terminal give-up (the retry "
+        "machinery STOPPED); the rest were retried.",
     )
 
     # (1) All three real shapes detected, each by its own marker, so a regex
@@ -5099,12 +5191,15 @@ src/commands_config.rs
         "rate_limited/retry_giveup/no_fallback",
     )
     # ...and at the emission point, all three in one stream are reported.
-    h, pr, ur = scan_provider_lines([real_rate_limit, real_giveup, real_no_fallback])
+    h, pr, ur, _htm = scan_provider_lines(
+        [real_rate_limit, real_giveup, real_no_fallback]
+    )
     assert_eq(
         "all three real shapes reach the rendered line as hits",
         render_provider_health(1, h, AUDIT_DIR_OK, pr, ("transcripts/*.log",), ur),
         "## Provider/API health\n1 sessions, 3 provider error hit(s) in "
-        "transcripts/*.log.",
+        "transcripts/*.log. 0 session(s) ended on a terminal give-up — every "
+        "hit above was retried (survived, not died).",
     )
 
     # (3) NEAR-MISS GUARD — my own prose is the false-positive population, and
@@ -5119,7 +5214,7 @@ src/commands_config.rs
         "Each log carries 11x `429`, 6x `529`, 7x `API error with no fallback "
         "configured. Exiting.`",
     ]
-    p_hits, p_prose, p_unanchored = scan_provider_lines(prose_lines)
+    p_hits, p_prose, p_unanchored, p_term = scan_provider_lines(prose_lines)
     assert_eq(
         "NEAR-MISS: five prose shapes yield ZERO hits and are all COUNTED",
         f"hits={p_hits} prose={p_prose} unanchored={p_unanchored}",
@@ -5137,7 +5232,7 @@ src/commands_config.rs
     # (4) NEAR-MISS GUARD — a genuinely clean session set still renders the
     # healthy branch and claims NOTHING false. The old wording ("no provider
     # errors detected") is asserted ABSENT: that sentence is the defect.
-    clean_hits, clean_prose, clean_unanchored = scan_provider_lines(
+    clean_hits, clean_prose, clean_unanchored, clean_term = scan_provider_lines(
         ['{"tool":"read_file","success":true}', "Phase A1: Assessment (900s)..."]
     )
     clean_render = render_provider_health(
