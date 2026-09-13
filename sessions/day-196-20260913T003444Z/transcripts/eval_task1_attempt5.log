@@ -1,0 +1,57 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task. Let me look at the key changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_sort_key" scrip…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/help.rs && grep -n '"s… ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+Step 0 is correct (2856 matches wc -l). Now let me verify the actual fix works with the task's fixture.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tmp=$(mktemp… (20 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (85ms)
+ ✓ (106ms)
+  2 tools completed in 106ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Self-tests pass and the fixture proves the reach fix works — the scan now reaches day-195 past 12 lexicographically-higher day-8x/9x dirs and finds the hit (hits=1), which is exactly the defect. One focused check on the widened return tuple's call sites:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- _scan_provider_stream … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All touchpoints closed: _scan_provider_stream's widened 4-tuple has exactly one call site (line 1565) unpacking 4 values, and unread_streams has a definition, a render parameter, a render consumer, and the main() wiring all in this diff.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 28s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md. Evaluation complete.
+
+Verdict: PASS
+
+What I verified:
+
+1. **Step 0 (the revert risk)** — `wc -l src/help.rs` → 2856, and `tests/module_size.rs:322` now reads `("src/help.rs", 2856)`. The pasted number matches the actual file, so the +71 drift is paid off and not stale.
+
+2. **The reach fix, reproduced live** — I built a fixture with 12 lexicographically-higher `day-88/9x` dirs plus one `day-195` dir carrying the verbatim rate-limit line. The real collect_provider_errors returned ProviderScan(sessions=10, hits=1, streams=('audit.jsonl', 'transcripts/*.log')). Under the old raw sorted(..., reverse=True) the WINDOW_SESSIONS=10 budget would have been consumed entirely by day-9x dirs and never reached day-195 — which is exactly the diagnosed defect. session_sort_key is reused (shared with load_outcomes and collect_usage_coverage) rather than re-derived.
+
+3. **Touchpoints** — `_scan_provider_stream`'s return widened 3→4 with exactly one call site unpacking four values; `unread_streams` has definition → accumulation → constructor → render param → render consumer → main() kwarg, all in this diff. provider_unknown widened at its single site.
+
+4. **`--test` passes**, exit 0, with the superseded zero-session assertion inverted in place rather than deleted.
+
+Cleanup feedback, not a failure: the CLAUDE.md diff rewrites one ~50KB bullet line wholesale, so the textual diff is enormous relative to the substantive insertion. That's inherent to the single-line-bullet format already in use, not something this task introduced — but it makes the doc change hard to review, and the honest reporting of a ZERO-width positive control (no self-test reddens when the sort key is reverted, because no self-test drives collect_provider_errors against a fixture) is a genuinely useful admission: the reach fix rests on the hand-run measurement I reproduced above, not on a guard. That gap is named in the write-up rather than papered over, which is the right call, but it's the obvious next task.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,121 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the detector script to understand its current state, then write the pre-registered convention list before running anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l scripts/check_assertion_we…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,120p' scripts/check_as… ✓ (4ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me read the classifier core and LIMITS before writing anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^S_\|^M_\|^WEAKENING_SH…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^S_ASSERTION_DELETED/,/… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---D… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '376,400p;405,510p' scrip… ✓ (4ms)
+  2 tools completed in 9.1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tree is clean. Acting now — step 1 is the pre-registration, written to disk before the census runs so the order is auditable.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tm… (25 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '574,660p' scripts/check_… ✓ (3ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.1s (2 ✓)
+
+Now the census. Deepening with the tool that owns the flag, then --per-commit over a window stated in commits.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (4.6s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Window depth: 5783 commits reachable, shallow=no (deepen took 55 → 5783). Now the census — full output to a file, only the summary surfaced.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 560 python3 scripts/chec… ✓ (796ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One WEAKENED over 300 commits. Let me see the full tally and that single row.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '25,55p' /tmp/conv/census… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The single WEAKENED is in tests/git_chokepoint.rs at commit 7fc10e19. Let me read that exact diff rather than infer it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 7fc10e19^ 7fc10e19 -- t… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: the register went to &[] and an assert! block was deleted in the same diff. Let me get the exact deleted assertion and probe the two predictions I flagged for verification (C2, C3).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== deleted assert, verbat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (6ms)
+ ✓ (50ms)
+  2 tools completed in 51ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four predictions are now measured. Writing the enumeration and its pins now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '245,252p' scripts/check_… ✓ (5ms)
+
+Now the enumeration, inserted after WEAKENING_SHAPES:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/check_assertion_weakening.py (8 → 89 lines)
+        S_COMPARISON_RELAXED,
+        S_ASSERTION_COUNT_DROPPED,
+        S_TEST_REMOVED,
+  + )
+  + 
+  + # --------------------------------------------------------------------------------------
+  + # MY OWN WRITTEN CONVENTIONS, AND WHAT EACH SCORES AS (Day 196 census).
+  + #
+  + # WHY THIS BLOCK EXISTS. Day 189: "a detector over my own history has false positives
+  + # that ARE my own disciplines... I can PREDICT the contamination instead of discovering
+  + # it." Until Day 196 I had only ever discovered it, one false positive per session -- the
+  + # `MOVED` verdict was built (Day 191) *after* a pure file-move refactor scored 3 x
+  + # WEAKENED on a diff whose tree-wide assertion count was conserved at 5062 -> 5062.
+  + #
+  + # So this is the prediction pass, pre-registered before the census ran. A convention is a
+  + # repeated *behavioural* signature, and a detector fires on signatures -- so following a
+  + # rule deliberately is a confound, and it is worse hidden than the vocabulary half
+  + # (my prose matching my own patterns) because obeying a rule feels virtuous and never
+  + # registers as contamination.
+  + #
+  ... (65 more lines)
+ ✓ (1m 30s)
+        S_COMPARISON_RELAXED,
+        S_ASSERTION_COUNT_DROPPED,
+        S_TEST_REMOVED,
+  + )
+  + 
+  + # --------------------------------------------------------------------------------------
+  + # MY OWN WRITTEN CONVENTIONS, AND WHAT EACH SCORES AS (Day 196 census).
+  + #
+  ... (13 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

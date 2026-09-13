@@ -1,0 +1,233 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what actually landed, and what the code looks like now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unread_streams\|class P… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+The evaluator is right — only a dead field landed. Let me read the actual walk and render functions.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def scan_provider_lines… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1440,1620p' scripts/extr… ✓ (5ms)
+  2 tools completed in 1.7s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me finish reading the render function, then run the Step 1 measurement.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1620,1680p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "collect_provider_errors… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+Now Step 1 — measure with a fixture, no network, driving the real collect_provider_errors:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tmp=$(mktemp… (12 lines) ✓ (87ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Branch: non-zero hits — the walk is fine. So the defect is upstream. Let me widen the fixture toward the real shape (many session dirs, as they actually accumulate):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def session_sort_key" -… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Found it. Line 1520 uses a raw lexicographic sorted(..., reverse=True), while both siblings (load_outcomes:170, collect_usage_coverage:1835) use session_sort_key. Lexicographically day-99 > day-195. Let me reproduce with a widened fixture:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tmp=$(mktemp… (8 lines) ✓ (70ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Nine ancient day-9x dirs crowd the window; day-195 only survived at slot 10 because my fixture was small. Adding one more pushes it out — the real repo has ~470 dirs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tmp=$(cat /t… (9 lines) ✓ (55ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reproduced exactly — byte-identical to the live trajectory line: 10 sessions, no provider-error lines in audit.jsonl, transcripts/*.log. with zero hits and zero rejects. The measured cause is the lexicographic sort, not the glob or the cap. Let me check how main consumes it before fixing:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2895,2910p;2962,2990p' s… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The measured cause is localized. Now the fix — (a) the reach, using the same session_sort_key both siblings already use:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (12 → 29 lines)
+        A session counts as examined when it has EITHER stream, so a dir carrying
+        transcripts but no audit.jsonl is no longer invisible to the denominator.
+  + 
+  +     ORDERING IS THE WHOLE REACH, and it is why Day 196's both-streams fix read
+  +     as a no-op (Day 196, second task). This walk used a raw
+  +     `sorted(..., reverse=True)` — LEXICOGRAPHIC — while its two siblings
+  +     (`load_outcomes`, `collect_usage_coverage`) both key on `session_sort_key`.
+  +     Lexicographically `day-99-*` > `day-195-*` because `'9' > '1'`, so the
+  +     WINDOW_SESSIONS window filled up with day-9x dirs from months ago and never
+  +     reached day-194/195 at all. Measured on a fixture that reproduces the live
+  +     line byte-identically: 10 sessions examined, ZERO hits, ZERO rejects — and
+  +     reject counts print only when > 0, so "no candidate lines" and "no session
+  +     I read had one" rendered the same clean bill. The classifier was never
+  +     blind; the window simply pointed at the wrong decade of sessions.
+  +     `session_sort_key` is REUSED rather than re-derived: a second ordering rule
+  +     agrees the day it is written and diverges forever after.
+        """
+        if not audit_dir.exists():
+            return ProviderScan()
+  ···
+  ... (10 more lines)
+ ✓ (1m 16s)
+        A session counts as examined when it has EITHER stream, so a dir carrying
+        transcripts but no audit.jsonl is no longer invisible to the denominator.
+  + 
+  +     ORDERING IS THE WHOLE REACH, and it is why Day 196's both-streams fix read
+  +     as a no-op (Day 196, second task). This walk used a raw
+  +     `sorted(..., reverse=True)` — LEXICOGRAPHIC — while its two siblings
+  +     (`load_outcomes`, `collect_usage_coverage`) both key on `session_sort_key`.
+  +     Lexicographically `day-99-*` > `day-195-*` because `'9' > '1'`, so the
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now (b) — the unread-stream counter gets a producer. First _scan_provider_stream must report a file it could not read whole:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (25 → 34 lines)
+  - def _scan_provider_stream(path: Path) -> tuple[int, int, int]:
+  -     """Scan one file. Returns (hits, prose_rejected, unanchored_rejected).
+  + def _scan_provider_stream(path: Path) -> tuple[int, int, int, int]:
+  +     """Scan one file. Returns (hits, prose, unanchored, unread).
+    
+        Bounded by the existing AUDIT_FILE_SIZE_CAP — no new budget was invented.
+        Fail-soft: an OSError warns and contributes nothing, because this
+        extractor must never block a session.
+  + 
+  +     `unread` is 1 when this file could NOT be read WHOLE — an OSError, or a
+  +     file past the cap whose tail was never scanned. It is a THIRD fact, never
+  +     summed into hits or into either reject count: a rejected line was read and
+  +     judged, an unread file was never judged at all, and rendering the second
+  +     as the first is "could not check" reading as "checked; clean" — the exact
+  +     refusal the pre-push hook and `CiScan`'s could-not-run branch already make.
+        """
+        try:
+            size = path.stat().st_size
+  -         if size > AUDIT_FILE_SIZE_CAP:
+  +         capped = size > AUDIT_FILE_SIZE_CAP
+  ... (15 more lines)
+ ✓ (1m 17s)
+  - def _scan_provider_stream(path: Path) -> tuple[int, int, int]:
+  -     """Scan one file. Returns (hits, prose_rejected, unanchored_rejected).
+  + def _scan_provider_stream(path: Path) -> tuple[int, int, int, int]:
+  +     """Scan one file. Returns (hits, prose, unanchored, unread).
+    
+        Bounded by the existing AUDIT_FILE_SIZE_CAP — no new budget was invented.
+        Fail-soft: an OSError warns and contributes nothing, because this
+        extractor must never block a session.
+  ... (13 more lines)
+
+Now wire it through the collect loop, including the un-listable directory case:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (29 → 31 lines)
+            except OSError as e:
+                warn(f"skipped transcripts of {child}: {e}")
+                transcripts = []
+  +             unread += 1
+            streams = ([audit] if audit.is_file() else []) + transcripts
+            if not streams:
+                continue
+  ···
+            if transcripts:
+                saw_transcripts = True
+            for stream in streams:
+  -             h, pr, ur = _scan_provider_stream(stream)
+  +             h, pr, ur, un = _scan_provider_stream(stream)
+                hits += h
+                prose_rejected += pr
+                unanchored_rejected += ur
+  +             unread += un
+            if sessions >= WINDOW_SESSIONS:
+                break
+        names = []
+  ... (7 more lines)
+ ✓ (1m 17s)
+            except OSError as e:
+                warn(f"skipped transcripts of {child}: {e}")
+                transcripts = []
+  +             unread += 1
+            streams = ([audit] if audit.is_file() else []) + transcripts
+            if not streams:
+                continue
+  ···
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the render — examined-zero refusal asserted first, plus the unread clause:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (8 → 9 lines)
+        prose_rejected: int = 0,
+        streams: tuple = (),
+        unanchored_rejected: int = 0,
+  +     unread_streams: int = 0,
+    ) -> str:
+ ✓ (1m 17s)
+        prose_rejected: int = 0,
+        streams: tuple = (),
+        unanchored_rejected: int = 0,
+  +     unread_streams: int = 0,
+    ) -> str:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (10 → 33 lines)
+        if sessions == 0:
+  -         return ""
+  +         # ANTI-VACUOUS, and it is asserted BEFORE any clean branch: a walk that
+  +         # examined ZERO sessions has no evidence of anything, and rendering it
+  +         # as silence let "I found no session dirs" pass for "I checked and the
+  +         # provider was fine" — this section's own subject wearing the opposite
+  +         # sign, and quieter than the bug. SUPERSEDED BEHAVIOUR, recorded rather
+  +         # than erased: this used to `return ""`, and the self-test that pinned
+  +         # the empty string was INVERTED rather than deleted (Day 148 — a
+  +         # fixture pinning a superseded convention that outlives its replacement
+  +         # converts a defect into a green invariant).
+  +         return (
+  +             "## Provider/API health: not checked — the audit-log directory "
+  +             "holds no session directories, so nothing was scanned. This is not "
+  +             "'no provider errors'."
+  +         )
+        scanned = f" in {', '.join(streams)}" if streams else ""
+        rejects = []
+        if prose_rejected > 0:
+  ···
+  ... (14 more lines)
+ ✓ (1m 17s)
+        if sessions == 0:
+  -         return ""
+  +         # ANTI-VACUOUS, and it is asserted BEFORE any clean branch: a walk that
+  +         # examined ZERO sessions has no evidence of anything, and rendering it
+  +         # as silence let "I found no session dirs" pass for "I checked and the
+  +         # provider was fine" — this section's own subject wearing the opposite
+  +         # sign, and quieter than the bug. SUPERSEDED BEHAVIOUR, recorded rather
+  +         # than erased: this used to `return ""`, and the self-test that pinned
+  ... (13 more lines)
+  2 tools completed in 2m 46s (2 ✓)
+
