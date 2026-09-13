@@ -576,5 +576,56 @@ if require "gasp_accept_verdict extracted" "$AV_FN"; then
         "$(grep -cF '"$task_title" promoted "$PRE_TASK_SHA"' "$SCRIPT")" "0"
 fi
 
+# ── main push: retry, and never echo a failure into success ────────────────
+PR_FN=$(awk '/^push_main_with_retry\(\) \{/,/^\}/' "$SCRIPT")
+if require "push_main_with_retry extracted" "$PR_FN"; then
+    pr_case() { # $1 = how many pushes fail  $2 = pull fails? (yes|no)  -> "rc pushes aborts"
+        ( set -uo pipefail
+          eval "$PR_FN"
+          _FAILS="$1"; _PULL="$2"; _PUSHES=0; _ABORTS=0
+          git() { case "$1" in
+                    pull)   [ "$_PULL" = yes ] && return 1; return 0 ;;
+                    rebase) _ABORTS=$((_ABORTS+1)); return 0 ;;
+                    push)   _PUSHES=$((_PUSHES+1)); [ "$_FAILS" -gt 0 ] && { _FAILS=$((_FAILS-1)); return 1; }; return 0 ;;
+                    *)      return 0 ;; esac; }
+          push_main_with_retry >/dev/null; rc=$?
+          printf '%s %s %s' "$rc" "$_PUSHES" "$_ABORTS"
+        ) 2>/dev/null | tail -1
+    }
+    check "push: first try lands -> ok, one push"            "$(pr_case 0 no)"  "0 1 0"
+    check "push: rejected once, retry lands -> ok, two pushes" "$(pr_case 1 no)"  "0 2 0"
+    check "push: rejected twice -> FAILS, two pushes"         "$(pr_case 2 no)"  "1 2 0"
+    # A failed rebase must be aborted before pushing, every attempt.
+    check "push: pull fails -> rebase aborted each attempt"    "$(pr_case 2 yes)" "1 2 2"
+    # Wiring: the caller decides, the outcome names it, and a lost push exits 1.
+    check "push: caller branches on the helper"     "$(grep -cF 'if ! push_main_with_retry; then' "$SCRIPT")" "1"
+    check "push: run outcome carries PUSH FAILED"   "$(grep -cF 'PUSH FAILED: none of it is on main' "$SCRIPT")" "1"
+    check "push: lost push exits non-zero at the end" \
+        "$(awk '/=== Day \$DAY complete ===/{p=1} p && /exit 1/{print "yes"; exit}' "$SCRIPT")" "yes"
+    check "push: the old fail-open echo is gone" \
+        "$(grep -cF 'Push failed (maybe no remote or auth issue)' "$SCRIPT")" "0"
+
+    # The pre-push sweep, banner to its `fi`, in a scratch repo: a tracked file
+    # dirtied after the wrap-up gets committed by name; a clean tree is untouched.
+    PS_BLOCK=$(awk '/^# ── Pre-push sweep/{p=1} p{print} p && /^fi$/{exit}' "$SCRIPT")
+    ps_case() { # $1 = dirty|clean  -> "<commits after> <clean?> <subject>"
+        ( set -uo pipefail
+          export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+          d=$(mktemp -d) && cd "$d" || exit 1
+          git init -q . && git config user.email t@t && git config user.name t
+          echo keys > handoff && git add handoff && git commit -qm base
+          [ "$1" = dirty ] && : > handoff
+          DAY=197; SESSION_TIME=15:47
+          eval "$PS_BLOCK" >/dev/null
+          printf '%s %s %s' "$(git rev-list --count HEAD)" "$([ -z "$(git status --porcelain)" ] && echo clean || echo dirty)" "$(git log -1 --format=%s | cut -c1-40)"
+          cd / && rm -rf "$d"
+        ) 2>/dev/null | tail -1
+    }
+    if require "pre-push sweep extracted" "$PS_BLOCK"; then
+        check "pre-push sweep: dirty tracked file -> committed by name, tree clean" "$(ps_case dirty)" "2 clean Day 197 (15:47): session-end state reset"
+        check "pre-push sweep: clean tree -> untouched"                              "$(ps_case clean)" "1 clean base"
+    fi
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

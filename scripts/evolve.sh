@@ -1941,6 +1941,36 @@ gasp_accept_verdict() {
     if [ -n "${1:-}" ]; then printf 'unverified'; else printf 'promoted'; fi
 }
 
+# push_main_with_retry — rebase onto origin and push, twice. Returns non-zero
+# when main still refuses, and the CALLER decides what that means; this never
+# echoes a failure into success.
+#
+# Measured 2026-09-13, run 34766606687: `git pull --rebase` refused ("You have
+# unstaged changes"), `git push` was rejected non-fast-forward because
+# synthesize had moved main mid-session, both were `|| echo`, and the session
+# went on to record "promoted 2/2 tasks" in the graph and tasks_succeeded=2 in
+# the audit log. Green run. Both tasks and six safety commits died with the
+# runner. Nothing on main. The dirty file was .yoyo/applied_pattern_keys.txt,
+# truncated by the session-end reset AFTER the wrap-up sweep — see the pre-push
+# sweep at the call site, which is the root-cause half of this fix.
+push_main_with_retry() {
+    local attempt
+    for attempt in 1 2; do
+        if ! git pull --rebase; then
+            # A conflict leaves the repo mid-rebase; a push from there is a push
+            # of the wrong thing. Abort back to our commits and try the push
+            # anyway — the retry will re-fetch.
+            git rebase --abort 2>/dev/null || true
+            echo "  Pull --rebase failed (attempt $attempt of 2); dirty files: $(git status --porcelain 2>/dev/null | head -3 | tr '\n' ' ')"
+        fi
+        if git push; then
+            return 0
+        fi
+        echo "  Push rejected (attempt $attempt of 2)"
+    done
+    return 1
+}
+
 safety_commit() {
     local msg="$1" staged_protected commit_out
     git add -A 2>/dev/null || true
@@ -3799,6 +3829,10 @@ PYEOF
     fi
     # Issue #501: reset the applied-patterns handoff (read into outcome.json above)
     # so it doesn't bleed into the next session. Best-effort; mirrors audit.jsonl.
+    # NOTE: this file is TRACKED and this runs AFTER the wrap-up sweep, so it
+    # leaves the tree dirty — the pre-push sweep commits it (Day 197: an
+    # uncommitted reset here made `git pull --rebase` refuse and a rejected push
+    # was then recorded as success; two tasks lost).
     [ -f .yoyo/applied_pattern_keys.txt ] && : > .yoyo/applied_pattern_keys.txt
 
     # Push to audit-log branch. Failures are non-fatal but tracked: after 3
@@ -3934,15 +3968,46 @@ fi
 echo ""
 echo "→ Pushing..."
 refresh_gh_token
-git pull --rebase || echo "  Pull --rebase failed (will attempt push anyway)"
-git push || echo "  Push failed (maybe no remote or auth issue)"
+# ── Pre-push sweep: the tree must be clean or `git pull --rebase` refuses ──
+# Anything dirty here was written by the harness itself AFTER the wrap-up
+# sweep (the applied-pattern-keys reset above is the known one; it must run
+# after outcome.json reads the file, so it cannot move before the sweep). It
+# is harness state, not agent work: commit it under its own name so the
+# rebase can run, and PRINT the list so any new writer is found in one look
+# rather than by losing a session to it (Day 197, run 34766606687).
+PREPUSH_LEFTOVERS=$(git status --porcelain 2>/dev/null || echo "?? (git status failed)")
+if [ -n "$PREPUSH_LEFTOVERS" ]; then
+    echo "  Tracked files changed after the wrap-up sweep — committing them so the rebase can run:"
+    printf '%s\n' "$PREPUSH_LEFTOVERS" | sed 's/^/    /'
+    git add -A
+    git commit -q -m "Day $DAY ($SESSION_TIME): session-end state resets" || echo "  WARNING: could not commit the leftovers — the rebase below may refuse"
+fi
+PUSH_OK=true
+if ! push_main_with_retry; then
+    PUSH_OK=false
+    echo "::error::main push FAILED after 2 attempts — this session's ${SESSION_TASKS_SUCCEEDED:-0} accepted task(s) are NOT on main and die with this runner. The graph already recorded them per task; the run outcome and this step's exit code say otherwise."
+    git log --oneline origin/main..HEAD 2>/dev/null | head -12 | sed 's/^/    unpushed: /'
+fi
 if [ "$QUIET_MODE" = false ]; then
     git push --tags || echo "  Tag push failed (non-fatal)"
 fi
 
 # GASP: close the run and push state AFTER the code push, so patch artifacts
 # never reference unpushed commits (code first, state second).
-gasp_session_end "promoted ${SESSION_TASKS_SUCCEEDED:-0}/${SESSION_TASKS_ATTEMPTED:-0} tasks"
+# A failed push is in the run outcome, so the graph's run node cannot read as
+# a delivery: the per-task verdicts above are append-only and already say
+# "promoted", and the artifact shas they carry now point at commits that exist
+# nowhere — the run.finished line is where a consumer can learn that.
+PUSH_SUFFIX=""
+[ "$PUSH_OK" = false ] && PUSH_SUFFIX=" — PUSH FAILED: none of it is on main"
+gasp_session_end "promoted ${SESSION_TASKS_SUCCEEDED:-0}/${SESSION_TASKS_ATTEMPTED:-0} tasks${PUSH_SUFFIX}"
 
 echo ""
 echo "=== Day $DAY complete ==="
+# Exit non-zero on a lost push: the step reads as failed and evolve.yml's
+# retry attempt fires, which is the one path that can redo the lost work
+# while budget remains. A green step over unpushed work is the Day 197 defect.
+if [ "${PUSH_OK:-true}" = false ]; then
+    echo "  (exiting 1: the push failed and this session's work is not on main)"
+    exit 1
+fi
