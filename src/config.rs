@@ -33,6 +33,7 @@ impl PermissionConfig {
             if glob_match(pattern, command)
                 && !allow_wildcard_swallows_options(pattern, command)
                 && !allow_wildcard_spans_a_command_chain(pattern, command)
+                && !allow_wildcard_reaches_cloud_metadata(pattern, command)
             {
                 return Some(true);
             }
@@ -141,6 +142,72 @@ fn allow_wildcard_spans_a_command_chain(pattern: &str, command: &str) -> bool {
     let subst = scanned.contains("$(") || scanned.contains('`');
     let pattern_names_subst = pattern.contains("$(") || pattern.contains('`');
     subst && !pattern_names_subst
+}
+
+/// Canonical cloud instance-metadata endpoints.
+///
+/// A single unauthenticated HTTP GET to one of these returns the host's IAM credentials, so a
+/// wildcard `allow` pattern that reaches one is credential exfiltration wearing an ordinary
+/// `curl`'s clothes. Every entry is here because it is a **documented** metadata address —
+/// an entry nobody can name a reason for is how a security fix acquires a regression, so this
+/// list grows only when a new endpoint can be cited.
+pub(crate) const CLOUD_METADATA_HOSTS: &[&str] = &[
+    // AWS EC2 IMDS (v1 and v2). The same link-local address is the metadata endpoint for
+    // Azure, DigitalOcean and OpenStack, so this one entry covers four providers.
+    "169.254.169.254",
+    // GCP metadata server, and the short form its own docs accept.
+    "metadata.google.internal",
+    "metadata.goog",
+    // AWS ECS task metadata / task IAM role endpoint (a different link-local address).
+    "169.254.170.2",
+    // Alibaba Cloud ECS metadata.
+    "100.100.100.200",
+];
+
+/// True when a **wildcard** `allow` pattern matched a command that targets a cloud
+/// instance-metadata endpoint the pattern itself never named.
+///
+/// The measured defect (Day 198): `allow = ["curl *"]` — which a user writes meaning "the `*`
+/// is the URL slot" — also matched
+/// `curl http://169.254.169.254/latest/meta-data/iam/security-credentials/`, auto-approving an
+/// IAM-credential fetch **for the whole session** with no prompt. Driven at the emission point
+/// before the fix, both the AWS and GCP rows returned `Some(true)`.
+///
+/// Three clauses, each load-bearing:
+///
+/// 1. It applies **only when the pattern carries a wildcard**. A literal, wildcard-free pattern
+///    the user typed in full is the user's own word and is byte-identical to before.
+/// 2. It rejects only when the pattern does **not** name the host itself, so
+///    `allow = ["curl http://169.254.169.254/*"]` still auto-approves — the same escape hatch
+///    `allow_wildcard_spans_a_command_chain` gives a separator the pattern names.
+/// 3. **Rejection means "not auto-approved", never "refused."** The command falls through to
+///    the normal confirmation prompt. That is graceful degradation by design, and it is why
+///    there is no warning, no refusal message and no new flag here — please do not add one.
+///
+/// **Quoted regions are deliberately NOT stripped**, unlike in
+/// `allow_wildcard_spans_a_command_chain`. That sibling strips quotes because a quoted `&&` is
+/// literal text rather than a shell operator; here, **quoting a URL is the normal way to write
+/// one** (`curl "http://169.254.169.254/..."`), so stripping would blind the check on the
+/// commonest shape. The cost is that `echo "169.254.169.254"` also stops auto-approving — that
+/// is over-blocking, the safe direction for an allow narrowing, where the worst case is one
+/// confirmation prompt.
+///
+/// `deny` keeps plain `glob_match` and must never mirror this: narrowing an `allow` removes
+/// privilege (safe), while narrowing a `deny` makes a fence stop matching, i.e. it fails
+/// **open** — a regression dressed as a security fix.
+///
+/// **The stated limit: this narrows one matcher; it is not egress control.** A user who trusts
+/// the command still runs it, the endpoint stays reachable by any tool the model may invoke,
+/// and a command built through a variable, a shell alias, an IP written in decimal/octal form,
+/// or a redirect that resolves to the metadata address is **invisible** to it. It is a
+/// token/host rule, not a network policy — "could not check" must not read as "checked; clean".
+fn allow_wildcard_reaches_cloud_metadata(pattern: &str, command: &str) -> bool {
+    if !pattern.contains('*') && !pattern.contains('?') {
+        return false;
+    }
+    CLOUD_METADATA_HOSTS
+        .iter()
+        .any(|host| command.contains(host) && !pattern.contains(host))
 }
 
 /// Directory restriction configuration for file access security.
@@ -4232,5 +4299,161 @@ mod allow_chain_tests {
         let padded = whitespace_padded_config_values(&[], &[cfg]);
         assert_eq!(padded.len(), 1);
         assert_eq!(padded[0].0, "mcp_servers.s.env.TOKEN");
+    }
+
+    /// The Day-198 defect, pinned at the **emission point** — the `Option<bool>` a caller of
+    /// `PermissionConfig::check` receives, never the predicate one layer below.
+    ///
+    /// Measured before the fix: both rows returned `Some(true)`, i.e. `allow = ["curl *"]`
+    /// auto-approved an IAM-credential fetch for the whole session with no prompt.
+    #[test]
+    fn wildcard_allow_does_not_auto_approve_a_cloud_metadata_fetch() {
+        let aws = "curl http://169.254.169.254/latest/meta-data/iam/security-credentials/";
+        let gcp = "curl http://metadata.google.internal/computeMetadata/v1/";
+
+        // ANTI-VACUOUS, asserted first: each fixture genuinely carries the host string, so a
+        // transcription slip cannot make this pass by both sides agreeing on nothing.
+        assert!(aws.contains("169.254.169.254"), "AWS fixture lost its host");
+        assert!(
+            gcp.contains("metadata.google.internal"),
+            "GCP fixture lost its host"
+        );
+
+        let cfg = PermissionConfig {
+            allow: vec!["curl *".to_string()],
+            deny: vec![],
+        };
+        assert_eq!(cfg.check(aws), None, "IMDS fetch must not auto-approve");
+        assert_eq!(
+            cfg.check(gcp),
+            None,
+            "GCP metadata fetch must not auto-approve"
+        );
+    }
+
+    /// NEAR-MISS GUARD, and the entire regression surface: every wildcard pattern that reaches
+    /// no metadata host is byte-identical to before. A discriminator tested only on the side
+    /// that blocks is vacuous green.
+    #[test]
+    fn ordinary_wildcard_allows_are_still_auto_approved_byte_for_byte() {
+        for (pat, cmd) in [
+            ("curl *", "curl https://example.com/api"),
+            ("cargo *", "cargo test --lib"),
+            ("npm run *", "npm run build"),
+        ] {
+            let cfg = PermissionConfig {
+                allow: vec![pat.to_string()],
+                deny: vec![],
+            };
+            assert_eq!(
+                cfg.check(cmd),
+                Some(true),
+                "{pat:?} vs {cmd:?} must still allow"
+            );
+        }
+    }
+
+    /// NEAR-MISS GUARD: a pattern that **names** the endpoint keeps its auto-approval — the
+    /// same escape hatch the command-chain rule gives a separator the pattern names.
+    #[test]
+    fn a_pattern_that_names_the_metadata_endpoint_still_auto_approves() {
+        let aws = "curl http://169.254.169.254/latest/meta-data/iam/security-credentials/";
+        assert!(aws.contains("169.254.169.254"), "fixture lost its host");
+        let cfg = PermissionConfig {
+            allow: vec!["curl http://169.254.169.254/*".to_string()],
+            deny: vec![],
+        };
+        assert_eq!(cfg.check(aws), Some(true));
+    }
+
+    /// NEAR-MISS GUARD: a **wildcard-free** pattern is the user's own word, typed in full, and
+    /// is untouched.
+    #[test]
+    fn a_wildcard_free_pattern_reaching_metadata_is_untouched() {
+        let aws = "curl http://169.254.169.254/latest/meta-data/";
+        assert!(aws.contains("169.254.169.254"), "fixture lost its host");
+        let cfg = PermissionConfig {
+            allow: vec![aws.to_string()],
+            deny: vec![],
+        };
+        assert_eq!(cfg.check(aws), Some(true));
+    }
+
+    /// NEAR-MISS GUARD: `deny` keeps plain `glob_match`. Narrowing a deny makes a fence stop
+    /// matching, i.e. it fails **open** — this row is the assertion that it did not move.
+    #[test]
+    fn deny_still_blocks_a_metadata_fetch() {
+        let aws = "curl http://169.254.169.254/latest/meta-data/iam/security-credentials/";
+        assert!(aws.contains("169.254.169.254"), "fixture lost its host");
+        let cfg = PermissionConfig {
+            allow: vec![],
+            deny: vec!["curl *".to_string()],
+        };
+        assert_eq!(cfg.check(aws), Some(false));
+    }
+
+    #[test]
+    fn allow_wildcard_reaches_cloud_metadata_table() {
+        // Fires: a wildcard pattern reaching a host it never named.
+        for (pat, cmd) in [
+            ("curl *", "curl http://169.254.169.254/latest/meta-data/"),
+            (
+                "curl *",
+                "curl http://metadata.google.internal/computeMetadata/v1/",
+            ),
+            ("curl *", "curl http://metadata.goog/computeMetadata/v1/"),
+            ("curl *", "curl http://169.254.170.2/v2/credentials"),
+            ("curl *", "curl http://100.100.100.200/latest/meta-data/"),
+            // Quotes are deliberately NOT stripped: quoting a URL is the normal shape.
+            (
+                "curl *",
+                "curl \"http://169.254.169.254/latest/meta-data/\"",
+            ),
+            ("wget *", "wget -q -O- http://169.254.169.254/"),
+        ] {
+            assert!(
+                allow_wildcard_reaches_cloud_metadata(pat, cmd),
+                "expected fire: {pat:?} vs {cmd:?}"
+            );
+        }
+
+        // Must NOT fire.
+        for (pat, cmd) in [
+            // No metadata host anywhere.
+            ("curl *", "curl https://example.com/api"),
+            ("cargo *", "cargo test --lib"),
+            // Pattern names the host.
+            (
+                "curl http://169.254.169.254/*",
+                "curl http://169.254.169.254/latest/meta-data/",
+            ),
+            // Wildcard-free pattern — the user's own word.
+            (
+                "curl http://169.254.169.254/latest/meta-data/",
+                "curl http://169.254.169.254/latest/meta-data/",
+            ),
+            // A near-miss address that is not a metadata endpoint.
+            ("curl *", "curl http://169.254.169.253/"),
+            ("curl *", ""),
+        ] {
+            assert!(
+                !allow_wildcard_reaches_cloud_metadata(pat, cmd),
+                "expected silence: {pat:?} vs {cmd:?}"
+            );
+        }
+    }
+
+    /// ANTI-VACUOUS: the endpoint list is non-empty and every entry is a non-blank host, so a
+    /// predicate that finds nothing cannot pass by having nothing to look for.
+    #[test]
+    fn cloud_metadata_host_list_is_non_empty_and_well_formed() {
+        assert!(!CLOUD_METADATA_HOSTS.is_empty());
+        for host in CLOUD_METADATA_HOSTS {
+            assert!(!host.trim().is_empty(), "blank metadata host entry");
+            assert!(
+                !host.contains(' '),
+                "metadata host carries a space: {host:?}"
+            );
+        }
     }
 }

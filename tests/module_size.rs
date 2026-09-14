@@ -247,7 +247,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // side, matching unescaping (and a lone-quote panic fix) on the read side,
     // plus the round-trip tests that pin writer and reader as one promise.
     // Day 174: +256 absorbed since Day 166.
-    ("src/config.rs", 4236), // Day 193: +266 for the MCP whitespace-padding detector, its warning and 5 guards.
+    ("src/config.rs", 4459), // Day 198: +223 for the cloud-metadata allow narrowing, CLOUD_METADATA_HOSTS and 7 guards.
     // Day 165: 2307 -> 2296. Not a shrink I made this session — the entry was
     // stale-high, and branch 3 (below-ceiling is fatal) is what finally said so.
     // Day 184: 2321 -> 2337 (+16). NOT this task's diff — `git diff src/dispatch.rs`
