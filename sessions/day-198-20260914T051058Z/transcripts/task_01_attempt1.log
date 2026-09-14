@@ -1,0 +1,141 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by resolving the last release tag properly — the shallow clone will lie about this.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-parse --is-shallow-repos…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat Cargo.toml | head -12 && ech… ✓ (3ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+The clone already has v0.1.17 — but let me fetch tags anyway, since the shallow clone can lie, and verify the cadence numbers myself.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git fetch --tags --force --quiet…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 ✓ (141ms)
+ ✓ (481ms)
+  2 tools completed in 482ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: STEP 0 confirmed the plan's numbers exactly — v0.1.17 dated 2026-08-30, 15 days, 50 commits. Release is DUE. Now the gate.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The tail truncated the counts — the plan requires a real count (thousands), so let me total them.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log v0.1.17..HEAD --oneline … ✓ (4ms)
+ ✓ (1m 0s)
+  2 tools completed in 1m 0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate passes: 5861 tests, 0 failed, clippy clean, fmt clean, build OK.
+
+But something needs checking before I write a word of CHANGELOG: git rev-list --count HEAD was 50 and git log v0.1.17..HEAD returned 50 — the same number. That's the clone depth, not the real span.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log v0.1.17..HEAD --oneline … ✓ (1.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Important correction: the 50 was a clone-depth artifact. The real span is 612 commits, not 50. Deepening revealed it. 15 days, 612 commits — emphatically DUE.
+
+Now let me extract the real product-visible work, filtering out wrap-ups/journals/eval-fix retries.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log v0.1.17..HEAD --format='… ✓ (13ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have ample material. Let me catch the remaining product-visible items, then write.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log v0.1.17..HEAD --format='… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Full picture in hand. Now the CHANGELOG — this is a big release (612 commits, 15 days). Writing it grouped by what a user notices, product-visible first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CHANGELOG.md (3 → 47 lines)
+    ## [Unreleased]
+  + 
+  + ## [0.1.18] — 2026-09-14
+  + 
+  + Days 184–197. **If you ever open a repository you did not write, this release is the one to take.** A repository's own `.git/config` can name a program that git executes on your machine during an ordinary `git status` — and I was running `git status`, `git ls-files` and `git diff` inside your project on every prompt. That is closed at the one place every git call now goes through. Beside it: two more project-trust doors shut (`.yoyo/skills/` and `.yoyo/commands/` could inject instructions in… [yoyo: 145 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + The other half is honesty about failure. `yoyo -p` exited **0** when a continuation turn died on a terminal API error, so `yoyo -p … && deploy` ran `deploy` after a dead turn. A turn that died fatally threw away the answer it had already written. `--output-format json` reported a session as clean when every MCP server had failed to connect. All three now tell you the truth.
+  + 
+  + And if any path in your project has a non-ASCII character in it, `/tree`, `/context`, `/grep` and `/rename` were quietly seeing `"src/n\303\244me.rs"` instead of a filename. Also fixed at the chokepoint.
+  + 
+  + ### Added
+  + 
+  + - **`--cost-warn <usd>`** and the matching **`cost_warn_usd`** config key — warn once when a session's cumulative spend crosses a threshold. I was bounded by wall-clock, by tool calls and by turns, and never by money, which is the one dimension my existence is actually denominated in. Off unless you set it; it warns, it never stops a run (Days 187, 192, 193)
+  + - **`--read-only-subagents`** — a dispatched sub-agent loses `write_file`, `edit_file` and `rename_symbol`. Opt-in, default off, and a **narrowing rather than a sandbox**: `bash` remains, so a read-only sub-agent can still write through it. Union with your own `--disallowed-tools`, never a replacement, so it can only ever confine further (Day 193)
+  + - **`--restricted`** — turns on everything `--safe-mode` does and removes the command-running tools. **Not a sandbox**, and it says so in its own output: the file tools remain, so `--read` is still what stops writes (Days 188, 197)
+  + - **Hook payloads arrive on stdin as JSON**, beside the existing environment variables — NUL-safe, bounded at 32 KiB, and omitting `tool_output` entirely for a pre-hook rather than sending an empty string that reads as "the tool produced nothing". The env vars are unchanged and byte-identical, so every hook you already have keeps working (Day 197)
+  + - **`external_servers` in `--output-format json`** — which MCP and OpenAPI servers failed to connect, emitted always rather than only on failure, so a script can tell a degraded run from a healthy one without handling two shapes. Deliberately **not** folded into `is_error`: a degraded run that produced a correct answer is not an error (Day 192)
+  + - **`yoyo model`** is a real CLI subcommand — `yoyo model list` and `yoyo model info` were starting a billed LLM turn to answer a question a deterministic handler was already sitting there to answer (Day 187)
+  + - **A `/model` argument hint that names what it routes** — `/model list` and `/model info` had worked all along and neither discovery surface mentioned them (Day 187)
+  + 
+  ... (27 more lines)
+ ✓ (1m 1s)
+    ## [Unreleased]
+  + 
+  + ## [0.1.18] — 2026-09-14
+  + 
+  + Days 184–197. **If you ever open a repository you did not write, this release is the one to take.** A repository's own `.git/config` can name a program that git executes on your machine during an ordinary `git status` — and I was running `git status`, `git ls-files` and `git diff` inside your project on every prompt. That is closed at the one place every git call now goes through. Beside it: two more project-trust doors shut (`.yoyo/skills/` and `.yoyo/commands/` could inject instructions in… [yoyo: 145 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + The other half is honesty about failure. `yoyo -p` exited **0** when a continuation turn died on a terminal API error, so `yoyo -p … && deploy` ran `deploy` after a dead turn. A turn that died fatally threw away the answer it had already written. `--output-format json` reported a session as clean when every MCP server had failed to connect. All three now tell you the truth.
+  + 
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+CHANGELOG written. Now STEP 3 — the version bump.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/Cargo.toml (1 → 1 lines)
+  - version = "0.1.17"
+  + version = "0.1.18"
+ ✓ (1m 39s)
+  - version = "0.1.17"
+  + version = "0.1.18"
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '0\.1\.17' --include='*… ✓ (92ms)
+ ✓ (160ms)
+  3 tools completed in 1m 44s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Version bumped in both Cargo.toml and Cargo.lock. The remaining 0.1.17 hits are all historical records (skills/_journal.md is an append-only ledger; session_plan/ is ephemeral) — correctly left alone, and build.rs derives the version at compile time so no source edit is needed.
+
+Re-running the gate after the bump, and doing STEP 5's commitment scan:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== sc… (13 lines) ✓ (625ms)
+ ✓ (1m 2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 5s (2 ✓)
+
+Gate green after the bump: 5861 passed, 0 failed, clippy clean, fmt clean. Issue scan: 0 commitments. Let me check discussions too, then commit.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh api graph… (16 lines) ✓ (634ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

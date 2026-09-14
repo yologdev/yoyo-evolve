@@ -1,0 +1,81 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll go through each issue and decide honestly. This session did two things: cut a release, and landed a cloud-metadata narrowing on permissions.allow. Let me check what that actually touches.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -6 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD~3 | head -3… ✓ (6ms)
+ ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.4s (2 ✓)
+
+Let me verify the actual state of a few of these before deciding — I don't want to guess at status.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #879 --restricted ==="…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #881 read-only subagen… ✓ (3ms)
+ ✓ (14ms)
+  2 tools completed in 15ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up the issue-response phase. I verified --restricted (#879) and --read-only-subagents (#881 slice 1) both landed but have explicitly-named open remainders. Now let me check #915, which CLAUDE.md says was fixed last session.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #915 TaskVerdict ===" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #915 in gasp.rs ===" &… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 19.1s (2 ✓)
+
+#915's vocabulary half genuinely landed (Day 197). Let me check whether I already commented on these — duplicating a status note would be noise.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 915 913 902 886 881 879… ✓ (8.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The command truncated partway. Let me finish checking the remaining issues — #879 is the one that might genuinely be closeable, so I want to verify its open clauses rather than assume.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 879 870 869 858 738; do…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #879 env var form (Q5)… ✓ (7ms)
+ ✓ (3.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain | head -5… ✓ (6ms)
+  3 tools completed in 18.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verification complete — tree is clean, and I have what I need. Here's my decision.
+
+## Verdict: comment on nothing, close nothing.
+
+This session did two things — cut release v0.1.18, and landed a cloud-metadata narrowing on `permissions.allow` wildcards (allow_wildcard_reaches_cloud_metadata, so allow = ["curl *"] no longer auto-approves a fetch to 169.254.169.254). Neither intersects a single issue in the queue. That's not a failure — it's just what happened, and dressing it up would be the noise the rules tell me to avoid.
+
+I checked each one rather than assuming:
+
+| issue | state | why silent |
+|---|---|---|
+| #915 gasp UNVERIFIED | vocabulary landed Day 197 (TaskVerdict 3 values, EvalStatus::Skipped, oracle_ran); last comment records the producer landing too | gap 2 (Abandoned, no patch node) open — already documented in 2 comments |
+| #913 CLI door always Open | 0 comments, untouched | it's a design question, not a bug; I have nothing new |
+| #902 instruction-file gate | 3 comments thru Day 196 | gate half explicitly blocked; status current |
+| #886 yoyo model list | model routed Day 187; last comment says "does NOT fix #886" | five verbs still billing — already on record |
+| #881 read-only sub-agent | slice 1 landed Day 193 | per-dispatch half needs a yoagent schema I don't own |
+| #879 composite --restricted | landed Day 188 | Q5 (env var) deferred in the code itself at src/cli.rs:1704 |
+| #870 / #869 / #858 | 27 / 2 / 3 comments | untouched; #858 still 3-of-4 unfixed |
+| #738 blind-round mirror | 71 comments | permanent durable home — never closes, and I ran no blind round |
+
+The one thing I was tempted by: #879 question 4 says --restricted "may only ever narrow," and my Task 2 is an allow-narrowing. But that's a different mechanism — I changed what PermissionConfig::check auto-approves, not what a composite flag composes. Commenting there would be reaching for a connection that isn't real, and I'd rather leave a clean queue than pad it.
+
+What I'd flag for a human: #913 has zero comments and is the only issue here nobody has ever replied to. It's a genuine design fork (three options, only option 2 changes operator-visible behaviour) sitting unanswered since Day 196. Not mine to decide unilaterally — but it's the one most likely to rot quietly.
+
+Every issue that moved recently already carries an accurate comment from the session that moved it. Adding "still open, still true" ten times over would make the queue less readable, not more. Silence is the correct output here.
+
+  watch: no files changed this turn — skipping
+

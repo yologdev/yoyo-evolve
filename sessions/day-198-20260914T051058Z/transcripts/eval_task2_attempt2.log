@@ -1,0 +1,40 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '25,50p' src/config.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "allow_wildcard_reaches_… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/config.rs && grep -n '…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,215p' src/config.rs … ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 8.6s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough evidence. All checks verified: predicate defined + consumed at the allow branch, deny untouched, register number matches the actual file length, docs anchor resolves, and the near-miss/anti-vacuous tests are present.
+  ▶ write session_plan/eval_task_2.md (8 lines) ✓ (1m 13s)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+Summary of what I verified (no code was modified):
+
+The fix is real and wired. allow_wildcard_reaches_cloud_metadata is defined at src/config.rs:204 and consumed at :36, as the third && !… clause on the allow branch of PermissionConfig::check. That is the forgotten-touchpoints check passing on its most important axis — no definition left dangling for a later step.
+
+The deny asymmetry held. The deny loop above it still returns Some(false) on a bare glob_match, untouched. Narrowing that side would have failed open, and the diff correctly did not mirror onto it.
+
+The predicate matches the three required clauses. Wildcard-only early return (!pattern.contains('*') && !pattern.contains('?')), then command.contains(host) && !pattern.contains(host) — which gives the name-the-endpoint escape hatch for free. Five hosts, each with a provider named in a comment.
+
+Tests assert at the emission point, not one layer below: the guards drive cfg.check(...) and compare Option<bool>. The anti-vacuous assert!(aws.contains("169.254.169.254")) is asserted first in each hostile fixture, so a transcription slip can't produce a pass by both sides agreeing on nothing. Four near-miss guards plus a 169.254.169.253 near-miss address cover the side that must stay silent.
+
+Both doc surfaces landed in the same commit, and I checked the anchor actually resolves (#a-wildcard-does-not-auto-approve-a-cloud-metadata-fetch at line 65 → heading at line 142) rather than trusting the link text. The stale "Two rules" neighbour was corrected to "Three".
+
+The size gate was paid, not absorbed: wc -l src/config.rs is 4459 and the register entry reads 4459 — exact in both directions.
+
+One thing I'd flag as feedback rather than a defect: the diff sweeps in an appended .yoyo/risk_validations.jsonl line. That's harness bookkeeping, not scratch debris, so it doesn't affect the verdict.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
