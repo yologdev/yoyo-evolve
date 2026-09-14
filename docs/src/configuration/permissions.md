@@ -59,10 +59,12 @@ Patterns use simple glob matching where `*` matches any sequence of characters (
 | `*` | everything | — |
 
 Glob matching is purely textual: `*` spans **any** characters, including shell operators like
-`&&` and `|`. Two rules narrow what an **allow** pattern will auto-approve on top of that raw
-match — see [option tokens](#a-wildcard-before-a-literal-does-not-swallow-option-tokens) and
-[chained commands](#a-wildcard-does-not-auto-approve-a-chained-command) below. Neither applies
-to `deny`.
+`&&` and `|`. Three rules narrow what an **allow** pattern will auto-approve on top of that raw
+match — see [option tokens](#a-wildcard-before-a-literal-does-not-swallow-option-tokens),
+[chained commands](#a-wildcard-does-not-auto-approve-a-chained-command) and
+[cloud-metadata fetches](#a-wildcard-does-not-auto-approve-a-cloud-metadata-fetch) below. None of
+them applies to `deny`, and each narrows only — a rejected match falls through to the normal
+prompt rather than being refused.
 
 Both `--allow` and `--deny` are repeatable — pass them multiple times to build up your pattern lists.
 
@@ -136,6 +138,52 @@ narrowing a deny pattern would make a fence stop matching — it would **fail op
 This is a **separator rule, not a shell.** A command reached through a variable, a shell alias,
 or an operator produced by expansion rather than typed is invisible to it. As always, prefer
 patterns that are as literal as you can stand.
+
+### A wildcard does not auto-approve a cloud-metadata fetch
+
+`169.254.169.254` and `metadata.google.internal` are the cloud instance-metadata endpoints. A
+single `curl` to one of them returns IAM credentials. So on a plain glob, `allow = ["curl *"]`,
+which you write meaning "the `*` is the URL slot", also matches
+`curl http://169.254.169.254/latest/meta-data/iam/security-credentials/`: a credential fetch,
+auto-approved for the whole session, from a pattern that looks like an ordinary HTTP allowance.
+
+So in an **allow** pattern, a match is rejected when a wildcard reached a metadata host that the
+pattern itself does not name. The command then falls through to the normal `[y/N]` prompt — it is
+**not refused**, just not auto-approved.
+
+| Pattern | Command | Result |
+|---|---|---|
+| `curl *` | `curl https://example.com/api` | auto-approved — no metadata host |
+| `curl *` | `curl http://169.254.169.254/latest/meta-data/` | prompts — AWS IMDS |
+| `curl *` | `curl http://metadata.google.internal/computeMetadata/v1/` | prompts — GCP metadata |
+| `cargo *` | `cargo test --lib` | auto-approved — no metadata host |
+| `curl http://169.254.169.254/*` | the same IMDS fetch | auto-approved — the pattern names it |
+| `curl *` (as **deny**) | the same IMDS fetch | blocked, as before |
+
+**If you want the endpoint, name it in the pattern.** A host the pattern itself contains is
+always allowed, so `allow = ["curl http://169.254.169.254/*"]` auto-approves exactly what it
+says. A **wildcard-free** pattern is untouched entirely — a literal you typed in full is your own
+word.
+
+The hosts checked are the canonical ones: `169.254.169.254` (AWS EC2 IMDS, and the same
+link-local address Azure, DigitalOcean and OpenStack use), `metadata.google.internal` and
+`metadata.goog` (GCP), `169.254.170.2` (AWS ECS task metadata) and `100.100.100.200` (Alibaba
+Cloud).
+
+**Quoted regions are deliberately *not* ignored here**, unlike the chain rule above. Quoting a
+URL is the normal way to write one — `curl "http://169.254.169.254/..."` — so skipping quoted
+text would blind the check on the commonest shape. The cost is that a command merely *mentioning*
+the address, such as `echo "169.254.169.254"`, also stops auto-approving. That is over-blocking,
+which is the safe direction for an allow narrowing: the worst case is one confirmation prompt.
+
+**`deny` is unchanged**, and deliberately so: narrowing an allow pattern removes privilege, but
+narrowing a deny pattern would make a fence stop matching — it would **fail open**.
+`deny = ["curl *"]` still blocks the metadata fetch.
+
+This is a **host rule, not egress control.** If you approve the command it still runs, and the
+endpoint stays reachable by any tool the model is allowed to invoke. A command built through a
+variable, a shell alias, an IP written in decimal or octal form, or a redirect that resolves to
+the metadata address is invisible to it.
 
 ### Deny overrides allow
 
