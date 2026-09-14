@@ -1,0 +1,52 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff. The key question: the task offered Branch A (fix) or Branch B (measured "this is fine" + docs). The diff took Branch B-ish but let me verify carefully.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat && echo "…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Known predicate hole" C… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.0s (2 ✓)
+
+Diff took Branch B (measured "this is fine" + a regression test) but touched no CLAUDE.md. Branch B explicitly required the doc update. Let me verify the measurement claim itself.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn should_prompt_for_tr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "should_prompt_for_trust… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2270,2300p' src/cli.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Measurement confirmed correct: cli.rs:2282 passes loaded_config_is_project_local() to should_prompt_for_trust, the same predicate the gate at :509 uses — so for a skills-only repo the question never fires and there is no ask-then-ignore. Branch B was the right call. But Branch B's named deliverable was the CLAUDE.md record, and the diff contains zero doc changes.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "correctly raises the tr… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: the false clause "correctly raises the trust question" still stands in CLAUDE.md, unmarked, in the file re-injected as authoritative context every session. Writing the verdict.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 1s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+## Summary
+
+The good half, and it is genuinely good: the agent ran STEP 0, found the task's premise false, and refused to manufacture a fix. I verified that reading independently rather than trusting it — src/cli.rs:2282 hands crate::config::loaded_config_is_project_local() to should_prompt_for_trust as its project_local argument, which is the same predicate gate_project_skills receives at :509. So for a repo carrying .yoyo/skills/ and no .yoyo.toml, the five-way AND short-circuits and the question never fires — there is no answer for the gate to ignore. project_trust_grants keys on directory existence, but it only fills the prompt's body. The failure mode is silent, not ask-then-ignore, which is materially less severe than the task claimed.
+
+The regression test is well-built: anti-vacuous assertion first, both directions pinned, and an explicit note marking which of its four assertions are absence-shaped boundary pins versus presence-shaped evidence.
+
+Why it still fails: Branch B was not "stop and ship the test." It was, verbatim, "Write the measurement into CLAUDE.md as a recorded 'this is fine', correct the stale hole-claim in the #897 paragraph, and ship that." CLAUDE.md is named in the task's Files: line and is absent from the diff.
+
+The concrete cost: grep returns exactly one live occurrence of "correctly raises the trust question" — a mechanism claim this very task measured as false — still standing unmarked, alongside "That asymmetry already exists in the shipped `.yoyo/skills/` gate." Those sentences are now the authoritative description of a boundary they describe incorrectly, in the one file re-injected as context every session, while the correcting evidence sits in a test doc comment no planner reads. cargo test cannot fail for a false sentence — which is precisely why this repo's own history records two prior payments rejected for landing code with no doc update.
+
+The remedy is small — one paragraph, keeping the superseded clause rather than erasing it, marking which half went stale, and adding the STEP-0 measurement plus the two stated limits. This is a cheap correction, not a rework; the code half needs no changes at all.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,56 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gate_project_skills(" s… ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn should_prompt_for_tr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '490,530p' src/cli.rs && … ✓ (3ms)
+ ✓ (4ms)
+  4 tools completed in 7.2s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2275,2300p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat -- CLAUDE… ✓ (3ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 36.2s (2 ✓)
+
+Key verification done. Let me confirm the one blocking fact.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only && e… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 0s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: FAIL (on doc_sync only — the investigation itself was correct).
+
+What I verified:
+
+The STEP-0 measurement is right, and I confirmed it independently rather than trusting the write-up. src/cli.rs:2282 passes crate::config::loaded_config_is_project_local() as should_prompt_for_trust's project_local argument — the same predicate gate_project_skills receives at :509. project_trust_grants (dir-existence keyed) only fills the prompt's body; it does not decide whether to ask. So for a skills-only repo with no .yoyo.toml the question never fires, and there is no "no" for the gate to ignore. The task's premise — ask-then-ignore — is genuinely false. Branch B was the correct branch, and declining to manufacture a fix was the right call.
+
+The landed test is good work: anti-vacuous assertion first, both directions driven, and the presence-vs-absence split labelled per the Day-191 rule.
+
+Why it still fails:
+
+Branch B had two deliverables, not one. Its text is explicit: "Write the measurement into CLAUDE.md as a recorded 'this is fine', **correct the stale hole-claim in the #897 paragraph**, and ship that." git diff HEAD~1 -- CLAUDE.md is empty.
+
+The consequence is concrete rather than procedural. CLAUDE.md:363 still reads:
+
+│ the gate does not fire on that shape even though project_trust_grants — keyed on directory existence — correctly raises the trust question
+
+That final clause is precisely what this session just measured as false, and it sits in the file re-injected as authoritative context every session. This repo's own record is unambiguous about the cost of that shape — the src/gasp.rs "unreachable" claim burned eight sessions, and the standing note that "the doc half is the half with no gate" applies verbatim: cargo test cannot fail for a false sentence, which is exactly why the test passing does not discharge this.
+
+Left standing, that clause will regenerate this same task. The measurement is captured in the test's doc comment, which is real — but a doc comment in src/cli.rs is not the surface the planner reads.
+
+Cleanup note (not a fail reason): .yoyo/risk_validations.jsonl picked up one appended ledger line, which is ordinary harness bookkeeping.
+
+The fix from here is small and does not require re-deriving anything: keep the superseded sentence, mark which half went stale, and record that the diagnosis was right — the two halves do disagree about what "project-local" means, it just fails silently rather than by ignoring an answer.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
