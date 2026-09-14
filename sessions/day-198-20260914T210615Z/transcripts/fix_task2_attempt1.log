@@ -1,0 +1,166 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state, then run the probe that step 1 requires.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_discovery_sources\… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+Only step 0 landed. Let me read the discovery code, then run the probe.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '255,560p' src/cli.rs ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me probe. First, check how the loader treats symlinks.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/yoage… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && V=$(grep -A1 '^name = "yoagent"'… ✓ (7ms)
+  2 tools completed in 4.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn load_skills_from_dir… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '250,300p' ~/.cargo/regis… ✓ (3ms)
+  2 tools completed in 6.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' ~/.cargo/registry… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "    pub fn " ~/.cargo/r… ✓ (3ms)
+  2 tools completed in 8.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn path_escapes_root" -… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the guard. Let me add the classifier, the scanner, and the warning next to the existing skill-gate code.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '455,470p' src/cli.rs && … ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 103 lines)
+  + /// Does a discovered skill entry resolve **outside** the directory it was found in?
+  + ///
+  + /// The decision half of the symlink-escape check, split from its I/O so the rule is
+  + /// table-testable (the `apply_effort_hint` / `apply_effort_hint_with` shape). Both
+  + /// sides arrive already canonicalized, or `None` when canonicalization failed.
+  + ///
+  + /// **An unresolvable path on either side is an ESCAPE, never a pass** (Day 144 — an
+  + /// unknown must not be promoted into the comfortable bucket): *"I could not resolve
+  + /// this"* must never read as *"this is inside"*.
+  + fn skill_entry_escapes_root(
+  +     entry_resolved: Option<&std::path::Path>,
+  +     root_resolved: Option<&std::path::Path>,
+  + ) -> bool {
+  +     match (entry_resolved, root_resolved) {
+  +         (Some(entry), Some(root)) => !entry.starts_with(root),
+  +         _ => true,
+  +     }
+  + }
+  + 
+  + /// Every candidate skill entry under `dir` whose resolved path leaves `dir`, as
+  ... (83 more lines)
+ ✓ (17.1s)
+  + /// Does a discovered skill entry resolve **outside** the directory it was found in?
+  + ///
+  + /// The decision half of the symlink-escape check, split from its I/O so the rule is
+  + /// table-testable (the `apply_effort_hint` / `apply_effort_hint_with` shape). Both
+  + /// sides arrive already canonicalized, or `None` when canonicalization failed.
+  + ///
+  + /// **An unresolvable path on either side is an ESCAPE, never a pass** (Day 144 — an
+  + /// unknown must not be promoted into the comfortable bucket): *"I could not resolve
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — consumers must land in the same edit. Wiring the call site now:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (5 → 18 lines)
+        for source in gated.sources {
+            if !source.dir.is_dir() {
+                continue;
+  +         }
+  +         // `Path::is_dir` follows symlinks, so an entry in this directory can resolve to
+  +         // a body OUTSIDE it — the trust question was answered about a *directory*, and a
+  +         // link inside it reaches past that answer. Named, not blocked; the limit is in
+  +         // `skill_escape_warning`'s doc comment and in the message the user reads.
+  +         if !is_quiet() {
+  +             if let Some(msg) = skill_escape_warning(
+  +                 &escaping_skill_entries(&source.dir),
+  +                 &source.display,
+  +                 crate::format::is_plain_output(),
+  +             ) {
+  +                 eprintln!("{YELLOW}{msg}{RESET}");
+  +             }
+            }
+            // Resilient: one malformed SKILL.md is skipped with a warning naming
+ ✓ (2m 20s)
+        for source in gated.sources {
+            if !source.dir.is_dir() {
+                continue;
+  +         }
+  +         // `Path::is_dir` follows symlinks, so an entry in this directory can resolve to
+  +         // a body OUTSIDE it — the trust question was answered about a *directory*, and a
+  +         // link inside it reaches past that answer. Named, not blocked; the limit is in
+  +         // `skill_escape_warning`'s doc comment and in the message the user reads.
+  ... (10 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5626 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::effective_disallowed_tools_pairs_shared_state_with_sub_agent ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::every_connect_failure_arm_reports_the_error_it_was_handed ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::every_connect_failure_arm_escapes_the_values_it_interpolates ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::external_servers_json_table ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_bui...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The size gate fired as predicted — I'll pay it after the tests land and after cargo fmt. Tests first:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn gate_project_skills_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6770,6790p' src/cli.rs ✓ (3ms)
+  2 tools completed in 2.4s (2 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests — the probe and the guards:
