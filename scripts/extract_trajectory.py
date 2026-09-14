@@ -6078,16 +6078,32 @@ src/commands_config.rs
         classify_productivity({}, {194, 195}).state == PRODUCTIVITY_COULD_NOT_CHECK,
     )
 
-    # THE REAL STREAK, as a fixture. Day 195 ran five sessions, every instrument
-    # reported success, and `git log` carries no Day-195 task commit at all.
+    # THE REAL STREAK, as a fixture, and it is THE NEAR-MISS GUARD for the
+    # Day-197 range split: a claiming day INTERIOR to the observed span with
+    # zero task commits is STILL IDLE. Day 195 ran five sessions, every
+    # instrument reported success, and `git log` carries no Day-195 task
+    # commit at all -- while the window plainly reached across it.
+    #
+    # SUPERSEDED FIXTURE, widened rather than deleted (Day 148: a fixture
+    # pinning a replaced convention that outlives its replacement converts a
+    # defect into a green invariant). It read `{194}` as the observed set
+    # until Day 197. That was a true record of the Day-195 reading and it is
+    # NOT a valid interior fixture under the range split, because 195 sits
+    # one past max(194) and now resolves to OUT_OF_RANGE -- i.e. the old
+    # fixture pinned the very fall-through #917's remainder removed. The half
+    # worth keeping is the ALARM: a day that claimed five successes inside a
+    # span the slice really covered produced nothing, and that must still
+    # accuse. The observed set is therefore `{194, 196}`, which brackets 195
+    # exactly as the real window did.
+    #
     # The third argument is the EVIDENCE half (Day 197, #912): the window did
-    # carry task commits -- four of them -- and every one is labelled day-194,
-    # which is exactly the artifact shape the clause exists to name. Passing it
-    # is what makes the fixture genuinely carry a count rather than leaving the
-    # clause on its no-count floor.
-    streak = classify_productivity({194: 4, 195: 5}, {194}, 4)
+    # carry task commits -- four of them -- under other day labels, which is
+    # what the clause exists to name. Passing it is what makes the fixture
+    # genuinely carry a count rather than leaving the clause on its no-count
+    # floor.
+    streak = classify_productivity({194: 4, 195: 5}, {194, 196}, 4)
     assert_true(
-        "the measured streak: {195: 5} claimed vs {194} observed is IDLE naming day 195",
+        "the measured streak: {195: 5} claimed INSIDE the observed span is still IDLE",
         streak.state == PRODUCTIVITY_IDLE
         and streak.idle_days == (195,)
         and streak.idle_claimed == 5,
