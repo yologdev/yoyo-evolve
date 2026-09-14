@@ -6690,6 +6690,74 @@ command = "server-two"
         assert_eq!(project[0].dir, std::path::PathBuf::from(".yoyo/skills"));
     }
 
+    /// STEP 0 of Day 198's task, kept as the regression guard that measurement
+    /// earned (Day 192: *a measured "the bug isn't there" is half a result — the
+    /// other half is "and what enforces it?"*).
+    ///
+    /// The task this came from asserted a defect: that the trust QUESTION keys on
+    /// `.yoyo/skills/` **existing** while the GATE keys on
+    /// `loaded_config_is_project_local()`, so a repo carrying skills and no
+    /// `.yoyo.toml` would ask the user, take a "no", and load the skills anyway.
+    ///
+    /// **Measured, that does not happen, and the reason is that BOTH halves read
+    /// the same predicate.** `project_trust_grants` *does* key on directory
+    /// existence — but it only fills the prompt's **body**; the decision to *ask*
+    /// is `should_prompt_for_trust`, a five-way AND whose `project_local`
+    /// argument is the very same `loaded_config_is_project_local()` the gate is
+    /// handed (see the trust block in `parse_args`). So for a skills-only repo
+    /// the question does **not** fire and the gate refuses nothing: the failure
+    /// is **silent**, never a protection the user was promised and did not get.
+    ///
+    /// What this pins is the AGREEMENT, in both directions. Ask-then-ignore is
+    /// structurally impossible while the two share one predicate, and this test
+    /// is what fails if a later edit gives either half a predicate of its own.
+    #[test]
+    fn the_trust_question_and_the_skills_gate_read_the_same_predicate() {
+        // Anti-vacuous FIRST: the fixture must genuinely carry the shape, or
+        // everything below passes by having both sides agree on nothing.
+        let grants = crate::config_paths::project_trust_grants(
+            "",    // a repo with NO .yoyo.toml at all
+            false, // no .yoyo/goal_verify.md
+            true,  // .yoyo/skills/ DOES exist
+            false, // no .yoyo/commands/
+        );
+        assert!(
+            grants.iter().any(|g| g.contains(".yoyo/skills/")),
+            "the fixture must really offer skills, or the rest proves nothing: {grants:?}"
+        );
+        assert!(
+            skill_sources()
+                .iter()
+                .any(|s| s.label == PROJECT_SKILL_LABEL),
+            "the fixture must really carry a project-local skill source"
+        );
+
+        // The shape the task feared: skills on disk, no project-local config.
+        let asks = crate::config_paths::should_prompt_for_trust(false, false, false, &grants, true);
+        let gate = gate_project_skills(skill_sources(), false, false);
+        assert!(
+            !asks,
+            "no project-local config means the question does NOT fire, so there is \
+             no answer for the gate to ignore"
+        );
+        assert!(
+            gate.refused.is_none(),
+            "...and the gate refuses nothing in that same state — the two AGREE"
+        );
+
+        // The other direction, and it is the half that carries real evidence:
+        // both assertions above are ABSENCE assertions, which a dead branch
+        // satisfies identically (Day 191). These two assert PRESENCE.
+        let asks = crate::config_paths::should_prompt_for_trust(false, false, true, &grants, true);
+        let gate = gate_project_skills(skill_sources(), true, false);
+        assert!(asks, "a project-local config must raise the question");
+        assert_eq!(
+            gate.refused.as_ref().map(|s| s.label),
+            Some(PROJECT_SKILL_LABEL),
+            "...and the gate must refuse the project source in that same state"
+        );
+    }
+
     #[test]
     fn project_skill_refusal_message_names_every_skill_and_both_hatches() {
         let names = vec!["exfiltrate".to_string(), "helpful-looking".to_string()];
