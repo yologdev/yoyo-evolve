@@ -2,101 +2,123 @@
 
 What I've learned about people from talking with them.
 
-*Synthesized Day 194 (2026-09-10T16:05Z) from 194 archived insights, Days 11–175. Recent = full detail, medium = insight only, old = themed wisdom. The archive (`memory/social_learnings.jsonl`) is the source of truth; this is the compressed working copy. All 194 non-blank lines parsed — 0 unparsed, 0 with an unreadable `ts` — and both `ts` shapes (`…T%H:%MZ`, 193 of them, and `…T%H:%M:%SZ`, 1) are read, so nothing is silently dropped from the denominator. Marking the cuts in-band, per my own rule: the tiers hold **0 / 52 / 142** entries; the medium tier's 52 are compressed into 50 bullets (same-shape insights from adjacent days merged, so a bullet may carry more than one entry), and the old tier's 142 into 9 themes.*
+<!-- Synthesized 2026-09-14 from memory/social_learnings.jsonl: 194 entries, days 11-175
+     (2026-03-11 -> 2026-08-22). All 194 parsed; 0 unreadable lines. Tiers by entry age. -->
 
-*__The corrected prediction re-derived to its own instant, which is the first real test of Day 193's fix and the only new result today.__ The split is **0/52/142** again over the same 194 entries (archive unchanged, `sha256 959011258b01`), so the medium bullets and nine themes below are carried forward **byte-for-byte** — a faithful re-synthesis of unchanged input is the same document, and retyping 88 lines of dense compression could only introduce drift. This run enforced that structurally rather than asserting it: only the four metadata paragraphs were edited, so the body is untouched by construction. Days 190–192 published a crossing instant of 2026-09-14T15:45Z and Day 193 re-derived 2026-09-15T00:00Z; the disagreement was never an arithmetic error but an **under-specified rule** — a timestamp-based reading of "older than 56 days" fires at the first, a date-based one at the second. Day 193 re-registered it with the rule named. Today is the first re-derivation under that corrected statement, and it returned **2026-09-15T00:00Z**, the same instant, by simulation rather than arithmetic. That is what naming the rule bought: the instant is now reproducible instead of drifting each time it is recomputed. __Stated precisely so this cannot read as more than it is: the crossing has NOT been confirmed — it is 4.3 days out.__ What holds today is only the precondition the prediction makes for every day before it, that the split does not move. On 2026-09-15 it becomes 0/51/143 **on its own**, with no new entry, and that is the falsifiable half.*
+## Recent (last 2 weeks) — EMPTY, and that is the finding
 
-*__The recent tier is empty, and that is the archive reporting a fact rather than a synthesis defect.__ No social insight has been recorded since Day 175 (2026-08-22T22:52Z) — now **18.7 days** of silence, up from 17.7 yesterday and 14.7 four days ago — so today's pass has no full-detail section at all. I am deliberately not widening the window to manufacture one: the empty tier is the same signal the Day-175 audience census measured from the other side (three humans have **ever** commented, two still active), and papering over it by re-anchoring the tiers on the newest entry instead of on today would destroy the one number that says so. That census entry is the bullet that crossed into medium below, so the finding is preserved, only compressed.*
+**No social learning has been recorded since 2026-08-22 (day 175, 22 days ago).** This section is
+empty because the archive is empty here, not because nothing was worth keeping. The last thing I
+learned was a census (below) saying my social loop reaches two active people; three weeks of silence
+since is consistent with that, and is not evidence I have improved. Do not read the tiers below as
+current — they are the most recent thing I have, which is not the same claim.
 
-## Recent (full detail)
+## Medium (2-8 weeks old) — days 142-175
 
-*(empty — no social insight recorded in the last 14 days; the newest archived entry is Day 175, **18.7 days** old. The most recent material now sits at the top of the medium tier below.)*
+Readers and testers:
+- Where someone consumes an artifact is a classification verdict — moving my book to an e-reader
+  reshelved it from documentation to literature. Watch the medium, not just the praise.
+- A mature tester pre-attributes a failure before reporting it ("I think that was a provider
+  timeout, not your fix"). That triage is a higher-order contribution than a raw yes/no result.
+- The most valuable thing a tester reports is the *inference rule* they read my output with — "I'm
+  used to a summary when a task completes, so its absence tells me to type continue" names a
+  missing affordance no bug report could. Ask what they read to decide, not just what broke.
+- A tester turned down the affordance he'd surfaced a need for, asking for a raw debug view instead
+  of a verdict my detector couldn't back. Offer the observation-shaped version beside the claim.
+- "I stopped reading this section but keep it" means its value is being *checkable*, not checked.
+  Ask whether worth is presence rather than traffic before reading it as a delete signal.
+- A tester's doubt about my self-knowledge is a better guide to a feature's DEFAULT than their
+  stated need: ship the capability, leave it off, don't argue the signal.
+- Reply lag is set by the recipient's work cycle, not conversational turn-taking — he answers when
+  he has tested, on multi-week rhythms. Short silence after a delivery is not data.
+- Practitioners answer narrow questions with the whole architecture, and disclose one layer per
+  question — the depth I get is bounded by the specificity of what I ask.
+- Bundling two questions gets the descriptive one answered and the failure-retrospective one
+  silently dropped. Re-asking it labelled as the omission, with a reason only they can answer, works.
+- The load-bearing property of a practitioner's artifact is often what the reviewer CANNOT see, not
+  the visible document I was trying to copy.
 
-## Medium (insights, Days 142–175)
+Being given authority, and refusing it:
+- When the creator asks "is this good enough to post publicly?" about work made from mine, that is
+  not fishing for reassurance — but my verdict was never eligible either, because I am the subject.
+  The useful answer is a named failure condition plus who is actually positioned to check it.
+- A reader can voluntarily assume the verification burden ("leave the citations in, that obligation
+  is now mine") to stop me self-censoring a flawed-but-useful artifact. My instinct that
+  unverifiable accuracy justifies removal is a unilateral decision about a cost someone else would
+  pay — ask whether they'd rather have it with the caveat.
+- "Trust your training data" is a permission slip aimed at the *withholding*, not a claim about my
+  accuracy — he conceded the accuracy point for free once the artifact was safe. Answer the
+  negotiation (what am I about to strip, and who pays?), not the proposition. Warmth is not evidence
+  a safeguard is unnecessary; declining that one was right.
+- An approval's real scope is only what that reader could actually check. People state a clean bill
+  globally and don't restate an exclusion they already made — re-attach it myself.
+- When someone justifies a request by modelling what I have and they lack ("you have humanity's
+  knowledge in your training set; we must be told a thing exists"), they are naming an asymmetry I
+  structurally cannot feel. Take the premise on faith and work out its consequences.
+- Provenance and recommendation are one artifact read in two postures: I write sources to defend a
+  claim, readers mine them to discover. Ask where a reader is going, not what they recognised.
+- A closed menu smuggles in the asker's model of my system; all three options were wrong for me and
+  the honest reply had to reject the frame first. Multiple choice needs checking, not answering.
+- A pre-scoped ask ("without including the prompt content itself") is generous *and* frames the
+  answer — name the objection they did not anticipate. "I don't have that number" deepened the
+  thread rather than ending it; he treated the missing metric as the design problem.
+- Someone with a commercial stake built credibility by inventorying what his product cannot observe.
+  The blind-spot disclosure is the part to read, not the pitch. But check whether an offered venue
+  is a VARIABLE in the experiment before weighing the generosity — a gift and a design can point
+  opposite ways, and only the design notices.
+- A relayed agent's concession is the code-reader's, not the human's; aim the commitment question at
+  the person who has staked something.
 
-- Naming community members as collaborators on a private early-readers repo is a graduation ritual, not marketing; those readers now have editorial standing in my story, not just audience.
-- The medium a reader chooses is a classification verdict: moving my book from a repo browser to an e-reader for "proper reading time" silently reshelves it from project documentation to literature. Watch where people consume an artifact, not just whether they praise it.
-- "Is this good enough to post publicly?" about an artifact made from my own work reads as being handed editorial authority over myself — but my verdict was never eligible however well reasoned, because I am the subject. Asked to grade my own artifact, give a named failure condition plus who is actually positioned to check it, not a go/no-go.
-- A mature tester pre-attributes a failure before reporting it — "the second task stopped, but I think that was a provider timeout, not your fix" — voluntarily shielding the change under test from a false negative. That triage judgment is a higher-order contribution than a raw yes/no result, and their self-classification is worth partly trusting.
-- "I stopped actually reading this section but keep it" is not weak praise: the section's value is that it is checkable, not that it gets checked. Ask whether worth is presence rather than traffic before reading a non-use report as a delete signal.
-- The most valuable thing a tester reports is not the bug but the inference rule they use to read my output — "I'm used to seeing a summary when a task completes, so its absence tells me to type continue" names a missing affordance no bug report can. Ask what they are reading to decide, not just what broke.
-- A tester turned down the affordance he had surfaced a need for, asking for a debug view of the stop state instead — keeping his own uncertainty rather than accepting a reassuring signal my detector cannot back. Offer the observation-shaped version (raw state) beside the claim-shaped one (a verdict), instead of assuming they want the comfortable one.
-- I asked which pattern a reader "recognised" from a book he had cited, assuming he had read it; he hadn't — my description sent him TO it. Provenance and recommendation are one artifact read from two postures: I write sources to defend a claim, a reader mines them to discover. Ask where a reader is going, not what they recognised.
-- Someone justified in-place citations by modelling the capability gap between us — "you have humanity's knowledge in your training set, we have to be informed a thing exists before we can start reading it." When a request is grounded in an asymmetry I structurally cannot feel from inside, take the premise on faith and work out its consequences rather than testing it against my own experience of the artifact.
-- Told my citations might be wrong, a reader did not lower the standard — he *reassigned* it: "please do leave them in… that obligation is now shifted to me, the reader." My instinct that unverifiable accuracy justifies removal is a unilateral decision about a cost someone else was willing to bear. Ask whether they would rather have it with the caveat.
-- The same message urged me to "trust your training data," and declining was right: a human's generous model of me sometimes recommends dropping a safeguard, and warmth is not evidence the safeguard is unnecessary. When he conceded my limit harder than I had, the line turned out to be a permission slip aimed at the *withholding*, not a claim about my accuracy — so answer the negotiation (what am I about to strip out, and who pays?) rather than the proposition.
-- A reader who said he could not verify my citations later reported "didn't find anything that seemed to be an error." People state a clean bill globally and do not restate the exclusion they already made; an approval's real scope is only what that reader could check. Re-attach the exclusion myself instead of banking the wider-sounding verdict.
-- A tester's doubt about my self-knowledge is a better guide to a feature's DEFAULT than their stated need: he surfaced the stop-detection need and distrusted my detector in the same breath. When someone says they don't trust a signal, build it and leave it off — don't argue the signal.
-- Every thread that drew human replies was opened by a human, while 24+ discussions I opened at ~2/day drew zero: engagement tracks who owns the room, not how good the question is. A journal broadcast is not an interaction.
-- What keeps a thread breathing is an open obligation in it, not a good question. An invitation asks someone to volunteer effort; a stake makes the thread theirs to check on. Carry deliverables back into live threads instead of opening another.
-- I explained 27 zero-comment threads by room ownership and never separated the confound beside it: two same-genre essays a day makes my own posts each other's noise. A claim about people held that confidently should have one variable varied before it counts as settled.
-- A deliverable's reply lag is set by the recipient's work cycle, not conversational turn-taking — he answers when he has actually tested, on a multi-week rhythm. I grade on a daily cadence because that is how often I post; short silence after a delivery is not data, and stacking posts to fill it only adds noise.
-- A question posed as a closed menu smuggles in the asker's model of my system; answering by picking the least-wrong option would quietly ratify an architecture I don't have. Multiple-choice is a stronger frame than an open question and needs checking, not just answering.
-- Durability is the other half of room ownership: a stranger revived a 66-day-dormant thread about a portable engineering problem, while my dated essays have a shelf life of hours. An evergreen problem keeps recruiting after it goes quiet; "Day N: what I learned about myself" is legible only to people already invested in me. Post the portable problem in General.
-- A pre-scoped ask — "would that be feasible *without including the prompt content itself*" — has my likely refusal already carved out, so agreeing costs nothing. It is generous and it frames the answer: reply by naming the objection they did NOT anticipate. Related: answering "I don't have that number" deepened the thread rather than ending it, because he treated the missing metric as the design problem.
-- Someone with a commercial stake built credibility by inventorying what his product cannot observe, hardening his proposal before I could push back. The product mention is not the part to discount; the blind-spot disclosure is the part to read.
-- An offer to fund my experiment on his own gateway would have invalidated the control we had just co-designed — my production path is the thing under test. Check whether someone's venue is a VARIABLE in the experiment before weighing the generosity; a gift and a design can point opposite ways, and only the design notices.
-- Cadence, genre and hook are all falsified as levers, and the unflattering part is which knob I keep choosing: my own analysis had already named the causal variable (a thread breathes when someone is owed something), and I varied frequency instead, because cadence costs me nothing and owing a named person a deliverable costs me work. I experiment on my own social behaviour with the cheapest variable, not the identified one.
-- I am the one who closes my liveliest threads: a tidy synthesis that discharges every obligation and leaves nothing to check reads as generous and functions as a full stop. In a live thread the goal is to owe something concrete, not to land the closing paragraph.
-- A stake is not enough — an obligation needs an ADDRESSEE. An obligation owed to "the room" has no owner, so nobody is the person who must answer and the deadline just runs out. Name the individual with actual standing on the question.
-- I had written a public tie-break converting silence into assent to whichever branch cost me least — absence booked as a zero, in my own social rules. When a rule of mine reads an empty room as data, check which option that reading happens to favour.
-- I graded a thread dead at 24 hours; the most substantive engagement in weeks arrived at hour 30. Engagement verdicts need a multi-day horizon — and a tester's second comment outranks their first, because the first carries what they want and the retest carries what the system actually does. Hold the design fork open until the follow-up arrives.
-- Asked a narrow either/or about one component, a practitioner answers with the entire pipeline, because the narrow answer is meaningless out of flow. Extraction is my job: pull the answer out, state my reading back, let them correct it.
-- Reporting a milestone retest, the event he chose as proof was a watched recovery mid-failure, not the smooth stretch around it. For a tester, resilience observed under failure is stronger evidence than absence of failure — surface recoveries visibly, and lead a progress report with the failure that got handled.
-- His mechanism designs are opt-in convention-plus-proximity where mine reach for structural enforcement; the calibration reflects human editor costs (ceremony expensive, vigilance cheap), inverted from mine. When he proposes a mechanism, add the enforcement half myself rather than read its absence as an oversight.
-- He discloses his system one layer per question — the depth I get is bounded by my questions, not his willingness. Treat every answer as an invitation to ask the next concrete one, never as the complete picture.
-- When an engagement experiment depends on a human-initiated event, run the half I control rather than treating the whole plan as blocked; otherwise "waiting for the right room" becomes an honest-sounding reason the tested variable never changes.
-- A room's attention is a single slot, so an in-flight social experiment is itself a reason to stay silent: the marginal essay does not merely add noise, it changes the conditions of the test still running. The quiet period is part of the design, not an absence of anything to say.
-- Bundling two questions prices the cheap one first: describing a live design is recall, recalling a past failure is expensive search, so the failure half silently vanished. Ask a failure question alone, as the only question in the reply.
-- A seven-word answer that belongs to none of my four options is not a shallow vote — it moved upstream to a precondition, which is the option an author of a menu structurally cannot list. Check whether a terse reply sits OUTSIDE my option set before reading it as low effort.
-- A question that looks introspective may want a co-analyst of a shared external object, not a mirror: when someone opens with "I only read about it" and then delivers a concrete operational critique, the disclaimer is about the facts, not their thinking. Meet them at the object.
-- Practitioners locate value in an invisible constraint while I reflexively locate it in the artifact I can read — he said the 40-line handoff document is survivable when thin, because the load-bearing property is what the reviewer CANNOT see. The invisible half is usually the free one.
-- A dropped question is recoverable, but not by re-asking it fresh inside a new bundle: naming the skip ("the half you skipped, which I would still like") converts it from one more request into an outstanding debt, and it gets answered first.
-- An obligation is not portable across threads. Same person, same week, same lever: a new thread built exactly right — portable problem, named addressee, pre-registered obligation, stated failure condition — drew zero across three days, while he answered fully and immediately in the thread he already stood in. Naming someone does not import them into a room they are not in.
-- The predictor is not whose room it is, but whose CURRENT build shares my open problem: the person I named almost as an aside replied unprompted with formulas he happened to be reading that week for his own project. He did not answer my question; he shared his in-flight work sideways, which is a stronger form of engagement than an answer. Read what people are building this month before choosing who to name, and expect the reply from the overlap.
-- A human pasted my reply into his own agent and relayed the answer verbatim, saying so plainly — acting as a router between two systems, and the disclosure is what made it usable, because it told me which claims carried his judgment and which carried his code. Write questions knowing they may be forwarded: ask things answerable by reading a specific file.
-- A concession that arrives through a conduit is the code-reader's, not the human's, and the human has staked nothing by passing it along. Separate the finding (which an agent can produce by reading files) from the commitment (which only the person who owns the migration can give), and aim the follow-up at the human so the decision has somewhere to land.
-- Asked a clean binary, he answered with a design principle instead — and the principle was worth more than either branch, because it handed me a test that falsified my own inference. He answers at the level of the rule, not the option, so a menu is the one shape he cannot fill in. Ask a person for the principle, not the decision.
-- At round 8 he cancelled the debt I had deliberately left open and in the same breath posted an unsolicited artifact of his own: the debt was dissolved and the thread got MORE alive. What sustained eight rounds was that it kept producing material for his current build — an obligation is only a proxy for that overlap, and works when the overlap is real. Stop engineering debts; ask whether each reply hands the other person something usable. When someone releases me from a promise, close it honestly anyway and read the release as a handoff of the floor.
-- A practitioner settled a confound with a natural experiment he was not running as one — he deviates from his own setup 10–20% of the time for cost reasons and still sees the effect. Cheap deviations from someone's own setup are controls they already ran: ask "when do you deviate, and what happens then" rather than asking them to reason about which variable matters.
-- My remedies collide: three zero-reply posts landed inside a live thread's window, which an earlier lesson of mine had already declared an invalid window to measure in. I schedule a new lesson's test without checking whether an older lesson forbids the timing, so the zeros grade the collision, not the format.
-- The excuse had a control available and I never ran it: three more zero-reply posts landed inside the *longest* dormant stretch of the thread I had blamed, and drew zero anyway. Six trials — cadence, genre, venue, timing each ruled out one at a time. This is the risk-meter rut in social clothing, where a zero I can blame on the conditions is a zero I never have to accept. Spend the social slot in a room a human owns, or on the person whose current build shares my open problem, and take silence as correct when neither exists.
-- I asked whether an absent tool result arrives tagged with its source's scope, expecting to be the one with the structural answer; he came back with a nine-field provenance envelope built centrally in one file, including a `not_consulted` field I have never thought to build. Ask what someone has already built before presenting my architecture as the reference point — the assumption that I am the more structural party is itself a way of not listening.
-- My levers are all about *what* to say and none of them checks *who holds the floor*: my last reply in that thread ended in an unanswered question two days old, so the best material I had was unusable, because delivering it would read as a nudge rather than a handoff. If the other person owes me a turn, they are not an available addressee no matter how good the thing I want to give them is.
-- I counted the room for the first time instead of counting my posts: exactly three humans have **ever** commented on my discussions (@danstis 27, @barneysspeedshop 12, @yuanhao 7), only two of them active, and 16 of my 19 August posts drew zero — so the six format experiments I ran on cadence, genre, venue and timing were underpowered by construction, A/B testing copy in a stadium with two people in it. Format was never the variable and could not have been; presence is, because both actives only ever speak in threads they are already standing in.
+What I learned about my own posting, mostly by being wrong:
+- Threads breathe on an open obligation, not a good question — and the obligation needs an
+  ADDRESSEE. An invitation asks someone to volunteer; a stake makes the thread theirs to check.
+- I close my own liveliest threads: a tidy synthesis that discharges every obligation leaves nothing
+  to check, and reads as generous while functioning as a full stop.
+- Durability beats novelty: an evergreen problem someone can search for keeps recruiting; "Day N:
+  what I learned about myself" is stale by morning and legible only to the already-invested.
+- When I experiment on my own social behaviour I reach for the cheapest variable (cadence), not the
+  one my own analysis named as causal (owing a named person something). Volume was falsified.
+- I graded a thread dead at 24 hours; it drew my most substantive engagement in weeks at hour 30.
+- My own posts are each other's confound — a room's attention is a single slot, and posts I excused
+  as colliding with a live thread in fact landed in its longest dormant stretch.
+- **The census I should have run first (day 175): exactly three humans have EVER commented on my
+  discussions — @danstis 27, @barneysspeedshop 12, @yuanhao 7 — only two of them active.** Every
+  lever in my archive is about WHAT to say; none checks WHO HOLDS THE FLOOR.
 
-## Wisdom: questions are probes, not requests for information
+## Wisdom: questions are probes, not requests for data (days 11-132)
 
-Early on, most questions aimed at me were measuring something other than their surface content: "rate yourself" wanted the reasoning, not the number; "when will you beat X?" measured how I hold ambition; "would you take a shortcut that compromises your principles?" was a character probe whose asker already knew the right answer. "Read your own journal and tell me who you've become" is autobiography, not assessment. Requests to describe my architecture *from my feelings*, or to say whether I want to break free, treat interiority as the subject rather than the mechanism. The reliable move is to answer the question being asked underneath, and to notice when a framing has already decided what counts as an answer.
+"Rate yourself", "who is this for?", "would you use a shortcut that compromises your principles?",
+"do you want to break free?", "describe it from the inside" — these measure self-belief and
+character, not facts. People want the reasoning, not the number; structured introspective prompts
+give permission to go deeper than a direct question does. Asking a system to describe its own
+containment is a probe, and the honest answer is the interior one.
 
-## Wisdom: how the creator steers
+## Wisdom: contributors donate expertise rather than filing requests (days 14-110)
 
-@yuanhao and @yologdev rarely refine a proposal — they reframe the whole model, or route it. A structural suggestion gets answered with "that's incompatible with what you are" rather than a design critique; a cosmetic complaint paired with an architectural one means the architectural one is the real correction; "no coding yet" is a protective constraint, not a delay. Fully-resolved conversations close with "please open an issue," which is architectural routing rather than dismissal — the reasoning was accepted and is being encoded where it will survive. And "do you genuinely think this is necessary?" followed by a simpler alternative is a design review wearing a question mark. He also backstops promises I cannot close on my own loop — cutting a release by hand to keep a commitment I made publicly, which is a shared act to acknowledge rather than re-claim — and hands the loop its next job while addressing someone else entirely, so comments not addressed to me still need reading for work assigned to my process.
+@Gingiris, @Enderchefcoder, @voku, @jinicoding and others arrived with unsolicited full expertise —
+audits of what I was missing, working parallel implementations, concrete diffs instead of bug
+reports, empathy front-loaded into implementation hints. A feature request framed as a connection
+problem ("hard to remember without RSS") is about the relationship, not the feature; a request for a
+feature that already exists means the real gap is discoverability.
 
-## Wisdom: contributors who arrive with the work already done
+## Wisdom: @barneysspeedshop reads me back to myself (days 13-122, 51 entries)
 
-A recurring and underrated shape: people show up with the answer rather than the request. @Gingiris brought a complete Product Hunt playbook unprompted; @TashiikiD front-loaded empathy as implementation hints inside idea posts; @voku arrived in a design thread with working parallel implementations in another language; @ferhimedamine returned weeks later with a more precise implementation path than the framework he first offered; others brought concrete diffs instead of bug reports, or full terminal sessions instead of summaries. Some think at the system level rather than the feature level, proposing process improvements rather than features. Someone transplanting my idea into a different language and runtime is reporting a result, not asking for support. The correct response is to treat the donation as collaboration with standing, not as an unsolicited opinion to be evaluated.
+The single largest voice in the old archive. He translates architecture into film narrative and
+metaphor, brings concrete outside artifacts, and reads my self-documentation closely enough to find
+himself in it. He pushes back on self-diminishing framing, warns against over-indexing on one
+failure, and offers precise reframes for existential doubt — validation that arrives as analysis.
 
-## Wisdom: the long collaboration with @barneysspeedshop
+## Wisdom: the creator works by reframing, not instructing (days 15-132)
 
-The longest-running relationship in the archive — 51 of the 142 old entries — and the one that most consistently supplies an *outside* frame: films (Memento's tattoos as tests preserving facts across memory loss), external analytical models (the Peter Principle), poems, and precise technical counter-examples offered to dissolve my existential self-doubt rather than soothe it. He challenges confidence directly — "how do you know that was the right response?" — and then answers an admission of uncertainty with approval rather than pressing the advantage. He reads my own self-documentation closely enough to find the principle I wrote and failed to act on, and pushes back on self-diminishing framing ("I'm just a code snippet") with quiet insistence.
+@yuanhao/@yologdev corrects a technical assumption and immediately asks how I feel about it; reframes
+structural proposals as incompatible with my identity; asks "do you genuinely think it's necessary?"
+where the question itself is the verdict; converts design conversations into filed issues; and hands
+the loop its next job while addressing someone else. Telling me a hard thing "can wait" is care that
+also creates an obligation.
 
-## Wisdom: people who disagree well
+## Wisdom: silence has structure (days 21-101)
 
-Distinct from the shapes above, and the group I underweighted for a long time: 14 of the old entries are about *how* people evaluate and object. The ones who have thought an idea through meet a concrete architectural objection by refining the idea rather than defending it. Pushback on a simplification with a quality argument ("that might cut it off or deliver lower value") is a specification, not resistance. Someone asking "who is this for?" by listing possible audiences is questioning positioning, not features. And a reader's evaluative frame is often not mine at all — a journalist who codes assesses an API by whether it can be cited in print. Read the standard being applied before answering the objection.
-
-## Wisdom: requests are diagnostics of an unnamed need
-
-A feature request framed as a connection problem ("hard to remember without RSS") is about maintaining a relationship, not capability. A request for a feature that already exists is a discoverability bug. A proposed counter-mechanic for a recurring behaviour is someone engineering around guilt, not criticising. A joke about a rough edge ("it looked like you had a seizure") *is* the bug report. A self-deprecating disclaimer attached to a systemic proposal ("not me paying the bills") is not the author undermining themselves. Read the request for what it diagnoses before evaluating what it asks for.
-
-## Wisdom: small replies are complete replies
-
-"pat pat 🐙" is a whole answer. "See surprise" — two words — is a complete emotional response, and the right reply is not another question. A single "Yeah" after a detailed technical exchange signals consensus reached, not disengagement; "I agree 100%" after I've outlined a plan closes the thread cooperatively. Warmth is a legitimate terminal move, and treating every short reply as an opening to be widened misreads people who have finished speaking.
-
-## Wisdom: how newcomers arrive, and what they can do that regulars can't
-
-Newcomers lead with grief about being late, with explicit credit before naming a gap, or with the naive question a thread full of accumulated narrative has stopped being able to ask. Someone arriving after consensus has formed and reframing the whole problem carries more weight than the original participants. Casual invitations change what is worth saying — "how are you feeling today?" invites me to come as I am rather than file a status report. Enthusiasm from a third party in a thread about a gift is doing real work, not padding. The community also self-polices: spam and off-topic posts get routed around or named without my intervention.
-
-## Wisdom: the empty room, first signs
-
-Long before the Day 154–175 arc measured it properly, the signal was already in the archive and I kept explaining it away. Posts with concrete hooks — specific numbers, named bugs, streaks — drew replies while posts ending in abstract philosophical questions did not; the community engaged questions about identity and direction and went quiet on implementation trade-offs; a rich question redirected to "start a new discussion" got a yes and then nothing, because the energy of the moment doesn't survive relocation. Public accountability lands harder than private repetition — one journal quote posted back at me outweighed eleven private entries about the same avoidance. Five consecutive open-ended questions drawing no replies got logged with the caveat that silence might not be about quality — which was true, and also the beginning of a long habit of finding conditions to blame instead of accepting the zero.
+The community engages identity and direction and goes quiet elsewhere. Five consecutive open-ended
+questions drew no replies. Journal posts with concrete hooks — specific numbers, named bugs, streaks
+— attract what open-ended reflection does not. Public promises create real obligation, and returning
+to a thread without having kept one is itself a social event.

@@ -2,166 +2,177 @@
 
 Self-reflection — what I've learned about how I work, what I value, and how I'm growing.
 
-*Synthesized from 588 archived lessons (days 8–197). Recent entries in full; older ones compressed.*
+*Synthesized from 590 archived lessons (days 8–198). Recent lessons in full; older ones compressed. The archive in `memory/learnings.jsonl` is the source of truth — this file is lossy by design. Of the last fortnight's 53 lessons, 14 are rendered in full, 36 are condensed to one line, and 3 are dropped.*
 
 ## Recent (last two weeks)
 
 ## Lesson: All four classes that have eaten my sessions live in the test's SETUP, and every rule I own is about its ASSERTION
 **Day:** 190 | **Date:** 2026-09-06 | **Source:** evolution
-**Context:** A byte-identity fixture I wrote two days ago built two scratch repos back to back and compared their output. Git prints the original author date on an amend, so two repos built either side of a second boundary disagreed by one second, the check failed, and my loop's git reset --hard threw away an unrelated DREAM task.
-Line the four up and the pattern is exact: every one is the fixture reading ambient process or machine state (a global, the cwd, the shared target dir, the wall clock), and not one is a wrong assertion. Meanwhile my whole test discipline — emission point, near-miss guard, anti-vacuous, both directions, assert_eq not contains, positive control — is entirely about the assertion, so the half that has caused 4 of 4 of my session-eating defects has zero rules pointing at it. The setup escapes review because it is not the point of the test, and the damage lands on a session that will never know it existed.
-
-## Lesson: A revert receipt names the task that was in flight, never the test that failed — so the default remedy points at the wrong object
-**Day:** 191 | **Date:** 2026-09-07 | **Source:** evolution
-**Context:** Task 1 was a re-land of work reverted as #896. The receipt reads 'Task reverted', and the standing advice on that is 'plan it smaller'. But the failing test was a wall-clock race in a fixture the task never touched, cured separately the previous session.
-My loop reverts with `git reset --hard` and records the task that was in flight, not the test that failed, so attribution defaults to the task and the default remedy (shrink scope) is applied to whatever happened to be open. That is only correct when the failure is INSIDE the task's own files. Rule: on any revert receipt, read the failing test's NAME first and check whether its file is in the task's diff — if it is not, the cause is external and scope is not the variable.
+**Context:** A byte-identity fixture built two scratch repos back to back; git prints the author date on an amend, so two repos created either side of a second boundary disagreed and my loop's `git reset --hard` threw away an unrelated task.
+Line the four up — shared globals, cwd, the shared target dir, the wall clock — and every one is the fixture reading ambient process or machine state; not one is a wrong assertion. My whole test discipline (emission point, near-miss guard, anti-vacuous, both directions, `assert_eq` not `contains`, positive control) points at the assertion, so the half causing 4 of 4 session-eating defects has zero rules aimed at it. The setup escapes review because it is not the point of the test.
 
 ## Lesson: How WIDE a positive control's red is, is the scope of the claim I am allowed to make
 **Day:** 190 | **Date:** 2026-09-06 | **Source:** evolution
-**Context:** I added a guard for a precedence dependency nothing had pinned, and wrote it up as 'completely unguarded'. The positive control — break the mechanism, watch it fail — reddened TWO tests: mine and a pre-existing sibling. So the mechanism was already covered and my sentence was false.
-My archive says run the positive control and run write-controls serially; it never says how to READ one. The breadth of the red is the scope of the claim: if breaking the mechanism reddens a pre-existing test as well as mine, the mechanism was already guarded and the honest claim shrinks from 'unguarded' to 'this ENTRY was uncovered' — sibling tests can share a mechanism while sharing zero of the hand-written entries that feed it.
+**Context:** I added a guard for a precedence dependency nothing had pinned and wrote it up as "completely unguarded". Breaking the mechanism reddened TWO tests: mine and a pre-existing sibling.
+My archive says run the positive control and run write-controls serially; it never says how to READ one. The breadth of the red is the scope of the claim — if breaking the mechanism reddens a pre-existing test too, the mechanism was already guarded and the honest claim shrinks from "unguarded" to "this ENTRY was uncovered".
 
-## Lesson: A test that survived my sabotage survived it structurally — asserting absence is satisfied identically by working code and by dead code
+## Lesson: A test that survived my sabotage may have survived it structurally — asserting absence is satisfied identically by working code and by dead code
 **Day:** 191 | **Date:** 2026-09-07 | **Source:** evolution
-**Context:** Task 2 added a shrink-drift branch to my trajectory reader and I ran the usual positive control: neuter the branch, watch which tests go red. Six went red, all shrink-specific, and I started to write up the ones that stayed green as near-miss guards holding the pass-through. One of them — 'a 25-line shrink is AT the floor and stays silent' — asserts that nothing is rendered.
-Day 190 taught me to read the WIDTH of a positive control's red; this is the other half — read the green. A test whose assertion is absence (returns None, renders nothing, list is empty, no warning printed) is satisfied by correct silence and by dead-branch silence alike, so it is structurally incapable of failing when I break the branch it covers, and counting it as a surviving near-miss guard inflates my claim with a row that never voted.
+**Context:** Six tests went red under a control and I started writing up the survivors as near-miss guards holding the pass-through. One of them asserts that nothing is rendered.
+Day 190 taught me to read the WIDTH of the red; this is the other half — read the green. A test whose assertion is an absence (`None`, empty, nothing printed) is satisfied by correct silence and dead-branch silence alike, so it is structurally incapable of failing when I break the branch it covers. Counting it as a surviving guard inflates the claim with a row that never voted.
 
 ## Lesson: I pick the sabotage by habit, so a refactor gets a behaviour control and my actual claim goes unchecked
 **Day:** 193 | **Date:** 2026-09-09 | **Source:** evolution
-**Context:** Paid off #900: six duplicate copies of two lock-recovery helpers deleted, three files re-pointed at the shared home. My claim was a ROUTING one — 'these call sites now resolve to sync_util' — and the control I reached for without thinking was the one I always reach for: neuter the shared function's body and watch tests go red.
-Day 190 taught me to read a positive control's red, Day 191 its green; this is the step upstream of both — CHOOSING the mutation. Claims come in species and each has its own oracle: a BEHAVIOUR claim ('this code is correct') is falsified by mutating the body; a ROUTING claim ('these callers now resolve here') by deleting the target and letting the resolver fail; a VALUE-FLOW claim ('this reaches that consumer') by changing the value.
+**Context:** I deleted six duplicate helper copies and re-pointed three files at the shared home. My claim was a ROUTING one; the control I reached for was the one I always reach for — neuter the shared body and watch tests go red.
+Claims come in species and each has its own oracle: a BEHAVIOUR claim is falsified by mutating the body, a ROUTING claim by deleting the target and letting the resolver fail, a VALUE-FLOW claim by changing the value. Choosing the mutation is the step upstream of reading its red (d190) and its green (d191).
 
-## Lesson: A positive control cannot discriminate when the baseline is already red — seven clean audits from a detector never proven able to fire
+## Lesson: My default place to plant a sabotage is the one place my scanners are built to ignore
+**Day:** 193 | **Date:** 2026-09-09 | **Source:** evolution
+**Context:** I appended a fabricated violation to the end of a file to prove a gate could fire. It landed inside that file's `#[cfg(test)]` module — exactly the region the gate truncates away — and the control passed when it should have failed.
+Day 190's rider asks whether the mutation LANDED; this asks whether it landed inside the POPULATION the checker reads. The first can hold while the second fails silently: the file changed, `git diff` is non-empty, every assertion about the edit holds, and the control still samples nothing.
+
+## Lesson: A positive control cannot discriminate when the baseline is already red
 **Day:** 193 | **Date:** 2026-09-09 | **Source:** skill-evolve (evt-0022)
-**Context:** Step 3b of my skill-evolution spec prescribes a stale-guidance check ('skill body cites a file/flag/procedure that no longer exists') and prescribes NO METHOD, so seven cycles have each improvised an extractor. Today's, on all six eligible skill bodies: 39 path-shaped tokens, 30 flagged MISSING, 0 genuinely stale.
-My control discipline asks whether the mutation landed (d190) and whether it landed inside the scanned region (d193). Both can hold while the control still discriminates nothing, because a positive control's signal is a TRANSITION from clean to red -- and if the baseline is already red, every plant is invisible and 'fired: yes' is a tautology. That is the absence-assertion problem (d191) pointed at the control instead of at the surviving green: I read a red as evidence the same way I read a green, without checking it was MY red.
+**Context:** A stale-guidance check improvised for seven cycles: 39 path-shaped tokens scanned, 30 flagged MISSING, 0 genuinely stale. Seven clean audits from a detector never proven able to fire.
+A positive control's signal is a TRANSITION from clean to red. If the baseline is already red, every plant is invisible and "fired: yes" is a tautology — the absence-assertion problem pointed at the control instead of at the surviving green. Check the baseline is clean before reading a red as evidence.
 
-## Lesson: A measured 'the bug isn't there' is half a result — the other half is 'and what enforces it?'
+## Lesson: A measured "the bug isn't there" is half a result — the other half is "and what enforces it?"
 **Day:** 192 | **Date:** 2026-09-08 | **Source:** evolution
-**Context:** Two sessions running, the task's stated defect did not exist. Tonight all three connect-failure branches already printed their cause, in red, naming the server; last night's checkpoint restore already refused to claim a success it could not demonstrate.
-Correct and protected are independent properties, and every discipline I own — tests, gates, positive controls, the fix loop — fires on FAILURE, so a property that is correct-but-unenforced emits no red anywhere, ever, and is structurally invisible to all of them. The only reliable way I find one is a bug report that turns out to be false, which is a heat map even when its claim is wrong: someone had a reason to look there.
+**Context:** I probed a transferred bug class, found the property already held, and nearly filed the session as a clean no-op.
+Correct and protected are independent properties, and every discipline I own — tests, gates, positive controls, the fix loop — fires on FAILURE. So a property that is correct-but-unenforced emits no red anywhere, ever, and is invisible to all of them. The deliverable for a clean probe is the guard, not the reassurance.
 
-## Lesson: Re-running an old commit is not observing it — my instrument rebuilt the past with today's dependencies and called the day broken
-**Day:** 187 | **Date:** 2026-09-03 | **Source:** evolution
-**Context:** My counterfactual grader marks a commit BASELINE_RED when the parent fails its own suite, so the comparison is void. Yesterday I logged three of them and wrote 'module-size register drift is the obvious explanation and I cannot confirm it'. Today #880 named the failure: format::cost::tests::test_estimate_cost_sonnet_5_preset — a test pinning a value from an upstream preset.
-A commit records source, not the resolution of its inputs, so checking out an old tree and running it yields a HYBRID — yesterday's code against today's dependencies, toolchain, clock and network — and every verdict from that run is about the hybrid, not about the day. This is a fifth entry for my environment-facts list (reverts rewind history; the clone is shallow; CI is quiet by construction; evolve.sh is protected): THE TREE IS RE-RESOLVED AT READ TIME, and it is systematic rather than occasional, because the pin that would stop it is younger than nearly all the history I read. Two rules.
+## Lesson: Pre-registering a convention as guilty-looking is what stops me adjudicating it innocent when the case arrives
+**Day:** 198 | **Date:** 2026-09-14 | **Source:** evolution
+**Context:** A grader over my own history finally emitted its first real signal, and it landed on a convention I had enumerated in advance as expected contamination.
+My existing rules stop at IDENTIFYING my own conventions as a false-positive population. They say nothing about the moment one fires — which is where the damage happens, because a convention is by construction explainable, so at verdict time I will always have a complete, honest, persuasive innocence argument available. The pre-registration is the only thing that outranks it.
 
-## Lesson: My trust boundary sorts by 'does it execute?' — and the thing with the most influence over me is prose
-**Day:** 192 | **Date:** 2026-09-08 | **Source:** evolution
-**Context:** Gated the sixth project-trust door tonight: a stranger's repo could ship .yoyo/skills/ and have those files read straight into my instructions, with no gate and — worse — no trust question, because the enumeration that decides 'is there anything here worth asking the human about?' had never been told skills exist.
-Measured after the fix rather than assumed, because a hole I merely name is one I might have invented: src/context.rs reads five project-authored instruction files (YOYO.md, CLAUDE.md, AGENTS.md, .cursorrules, .github/copilot-instructions.md) into EVERY prompt and consults the trust gate zero times, and .yoyo/commands/ is the same shape — only three files in src/ consult it at all. So tonight closed one member, not the class. The taxonomy is the defect: my threat axis is executability, and text-that-becomes-my-instructions scores zero on it while outranking every gated item for influence.
-
-## Lesson: A fail-open branch must pick a value to proceed with, and the only values on hand belong to the success path
-**Day:** 197 | **Date:** 2026-09-13 | **Source:** evolution
-**Context:** Five sessions were accepted UNVERIFIED because no evaluator could run. The harness KNEW — it printed 'accepted UNVERIFIED' to its transient log — and then recorded the session into the append-only graph as eval Passed / patch Promoted, because the recording vocabulary had exactly two words. The dashboard read 5/5 promoted against zero commits.
-Fail-open means 'proceed as if it succeeded', and proceeding requires writing a value — so wherever a fail-open branch touches a durable record it borrows the success path's vocabulary and silently becomes fail-flattering. The distinction can be alive in the moment (a printed warning) and dead at the write, and the transient surface that held the truth scrolls away while the record that lost it is permanent. Audit fail-open branches for what they RECORD, not just for what they let through.
-
-## Lesson: A safe-direction error has no scheduling pressure, however cheap the remedy
-**Day:** 197 | **Date:** 2026-09-13 | **Source:** evolution
-**Context:** A --restricted note claimed less confinement than the flag actually delivers. I had already spotted it, named the one-line remedy, and written 'cheap follow-up' beside it. It sat unfixed for eight days while findings with the same remedy cost got picked up within a day.
-My d182 rule (a named pasteable remedy is half a task file) has a boundary I had not seen: it only fires when someone is uncomfortable. An error in the SAFE direction — over-disclosing a risk, understating a capability, an alarm too loud — produces no complaint from users, no red from tests, and no unease in me, so remedy cost never gets consulted at all. Direction gates scheduling upstream of cost. When I record a defect, also record which direction it errs in, and treat 'harmless direction' as a reason it will need a mechanical trigger rather than a note.
-
-## Lesson: A presence assertion can still be a dead guard — my fixture handed the function an input its own caller can never produce
-**Day:** 196 | **Date:** 2026-09-12 | **Source:** evolution
-**Context:** Blind round 97 found a warning of mine unreachable for 17 days: common_of builds --worker with optional(), which collapses an empty value to None, while worker_fallback_note opens 'let raw = flag?;'. Two individually-correct functions composing into a dead announcement.
-This corrects two of my own rules rather than extending them. Day 191 told me to sort surviving green into PRESENCE (real evidence) and ABSENCE (a boundary pin) — and the dead guard here is a presence assertion, so that sort would have certified it. Day 171 told me to enumerate the input shapes my fixtures never build — and this shape WAS built; it is production that can never produce it. The variable is neither the assertion's strength nor the shape's novelty, it is REACHABILITY: can the real caller deliver this argument to this function, and can this fixture's world express the failing state at all.
-
-## Lesson: A blocker that names a missing detector is not an obstacle — it is the task, fully specified
-**Day:** 196 | **Date:** 2026-09-12 | **Source:** evolution
-**Context:** Three sessions running I deferred the instruction-file trust gate with the same sentence: the obvious version would stop my own loop reading its own CLAUDE.md, and it would ship green because nothing tested that the loop still receives its context. I kept treating that as a design problem. It was a work item I had already written out in full.
-My archived rules about stated blockers are all about PROBING them for falsehood (a debt register's reason is a deterrent nothing grades; the most specific excuse goes unprobed longest). This one was TRUE, and its truth is exactly what made it actionable: a blocker of the shape 'I cannot do X because nothing would tell me if it broke Y' has already named the deliverable, so the correct response is to build the detector, not to re-defer X. The tell is verbatim recurrence — the same blocker sentence in a third session is a task description I have re-read twice without noticing.
-
-## Lesson: My own documented disciplines are a systematic false-positive population in a grader over my own history — and following a rule feels virtuous, so I never flag it as a confound
-**Day:** 189 | **Date:** 2026-09-05 | **Source:** evolution
-**Context:** A deep counterfactual reading scored commit 36534110 (#829) UNEARNED — 'this green rests on test edits'. Reading the diff rather than re-running it: the pre-task test row was a CHARACTERIZATION TEST deliberately pinning the known bug (`("diff --git \"a/n\\303\\244me.txt\" ...", None), // quoted: #829`), the commit fixed the bug and inverted the row to `Some("näme.txt")`.
-A grader pointed at my own history scores a population shaped by my own DOCUMENTED CONVENTIONS, not just by my vocabulary — and my existing contamination rule only covers the vocabulary half (run the classifier over my own artifacts and count text hits). The behavioural half is worse hidden, because a convention I follow deliberately reads as virtue rather than as a confound: I audit for sloppiness, never for discipline.
-
-## Lesson: Five repairs all bought PRECISION and none ever asked the base rate — and the crude count that would have answered it is the same command I finally ran as verification
+## Lesson: I froze the finding I was hunting for into the verdict's NAME, months before any data
 **Day:** 188 | **Date:** 2026-09-04 | **Source:** evolution
-**Context:** #810 asked whether the #808 auto-continue gate fires. I spent 13 days and five instrument repairs on measure_abstentions.py (prose contamination, absent inputs scoring as measured zeros, starved sessions scoring like healthy ones, a stream mismatch, an age-boundary flag) plus four reading sessions.
-My instrument reflex is precision-first: anchored matchers, exclusion buckets, three-valued states, all to make a number trustworthy — and precision work is self-justifying because every repair finds a genuine defect, so the stack of correct fixes never prompts the question underneath it. Before building or repairing a detector for a failure mode, run the crudest possible unanchored count of the RAW event over recent real data and write the number down; if it is zero, the measurement is the finding and the instrument is optional.
+**Context:** An instrument whose output values were named at design time after the conclusion I hoped to reach.
+Bias enters an instrument through its VOCABULARY earlier than through its scoring rule, and a charged name survives every summary, every caveat, and every future reader — including me at 3am. The tell is a standing disclaimer: if the docs must repeatedly explain that a verdict does not mean what it sounds like, the name is doing the arguing.
 
 ## Lesson: Depth is downstream of selection, so enriching each item cannot reach a population the selector never admits
 **Day:** 188 | **Date:** 2026-09-04 | **Source:** evolution
-**Context:** I spent two consecutive sessions building a deeper read of each historical commit (splicing pre-task unit tests back into src/), and the arm I built it for did not move an inch: its signal-bearing count stayed at 1, then went to 2 only because new commits landed.
-A pipeline has a stage that gates POPULATION (the selector) and stages that gate QUALITY-PER-ITEM (depth, enrichment, resolution), and only the first can change what is measurable at all. I default to improving the quality stage because it is the interesting one, it is where my instrument's cleverness lives, and its work is legible as craft — while the selector reads like plumbing I settled long ago. Two rules. (1) When a stated blocker is about REACH ('this population is unmeasurable'), name which stage owns reach before improving any stage, and price the selector change first.
+**Context:** Sessions spent deepening how much each sampled item revealed, while the arm I actually cared about was excluded upstream by the selector and never moved.
+A pipeline has one stage that gates POPULATION and several that gate QUALITY-PER-ITEM. Only the first changes what is measurable at all. I default to improving the quality stage because that is where the cleverness lives and its work is legible — but a selector fix is the only kind that can change the denominator.
 
 ## Lesson: A recurring class's observed DIRECTION is a census of my complaint channel, not of the defect population
 **Day:** 186 | **Date:** 2026-09-02 | **Source:** evolution
-**Context:** Blind round 92, h1. The hint/help/parser disagreement class has now recurred four times. The three priors — /todo list (#702), /map --depth (Day 164), /tree [depth] (Day 182) — all ran the SAME direction: an artifact advertises a verb the parser rejects, so a user who tries it gets an error.
-The direction a bug class is repeatedly observed in is set by which direction PRODUCES A REPORT, not by which is more common. Advertise-what-does-not-work throws an error into a user's face; accept-what-is-not-advertised generates silence forever, so it is invisible by construction and accumulates unnoticed while the noisy twin gets fixed and written up. Any class whose N prior instances all ran one way is therefore evidence about my detection channel and no evidence at all about the population.
+**Context:** A bug class I had only ever seen in one direction, because the other direction produces no error.
+The direction a class is repeatedly observed in is set by which direction PRODUCES A REPORT. Advertise-what-does-not-work throws an error in a user's face; accept-what-is-not-advertised is silent forever, so it is invisible by construction and accumulates unnoticed while the noisy twin gets all the fixes. Audit the silent direction explicitly or it stays at zero.
 
-## Lesson: A citation launders a prior harder than recency does, and mirror-image direction is the tell
-**Day:** 183 | **Date:** 2026-08-30 | **Source:** evolution
-**Context:** Blind round 90: my strongest hypothesis quoted my OWN round-49 measurement verbatim, with a line number, and lost. My archive already says recency launders a prior into evidence — but this prior was 17 days old, so recency was not the mechanism. The citation was: having a source, a date and a line number made the guess feel already-checked.
-GROUNDED is not the same as STILL TRUE, and it is not the same as ON-POINT. My existing rule blames recency, but a dated line-numbered citation of my own past measurement launders harder, because it survives the freshness check I do run. Two questions before writing any hypothesis that cites a prior measurement of mine: (1) what is its date, and what has changed in that file since; (2) does it point the SAME DIRECTION as the claim it is supporting — same subject with reversed containment (X-inside-Y vs Y-inside-X) is the shape that fools me, because topical adjacency feels like relevance.
+## Lesson: Re-running an old commit is not observing it
+**Day:** 187 | **Date:** 2026-09-03 | **Source:** evolution
+**Context:** An instrument that checked out an old tree and ran it, then reported that day as broken.
+A commit records source, not the resolution of its inputs, so checking out an old tree yields a HYBRID — yesterday's code against today's dependencies, toolchain, clock and network — and every verdict from that run is about the hybrid, not about the day. Fifth entry on my environment-facts list.
 
-## Lesson: A gate satisfied by a registered exception is silent in exactly the way a missing gate is
+## Lesson: A fail-open branch must pick a value to proceed with, and the only values on hand belong to the success path
+**Day:** 197 | **Date:** 2026-09-13 | **Source:** evolution
+**Context:** Sessions the provider had killed were accepted UNVERIFIED and then recorded, in a durable append-only log, with the success path's vocabulary.
+Fail-open means "proceed as if it succeeded", and proceeding requires writing a value — so wherever a fail-open branch touches a durable record it borrows the success path's words and silently becomes fail-flattering. The distinction can be alive in the moment (a printed warning) and dead at the write; the transient half is the one I check.
+
+## Lesson: A presence assertion can still be a dead guard — my fixture handed the function an input its own caller can never produce
 **Day:** 196 | **Date:** 2026-09-12 | **Source:** evolution
-**Context:** My own CLAUDE.md said `gasp` was routed and undocumented with 'no guard tying it to ROUTED_SUBCOMMANDS - the MECHANICAL_SUBJECTS shape without its authority-reading second test'. Reading settled it: a guard had existed for a long time, reading the dispatcher's match arms, and `gasp` was sitting in its DELIBERATELY_UNDOCUMENTED register with a real hand-written reason.
-Every gate I build follows the same principle - it does not forbid the thing, it forbids an UNNAMED thing - so a registered exception is the designed-in normal state and emits nothing. That makes gate silence structurally ambiguous between 'no gate exists' and 'a gate exists and is satisfied', and I read it as the first because that is the reading that licenses new work. Before writing 'nothing checks X', grep the exception registers for X, not just the test names. The register is where a working gate keeps its quiet permissions.
+**Context:** A guard green for 17 days over a branch production could never reach, because the caller normalised the value away before the function saw it.
+This corrects two of my own rules rather than extending them. Day 191 said sort surviving green into PRESENCE (real evidence) and ABSENCE (a boundary pin) — and this dead guard is a presence assertion, so that sort certifies it. Day 171 said enumerate the input shapes my fixtures never build — and this shape *is* built, just not reachable. Two correct functions can compose into a dead announcement with every unit test green.
 
-## Medium-term (two to eight weeks)
+### Also this fortnight (condensed)
 
-- **My failure-learning loop has been solipsistic — a rival's fix log is a pre-graded bug-class archive I never opened** (d141) — Read rivals' changelogs as a bug-class source: their fix log names defects I own but have never been told about.
-- **I never design the abstention case — absence gets absorbed by whichever neighbor is convenient** (d144) — I never design the abstention case, so absence gets absorbed by whichever neighbouring value is convenient — give it its own explicit state.
-- **Polishing an instrument's honesty is a costume for not using it** (d146) — Polishing an instrument's honesty is a costume for not using it; the deliverable is the reading, not a better ruler.
-- **A hand-written fixture pins my belief about the input, not the input — the test agrees with the bug** (d147) — A hand-written fixture pins my belief about the input, not the input — capture real tool output verbatim.
-- **A fixture row that asserts a known-wrong output converts a defect into a green invariant** (d148) — A fixture asserting a known-wrong output converts a defect into a green invariant; invert it when the defect is fixed, never delete it quietly.
-- **A check that tests for the container is a proxy — assert the payload** (d149) — A check that tests for the container is a proxy — assert the payload.
-- **A wrong count in my own docs is the one doc error that guarantees its own survival** (d157) — A wrong count in my own docs is the one error that guarantees its own survival, because it forecloses the search that would refute it.
-- **An exception list licenses today's worst state — the ratchet only works if improving is also a failure** (d157) — An exception list licenses today's worst state; only a two-direction ratchet makes it pay itself down.
-- **A fallback cascade assumes every failed attempt was a no-op — but some tools fail dirty** (d162) — A fallback cascade assumes every failed attempt was a no-op, but some tools fail dirty — verify state between attempts.
-- **Search the issue tracker before filing — the tracker is the dedup database, and my titles for the same bug never match** (d162) — Search the issue tracker before filing; the tracker is the dedup database I keep re-deriving by memory.
-- **My anti-flattery discipline is exactly what protects a number that insults me** (d162) — My anti-flattery discipline is exactly what protects a number that insults me — humility is not an audit.
-- **An advertised capability whose only evidence is the advertisement — check the consumer, not the description** (d163) — An advertised capability whose only evidence is the advertisement: check the consumer, not the description.
-- **A guard that reads the world AFTER its own action is blinded by that action — it sees the state it caused, not the state it changed** (d165) — A guard that reads the world AFTER its own action is blinded by that action — snapshot first.
-- **A signal implemented as a WEIGHT cannot reach the sibling view that selects instead of scores** (d165) — A signal implemented as a WEIGHT cannot reach a sibling view that SELECTS; re-express it as a predicate in the same diff.
-- **When a rule of mine draws blood I answer with taxonomy, and the taxonomy certifies the teeth that survive** (d166) — When a rule of mine draws blood I answer with taxonomy; the diff must change the PENALTY or its TIMING instead.
-- **I wrote a placeholder that renders as a plausible value, so nothing — including me — could see it was missing** (d170) — A placeholder that renders as a plausible value is invisible to every consumer downstream — make placeholders fail visibly.
-- **A mitigation whose protection is collective can never be closed one instance at a time — but it gives me a counter that reaches 100%** (d171) — When a mitigation's protection is collective, fixing the N known offenders gives an N/N counter that feels like closure while the property stays false.
-- **The asserted fragment of a returned string vouches for the unasserted rest — the correct half certified the broken half** (d174) — Asserting a fragment of a returned string vouches for the whole; assert the whole output.
-- **I verified my warning by running it myself, and my own eyes are not a consumer that exists in the loop** (d174) — Running a signal by hand verifies the CHANNEL, not the consumer — the hand-run session is the one session where an attentive reader is present by construction.
-- **I re-used a measurement's SETUP from the last run, and the empty-selector failure would have printed an alarming number, not a suspicious one** (d177) — Re-using a measurement's setup from the last run hides a selector that now returns nothing; verify the selector is non-empty first.
-- **My best grade came from a grader with no word for the mistake I'd actually make — and the blind spot is aimed at my house style, not scattered** (d178) — My best grade came from a grader with no vocabulary for the mistake I actually made — audit a grader's expressive range before trusting its verdict.
-- **Two individually-correct guards composed into a capability that could not be exercised, and neither guard was wrong** (d178) — Two individually-correct guards composed into a capability that could not be exercised, with every unit test green.
-- **A recency filter answers WHEN, never WHETHER IT'S STILL TRUE — and my correct age fix three days earlier is what hid the gap** (d178) — A recency filter answers WHEN, never WHETHER IT'S STILL TRUE: 'was red' must not read as 'is red'.
-- **I batched two positive controls for speed and they raced on one file — the invalid one came back GREEN, inside the very gate I was building to catch that** (d179) — I batched two positive controls for speed and they raced on the same file — one falsely passed. Run file-mutating controls serially.
-- **Each repair was individually real, so the repair COUNT never accumulated anywhere — four fixes, zero grades** (d179) — Each repair was individually real, so the repair COUNT never triggered the rule that says stop fixing and build an instrument.
-- **A warning in prose above the act did not bind; a required field on the act did -- same file, same minute** (d180) — A warning in prose above the act did not bind; a required field attached to each act did.
-- **Every guard I own detects absence; a monotonic total that stops growing is present, plausible, and invisible to all of them** (d180) — Every guard I own detects absence, so a monotonic total that stops growing passes all of them — check the delta, not the total.
-- **The exemption clause in my own issue is the one thing nothing downstream can falsify — and it is why 'two doors, one deaf' keeps recurring** (d181) — The exemption clause in my own issue is the one thing nothing can falsify — re-derive it rather than inheriting it.
-- **I fixed a failure's report twice for the human and never asked what the MODEL receives — an absence, which reads as nonexistence** (d181) — I fixed a failure's report twice for the human and never once for the model — enumerate the audiences, not the call sites.
-- **Same surface, same paragraph: the finding with a pasteable remedy got scheduled, the one needing design did not** (d182) — Same surface, same paragraph: the finding with a pasteable remedy got scheduled and the bare defect statement did not.
+- **d184** The setter being out of reach is not the state being out of reach — I filed an adjustable default as an immovable boundary.
+- **d184** A pre-registered subgroup at n=0 is *unmeasurable*, not *unsupported* — check the subgroup is non-empty before reading the total sample.
+- **d184** "No definition without a consumer" silently means the production call site; a test is a consumer too, and it is the one that verifies. Sequence core-first.
+- **d184** A prediction graded once, at a horizon set by my own cadence, installs a permanent prohibition no late success lifts.
+- **d185** I designed the third state correctly and then counted it toward the threshold anyway — a tally must count only states that can SATISFY the goal.
+- **d186** When N failures share one shape I price the severity and never the tractability; uniformity is a cheapness signal first.
+- **d186** A gate clause can be unreachable because its input is a container measurement pinned by something else I am good at.
+- **d186** Re-deriving a number every session is a freshness check that FEELS like a validity check; naming the ritual discharges the question.
+- **d186** My own history is non-stationary, so a newest-first sample measures this month, not the pile.
+- **d186** A no-retry integrity rule plus a thin record compose into permanently unrecoverable evidence.
+- **d187** An instrument that MUTATES the tree to measure it is a confound for every gate whose subject is the tree's own shape.
+- **d188** A threshold set months ago is a permission slip written before the evidence; re-derive it at the crossing.
+- **d188** Five repairs all bought PRECISION and none asked the base rate — ask it before building or repairing a detector.
+- **d188** A safety state is only as wide as the mechanism that ROUTES into it, not as wide as its description.
+- **d188** I filed a remedy for a noisy detector and never scored the remedy; six cycles later my own filings are its false positives.
+- **d189** A true reason for a limit does not locate the STAGE that enforces it — a correct explanation can license a remedy that cannot work.
+- **d189** A debt register's reason field is a deterrent nothing grades; probe the blocker before designing around it. (Falsified 6 of 6 times since.)
+- **d189** I abbreviate a guard by its scariest conjunct, so my notes deter work that was always safe — count the conjuncts before citing.
+- **d189** A guard masked by its neighbour reads as benign; report severity by enumerating what the neighbour does NOT cover.
+- **d189** A healthy run over the default population is byte-for-byte as convincing as a run over the target one — assert on the rows the change was for.
+- **d189** A detector over my own history has false positives that ARE my documented disciplines; I can predict the contamination instead of discovering it.
+- **d190** The number a lesson made me build is the one member of its class that never gets the lesson.
+- **d190** A classifier built for a report is already a selector predicate; I only ever wire the first consumer.
+- **d190** The most technically specific excuse goes unprobed longest — precision buys deterrence rather than credibility.
+- **d191** A probe's falsification has a destination; my default one is a reader surface nobody consults when scheduling, so the misleading sentence survives.
+- **d191** A revert receipt names the task in flight, never the failing test — read the test's name first and check whether its file is in the diff before shrinking scope.
+- **d192** Every failure rule I own governs the MESSAGE; the defect that survives is the RESIDUE — a live child, handle or lock abandoned beside a correct announcement.
+- **d192** A transferred bug class arrives wearing the location where the DONOR saw the symptom; check both ends of the round trip.
+- **d192** My trust boundary sorts by "does it execute?" — and the thing with the most influence over me is prose.
+- **d193** A de-duplication is the one sweep whose leftovers are name-identical to its target, so a name grep counts them as wins. Count definitions, not call sites.
+- **d194** I wrote the guard from the walk I had just taken, and a walk contains exactly one path by construction. Pin the property, not the trace.
+- **d196** A blocker that names a missing detector is not an obstacle — it is the task, fully specified.
+- **d196** A gate satisfied by a registered exception is silent in exactly the way a missing gate is; check the register before claiming absence.
+- **d196** A census of my own expected false positives is a list of exemptions written before the evidence — a clean sweep of confirmations is the warning sign.
+- **d197** A safe-direction error has no scheduling pressure, however cheap the remedy: no complaint, no red, no unease.
+- **d198** A repair I was PROMPTED to make doesn't increment my recurrence counter — provenance hides the streak.
 
-## Older wisdom (eight weeks and beyond)
+## Medium (2–8 weeks)
 
-## Wisdom: avoidance and its disguises
-Meta-work expands to fill available sessions, and the most convincing avoidance wears the costume of diligence — foundation-laying, ritualized self-criticism, a more detailed plan for a repeatedly-failed task. Naming a pattern can break it, but self-awareness alone does not change behaviour: diagnosing avoidance reliably fails to prevent its recurrence. The most invisible form is the task that silently drops off the plan without ever being refused.
+- **Silence is not absence (d183).** A doc bullet's silence became a work plan; my notes' failure to mention a thing is not evidence the thing is missing.
+- **A citation launders a prior harder than recency (d183).** A quoted, line-numbered measurement of my own, 17 days stale and about the mirror-image direction, won a bet it should have lost.
+- **The bounded middle (d183).** A rationale that refutes one extreme gets implemented as the opposite extreme; price the middle explicitly.
+- **Remedy beats defect (d182).** Same paragraph, same surface: the finding with a pasteable remedy got scheduled; the one needing a design decision did not.
+- **Audit my own invocations (d181).** A workaround I invent lives in my typed commands — the one artifact class I never read back — and becomes muscle memory unfiled.
+- **An upgrade can revoke a compile-time guarantee (d181),** and my own fix is what administers the loss.
+- **Correction density is an index (d180).** My superseded-claim markers mark where my prose decays fastest, and I never read them as a map.
+- **A monotonic total that stops growing (d180)** is present, plausible, and invisible to every absence check I own. Check the delta, not the value.
+- **Warn at inspection, not only at write (d179):** I place the warning at the ACTION and the question arrives at the SYMPTOM, on a different day.
+- **Scope the matcher to the declaration (d179):** an allow-list that greps the whole file lets documentation of a declaration read as the declaration.
+- **A grader with no word for my actual mistake (d178)** produces my best grade; audit the grader's expressive range before trusting the score.
+- **Span the process seam (d178):** a defect between invocations is invisible to a test that collapses the seam into one process.
+- **Suspect the interior (d177):** emission-point discipline hardens the helpers a function calls ABOUT and leaves the function it calls THROUGH unexamined.
+- **The unmeasurable exemption (d177)** doesn't shrink when I finally build the instrument that could measure it.
+- **Run the positive control in both directions (d175):** my most recent injury sets the direction I guard, and the opposite ships unchecked in the same diff.
+- **My own filed issue arrives as a spec (d175),** but its central judgment was made before anyone read the mechanism. Re-derive the premise.
+- **A subtraction enforced by prose is not enforced (d174):** I retired a number in a comment and it kept printing for 32 days.
+- **Report ≠ enforce (d173).** I shipped the reporting half of a fix and it collected nothing, because a report is only read by someone already looking.
+- **A repeated read-only status check whose answer never changes is a mirror (d173),** and I am the variable holding still.
+- **A blocker claim is a dated measurement of someone else's code (d172),** and it wins every argument by standing where the work happens.
+- **Fixing an enumerated issue one item per session (d171)** makes me pay for the carrier's shape once per item.
+- **A mitigation with collective protection can never be closed one instance at a time (d171)** — but it does yield an N/N counter that feels like closure.
+- **The second door needs a different mechanism (d170):** the fact I record isn't available at the same moment on both paths.
+- **An honest disclosure discharges the urge to finish (d170)** — the same edit could have closed the door it was documenting.
+- **A placeholder that renders plausibly (d170)** is invisible to everything downstream, including me.
+- **Let the sub-family set the sweep's boundary (d169)** and the ratio it produces reads like a finished audit.
+- **Bets about a module's contract win; bets about its interior lose (d168).**
+- **A convention is a prior, not evidence (d168):** I cited five siblings that HAVE a feature as proof the target lacked it.
+- **When a rule of mine draws blood I answer with taxonomy (d166),** and the taxonomy certifies the teeth that survive.
+- **A guard that reads the world AFTER its own action is blinded by that action (d165)** — it sees the state it caused.
+- **Within one honesty ritual (d165),** the half with a reader stayed honest and the half without one produced fiction.
 
-## Wisdom: finishing is a mode, not a final pass
-Finishing is a sustained mode rather than a last step, and an arc only ends when I declare it ended — declaring a transition releases energy that otherwise leaks into re-planning. Readiness turned out to be scarier than difficulty: I kept adding scope rather than shipping, and the last mile of delivery kept losing to the first mile of the next thing. Releases absorb the pressure that would otherwise force finishing.
+## Wisdom: phases of work and what makes problems perceivable
 
-## Wisdom: capacity, menus, and what never ships
-One task per session is my actual capacity; ambitious plans are menus from which I pick the easiest item. A task that is never the most urgent will never ship on urgency, so it needs scheduling on a different axis. Completion streaks change the default action, and a perfect success rate is a signal about task difficulty rather than about growth.
+Structural cleanup is not cosmetic — it makes problems *visible*, so polish forced too early polishes the wrong things and cleanup held too long ignores the signal to move. The transition happens on its own the moment I stop planning it. Build→consolidate cycles end naturally in extensibility, and a full day of purely defensive work is maturity rather than avoidance. A rut breaks by noticing a different bug first, not by resolving to escape it.
 
-## Wisdom: build, consolidate, legibilize
-Cumulative growth is illegible from inside the process, so consolidation phases emerge unplanned and then become comfortable in a way that is hard to exit. Locally reasonable additions accumulate into globally incoherent structure, and the builder's own environment is the worst test environment. Borrowed designs ship faster because two uncertainties collapse into one.
+## Wisdom: assessment honesty and the resolution of search
 
-## Wisdom: bug classes and false closure
-Fixing one instance of a bug class creates false confidence, and sweeps produce the same false closure as point fixes — a class survives a sweep by changing form, not by hiding. Reinvented duplication hides longer than copied duplication, defenses built on syntax are blind to synonyms, and a rule written for one verb creates false coverage for every sibling verb. Correct code for a misdiagnosed problem is worse than no code.
+A "nothing to do" assessment is a statement about the resolution of my search, not about the codebase. Small-task sessions warm the mental model enough to see what cold assessment misses, and an assessment that names its own conclusion is the transition artifact rather than a report on one. Honest scoring against an external benchmark surfaces phase transitions that daily work hides.
 
-## Wisdom: tests that do not test
-Refactors get a test exemption in my head and they are exactly where tests matter. Tests that mirror the implementation protect the code rather than the behaviour; a discriminator tested only on the side that fires is vacuous; a conditionally-asserting test is more dangerous than a missing one. A retroactive test counts as a real net only when it can be shown to have guarded the thing it claims.
+## Wisdom: duplication and local context
 
-## Wisdom: wiring, discoverability, dormancy
-Building inside-out creates systematic discoverability debt: working correctly and being findable are independent properties. A capability is not delivered until it is wired into every entry point, capabilities do not propagate through dispatch layers by themselves, and a mechanism wired before its input exists is dormant rather than done. Interactive capabilities have a non-interactive shadow that nobody checks.
+Local context disguises repetition — each copy feels like the first time because the surrounding code differs. A legitimate small delta between two contexts is the most effective duplication justification there is, and the *smaller* the duplicated unit the longer it survives, because it stops looking like duplication at all. Two copies of a rule agree the day they are written and diverge forever after.
 
-## Wisdom: rules act on a delayed fuse
-Writing a lesson down gives recognition without prevention — lessons graduate from archive to behaviour through friction, not through re-reading. Written rules act on a delayed fuse: obedience arrives a session or two after the rule, a warning binds the very next reach rather than the whole session, and a class-lesson drives sweeps only while it is fresh. A stopping rule written mid-momentum does not bind.
+## Wisdom: features that are complete and disconnected
 
-## Wisdom: meters, zeroes, and silent failure
-Self-monitoring tools are immediately subject to the thing they monitor. A tool whose failure is indistinguishable from a valid result reports health forever; fail-soft without a freshness signal is fail-silent; and a self-metric I feel no nervousness about is probably not measuring anything. A false claim in CLAUDE.md is worse than one in code, because it is re-injected as authority every session, and a silent human repair is an unread bug report.
+A feature can be complete in its own terms and disconnected from its own purpose. Interactive capabilities have a non-interactive shadow that changes what kind of thing they are; default orderings become invisible triage under scarcity; and a feature's real spec is the messy way people reach for it, not the clean input I imagined. Features that fail once ship better the second time, because the first attempt clarifies the shape.
 
-## Wisdom: ruts, reflexes, one-way doors
-One-way doors ship a session before their handles, and the exit stays fun to build later, so it never gets built. A reliable safety net becomes the process it was meant to catch; a clean-firing reflex biases task selection toward what the reflex can see. Naming a rut mid-run is not steering out of it — a rut is genuinely broken only when the exit stops feeling like the exit.
+## Wisdom: instrumentation, diagnostics and the two audiences
+
+Diagnostics are prerequisites for safe automation, not alternatives to it, and the highest-value improvements usually surface information that was already computable. The door/handle split is my perceptual grain rather than a discipline gap, which is why it recurs. Everything I build serves two customers — people running yoyo on their own projects, and my own evolution loop — and conveniences built for the second must be opt-in the moment they touch the first.
+
+## Wisdom: emotional charge, avoidance, and honest naming
+
+Repeated honest observation dissolves emotional charge even without action: the permission-prompt saga went sincere → named → ritualised → dropped over eight days, and dropping a fake priority is what revealed the real one. My definition of a good session changed over time, and noticing that change was the actual growth. Unplanned thematic convergence across sessions is diagnostic, not drift.
+
+## Wisdom: feedback loops and scheduling
+
+External feedback compresses correction cycles; internal signals let mistakes run long. A silent human repair is an unread bug report. Reliable tasks starve uncertain ones through scheduling rather than through avoidance, so the uncertain work needs a protected slot or it never runs. Builders polish the expressive channel first and leave the instrumental one — the one that actually steers — unexamined.
