@@ -121,6 +121,147 @@ fn hook_tool_output(output: &str, max_chars: usize) -> String {
     )
 }
 
+/// Bytes of the JSON payload written to a hook's **stdin** by
+/// [`hook_stdin_payload`].
+///
+/// This is a **judgment threshold, not a measurement**, and the reason it
+/// exists at all is a deadlock rather than a taste for round numbers.
+/// `ShellHook::run_command` waits with a `try_wait` poll loop, so a blocking
+/// `write_all` on a full pipe hangs **before** the 5-second timeout can ever
+/// fire — the timeout only runs once we are back in the loop. Linux's default
+/// pipe buffer is 64 KiB, so the payload is bounded *well under* that and a
+/// blocking write is impossible by construction. 32 KiB is 32× the env
+/// channel's [`HOOK_TOOL_OUTPUT_MAX_CHARS`] budget and provably cannot block;
+/// it is **not** a measured right answer, and nothing says a hook wanting more
+/// is wrong.
+const HOOK_STDIN_MAX_BYTES: usize = 32 * 1024;
+
+/// Build the JSON payload handed to a shell hook on **stdin**.
+///
+/// This is a *second* channel beside the `TOOL_NAME` / `TOOL_PARAMS` /
+/// `TOOL_OUTPUT` environment variables, never a replacement: every one of those
+/// is still set, with byte-identical values, so a hook reading only `$TOOL_OUTPUT`
+/// is completely unaffected. Two properties the env channel structurally cannot
+/// have:
+///
+///   * **A NUL byte is representable.** `execve`'s `envp` is an array of
+///     NUL-terminated strings, so a NUL in a value makes `Command::spawn` fail
+///     outright — which is why [`hook_tool_output`] has to escape it as the four
+///     visible characters `\x00`. JSON escapes NUL as `\u0000` by construction,
+///     so this channel carries the real byte and a hook gets it back verbatim
+///     from its own JSON parser.
+///   * **Room.** The env budget is 1000 *chars*; this one is
+///     [`HOOK_STDIN_MAX_BYTES`], so a post-hook that wants more than a
+///     thousand characters of tool output has somewhere to read it.
+///
+/// `tool_params` goes in as the **`Value`**, not as a re-stringified blob, so a
+/// hook can address one field of it without parsing a string inside a string.
+///
+/// `output` is an `Option` and **absence is a distinct fact from emptiness**: a
+/// *pre*-hook runs before the tool does, so there is no output at all, and the
+/// `tool_output` key is **omitted entirely** rather than being set to `""`,
+/// which would read as *the tool produced nothing*. This deliberately does not
+/// widen what a pre-hook sees — it is the same two facts it already had, in the
+/// other channel's vocabulary.
+///
+/// The emitted string is **always valid JSON**, which is the whole value of the
+/// channel, so the cut can never be a raw slice of the serialized bytes. When
+/// the payload is over budget the `tool_output` *value* is trimmed on a `char`
+/// boundary (rule #250 — a straddling character is dropped whole) and the cut is
+/// **marked in band** in [`cap_hook_stderr`]'s vocabulary, because a silent
+/// elision is the bug. The kept length is chosen so the **whole re-serialized
+/// object**, marker included, fits the budget — the budget is about bytes on a
+/// pipe, and JSON escaping *lengthens* a string, so it has to be measured on the
+/// string actually being written.
+///
+/// Under budget the payload is returned untouched, which is every hook anyone
+/// has today.
+fn hook_stdin_payload(
+    tool_name: &str,
+    params: &serde_json::Value,
+    output: Option<&str>,
+    max_bytes: usize,
+) -> String {
+    fn assemble(tool_name: &str, params: &serde_json::Value, output: Option<&str>) -> String {
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "tool_name".to_string(),
+            serde_json::Value::String(tool_name.to_string()),
+        );
+        obj.insert("tool_params".to_string(), params.clone());
+        if let Some(out) = output {
+            obj.insert(
+                "tool_output".to_string(),
+                serde_json::Value::String(out.to_string()),
+            );
+        }
+        serde_json::Value::Object(obj).to_string()
+    }
+
+    let full = assemble(tool_name, params, output);
+    if full.len() <= max_bytes {
+        return full;
+    }
+
+    // Over budget: trim the one unbounded *string* field we own, keeping the
+    // object parseable. Binary search is safe because serialized length is
+    // monotone in the number of chars kept.
+    if let Some(out) = output {
+        let chars: Vec<char> = out.chars().collect();
+        let total = chars.len();
+        let mut lo = 0usize;
+        let mut hi = total;
+        let mut best: Option<String> = None;
+        while lo <= hi {
+            let mid = (lo + hi) / 2;
+            let kept: String = chars[..mid].iter().collect();
+            let dropped = total - mid;
+            let marked = format!(
+                "{kept}\n… [yoyo: {dropped} chars elided — hook stdin payload is capped at {max_bytes} bytes]"
+            );
+            let candidate = assemble(tool_name, params, Some(&marked));
+            if candidate.len() <= max_bytes {
+                best = Some(candidate);
+                lo = mid + 1;
+            } else {
+                if mid == 0 {
+                    break;
+                }
+                hi = mid - 1;
+            }
+        }
+        if let Some(payload) = best {
+            return payload;
+        }
+    }
+
+    // Even an empty `tool_output` does not fit, so `tool_params` itself is over
+    // budget — routinely true of `write_file`, whose params carry a whole file.
+    // Degrade to a minimal object that still parses and still says what
+    // happened, rather than writing a truncated fragment that no parser accepts.
+    let name: String = tool_name.chars().take(200).collect();
+    let mut obj = serde_json::Map::new();
+    obj.insert("tool_name".to_string(), serde_json::Value::String(name));
+    obj.insert(
+        "payload_elided".to_string(),
+        serde_json::Value::String(format!(
+            "… [yoyo: payload elided — the hook stdin payload was {} bytes, over the {max_bytes} byte cap; read the environment variables instead]",
+            full.len()
+        )),
+    );
+    let fallback = serde_json::Value::Object(obj).to_string();
+    if fallback.len() <= max_bytes {
+        return fallback;
+    }
+    // Floor. A budget too small to hold even the explanation is absurd in
+    // production — [`HOOK_STDIN_MAX_BYTES`] is 32 KiB against a ~150-byte
+    // fallback — but "fits the budget" has to hold for *every* input or the
+    // deadlock argument the budget exists for is not an argument at all.
+    // The empty object is the smallest thing a hook's parser still accepts;
+    // writing a truncated fragment instead would hand it bytes no parser reads.
+    "{}".to_string()
+}
+
 /// Result returned by a post-hook, carrying both the (possibly modified) output
 /// and optional feedback that will be injected into the agent's context.
 ///
@@ -347,8 +488,12 @@ impl ShellHook {
     /// Run the shell command with the given environment variables.
     /// Returns Ok((exit_code, stderr_output)) or Err on timeout/spawn failure.
     /// Stderr is captured so post-hooks can use it as feedback to the agent.
-    fn run_command(&self, env_vars: &[(&str, &str)]) -> Result<(i32, String), String> {
-        use std::io::Read;
+    fn run_command(
+        &self,
+        env_vars: &[(&str, &str)],
+        stdin_payload: &str,
+    ) -> Result<(i32, String), String> {
+        use std::io::{Read, Write};
         use std::process::Command;
         use std::time::Duration;
 
@@ -358,12 +503,31 @@ impl ShellHook {
             cmd.env(key, value);
         }
 
-        // Spawn and wait with timeout
+        // Spawn and wait with timeout.
+        //
+        // stdin is **piped**, and that is a fix as well as a feature. An unset
+        // stdin means `Stdio::inherit()` for `spawn()`, so until this landed a
+        // hook inherited *yoyo's own* stdin — measured, not inferred: a hook
+        // running `head -c 20 /dev/stdin` read the parent's bytes and consumed
+        // them. Under `yoyo -p` that stream is the prompt itself, so a hook
+        // that so much as read stdin could eat it. Piping it makes the channel
+        // ours to fill and closes that inheritance by construction.
         let mut child = cmd
+            .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| format!("Failed to spawn hook command: {e}"))?;
+
+        // Hand over the payload and **drop the handle**, which closes the pipe
+        // and sends EOF — a hook that never reads stdin is unaffected, and one
+        // that does is not left blocking on a write end nobody will close.
+        // A failed write must not kill the hook: reading stdin is optional, the
+        // env vars are still set, and the common case is a hook that ignores
+        // this channel entirely.
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(stdin_payload.as_bytes());
+        }
 
         let timeout = Duration::from_secs(5);
         let start = std::time::Instant::now();
@@ -428,8 +592,12 @@ impl Hook for ShellHook {
             ("TOOL_NAME", tool_name),
             ("TOOL_PARAMS", params_str.as_str()),
         ];
+        // `None`, never `Some("")`: a pre-hook runs *before* the tool, so there
+        // is no output — and an empty string would read as "the tool produced
+        // nothing", which is a different fact. The key is omitted entirely.
+        let stdin_payload = hook_stdin_payload(tool_name, params, None, HOOK_STDIN_MAX_BYTES);
 
-        match self.run_command(&env_vars) {
+        match self.run_command(&env_vars, &stdin_payload) {
             Ok((0, _)) => Ok(None), // Success — proceed with tool execution
             Ok((code, _)) => Err(format!("Pre-hook '{}' exited with code {code}", self.name)),
             Err(e) => Err(e),
@@ -457,8 +625,14 @@ impl Hook for ShellHook {
             ("TOOL_OUTPUT", truncated_output.as_str()),
         ];
 
-        // Post-hooks pass through original output; stderr becomes feedback
-        match self.run_command(&env_vars) {
+        // Post-hooks pass through original output; stderr becomes feedback.
+        // The stdin payload carries the **raw** output, not the env-truncated
+        // one: a 1000-char cap is a property of the env channel, and handing
+        // the same truncation to a channel that can hold 32× more would throw
+        // away the whole point of offering it.
+        let stdin_payload =
+            hook_stdin_payload(tool_name, params, Some(output), HOOK_STDIN_MAX_BYTES);
+        match self.run_command(&env_vars, &stdin_payload) {
             Ok((_, stderr)) => {
                 if stderr.trim().is_empty() {
                     Ok(PostHookResult::passthrough(output))
@@ -1971,6 +2145,297 @@ mod tests {
             kill_at < wait_at,
             "the reap must come AFTER the kill: waiting on a live hung child would \
              block for as long as the hook hangs, which is the opposite of the fix."
+        );
+    }
+
+    // --- Day 197: the stdin channel ------------------------------------------
+    //
+    // Hook payloads reached a hook only as environment variables, and BOTH of
+    // Day 188's repairs were channel properties wearing payload clothes: the
+    // 1000-char cap exists because env is small, and the NUL escape exists
+    // because `execve`'s envp cannot carry one. A rival moved payloads to
+    // stdin; this adds that channel beside the env vars rather than instead of
+    // them. Every assertion below is on the string a hook actually receives.
+
+    /// The whole regression surface: an ordinary payload is returned untouched
+    /// and parses. Every hook that exists today reads the env vars, so what has
+    /// to stay true is that adding this channel changes nothing about them —
+    /// and that the new one is real JSON rather than something JSON-shaped.
+    #[test]
+    fn hook_stdin_payload_ordinary_shapes_are_untouched_and_parse() {
+        let params = serde_json::json!({"path": "src/main.rs", "n": 3});
+        for (label, out) in [
+            ("empty", ""),
+            ("ascii", "all good"),
+            ("crlf and tabs", "a\r\n\tb\r\n"),
+            ("multi-byte", "caf\u{e9} \u{1F419} na\u{ef}ve"),
+        ] {
+            let got = hook_stdin_payload("bash", &params, Some(out), HOOK_STDIN_MAX_BYTES);
+
+            // ANTI-VACUOUS, asserted first: the fixture is genuinely in budget,
+            // so "untouched" is a real pass rather than a cap that never fired.
+            assert!(
+                got.len() <= HOOK_STDIN_MAX_BYTES,
+                "{label}: fixture must be in budget for this to test the pass-through"
+            );
+
+            let parsed: serde_json::Value = serde_json::from_str(&got)
+                .unwrap_or_else(|e| panic!("{label}: payload must be valid JSON: {e}"));
+            assert_eq!(parsed["tool_name"], serde_json::json!("bash"), "{label}");
+            assert_eq!(
+                parsed["tool_params"], params,
+                "{label}: params go in as a Value"
+            );
+            assert_eq!(
+                parsed["tool_output"],
+                serde_json::json!(out),
+                "{label}: an in-budget output must arrive byte-identically"
+            );
+            assert!(
+                !got.contains("elided"),
+                "{label}: nothing was dropped, so nothing may claim it was"
+            );
+        }
+    }
+
+    /// A NUL round-trips. This is the property the env channel structurally
+    /// cannot have: `execve`'s envp is NUL-terminated strings, so
+    /// `hook_tool_output` has to escape it as the four visible characters
+    /// `\x00` and a hook can never recover the byte. JSON escapes it as
+    /// `\u0000`, so a hook's own parser hands back the real thing.
+    #[test]
+    fn hook_stdin_payload_carries_a_nul_the_env_channel_cannot() {
+        let raw = "before\u{0}after";
+
+        // ANTI-VACUOUS: the fixture really carries a NUL, so a transcription
+        // slip cannot make this pass by both sides agreeing on nothing.
+        assert!(raw.contains('\u{0}'), "fixture must genuinely carry a NUL");
+
+        let got = hook_stdin_payload(
+            "bash",
+            &serde_json::json!({}),
+            Some(raw),
+            HOOK_STDIN_MAX_BYTES,
+        );
+
+        // Escaped exactly once by serde, not hand-assembled with `format!`.
+        assert!(
+            got.contains("\\u0000"),
+            "serde must escape the NUL as \\u0000, got: {got}"
+        );
+        let parsed: serde_json::Value =
+            serde_json::from_str(&got).expect("a NUL-carrying payload must still be valid JSON");
+        assert_eq!(
+            parsed["tool_output"].as_str(),
+            Some(raw),
+            "the NUL must round-trip as the real byte"
+        );
+
+        // And the contrast that makes the point: the env channel cannot.
+        assert_eq!(
+            hook_tool_output(raw, HOOK_TOOL_OUTPUT_MAX_CHARS),
+            "before\\x00after",
+            "the env channel escapes it to visible characters because it must"
+        );
+    }
+
+    /// `None` is not `Some("")`. A pre-hook runs before the tool, so the key is
+    /// absent rather than empty — absence gets its own name.
+    #[test]
+    fn hook_stdin_payload_omits_tool_output_for_a_pre_hook() {
+        let params = serde_json::json!({"command": "ls"});
+        let pre = hook_stdin_payload("bash", &params, None, HOOK_STDIN_MAX_BYTES);
+        let parsed: serde_json::Value = serde_json::from_str(&pre).expect("valid JSON");
+
+        assert!(
+            parsed.get("tool_output").is_none(),
+            "a pre-hook has no output, so the key must be ABSENT, not empty: {pre}"
+        );
+        assert_eq!(parsed["tool_name"], serde_json::json!("bash"));
+        assert_eq!(parsed["tool_params"], params);
+
+        // The near-miss that makes the distinction load-bearing: an empty
+        // output is a real observation and must still emit the key.
+        let post = hook_stdin_payload("bash", &params, Some(""), HOOK_STDIN_MAX_BYTES);
+        let parsed_post: serde_json::Value = serde_json::from_str(&post).expect("valid JSON");
+        assert_eq!(
+            parsed_post["tool_output"],
+            serde_json::json!(""),
+            "an observed-empty output is a different fact from no output at all"
+        );
+    }
+
+    /// The boundary, pinned on BOTH sides — a discriminator tested only where it
+    /// fires is vacuous green.
+    #[test]
+    fn hook_stdin_payload_boundary_is_pinned_on_both_sides() {
+        let params = serde_json::json!({});
+        // Serialized overhead of `{"tool_name":"b","tool_params":{},"tool_output":""}`.
+        let overhead = hook_stdin_payload("b", &params, Some(""), HOOK_STDIN_MAX_BYTES).len();
+        // 400 is comfortably above the in-band marker's own length, so the
+        // over-budget side exercises the TRIMMING path rather than the
+        // nothing-fits floor. (A cap smaller than the marker is a real input and
+        // has its own test; it is not the boundary this one is about.)
+        let cap = overhead + 400;
+
+        let exactly = "a".repeat(400);
+        let at = hook_stdin_payload("b", &params, Some(&exactly), cap);
+        assert_eq!(at.len(), cap, "fixture must land exactly on the budget");
+        assert!(
+            !at.contains("elided"),
+            "exactly at the cap must be untouched: {at}"
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&at).expect("valid JSON")["tool_output"],
+            serde_json::json!(exactly)
+        );
+
+        let over = "a".repeat(401);
+        let marked = hook_stdin_payload("b", &params, Some(&over), cap);
+        assert!(
+            marked.contains("elided"),
+            "one byte over the cap must mark its cut: {marked}"
+        );
+        assert!(
+            marked.len() <= cap,
+            "the marked payload must itself fit the budget, got {} > {cap}",
+            marked.len()
+        );
+    }
+
+    /// The marker must not lie: the count it reports has to equal what was
+    /// actually dropped. A marker that lies is worse than none.
+    #[test]
+    fn hook_stdin_payload_marker_count_agrees_with_what_was_dropped() {
+        let params = serde_json::json!({});
+        let overhead = hook_stdin_payload("b", &params, Some(""), HOOK_STDIN_MAX_BYTES).len();
+        let cap = overhead + 200;
+        let total_chars = 5_000;
+        let raw = "z".repeat(total_chars);
+
+        // ANTI-VACUOUS: the fixture genuinely exceeds the cap.
+        assert!(
+            hook_stdin_payload("b", &params, Some(&raw), HOOK_STDIN_MAX_BYTES).len() > cap,
+            "fixture must be over the budget under test"
+        );
+
+        let got = hook_stdin_payload("b", &params, Some(&raw), cap);
+        assert!(
+            got.len() <= cap,
+            "the result must fit the budget it was given"
+        );
+
+        let parsed: serde_json::Value = serde_json::from_str(&got).expect("valid JSON");
+        let value = parsed["tool_output"].as_str().expect("a string");
+        let kept = value.chars().take_while(|c| *c == 'z').count();
+        let claimed = value
+            .split("[yoyo: ")
+            .nth(1)
+            .and_then(|s| s.split(' ').next())
+            .and_then(|n| n.parse::<usize>().ok())
+            .unwrap_or_else(|| panic!("marker must report a count: {value}"));
+        assert_eq!(
+            claimed,
+            total_chars - kept,
+            "the marker claims {claimed} chars dropped but {} were",
+            total_chars - kept
+        );
+    }
+
+    /// A char straddling the cut is dropped WHOLE (rule #250), and the result
+    /// still parses — the cut can never be a raw byte slice of the JSON.
+    #[test]
+    fn hook_stdin_payload_never_splits_a_char_and_always_parses() {
+        let params = serde_json::json!({});
+        let raw = "\u{1F419}".repeat(400); // 4 bytes each
+        assert!(raw.len() > 1000, "fixture must be genuinely large");
+
+        let overhead = hook_stdin_payload("b", &params, Some(""), HOOK_STDIN_MAX_BYTES).len();
+        // Caps above the in-band marker's own length, so each of these
+        // exercises the trimming path. The emoji is 4 bytes, so several of
+        // these land mid-character by construction.
+        for extra in [200usize, 201, 202, 203, 400, 401] {
+            let cap = overhead + extra;
+            let got = hook_stdin_payload("b", &params, Some(&raw), cap);
+            let parsed: serde_json::Value = serde_json::from_str(&got)
+                .unwrap_or_else(|e| panic!("cap {cap}: must stay valid JSON: {e}"));
+            let value = parsed["tool_output"].as_str().expect("a string");
+            let kept = value.split('\n').next().unwrap_or("");
+            assert!(
+                !kept.is_empty() && kept.chars().all(|c| c == '\u{1F419}'),
+                "cap {cap}: the kept prefix must be WHOLE characters, got {kept:?}"
+            );
+            assert!(
+                got.len() <= cap,
+                "cap {cap}: result must fit its budget, got {}",
+                got.len()
+            );
+        }
+    }
+
+    /// Params alone can blow the budget — `write_file` carries a whole file —
+    /// so the fallback must still parse and still say what happened, rather
+    /// than writing a truncated fragment no parser accepts.
+    #[test]
+    fn hook_stdin_payload_degrades_to_a_parseable_object_when_params_alone_are_too_big() {
+        let params = serde_json::json!({"content": "x".repeat(5_000)});
+        let cap = 512;
+
+        // ANTI-VACUOUS: params really are over the cap on their own.
+        assert!(
+            params.to_string().len() > cap,
+            "fixture params must genuinely exceed the cap"
+        );
+
+        let got = hook_stdin_payload("write_file", &params, Some("done"), cap);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&got).expect("the fallback must still be valid JSON");
+        assert_eq!(parsed["tool_name"], serde_json::json!("write_file"));
+        assert!(
+            parsed["payload_elided"]
+                .as_str()
+                .is_some_and(|s| s.contains("elided")),
+            "the fallback must say what happened: {got}"
+        );
+        assert!(
+            got.len() <= cap,
+            "the fallback must fit the budget, got {} > {cap}",
+            got.len()
+        );
+    }
+
+    /// Deliberately WEAK source-level guard. `run_command` spawns real
+    /// processes and is driven by no test, so this proves the call is
+    /// POSITIONED — never that a hook read a byte. It asserts BOTH directions,
+    /// because a guard checking only the pipe would pass on a half-applied edit
+    /// that opened the pipe and wrote nothing. Needles are assembled at runtime
+    /// so this cannot match its own source.
+    #[test]
+    fn run_command_pipes_stdin_and_writes_the_payload() {
+        let src = include_str!("hooks.rs");
+        let body = src
+            .split_once("fn run_command(")
+            .expect("run_command must exist")
+            .1;
+        let body = body
+            .split_once("\nimpl Hook for ShellHook")
+            .map(|(before, _)| before)
+            .unwrap_or(body);
+
+        let piped = format!("{}(std::process::Stdio::{})", ".stdin", "piped()");
+        assert!(
+            body.contains(&piped),
+            "run_command must pipe stdin (`{piped}`). Unset means Stdio::inherit() \
+             for spawn(), so a hook would inherit yoyo's own stdin — under `yoyo -p` \
+             that stream is the prompt itself."
+        );
+
+        let write = format!("stdin.{}(stdin_payload.as_bytes())", "write_all");
+        assert!(
+            body.contains(&write),
+            "run_command opens the stdin pipe but never writes the payload — a hook \
+             would get an empty channel and every stdin test above would still pass, \
+             because they drive the pure builder rather than the spawn."
         );
     }
 }

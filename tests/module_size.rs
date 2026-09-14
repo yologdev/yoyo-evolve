@@ -320,6 +320,14 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // band applies to it from here on. The better fix is a split; owed, not done.
     ("src/git.rs", 2031),
     ("src/help.rs", 2856), // Day 196: +71 drift paid off (pasted from what the gate printed).
+    // Day 197: the stdin channel (`hook_stdin_payload` + its guards) crossed the
+    // cap. Registered rather than split, on the Day-183 `prompt_retry.rs`
+    // precedent: registering is this gate's OWN stated remedy, while the better
+    // fix is a split — deliberately not done in that task because a half-landed
+    // pure move is a build failure and a reverted session, and a register edit
+    // cannot half-land. The file was already at 1976/2000, i.e. 24 lines of
+    // headroom, so ANY real feature here crosses. The split is owed, not done.
+    ("src/hooks.rs", 2441),
     // Day 161 (#662 half 1): +9 lines — run_prompt_auto_retry now breaks out of
     // the retry loop (with one dim stderr line) on deterministic tool refusals
     // instead of burning MAX_AUTO_RETRIES on an identical answer.
