@@ -1,0 +1,62 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- CLAUDE.md | h… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.1s (2 ✓)
+
+CLAUDE.md was not touched. Let me confirm this is real and check the register number.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | tail -8; … ✓ (14ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: CLAUDE.md is entirely untouched despite being listed in the task's Files: line, with STEP 2 dedicating a whole required section to it. One last focused check on call sites before the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== run_command call sites… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything on the code side is clean (2 run_command call sites both updated, 2 production consumers of hook_stdin_payload, register entry 2441 matches actual line count, 0 leftover markers). But CLAUDE.md is entirely absent from the commit.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 29s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md.
+
+## FAIL
+
+The code half is genuinely well done. I verified:
+
+• `hook_stdin_payload is pure and built with serde_json (never format!), takes params as a Value, distinguishes None (pre-hook, key omitted) from Some("")` (observed empty) — absence gets its own name
+• `HOOK_STDIN_MAX_BYTES = 32 KiB carries the **deadlock reasoning** in its doc comment as the task demanded, not as a footnote: try_wait poll loop + 64 KiB Linux pipe buffer ⇒ a blocking write_all` is impossible by construction
+• The env channel is byte-identical — all three vars, hook_tool_output's NUL escaping and 1000-char cap untouched. Genuinely additive.
+• Cut marked in band, on a char boundary, with the reported count asserted to equal what was dropped
+• run_command: stdin piped, payload written, handle dropped for EOF, write failure ignored
+• **forgotten_touchpoints clean**: `run_command`'s new third parameter updated at *both* call sites (600, 635); `hook_stdin_payload` and `HOOK_STDIN_MAX_BYTES` each have two production consumers; register entry 2441 matches actual wc -l; zero leftover NEUTERED markers
+
+What fails it: STEP 2 was not executed at all.
+
+git show HEAD --name-only yields only src/hooks.rs and tests/module_size.rs. CLAUDE.md — explicitly named in the task's own Files: line — has zero changes and zero mentions of hook_stdin_payload or HOOK_STDIN_MAX_BYTES. None of STEP 2's five required records landed: the additive/byte-identical-env claim, the deadlock reasoning, the Day-188 superseded framing (the cap and the escape were channel properties, and I fixed two payload symptoms on a channel I never examined), the /proc/<pid>/environ fact, or the two stated limits.
+
+This is not a cosmetic omission. The diff's own comment records a real behavior change discovered during implementation — stdin was inherited, not Stdio::null() as STEP 0 predicted, so a hook running head -c 20 /dev/stdin could consume yoyo -p's prompt. That correction now exists only in a source comment, while the file re-injected as authoritative context every session still describes the env channel as the whole story.
+
+This repo has recorded this exact shape being rejected before — the commands_spawn.rs Day-194 process note: "this task's code, tests and register edit landed with no CLAUDE.md update at all and was rejected by the evaluator for it" — and the #864 entry names the mechanism: `cargo test` cannot fail for a missing sentence, so the doc half is the half with no gate.
+
+The remedy is one file. Everything else is ready to land.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

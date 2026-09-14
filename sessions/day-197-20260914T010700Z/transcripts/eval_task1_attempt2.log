@@ -1,0 +1,110 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat && echo "…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.0s (2 ✓)
+
+The diff touches only scripts/extract_trajectory.py — no CLAUDE.md. Let me confirm the guards and doc situation.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== CLAUDE.md mentions OUT…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only; ech… ✓ (8ms)
+ ✓ (8ms)
+  2 tools completed in 9ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the decisive evidence. One focused check to confirm the guards situation and code soundness before writing the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== productivity self-test… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Full picture confirmed. The production mechanism is sound (observed[0]/observed[-1] is safe — both empty paths return COULD_NOT_CHECK before observed is built; precedence, inclusive boundary and the mixed clause are all as specified), but two mandated halves of the task are entirely absent.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== does run_self_tests ex… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evidence is complete. Writing the verdict.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 18s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+## What I found
+
+The code that landed is good. I verified the STEP 1 mechanism directly:
+• `PRODUCTIVITY_OUT_OF_RANGE is its own constant, folded into none of the four existing values, with a comment explaining why it is not COULD_NOT_CHECK` (different fact, different remedy).
+• Precedence is correct and commented at the branch: if interior: → IDLE wins, then if out_of_range: → the new verdict. A genuine idle cannot be downgraded by its quieter neighbour.
+• Boundary is inclusive on both sides (lo <= day <= hi).
+• The IDLE line names the out-of-range count in a mixed window.
+• `observed[0]/observed[-1] **cannot** crash — both empty-input paths return COULD_NOT_CHECK before observed` is built. I checked this specifically because it was the one plausible latent bug.
+• Docstring limit 4 records clone depth as the third window and states it does not deepen the clone.
+
+Two mandated halves are entirely absent, and both are the ungated kind:
+
+1. **CLAUDE.md is untouched.** `git diff HEAD~1 --name-only` returns only the script; CLAUDE.md has zero hits for `OUT_OF_RANGE` / `out-of-range`. The task listed it in `Files:` and STEP 2 called it "the half #917 was failed for … not optional garnish." This is the third consecutive Day-197 receipt with the identical omission — exactly the shape the task was commissioned to stop repeating.
+
+2. **Zero self-tests for the new branch. Grepping the `run_self_tests` region returns 0** hits. The task named six specific guards and a positive control with a required width-of-the-red / sorted-green record. None landed, so `--test` printing ALL PASSED means only that the new branch is never exercised — the positive control was literally unrunnable, since there is nothing that could redden.
+
+forgotten_touchpoints passes: every new definition (the constant, both dataclass fields) has a consumer inside this same diff.
+
+The honest read for whoever picks this up: do not revert or rewrite the mechanism — it is correct. The remaining work is the guards battery plus the two-paragraph CLAUDE.md write-up (including the #919 discharge paragraph STEP 2(b) asked for).
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My evaluator work is complete — the verdict is written and my instructions are explicit: "Then STOP. Do not modify any code." Implementing the missing guards or the CLAUDE.md write-up is the implementation agent's job, not mine; doing it would corrupt the evaluation I just recorded.
+
+The one legitimate remaining check is that my verdict file is actually parseable by the harness, since malformed lines get logged as UNANSWERED against this session.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== verdict file ===" && c… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict file is well-formed and the working tree is clean — I modified no code, as required.
+
+## Evaluation complete
+
+Verdict: FAIL (session_plan/eval_task_1.md)
+
+Format checks pass: 1 verdict line, all 4 Checked: lines present, 0 stray placeholders, 0 files modified by me.
+
+### Summary of the judgment
+
+| Check | Result | Basis |
+|---|---|---|
+| intent_alignment | FAIL | STEP 1 mechanism is correct and verified; the six mandated Guards and the positive control are entirely absent (0 self-test hits for the new branch) |
+| forgotten_touchpoints | PASS | New constant has its render arm; both new dataclass fields are read in this same diff |
+| doc_sync | FAIL | CLAUDE.md untouched; zero occurrences of the new verdict anywhere in it |
+| product_surface | N/A | Harness-side reader only — no config defaults, flags, wizard or startup behaviour |
+
+### The load-bearing finding
+
+The failure is not in the code that landed. PRODUCTIVITY_OUT_OF_RANGE is folded into nothing, precedence correctly lets a genuine interior idle win, the boundary is inclusive on both ends, and observed[0]/observed[-1] provably cannot crash because both empty-input paths return COULD_NOT_CHECK first. I checked that indexing specifically because it was the one plausible latent bug.
+
+What is missing are both of the halves that no gate can catch:
+
+1. The CLAUDE.md write-up — the exact thing #917 was failed for, named as such in the task, now omitted for the third consecutive Day-197 receipt.
+2. The self-tests — so --test printing ALL PASSED carries no information about the new branch, and the required positive control was unrunnable because nothing exists that could redden.
+
+That is the same mechanism this repo has documented repeatedly: cargo test cannot fail for a missing sentence, and it cannot fail for a branch nobody wrote a fixture for. Both ungated halves were skipped in one diff.
+
+Guidance for the next session: do not revert or rewrite the mechanism — it is sound. The remaining work is additive: the six named guards (anti-vacuous first, the interior-idle near-miss asserting the rendered string, both boundary sides, the mixed case, and the two byte-identical regression rows), the mutate→run→restore positive control with its width-of-red and sorted-green record, and the two-paragraph CLAUDE.md write-up including the #919 discharge that STEP 2(b) asked for.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

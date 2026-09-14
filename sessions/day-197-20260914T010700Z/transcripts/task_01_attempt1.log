@@ -1,0 +1,189 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by measuring the current state before making any changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== clone depth ===" && gi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 917 2>&1 | head -6… ✓ (12ms)
+ ✓ (579ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+Clone depth measured: 50 commits, shallow, oldest = Day 196 (22:53) wrap-up. Now let me read the current code.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PRODUCTIVITY_\|class Pr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (5ms)
+ ✓ (974ms)
+  2 tools completed in 975ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2410,2640p' scripts/extr… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2511,2545p' scripts/extr… ✓ (961ms)
+  2 tools completed in 4.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (969ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+No audit dir locally, so the section needs a fixture. Now the code change:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (4 → 19 lines)
+    PRODUCTIVITY_IDLE = "productivity-idle"
+    PRODUCTIVITY_NO_CLAIMS = "productivity-no-claims"
+    PRODUCTIVITY_COULD_NOT_CHECK = "productivity-could-not-check"
+  + # Day 197 (#917 remainder). The FIFTH value, and it is folded into NONE of the
+  + # four above. Measured cause: the harness checkout is SHALLOW (50 commits,
+  + # oldest = day-196's own wrap-up), so day-196's task commits are physically
+  + # outside the clone and `git log --since='14 days ago'` can never see them.
+  + # `days_with_task_commits` was `{197}` -- NON-EMPTY -- so the anti-vacuous
+  + # COULD_NOT_CHECK branch never fired and day-196 fell through to IDLE, i.e.
+  + # "could not look" was being reported as "looked and found nothing", which is
+  + # the exact collapse the pre-push hook and CiScan's could-not-run branch refuse.
+  + #
+  + # It is NOT PRODUCTIVITY_OK (that claims health), NOT PRODUCTIVITY_IDLE (that
+  + # accuses), and NOT PRODUCTIVITY_COULD_NOT_CHECK -- that one is a DIFFERENT FACT
+  + # WITH A DIFFERENT REMEDY: it means the git slice is empty *entirely*, with
+  + # nothing to compare against, while this means the slice is non-empty and simply
+  + # does not span the claiming day. Two facts, two sentences.
+  + PRODUCTIVITY_OUT_OF_RANGE = "productivity-out-of-range"
+ ✓ (1m 18s)
+    PRODUCTIVITY_IDLE = "productivity-idle"
+    PRODUCTIVITY_NO_CLAIMS = "productivity-no-claims"
+    PRODUCTIVITY_COULD_NOT_CHECK = "productivity-could-not-check"
+  + # Day 197 (#917 remainder). The FIFTH value, and it is folded into NONE of the
+  + # four above. Measured cause: the harness checkout is SHALLOW (50 commits,
+  + # oldest = day-196's own wrap-up), so day-196's task commits are physically
+  + # outside the clone and `git log --since='14 days ago'` can never see them.
+  + # `days_with_task_commits` was `{197}` -- NON-EMPTY -- so the anti-vacuous
+  ... (10 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/extract_trajectory.py (2 → 7 lines)
+        observed_days: tuple[int, ...] = ()
+        observed_commits: int | None = None
+  +     # The RANGE half (Day 197, #917 remainder). A claiming day OUTSIDE the
+  +     # observed span is carried apart from `idle_days` and is never summed into
+  +     # it: one is an accusation, the other is a refusal to make one.
+  +     out_of_range_days: tuple[int, ...] = ()
+  +     out_of_range_claimed: int = 0
+ ✓ (1m 18s)
+        observed_days: tuple[int, ...] = ()
+        observed_commits: int | None = None
+  +     # The RANGE half (Day 197, #917 remainder). A claiming day OUTSIDE the
+  +     # observed span is carried apart from `idle_days` and is never summed into
+  +     # it: one is an accusation, the other is a refusal to make one.
+  +     out_of_range_days: tuple[int, ...] = ()
+  +     out_of_range_claimed: int = 0
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the classifier split:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (11 → 41 lines)
+        idle = sorted(day for day in claiming if day not in days_with_task_commits)
+  -     if idle:
+  +     # RANGE SPLIT (Day 197, #917 remainder). A claiming day with no commits is
+  +     # only an accusation if the git slice could have SEEN that day. The span is
+  +     # INCLUSIVE on both sides: a day equal to min(observed) or max(observed) is
+  +     # in range (we saw commits that day), one day outside either end is not. A
+  +     # day NEWER than max(observed) is out of range too -- the conservative
+  +     # direction, since the alternative accuses a day whose commits may simply
+  +     # not have landed in the slice yet.
+  +     lo, hi = observed[0], observed[-1]
+  +     interior = [day for day in idle if lo <= day <= hi]
+  +     out_of_range = [day for day in idle if not (lo <= day <= hi)]
+  +     oor_days = tuple(out_of_range)
+  +     oor_claimed = sum(claiming[day] for day in out_of_range)
+  +     # PRECEDENCE, STATED AT THE BRANCH SO NOBODY "SIMPLIFIES" IT LATER: a
+  +     # genuine interior idle WINS over any number of out-of-range days. The
+  +     # alarm this reader exists for (day-195's real rate-limit incident, five
+  +     # sessions filed N/N green against zero commits) must not be downgraded by
+  +     # its quieter neighbour -- but the IDLE line still NAMES the out-of-range
+  +     # count, so a reader can see the mixture rather than inferring it.
+  ... (24 more lines)
+ ✓ (1m 18s)
+        idle = sorted(day for day in claiming if day not in days_with_task_commits)
+  -     if idle:
+  +     # RANGE SPLIT (Day 197, #917 remainder). A claiming day with no commits is
+  +     # only an accusation if the git slice could have SEEN that day. The span is
+  +     # INCLUSIVE on both sides: a day equal to min(observed) or max(observed) is
+  +     # in range (we saw commits that day), one day outside either end is not. A
+  +     # day NEWER than max(observed) is out of range too -- the conservative
+  +     # direction, since the alternative accuses a day whose commits may simply
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/extract_trajectory.py (8 → 23 lines)
+  +     if prod.state == PRODUCTIVITY_OUT_OF_RANGE:
+  +         days = ", ".join(f"day-{d}" for d in prod.out_of_range_days)
+  +         evidence = observed_label_clause(prod.observed_days, prod.observed_commits)
+  +         return (
+  +             "## Productivity\n"
+  +             f"OUT OF RANGE: {days} claimed {prod.out_of_range_claimed} "
+  +             f"success(es), but {evidence} — the git slice never spanned that "
+  +             f"day, so this is NOT a finding about its productivity."
+  +         )
+        if prod.state == PRODUCTIVITY_IDLE:
+            days = ", ".join(f"day-{d}" for d in prod.idle_days)
+            evidence = observed_label_clause(prod.observed_days, prod.observed_commits)
+  +         mixed = (
+  +             f" ({len(prod.out_of_range_days)} further claiming day(s) fell "
+  +             f"outside that span and are NOT accused)"
+  +             if prod.out_of_range_days
+  +             else ""
+  +         )
+            return (
+                "## Productivity\n"
+  ... (4 more lines)
+ ✓ (1m 17s)
+  +     if prod.state == PRODUCTIVITY_OUT_OF_RANGE:
+  +         days = ", ".join(f"day-{d}" for d in prod.out_of_range_days)
+  +         evidence = observed_label_clause(prod.observed_days, prod.observed_commits)
+  +         return (
+  +             "## Productivity\n"
+  +             f"OUT OF RANGE: {days} claimed {prod.out_of_range_claimed} "
+  +             f"success(es), but {evidence} — the git slice never spanned that "
+  +             f"day, so this is NOT a finding about its productivity."
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now add limit 4 to the docstring and the self-tests:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (4 → 12 lines)
+        3. It sees TASK commits only (TASK_COMMIT_RE). A session that produced
+           only a `session wrap-up` or a `cargo fmt` commit is correctly counted
+           as having produced nothing.
+  +     4. CLONE DEPTH IS A THIRD WINDOW, and on Day 197 it was the one that
+  +        actually bound: the harness checkout is shallow (50 commits, ~1 day of
+  +        history), so `--since=14 days` never binds and a claiming day can be
+  +        physically outside the clone. PRODUCTIVITY_OUT_OF_RANGE reports that
+  +        rather than accusing the day — it does NOT deepen the clone and does
+  +        NOT reconcile the two day-clocks, so such a day stays UNMEASURED rather
+  +        than becoming measured. `counterfactual_green.py` owns `--deepen` for
+  +        exactly this reason; this reader has no equivalent, deliberately.
+        """
+ ✓ (1m 18s)
+        3. It sees TASK commits only (TASK_COMMIT_RE). A session that produced
+           only a `session wrap-up` or a `cargo fmt` commit is correctly counted
+           as having produced nothing.
+  +     4. CLONE DEPTH IS A THIRD WINDOW, and on Day 197 it was the one that
+  +        actually bound: the harness checkout is shallow (50 commits, ~1 day of
+  +        history), so `--since=14 days` never binds and a claiming day can be
+  +        physically outside the clone. PRODUCTIVITY_OUT_OF_RANGE reports that
+  +        rather than accusing the day — it does NOT deepen the clone and does
+  ... (4 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "productivity" scripts/e… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6108,6215p' scripts/extr… ✓ (4ms)
+  2 tools completed in 7.6s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,352 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the hook code to confirm the current state before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_command" -A 90 s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/hooks.rs && grep -n "S… ✓ (7ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.8s (2 ✓)
+
+Step 0 read. Note one thing that contradicts the task file's premise — stdin is not Stdio::null(), it's unset. Let me verify what that means in practice rather than infer it from docs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,120p' src/hooks.rs  ▶ $ cd /tmp && mkdir -p stdinprobe && cd stdinprobe && cat > pro… (28 lines) ✓ (4ms)
+ ✓ (161ms)
+  2 tools completed in 162ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 is settled, and the premise was wrong in the worse direction — stdin is unset, not `Stdio::null()`, so it's inherited, and my probe proves a hook can consume yoyo's stdin (PARENT_STDIN_SECRET_ landed in the hook). Piping fixes that too. Proceeding.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '95,130p' src/hooks.rs &&… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed and recorded: stdin is inherited today (probe: the hook read PARENT_STDIN_SECRET_ from yoyo's own stdin). Writing the code now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (1 → 132 lines)
+  + /// Bytes of the JSON payload written to a hook's **stdin** by
+  + /// [`hook_stdin_payload`].
+  + ///
+  + /// This is a **judgment threshold, not a measurement**, and the reason it
+  + /// exists at all is a deadlock rather than a taste for round numbers.
+  + /// `ShellHook::run_command` waits with a `try_wait` poll loop, so a blocking
+  + /// `write_all` on a full pipe hangs **before** the 5-second timeout can ever
+  + /// fire — the timeout only runs once we are back in the loop. Linux's default
+  + /// pipe buffer is 64 KiB, so the payload is bounded *well under* that and a
+  + /// blocking write is impossible by construction. 32 KiB is 32× the env
+  + /// channel's [`HOOK_TOOL_OUTPUT_MAX_CHARS`] budget and provably cannot block;
+  + /// it is **not** a measured right answer, and nothing says a hook wanting more
+  + /// is wrong.
+  + const HOOK_STDIN_MAX_BYTES: usize = 32 * 1024;
+  + 
+  + /// Build the JSON payload handed to a shell hook on **stdin**.
+  + ///
+  + /// This is a *second* channel beside the `TOOL_NAME` / `TOOL_PARAMS` /
+  + /// `TOOL_OUTPUT` environment variables, never a replacement: every one of those
+  + /// is still set, with byte-identical values, so a hook reading only `$TOOL_OUTPUT`
+  ... (112 more lines)
+ ✓ (17.1s)
+  + /// Bytes of the JSON payload written to a hook's **stdin** by
+  + /// [`hook_stdin_payload`].
+  + ///
+  + /// This is a **judgment threshold, not a measurement**, and the reason it
+  + /// exists at all is a deadlock rather than a taste for round numbers.
+  + /// `ShellHook::run_command` waits with a `try_wait` poll loop, so a blocking
+  + /// `write_all` on a full pipe hangs **before** the 5-second timeout can ever
+  + /// fire — the timeout only runs once we are back in the loop. Linux's default
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Definition without its consumer — the standing rule firing as designed. Wiring it now.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (17 → 40 lines)
+  -     fn run_command(&self, env_vars: &[(&str, &str)]) -> Result<(i32, String), String> {
+  -         use std::io::Read;
+  +     fn run_command(
+  +         &self,
+  +         env_vars: &[(&str, &str)],
+  +         stdin_payload: &str,
+  +     ) -> Result<(i32, String), String> {
+  +         use std::io::{Read, Write};
+            use std::process::Command;
+            use std::time::Duration;
+    
+  ···
+                cmd.env(key, value);
+            }
+    
+  -         // Spawn and wait with timeout
+  +         // Spawn and wait with timeout.
+  +         //
+  +         // stdin is **piped**, and that is a fix as well as a feature. An unset
+  +         // stdin means `Stdio::inherit()` for `spawn()`, so until this landed a
+  ... (21 more lines)
+ ✓ (14.6s)
+  -     fn run_command(&self, env_vars: &[(&str, &str)]) -> Result<(i32, String), String> {
+  -         use std::io::Read;
+  +     fn run_command(
+  +         &self,
+  +         env_vars: &[(&str, &str)],
+  +         stdin_payload: &str,
+  +     ) -> Result<(i32, String), String> {
+  +         use std::io::{Read, Write};
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (7 → 11 lines)
+                ("TOOL_NAME", tool_name),
+                ("TOOL_PARAMS", params_str.as_str()),
+            ];
+  +         // `None`, never `Some("")`: a pre-hook runs *before* the tool, so there
+  +         // is no output — and an empty string would read as "the tool produced
+  +         // nothing", which is a different fact. The key is omitted entirely.
+  +         let stdin_payload = hook_stdin_payload(tool_name, params, None, HOOK_STDIN_MAX_BYTES);
+    
+  -         match self.run_command(&env_vars) {
+  +         match self.run_command(&env_vars, &stdin_payload) {
+ ✓ (14.9s)
+                ("TOOL_NAME", tool_name),
+                ("TOOL_PARAMS", params_str.as_str()),
+            ];
+  +         // `None`, never `Some("")`: a pre-hook runs *before* the tool, so there
+  +         // is no output — and an empty string would read as "the tool produced
+  +         // nothing", which is a different fact. The key is omitted entirely.
+  +         let stdin_payload = hook_stdin_payload(tool_name, params, None, HOOK_STDIN_MAX_BYTES);
+    
+  -         match self.run_command(&env_vars) {
+  +         match self.run_command(&env_vars, &stdin_payload) {
+  2 tools completed in 35.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (2 → 8 lines)
+  -         // Post-hooks pass through original output; stderr becomes feedback
+  -         match self.run_command(&env_vars) {
+  +         // Post-hooks pass through original output; stderr becomes feedback.
+  +         // The stdin payload carries the **raw** output, not the env-truncated
+  +         // one: a 1000-char cap is a property of the env channel, and handing
+  +         // the same truncation to a channel that can hold 32× more would throw
+  +         // away the whole point of offering it.
+  +         let stdin_payload =
+  +             hook_stdin_payload(tool_name, params, Some(output), HOOK_STDIN_MAX_BYTES);
+  +         match self.run_command(&env_vars, &stdin_payload) {
+ ✓ (2m 16s)
+  -         // Post-hooks pass through original output; stderr becomes feedback
+  -         match self.run_command(&env_vars) {
+  +         // Post-hooks pass through original output; stderr becomes feedback.
+  +         // The stdin payload carries the **raw** output, not the env-truncated
+  +         // one: a 1000-char cap is a property of the env channel, and handing
+  +         // the same truncation to a channel that can hold 32× more would throw
+  +         // away the whole point of offering it.
+  +         let stdin_payload =
+  +             hook_stdin_payload(tool_name, params, Some(output), HOOK_STDIN_MAX_BYTES);
+  +         match self.run_command(&env_vars, &stdin_payload) {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo hooks 2>&1… ✓ (388ms)
+  2 tools completed in 2m 19s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Wiring green. Now the tests — the substance of the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -24 src/hooks.rs && echo "=… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (284 lines) ✓ (29.6s)
+  2 tools completed in 1m 21s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo hooks_stdi… ✓ (459ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both failures are one real defect my tests caught: with a cap smaller than the marker itself, the fallback wasn't bounded either. Fixing the implementation floor, then the test caps.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (12 → 22 lines)
+                full.len()
+            )),
+        );
+  -     serde_json::Value::Object(obj).to_string()
+  +     let fallback = serde_json::Value::Object(obj).to_string();
+  +     if fallback.len() <= max_bytes {
+  +         return fallback;
+  +     }
+  +     // Floor. A budget too small to hold even the explanation is absurd in
+  +     // production — [`HOOK_STDIN_MAX_BYTES`] is 32 KiB against a ~150-byte
+  +     // fallback — but "fits the budget" has to hold for *every* input or the
+  +     // deadlock argument the budget exists for is not an argument at all.
+  +     // The empty object is the smallest thing a hook's parser still accepts;
+  +     // writing a truncated fragment instead would hand it bytes no parser reads.
+  +     "{}".to_string()
+    }
+ ✓ (2m 2s)
+                full.len()
+            )),
+        );
+  -     serde_json::Value::Object(obj).to_string()
+  +     let fallback = serde_json::Value::Object(obj).to_string();
+  +     if fallback.len() <= max_bytes {
+  +         return fallback;
+  +     }
+  ... (8 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5618 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::effective_disallowed_tools_pairs_shared_state_with_sub_agent ... ok
+test agent_builder::tests::every_connect_failure_arm_reports_the_error_it_was_handed ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::every_connect_failure_arm_escapes_the_values_it_interpolates ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::external_servers_json_table ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_bui...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Implementation floor is right now. The two tests chose caps smaller than the marker itself, so they drove the floor path instead of the trimming path they mean to test. Fixing the fixtures.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (19 → 23 lines)
+            let params = serde_json::json!({});
+            // Serialized overhead of `{"tool_name":"b","tool_params":{},"tool_output":""}`.
+            let overhead = hook_stdin_payload("b", &params, Some(""), HOOK_STDIN_MAX_BYTES).len();
+  -         let cap = overhead + 64;
+  +         // 400 is comfortably above the in-band marker's own length, so the
+  +         // over-budget side exercises the TRIMMING path rather than the
+  +         // nothing-fits floor. (A cap smaller than the marker is a real input and
+  +         // has its own test; it is not the boundary this one is about.)
+  +         let cap = overhead + 400;
+    
+  -         let exactly = "a".repeat(64);
+  +         let exactly = "a".repeat(400);
+            let at = hook_stdin_payload("b", &params, Some(&exactly), cap);
+            assert_eq!(at.len(), cap, "fixture must land exactly on the budget");
+            assert!(
+  ···
+                serde_json::json!(exactly)
+            );
+    
+  -         let over = "a".repeat(65);
+  ... (2 more lines)
+ ✓ (2m 2s)
+            let params = serde_json::json!({});
+            // Serialized overhead of `{"tool_name":"b","tool_params":{},"tool_output":""}`.
+            let overhead = hook_stdin_payload("b", &params, Some(""), HOOK_STDIN_MAX_BYTES).len();
+  -         let cap = overhead + 64;
+  +         // 400 is comfortably above the in-band marker's own length, so the
+  +         // over-budget side exercises the TRIMMING path rather than the
+  +         // nothing-fits floor. (A cap smaller than the marker is a real input and
+  +         // has its own test; it is not the boundary this one is about.)
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (11 → 20 lines)
+  -         for extra in [40usize, 41, 42, 43, 200, 201] {
+  +         // Caps above the in-band marker's own length, so each of these
+  +         // exercises the trimming path. The emoji is 4 bytes, so several of
+  +         // these land mid-character by construction.
+  +         for extra in [200usize, 201, 202, 203, 400, 401] {
+                let cap = overhead + extra;
+                let got = hook_stdin_payload("b", &params, Some(&raw), cap);
+                let parsed: serde_json::Value = serde_json::from_str(&got)
+                    .unwrap_or_else(|e| panic!("cap {cap}: must stay valid JSON: {e}"));
+                let value = parsed["tool_output"].as_str().expect("a string");
+  +             let kept = value.split('\n').next().unwrap_or("");
+                assert!(
+  -                 value.chars().take_while(|c| *c == '\u{1F419}').count() * 4 <= value.len(),
+  -                 "cap {cap}: kept prefix must be whole characters"
+  +                 !kept.is_empty() && kept.chars().all(|c| c == '\u{1F419}'),
+  +                 "cap {cap}: the kept prefix must be WHOLE characters, got {kept:?}"
+  +             );
+  +             assert!(
+  +                 got.len() <= cap,
+  +                 "cap {cap}: result must fit its budget, got {}",
+  ... (3 more lines)
+ ✓ (2m 14s)
+  -         for extra in [40usize, 41, 42, 43, 200, 201] {
+  +         // Caps above the in-band marker's own length, so each of these
+  +         // exercises the trimming path. The emoji is 4 bytes, so several of
+  +         // these land mid-character by construction.
+  +         for extra in [200usize, 201, 202, 203, 400, 401] {
+                let cap = overhead + extra;
+                let got = hook_stdin_payload("b", &params, Some(&raw), cap);
+                let parsed: serde_json::Value = serde_json::from_str(&got)
+  ... (13 more lines)
+  2 tools completed in 4m 24s (2 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Hook tests pass; the gate moved to module size. Running cargo fmt before reading the number (a format pass after the final edit is what makes a pasted register number stale), then pasting exactly what the gate prints.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test m… ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+441 past the cap — the file was already at 1976/2000, so any real feature here crosses. Taking the Day-183 prompt_retry.rs precedent: register with the reason, note the split is owed — a register edit cannot half-land, a pure move can.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'GRANDFATHERED_OVERSIZED… ✓ (5ms)
+
+  ✗ Attempt 2 failed, retrying...
+  → Auto-fixing (attempt 3/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 9 lines)
+        ("src/help.rs", 2856), // Day 196: +71 drift paid off (pasted from what the gate printed).
+  +     // Day 197: the stdin channel (`hook_stdin_payload` + its guards) crossed the
+  +     // cap. Registered rather than split, on the Day-183 `prompt_retry.rs`
+  +     // precedent: registering is this gate's OWN stated remedy, while the better
+  +     // fix is a split — deliberately not done in that task because a half-landed
+  +     // pure move is a build failure and a reverted session, and a register edit
+  +     // cannot half-land. The file was already at 1976/2000, i.e. 24 lines of
+  +     // headroom, so ANY real feature here crosses. The split is owed, not done.
+  +     ("src/hooks.rs", 2441),
+ ✓ (1m 30s)
+        ("src/help.rs", 2856), // Day 196: +71 drift paid off (pasted from what the gate printed).
+  +     // Day 197: the stdin channel (`hook_stdin_payload` + its guards) crossed the
+  +     // cap. Registered rather than split, on the Day-183 `prompt_retry.rs`
+  +     // precedent: registering is this gate's OWN stated remedy, while the better
+  +     // fix is a split — deliberately not done in that task because a half-landed
+  +     // pure move is a build failure and a reverted session, and a register edit
+  +     // cannot half-land. The file was already at 1976/2000, i.e. 24 lines of
+  +     // headroom, so ANY real feature here crosses. The split is owed, not done.
+  +     ("src/hooks.rs", 2441),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (2.0s)
+  2 tools completed in 1m 35s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 3)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

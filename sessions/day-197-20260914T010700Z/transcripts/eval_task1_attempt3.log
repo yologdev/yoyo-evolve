@@ -1,0 +1,73 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff. Let me start by checking the key claim: the task required BOTH step 1 (code) and step 2 (CLAUDE.md write-up).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -6 ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== full task range a9b215…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain | head -2… ✓ (5ms)
+ ✓ (8ms)
+  4 tools completed in 7.1s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The full task range touches only scripts/extract_trajectory.py. Let me confirm the CLAUDE.md half is genuinely absent and the code half is otherwise sound.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== CLAUDE.md mentions of …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #919 provider split in… ✓ (10ms)
+ ✓ (95ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.2s (2 ✓)
+
+Two blocking findings. Let me identify the 3 self-test failures — that's a concrete uncertainty worth one focused check.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (89ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (89ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Complete picture. Writing the verdict.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 17s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md. Evaluation complete.
+
+## FAIL — two independent, decisive grounds
+
+1. The self-test harness is red. python3 scripts/extract_trajectory.py --test exits 1 with 3 FAILURE(S):
+
+```
+407:  FAIL: the measured streak: {195: 5} claimed vs {194} observed is IDLE naming day 195
+408:  FAIL: the IDLE line names the day, the claimed total, and the evidence it used
+409:  FAIL: a claiming day that DID commit is not dragged into the alarm half
+```
+
+The streak fixture is classify_productivity({195: 5}, {194}). Under the new range logic min(observed) == max(observed) == 194, so day 195 falls outside the span and now returns OUT_OF_RANGE instead of IDLE. The diff repaired the sibling multi fixture (widening {194} → {192, 194, 196}) and repurposed artifact, and its own comment even reads "same reason and same repair as `streak` above" — but streak was never actually widened.
+
+The sharp part: this is exactly the near-miss guard the task named as the proof-of-correctness direction ("a claiming day interior to the span with zero commits is still IDLE — assert the rendered string"). The guard that was supposed to stay green is the guard that broke.
+
+Worth flagging for the next attempt: the harness reported Tests: PASS because that is cargo test, and the Python self-tests are not in the Rust suite — the gate was structurally blind to this, the same feature-gated-blindness shape tests/feature_gated_tests.rs exists to name.
+
+2. STEP 2 is entirely absent. CLAUDE.md is untouched: 0 matches for PRODUCTIVITY_OUT_OF_RANGE/out_of_range, 0 for terminal_sessions/"survived, not died". Neither 2(a) nor the #919 discharge landed, and the existing bullet still describes the four-state set — a stale authoritative claim in the file re-injected as context every session. The task's Files: line names CLAUDE.md and calls this "the half #917 was failed for."
+
+## What is genuinely good and should not be rewritten
+
+The design half is sound and the next attempt should keep it: PRODUCTIVITY_OUT_OF_RANGE is its own constant folded into none of the four, the precedence rule (interior idle wins, IDLE line still names the out-of-range count via the mixed clause) is implemented and commented at the branch, the boundary is inclusive on both sides, observed_days is reused so no new git call was added, and both new dataclass fields have real consumers in render_productivity. forgotten_touchpoints failed on the assertion side, not on a dangling definition.
+
+The remedy is small: widen streak's observed set so day 195 is interior (mirroring what multi already got), then write the two CLAUDE.md paragraphs.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

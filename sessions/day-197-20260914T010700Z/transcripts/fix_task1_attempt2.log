@@ -1,0 +1,165 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PRODUCTIVITY_OUT_OF_RAN… ✓ (5ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+The code landed but two gated halves are missing. Let me read the current implementation.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2420,2500p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2500,2700p' scripts/extr… ✓ (5ms)
+ ✓ (6ms)
+  2 tools completed in 6ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me re-establish state: measure (STEP 0) and find the self-test area.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== depth ===" && git rev-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "productivity\|Productiv… ✓ (4ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.3s (2 ✓)
+
+Depth is 51 now (was 50 at plan time — my own chunk commits advance HEAD), oldest commit still day-196's wrap-up. The measurement holds. Let me check the live render and read the existing self-tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6052,6215p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6255,6285p' scripts/extr… ✓ (5ms)
+ ✓ (5ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me run the script's self-tests — the existing fixtures look like they'd be reclassified by the new range split.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (88ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+--test is RED — 5 failures. The landed code reclassified pre-existing fixtures. Let me see all of them.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (88ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+--test is RED with 5 pre-existing failures — all fixtures the range split correctly reclassified. Let me see the exact regions to fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6080,6092p;6118,6132p' s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6186,6200p' scripts/extr… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.2s (2 ✓)
+
+Now the fixture repairs — intent-preserving, superseded recorded (Day 148), not deleted.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (5 → 14 lines)
+  -     streak = classify_productivity({194: 4, 195: 5}, {194}, 4)
+  +     # SUPERSEDED FIXTURE, recorded rather than deleted (Day 197, #917
+  +     # remainder). This read `{194}` as the observed set until the range split
+  +     # landed, and under that set day-195 is NEWER than every observed day --
+  +     # i.e. it is the OUT_OF_RANGE shape, not the idle one, so the fixture was
+  +     # asserting IDLE on a day the slice never spanned. The INTENT is the
+  +     # day-195 rate-limit incident, which is a GENUINE idle, so the observed set
+  +     # gained day-196: 195 now sits INTERIOR to 194..196 and the alarm is being
+  +     # tested on the shape it exists for. The out-of-range shape is tested on
+  +     # its own fixture below, never by reinterpreting this one.
+  +     streak = classify_productivity({194: 4, 195: 5}, {194, 196}, 4)
+        assert_true(
+  -         "the measured streak: {195: 5} claimed vs {194} observed is IDLE naming day 195",
+  +         "the measured streak: day-195 INTERIOR to the observed span is IDLE naming it",
+            streak.state == PRODUCTIVITY_IDLE
+            and streak.idle_days == (195,)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (5 → 10 lines)
+  -     multi = classify_productivity({193: 1, 194: 2, 195: 5}, {194})
+  +     # SUPERSEDED FIXTURE, same reason and same repair as `streak` above: the
+  +     # observed set was `{194}`, which puts BOTH 193 and 195 outside the span,
+  +     # so this was asserting a multi-day alarm over days the slice never
+  +     # covered. Widened to 192..196 so both idle days are interior and the
+  +     # summing rule is tested on genuine idles.
+  +     multi = classify_productivity({193: 1, 194: 2, 195: 5}, {192, 194, 196})
+        assert_true(
+            "several idle days are listed in order and their claims summed, never averaged",
+            multi.idle_days == (193, 195) and multi.idle_claimed == 6,
+ ✓ (1m 17s)
+  -     streak = classify_productivity({194: 4, 195: 5}, {194}, 4)
+  +     # SUPERSEDED FIXTURE, recorded rather than deleted (Day 197, #917
+  +     # remainder). This read `{194}` as the observed set until the range split
+  +     # landed, and under that set day-195 is NEWER than every observed day --
+  +     # i.e. it is the OUT_OF_RANGE shape, not the idle one, so the fixture was
+  +     # asserting IDLE on a day the slice never spanned. The INTENT is the
+  +     # day-195 rate-limit incident, which is a GENUINE idle, so the observed set
+  +     # gained day-196: 195 now sits INTERIOR to 194..196 and the alarm is being
+  ... (8 more lines)
+ ✓ (2m 35s)
+  -     multi = classify_productivity({193: 1, 194: 2, 195: 5}, {194})
+  +     # SUPERSEDED FIXTURE, same reason and same repair as `streak` above: the
+  +     # observed set was `{194}`, which puts BOTH 193 and 195 outside the span,
+  +     # so this was asserting a multi-day alarm over days the slice never
+  +     # covered. Widened to 192..196 so both idle days are interior and the
+  +     # summing rule is tested on genuine idles.
+  +     multi = classify_productivity({193: 1, 194: 2, 195: 5}, {192, 194, 196})
+        assert_true(
+            "several idle days are listed in order and their claims summed, never averaged",
+            multi.idle_days == (193, 195) and multi.idle_claimed == 6,
+  2 tools completed in 2m 35s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (7 → 15 lines)
+  +     # SUPERSEDED FIXTURE, recorded rather than deleted. This shape -- claims on
+  +     # day-195, commits labelled day-196 -- was written as an IDLE artifact and
+  +     # is in fact the LIVE OUT_OF_RANGE case: the claiming day is OLDER than
+  +     # every observed day, so the git slice never spanned it. It keeps its
+  +     # anti-vacuous role (both halves of the join are genuinely present) and now
+  +     # pins the range verdict instead of the alarm.
+        artifact = classify_productivity({195: 5}, {196}, 4)
+        assert_true(
+            "ANTI-VACUOUS: the fixture really carries a claims row AND >=1 observed commit",
+  -         artifact.idle_days == (195,)
+  +         artifact.state == PRODUCTIVITY_OUT_OF_RANGE
+  +         and artifact.out_of_range_days == (195,)
+  +         and artifact.idle_days == ()
+            and artifact.observed_days == (196,)
+            and artifact.observed_commits == 4,
+        )
+ ✓ (1m 17s)
+  +     # SUPERSEDED FIXTURE, recorded rather than deleted. This shape -- claims on
+  +     # day-195, commits labelled day-196 -- was written as an IDLE artifact and
+  +     # is in fact the LIVE OUT_OF_RANGE case: the claiming day is OLDER than
+  +     # every observed day, so the git slice never spanned it. It keeps its
+  +     # anti-vacuous role (both halves of the join are genuinely present) and now
+  +     # pins the range verdict instead of the alarm.
+        artifact = classify_productivity({195: 5}, {196}, 4)
+        assert_true(
+  ... (8 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (86ms)
+  2 tools completed in 1m 20s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "streak = classify_produ… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+My two parallel edits raced on the same file — edit 2 clobbered edit 1. That's the exact lesson my own notes record. Re-applying serially.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "multi = classify_produc… ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
