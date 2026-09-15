@@ -1,0 +1,483 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by surveying the current state — recent history, git log, and the trajectory.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 && echo "-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null; ec… ✓ (5ms)
+ ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check the trajectory, open issues, and current state. Let me get the trajectory block.
+
+Since I'm in the evolve loop, I need to:
+1. Assess current state
+2. Plan tasks
+3. Implement
+
+Let me look at recent issues and the trajectory.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.3s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null | h…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --limit 30 --state… ✓ (134ms)
+ ✓ (397ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The most recent and urgent issue is #924: "test_lite_flag_sets_context_window reads the repo's own .yoyo.toml — red on main since context_window landed; give parse_args a config-injecting seam".
+
+That says main is red! Let me check. Also #923: `providers.rs / format/cost.rs: deepseek-flash is not a known model and has no price`.
+
+Wait, the commit `e8662d39 Make main green again after today's schedule and DeepSeek switches` says main is green. But #924 says red on main since context_window landed. Let me verify by running the specific test.
+
+Let me check the current test state first.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo test_lite_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .yoyo.toml ✓ (2ms)
+ ✓ (570ms)
+  2 tools completed in 570ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The context is very large. Let me be efficient and focus. The most important recent signal: #924 says `test_lite_flag_sets_context_window` is red on main because it reads the repo's own `.yoyo.toml`. But my run showed it passes... wait, I ran it just now and it passed. Hmm, but the issue says it's red on main since context_window landed.
+
+Wait, let me re-check. The test passed. But maybe the full test suite run has it red due to parallelism with other tests that change cwd or env. Let me check the actual test.
+
+Actually, let me look at the test to understand.
+
+Let me be efficient — I've burned a lot of context. Let me focus on a single task: #924, which is a concrete red-on-main test. Let me investigate carefully but efficiently.
+
+Actually first — is main green? Let me run the full test suite quickly to see.
+
+Let me be careful about context. I'll run cargo test and check.
+
+Let me first look at the test itself.
+
+Let me plan: I should pick one task, do it well. Let me:
+1. Reproduce #924 (test_lite_flag_sets_context_window red on main).
+2. Fix with a config-injecting seam.
+
+Let me look at the test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_lite_flag_sets_con…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 -- src/cli.… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I see! `test_lite_flag_sets_context_window` at line 5695 lacks a `#[serial]` attribute, while its sibling at 5707 has one. The issue is that `parse_args` reads the repo's own `.yoyo.toml` which now sets `context_window = 200000` (commented out?) — wait, actually the comment says `# context_window = 200000` was commented. Let me check.
+
+Actually looking at .yoyo.toml output, the line `context_window = 200000` appears preceded by `# `. Hmm, the output showed `# context_window = 200000`. So it's commented out.
+
+But `parse_numeric_flag::<u32>(args, "--context-window", &file_config, "context_window")` reads from file_config. The test calls `parse_args(&args)` which loads the config file. The repo's .yoyo.toml has `max_tokens` and thinking but context_window is commented.
+
+Wait — the issue #924 says "reads the repo's own .yoyo.toml — red on main since context_window landed; give parse_args a config-injecting seam".
+
+So when `context_window` was added to .yoyo.toml (uncommented), the test became red. Now it seems commented out again (someone made main green: commit e8662d39 "Make main green again after today's schedule and DeepSeek switches").
+
+Let me check the git history of .yoyo.toml for that context_window line.
+
+Actually — the test passes right now. And commit e8662d39 "Make main green again after today's schedule and DeepSeek switches" probably commented it out. So the issue is still real: the test depends on the ambient repo config. That's a latent defect: any future change to .yoyo.toml breaks the test again.
+
+The right fix: give `parse_args` a config-injecting seam, per the issue title. That's a real, surgical fix.
+
+But wait — is this the best task? Let me consider context budget. I have limited context. Let me pick this task: it's concrete, well-scoped, and the issue text prescribes the remedy.
+
+Actually hold on. Let me first verify main is actually green. Let me run the full test suite in background... that takes a while. Let me instead check quickly.
+
+Actually, let me reconsider. The trajectory/context is already huge. Let me be decisive.
+
+Plan:
+1. Look at how `parse_args` loads config — find the seam.
+2. Add a `parse_args_with_config(args, file_config)` seam; `parse_args` delegates by loading from disk.
+3. Make the lite tests drive the seam with an explicit empty config → they no longer read the repo's `.yoyo.toml`.
+4. Verify.
+
+Let me look at parse_args signature and the config loading.
+
+Let me search.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.8s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn parse_args\|fn p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2380,2420p' src/cli.rs ✓ (2ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at parse_args around line 2073-2110 to see the structure and where I can insert the seam.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2073,2110p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4830,4870p' src/cli.rs ✓ (3ms)
+ ✓ (2ms)
+  2 tools completed in 3ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to be efficient here. The test passes locally now. Issue #924 says it's red on main. Let me verify with the full test suite quickly, but that's expensive. Let me check the issue content first.
+
+Actually, the key insight: the test passes locally NOW. Why? Because `.yoyo.toml` has `context_window` commented out (`# context_window = 200000`). The issue says it's "red on main since context_window landed". Let me actually check the issue body.
+
+Let me be efficient and read the issue.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 924 2>&1 | head -6…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2600,2620p' src/cli.rs &… ✓ (7ms)
+ ✓ (587ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I understand clearly. The issue gives a reference patch. Let me see the rest of the issue.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 924 2>&1 | sed -n … ✓ (631ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I have a clear task. Let me implement it.
+
+Plan:
+1. Split `parse_args` into `parse_args` (wrapper: early dispatch, quiet, load_config_file) + `parse_args_with_config(args, file_config, raw_config_content)`.
+2. Update the test to use `parse_args_with_config` with an empty map.
+3. Add a weak source-level guard that `parse_args` calls `parse_args_with_config(` exactly once.
+4. Run fmt, clippy, tests, module_size gate.
+
+Let me look at the boundary between the wrapper part and the rest. The current parse_args starts at 2073. The config load is at 2094. The quiet-from-config block follows. Then the rest.
+
+Question: should the quiet-from-config block (which uses file_config) go into the wrapper or the decision half? The reference patch says wrapper does "early-exit dispatch, quiet enabling, and the single load_config_file() call". The quiet-block at 2096-2110 uses file_config and reads stdin/stdout terminal state (ambient but not config-file). Hmm — that block is ambient too (is_terminal), which is the same class of problem. But the issue says keep it in the wrapper.
+
+Actually, wait: the test would then still hit ambient terminal state. But that's fine — the reference patch is verified. Let me follow it exactly: wrapper = early-exit dispatch + quiet enabling (the first quiet block) + `load_config_file()`. Then `parse_args_with_config` holds the rest including the quiet-from-config block, no — the quiet-from-config block uses file_config and is right after load.
+
+Hmm, the reference patch shows:
+
+```rust
+pub fn parse_args(args: &[String]) -> Option<Config> {
+    // …existing try_dispatch_subcommand + quiet handling unchanged…
+    let (file_config, raw_config_content) = load_config_file();
+    parse_args_with_config(args, file_config, raw_config_content)
+}
+```
+
+"quiet handling unchanged" — ambiguous. Let me just put everything after `load_config_file()` into `parse_args_with_config`, including the quiet-from-config block. That's simplest and most defensible: the decision half is "everything after the config file has been read". The issue's doc comment says: "Everything after the config file has been read, with the file passed IN rather than looked up from the process CWD."
+
+So: `parse_args_with_config` = everything after load_config_file(). Good, that matches the doc comment the issue supplied.
+
+Let me find the exact end of parse_args to be sure of scope. Let me view around the end.
+
+Actually I don't need the end — I just need to insert the split at the right point. The body from line 2096 (the `if !args.iter().any(...)` quiet-from-config block) to the end of parse_args becomes parse_args_with_config's body.
+
+Let me do this via a script-free approach: use `sed` to find the function boundaries. `parse_args` starts at 2073, `parse_args_with_config` needs to start after 2094.
+
+Let me check indentation: the body is at 4 spaces. So I'd need to add 0 indentation change (function body stays at 4 spaces). Good — no reindenting needed.
+
+Let me do it with a small Python edit: insert the new function signature line before line 2096, and change the wrapper's ending.
+
+Specifically:
+- Current line 2094: `    let (file_config, raw_config_content) = load_config_file();`
+- After it (line 2095 blank?) — let me check.
+
+Let me print lines 2092-2100 with numbers.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2090,2100p' src/cli.rs |… ✓ (36ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I'm burning context badly. I need to stop exploring and act. The change is mechanical and fully specified. Let me do it in as few tool calls as possible.
+
+Plan:
+1. Insert the wrapper + `parse_args_with_config` signature at line 2093-2094.
+2. Update the test to use `parse_args_with_config(&args, HashMap::new(), String::new())`.
+3. Add the source-level guard test.
+4. Run fmt, test, module_size.
+
+Let me do step 1 with an edit_file, matching exact text:
+
+```
+    // Load config file defaults (CLI flags override these)
+    // Read the file once and reuse raw content for permissions + directory parsing
+    let (file_config, raw_config_content) = load_config_file();
+```
+
+Replace with:
+
+```
+    // Load config file defaults (CLI flags override these)
+    // Read the file once and reuse raw content for permissions + directory parsing
+    let (file_config, raw_config_content) = load_config_file();
+    parse_args_with_config(args, file_config, raw_config_content)
+}
+
+/// Everything after the config file has been read, with the file passed IN
+/// rather than looked up from the process CWD.
+///
+/// The `apply_effort_hint` / `apply_effort_hint_with` split applied here (#924):
+/// `parse_args` is the thin wrapper that does the early-exit dispatch, the quiet
+/// enabling and the single `load_config_file()` call, and hands the loaded pair
+/// to this decision half. Production behaviour is byte-identical — the wrapper
+/// is the only config-file read, and it passes the same value through.
+///
+/// The point is the tests: `cargo test` runs with the process CWD at the repo
+/// root, so `parse_args(&args)` reads *this repository's own* `.yoyo.toml`, and
+/// a test asserting a DEFAULT was really asserting that the repo's config
+/// happened to be silent about that key. `c00b8d26` added
+/// `context_window = 200000` there and `test_lite_flag_sets_context_window`
+/// went red on `main` for a reason that had nothing to do with `--lite`.
+/// A test about a default now drives this with an empty map, which is the
+/// fixture it always meant to be. Same class as the Day-179 `NO_COLOR` pin
+/// (#836): a verdict that depended on ambient state outside the fixture.
+pub(crate) fn parse_args_with_config(
+    args: &[String],
+    file_config: HashMap<String, String>,
+    raw_config_content: String,
+) -> Option<Config> {
+```
+
+Need `HashMap` imported in cli.rs. Check: `use std::collections::HashMap;` likely exists. Let me just verify with one command combined with the edit... I'll check first quickly along with doing the test edit.
+
+Actually let me be efficient: do the check + edits in one bash call using python? No — use edit_file (safe) but I need the import check. Let me grep for `use std::collections` in cli.rs and simultaneously look at the test region + whether there's a nearby source-level guard test to copy.
+
+I'll batch: one bash call for greps.
+
+Then edits.
+
+Let me keep it tight.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use std::collections" … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`HashMap` is imported. There's no `include_str!` guard in cli.rs yet — I'll add a weak source-level guard using `include_str!("cli.rs")` inside the test module with runtime-assembled needles.
+
+Wait — but `include_str!("cli.rs")` inside cli.rs's own test module works? The path is relative to the current file, so `include_str!("cli.rs")` from src/cli.rs resolves to src/cli.rs. Yes.
+
+Now let me make the three edits.
+
+Edit 1: signature split.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (3 → 30 lines)
+        // Load config file defaults (CLI flags override these)
+        // Read the file once and reuse raw content for permissions + directory parsing
+        let (file_config, raw_config_content) = load_config_file();
+  +     parse_args_with_config(args, file_config, raw_config_content)
+  + }
+  + 
+  + /// Everything after the config file has been read, with the file passed IN
+  + /// rather than looked up from the process CWD.
+  + ///
+  + /// This is the `apply_effort_hint` / `apply_effort_hint_with` split (#924)
+  + /// applied to `parse_args`: the wrapper above does the early-exit dispatch, the
+  + /// quiet enabling and the single `load_config_file()` call, and hands the loaded
+  + /// pair to this decision half — the only caller, so production behaviour is
+  + /// byte-identical.
+  + ///
+  + /// The point is the tests. `cargo test` runs with the process CWD at the
+  + /// repository root, so a test calling `parse_args(&args)` reads *this
+  + /// repository's own* `.yoyo.toml`, and a test asserting a DEFAULT was really
+  + /// asserting that the repo's config happened to be silent about that key.
+  + /// `c00b8d26` added `context_window = 200000` there and
+  ... (10 more lines)
+ ✓ (1m 32s)
+        // Load config file defaults (CLI flags override these)
+        // Read the file once and reuse raw content for permissions + directory parsing
+        let (file_config, raw_config_content) = load_config_file();
+  +     parse_args_with_config(args, file_config, raw_config_content)
+  + }
+  + 
+  + /// Everything after the config file has been read, with the file passed IN
+  + /// rather than looked up from the process CWD.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now edit the test to use `parse_args_with_config(&args, HashMap::new(), String::new())`.
+
+The test at (now) line ~5695+27 = 5722ish. Let me use edit_file with exact text.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (11 → 15 lines)
+                "-p".to_string(),
+                "hello".to_string(),
+            ];
+  -         let config = parse_args(&args).expect("should parse");
+  +         // #924: drive the config-injecting half with an EMPTY config. Calling
+  +         // parse_args here read the repo's own .yoyo.toml and silently tested
+  +         // whether that file happened to be silent about context_window.
+  +         let config = parse_args_with_config(&args, HashMap::new(), String::new())
+  +             .expect("should parse");
+            assert_eq!(config.context_window, Some(LITE_DEFAULT_CONTEXT_WINDOW));
+        }
+ ✓ (1m 31s)
+                "-p".to_string(),
+                "hello".to_string(),
+            ];
+  -         let config = parse_args(&args).expect("should parse");
+  +         // #924: drive the config-injecting half with an EMPTY config. Calling
+  +         // parse_args here read the repo's own .yoyo.toml and silently tested
+  +         // whether that file happened to be silent about context_window.
+  +         let config = parse_args_with_config(&args, HashMap::new(), String::new())
+  ... (3 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now add the deliberately weak source-level guard that `parse_args` calls `parse_args_with_config(` exactly once. Let me find a place in the tests module — near the other tests. Let me look for a good insertion point, e.g. right after test_lite_flag_sets_context_window.
+
+The needles must be assembled at runtime so the test cannot match itself.
+
+Let me add it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5715,5725p' src/cli.rs ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me add the weak source-level guard. I'll place it right after `test_lite_flag_sets_context_window` ends. Let me find its end.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5726,5745p' src/cli.rs ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now add the guard after line 5736 (the `}` closing test_lite_flag_sets_context_window).
+
+Let me insert a test that reads cli.rs's own source and asserts parse_args delegates exactly once.
+
+Needles assembled at runtime. In Rust, I can do `concat!("parse_args", "_with_config(")` — that's still a compile-time concat but avoids the literal appearing... Actually `concat!` produces the literal at compile time, so the string `parse_args_with_config(` would appear in the compiled binary but not in the source text. The source-level guard uses `include_str!` of its own source, so what matters is whether the literal appears in *cli.rs's source text*. `concat!("parse_args", "_with_config(")` in the source does not contain the contiguous literal — so the guard wouldn't match itself. That's the established "needles assembled at runtime" discipline (though this is compile-time); other tests in the repo use `format!("{}{}", ...)`. Let me use `format!("{}{}", "parse_args", "_with_config(")` to be consistent with the runtime-assembly convention.
+
+Let me write the test:
+
+```rust
+    /// Deliberately WEAK source-level guard: proves `parse_args` delegates to
+    /// `parse_args_with_config` exactly once, and never that the delegation
+    /// yields the right value. Needles are assembled with `format!` so this
+    /// test cannot match its own source.
+    #[test]
+    fn parse_args_delegates_to_the_config_injecting_half() {
+        let source = include_str!("cli.rs");
+        let needle = format!("{}{}", "parse_args", "_with_config(");
+        let body_start = source
+            .find(&format!("{}fn {}{}", "", "parse_args", "("))
+            .expect("cli.rs must still define parse_args");
+        let rest = &source[body_start..];
+        let body_end = rest
+            .find("\n}\n")
+            .map(|i| body_start + i)
+            .unwrap_or(source.len());
+        let body = &source[body_start..body_end];
+        // Anti-vacuous first: an empty slice would satisfy every count below.
+        assert!(!body.is_empty(), "the parse_args slice must not be empty");
+        let calls = body.matches(&needle).count();
+        assert_eq!(calls, 1, "parse_args must delegate to parse_args_with_config exactly once; found {calls}");
+    }
+```
+
+Hmm wait — `parse_args_with_config(` also contains `parse_args` prefix... `body.find("parse_args(")` — the literal "parse_args(" would also match inside "parse_args_with_config("? No: "parse_args_with_config(" — after "parse_args" comes "_", not "(". So "parse_args(" does not match. Good.
+
+But the body slice: `fn parse_args(` — the body ends at the first `\n}\n`. The parse_args function body is short (a few lines ending with the `parse_args_with_config(...)` call). Actually the wrapper's closing brace at column 0 — yes.
+
+But careful: `rest.find("\n}\n")` — the function body contains nested braces; the first `\n}\n` at column 0 is the function's end. Should be fine.
+
+Also, does the needle appear in the slice only once? parse_args body: `parse_args_with_config(args, file_config, raw_config_content)`. Yes once.
+
+Now, this guard needs `include_str!("cli.rs")` — is that used elsewhere in cli.rs tests? Let me check how other modules do it. Some use `include_str!("main.rs")` in main_tests.rs. Here the file is cli.rs so `include_str!("cli.rs")`. That's a path relative to the current file's directory: src/, so `src/cli.rs`. Good.
+
+Let me insert it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (2 → 34 lines)
+            assert_eq!(config.context_window, Some(LITE_DEFAULT_CONTEXT_WINDOW));
+  +     }
+  + 
+  +     /// Deliberately WEAK source-level guard, and its own doc comment says so: it
+  +     /// proves `parse_args` delegates to `parse_args_with_config` exactly once,
+  +     /// never that the delegation produces the right value. Its job is to fail
+  +     /// loudly if the seam is deleted and a test goes back to reading the
+  +     /// developer's own `.yoyo.toml` (#924). Both needles are assembled with
+  +     /// `format!` so the test cannot match its own source.
+  +     #[test]
+  +     fn parse_args_delegates_to_the_config_injecting_half() {
+  +         let source = include_str!("cli.rs");
+  +         let fn_needle = format!("{}fn {}{}", "", "parse_args", "(");
+  +         let call_needle = format!("{}{}", "parse_args", "_with_config(");
+  +         let body_start = source
+  +             .find(&fn_needle)
+  +             .expect("cli.rs must still define parse_args");
+  +         let rest = &source[body_start..];
+  +         let body_end = rest
+  +             .find("\n}\n")
+  ... (14 more lines)
+ ✓ (1m 31s)
+            assert_eq!(config.context_window, Some(LITE_DEFAULT_CONTEXT_WINDOW));
+  +     }
+  + 
+  +     /// Deliberately WEAK source-level guard, and its own doc comment says so: it
+  +     /// proves `parse_args` delegates to `parse_args_with_config` exactly once,
+  +     /// never that the delegation produces the right value. Its job is to fail
+  +     /// loudly if the seam is deleted and a test goes back to reading the
+  +     /// developer's own `.yoyo.toml` (#924). Both needles are assembled with
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check the state and run the tests for cli.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 550 cargo test --bin yoy… ✓ (26.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, that says 273 passed under `cli::`. Hmm, that filter matched a lot. Anyway, all pass. Let me run the specific new test and the lite ones.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 550 cargo test --bin yoy… ✓ (2.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now positive control: neuter the seam so `parse_args` does not delegate (or the test's needle doesn't find it) and verify the guard fails. Let me do one atomic mutate→run→restore.
+
+Actually, the meaningful control: change `parse_args_with_config(` call to something else so the guard fires. But that would break the build. Instead, neuter the guard itself? No — the control should be on the mechanism: if `parse_args` stopped delegating (e.g., inlined), would the guard fail? Simulate by renaming the call to a comment. That breaks build. 
+
+A cleaner control: temporarily make the guard's `calls == 1` assertion read a needle that can't match, i.e. neuter the guard function to always pass. Hmm, that tests the guard is live, but the standard discipline in this repo is: neuter the thing under test and see the guard fail.
+
+Better: temporarily duplicate the delegation line in parse_args? No, that changes behaviour.
+
+The simplest control matching this guard: change `parse_args_with_config(&args, file_config, raw_config_content)` inside parse_args... too entangled.
+
+Alternative control that's honest: neuter the guard's body to a no-op and confirm the test *still passes* trivially? That's not a control that proves anything.
+
+Let me instead do the control on the *value* mechanism: a test driving `parse_args_with_config` with a config that sets `context_window = 999999` should show the config is actually read (proving the injected config is the one used). That's a stronger, more meaningful new test, and its control is: neuter the injection. Actually that's a nice addition — an anti-vacuous assertion that the injected config is genuinely consumed.
+
+Let me add that as part of the guard: assert that injecting `context_window = "123456"` changes the outcome. That proves the parameter is read. Then the positive control is: ignore the injected `file_config` in the body → the assertion fails.
+
+Let me add it. Where? Right after the delegation guard.
+
+Actually, careful: does the parse path apply file_config context_window when --lite isn't passed? Let me check how context_window is derived from file_config. Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "context_window" src/cli… ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
