@@ -209,10 +209,47 @@ fi
 WF="$(cd "$(dirname "$0")/.." && pwd)/.github/workflows/evolve.yml"
 TMIN=$(grep -oE 'timeout-minutes: [0-9]+' "$WF" | grep -oE '[0-9]+' | head -1)
 DOC="$(cd "$(dirname "$0")/.." && pwd)/CLAUDE.md"
-CRON_H=$(grep -oE "cron: '0 \*/[0-9]+ \* \* \*'" "$WF" | grep -oE '[0-9]+' | tail -1)
-if require "evolve cron hour-step extracted" "$CRON_H"; then
-    check "CLAUDE.md states the real gap"      "$(grep -cE "flat ${CRON_H}h gap" "$DOC")" "1"
-    check "CLAUDE.md states the real runs/day" "$(grep -cE "~$(( 24 / CRON_H ))/day" "$DOC")" "1"
+# Two cron shapes are recognised: a flat hour step (`0 */N * * *`, the shape
+# until 2026-09-15) and an explicit hour list (`0 h1,h2,... * * *`, the shape
+# since — two sessions a day at 03:00 and 15:00 UTC). The gap the job ceiling
+# must fit inside is the step for the first and the SMALLEST circular distance
+# between consecutive listed hours for the second; runs/day is 24/step or the
+# list length. Neither shape matching is a refusal, never a pass.
+CRON_SPEC=$(grep -oE "cron: '[^']+'" "$WF" | head -1 | sed -E "s/^cron: '(.*)'$/\1/")
+CRON_STEP=$(echo "$CRON_SPEC" | grep -oE '^0 \*/[0-9]+ \* \* \*$' | grep -oE '[0-9]+' | tail -1)
+CRON_HOURS=$(echo "$CRON_SPEC" | grep -oE '^0 [0-9]+(,[0-9]+)+ \* \* \*$' | cut -d' ' -f2)
+CRON_H=""; RUNS_PER_DAY=""; HOURS=""
+if [ -n "$CRON_STEP" ]; then
+    CRON_H=$CRON_STEP; RUNS_PER_DAY=$(( 24 / CRON_STEP ))
+elif [ -n "$CRON_HOURS" ]; then
+    HOURS=$(echo "$CRON_HOURS" | tr ',' '\n' | sort -n)
+    RUNS_PER_DAY=$(echo "$HOURS" | wc -l | tr -d ' ')
+    FIRST=$(echo "$HOURS" | head -1); PREV=""; CRON_H=24
+    for h in $HOURS; do
+        if [ -n "$PREV" ]; then g=$(( h - PREV )); [ "$g" -lt "$CRON_H" ] && CRON_H=$g; fi
+        PREV=$h
+    done
+    g=$(( 24 - PREV + FIRST )); [ "$g" -lt "$CRON_H" ] && CRON_H=$g   # wrap-around gap
+fi
+if require "evolve cron cadence extracted (hour step or hour list; got '$CRON_SPEC')" "$CRON_H"; then
+    if [ -n "$CRON_STEP" ]; then
+        check "CLAUDE.md states the real gap"      "$(grep -cE "flat ${CRON_H}h gap" "$DOC")" "1"
+        check "CLAUDE.md states the real runs/day" "$(grep -cE "~${RUNS_PER_DAY}/day" "$DOC")" "1"
+    else
+        # An hour list is documented by naming its hours ("03:00 and 15:00 UTC")
+        # and its count ("twice a day"); both are derived from the cron, never
+        # hand-typed here, so a re-scheduled cron fails this until the doc moves.
+        HOUR_PHRASE=$(echo "$HOURS" | awk -v n="$RUNS_PER_DAY" '{sep=(NR==1 ? "" : (NR==n ? " and " : ", ")); printf "%s%02d:00", sep, $1}')
+        case "$RUNS_PER_DAY" in
+            1) COUNT_PHRASE="once a day" ;;
+            2) COUNT_PHRASE="twice a day" ;;
+            *) COUNT_PHRASE="${RUNS_PER_DAY} times a day" ;;
+        esac
+        check "CLAUDE.md names the scheduled hours (${HOUR_PHRASE} UTC)" \
+            "$([ "$(grep -c "${HOUR_PHRASE} UTC" "$DOC")" -ge 1 ] && echo yes || echo no)" "yes"
+        check "CLAUDE.md states the real runs/day (${COUNT_PHRASE})" \
+            "$([ "$(grep -c "${COUNT_PHRASE}" "$DOC")" -ge 1 ] && echo yes || echo no)" "yes"
+    fi
     [ "$TMIN" -le "$(( CRON_H * 60 ))" ] \
         && ok "job ceiling ${TMIN}m fits inside the ${CRON_H}h cron gap" \
         || bad "job ceiling vs cron gap" "timeout-minutes=$TMIN exceeds the $(( CRON_H * 60 ))m gap — the next run queues and is then cancelled"

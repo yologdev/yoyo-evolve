@@ -6,7 +6,13 @@
 # yoyo passes `--model "$MODEL"` from the MODEL secret, which overrides the
 # `model` line below; keep the two in sync.
 provider = "deepseek"
-model = "deepseek-flash"
+# 2026-09-15 (later the same evening): "deepseek-v4-flash" rather than the
+# canonical "deepseek-flash". DeepSeek's pricing page lists it as a legacy
+# name that is still accepted and served by DeepSeek-V4.1-Flash at the Flash
+# price; it is what the MODEL secret carries, and it is in yoyo's known-model
+# list so the "Unknown model" warning stays quiet. #923 tracks teaching that
+# list the canonical id.
+model = "deepseek-v4-flash"
 
 # Reasoning effort. yoyo maps "high" to DeepSeek `reasoning_effort: "high"` on
 # yoagent 0.18.1; DeepSeek's top rung is "max", which needs the yoagent-side
@@ -25,7 +31,16 @@ max_tokens = 131072
 # 200K is kept deliberately: it matches the Opus-5 window the loop's
 # compaction behaviour was tuned against, so sessions stay comparable, and
 # DeepSeek's own stated weakness is sparse retrieval over very long contexts.
-context_window = 200000
+#
+# Commented out 2026-09-15 (evening) — restore once #924 lands.
+# cli::tests::test_lite_flag_sets_context_window reads THIS file through
+# parse_args (cargo test runs from the repo root), so this line made the test
+# assert Some(200000) against the --lite default and `cargo test` went red on
+# main; every evolve session then died at its Step-1 `cargo test` (run
+# 35024292007, attempt 1: 129s). Fixing the test is yoyo's job, filed as
+# #924 with the reference patch. Until then the DeepSeek arm reports the 128K
+# window yoagent's OpenAI-compatible base config gives it.
+# context_window = 200000
 
 # preserved from previous config
 auto_watch = true
