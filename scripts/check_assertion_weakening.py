@@ -372,10 +372,65 @@ WRITTEN_CONVENTIONS = (
 # --------------------------------------------------------------------------------------
 
 # assert!, assert_eq!, assert_ne!, assert_matches!, debug_assert!, debug_assert_eq!, ...
-ASSERT_MACRO_RE = re.compile(r"\b(?:debug_)?assert(?:_eq|_ne|_matches)?!")
+BUILTIN_ASSERT_PATTERN = r"\b(?:debug_)?assert(?:_eq|_ne|_matches)?!"
+# #[test] and #[tokio::test]. The attribute form, which is how Rust's own harness works.
+BUILTIN_TEST_PATTERN = r"#\[\s*(?:tokio::)?test\s*\]"
+
+ASSERT_MACRO_RE = re.compile(BUILTIN_ASSERT_PATTERN)
 ASSERT_EQ_RE = re.compile(r"\b(?:debug_)?assert_eq!")
 PANICKY_RE = re.compile(r"\.expect\(|\.unwrap\(\)")
-TEST_ATTR_RE = re.compile(r"#\[\s*(?:tokio::)?test\s*\]")
+TEST_ATTR_RE = re.compile(BUILTIN_TEST_PATTERN)
+
+
+class Vocabulary:
+    """Which macro/attribute names count as an ASSERTION and as a TEST DECLARATION.
+
+    WHY THIS IS EXTENSIBLE RATHER THAN A LONGER HARDCODED LIST. #921 measured the hole
+    and literally suggested adding `eqnice!` and `rgtest!` to the two regexes. That was
+    refused: hardcoding one foreign project's dialect into my classifier is a treadmill
+    (every new repo needs a new hardcode) and it puts someone else's vocabulary in my
+    source forever. The whole point of the cross-project milestone is GENERALITY, so the
+    MECHANISM admits that dialects exist and the specific NAMES stay data.
+
+    The loop this closes: `SKIPPED_UNKNOWN_VOCABULARY` already tells the operator which
+    macro/attribute names the scan could not read. Its output is now the input to
+    `--assert-macro` / `--test-macro`. The instrument reports the hole; you hand the
+    names back.
+
+    A supplied name is DATA, NOT A PATTERN: every extra is `re.escape`d, so an operator
+    typing `.*` gets a literal `.*` and not a wildcard. Matching is WHOLE-TOKEN -- the
+    `\\b` before and the required `!` after mean `--assert-macro eqnice` matches
+    `eqnice!(a, b)` and matches neither the bare word `eqnice` nor `not_eqnice!`.
+
+    WITH NO EXTRAS THE COMPILED PATTERNS ARE THE BUILTINS VERBATIM, wrapped in a
+    non-capturing group that cannot change what `.search()` matches. That is every
+    reading already published and the entire regression surface.
+    """
+
+    __slots__ = ("assert_re", "test_re", "assert_extras", "test_extras")
+
+    def __init__(self, assert_extras=(), test_extras=()):
+        self.assert_extras = tuple(assert_extras)
+        self.test_extras = tuple(test_extras)
+        self.assert_re = _compile_vocabulary(BUILTIN_ASSERT_PATTERN, self.assert_extras)
+        self.test_re = _compile_vocabulary(BUILTIN_TEST_PATTERN, self.test_extras)
+
+    def is_builtin_only(self) -> bool:
+        return not self.assert_extras and not self.test_extras
+
+    def __repr__(self):  # pragma: no cover - debugging aid
+        return f"Vocabulary({self.assert_extras!r}, {self.test_extras!r})"
+
+
+def _compile_vocabulary(builtin_pattern: str, extras) -> "re.Pattern[str]":
+    """Builtin alternative first, then one escaped whole-token alternative per extra."""
+    alts = [f"(?:{builtin_pattern})"]
+    for name in extras:
+        alts.append(rf"\b{re.escape(name)}!")
+    return re.compile("|".join(alts))
+
+
+BUILTIN_VOCABULARY = Vocabulary()
 FN_NAME_RE = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)")
 CONTAINS_NEEDLE_RE = re.compile(r"contains\(\s*&?(?:r#*)?\"((?:[^\"\\]|\\.)*)\"")
 INT_LITERAL_RE = re.compile(r"(?<![\w.])(\d+)(?![\w.])")
@@ -435,16 +490,20 @@ def is_dedicated_test_file(path: str) -> bool:
     return path.startswith("tests/") or path.endswith("_tests.rs")
 
 
-def is_assertion_line(line: str, dedicated_test_file: bool = False) -> bool:
-    if ASSERT_MACRO_RE.search(line):
+def is_assertion_line(line: str, dedicated_test_file: bool = False, vocab=None) -> bool:
+    vocab = vocab or BUILTIN_VOCABULARY
+    if vocab.assert_re.search(line):
         return True
     if dedicated_test_file and PANICKY_RE.search(line):
         return True
     return False
 
 
-def is_test_ish_line(line: str, dedicated_test_file: bool = False) -> bool:
-    return is_assertion_line(line, dedicated_test_file) or bool(TEST_ATTR_RE.search(line))
+def is_test_ish_line(line: str, dedicated_test_file: bool = False, vocab=None) -> bool:
+    vocab = vocab or BUILTIN_VOCABULARY
+    return is_assertion_line(line, dedicated_test_file, vocab) or bool(
+        vocab.test_re.search(line)
+    )
 
 
 def contains_needles(line: str) -> list[str]:
@@ -555,6 +614,7 @@ def classify_assertion_change(
     removed_lines: list[str],
     added_lines: list[str],
     dedicated_test_file: bool = False,
+    vocab=None,
 ) -> HunkVerdict | None:
     """Classify one hunk's test-ish changes.
 
@@ -566,10 +626,15 @@ def classify_assertion_change(
     assertions and deletes one still deserves the read, and the `shapes` list carries
     both so the mixed case is visible rather than hidden by the verdict.
     """
-    r_asserts = [ln for ln in removed_lines if is_assertion_line(ln, dedicated_test_file)]
-    a_asserts = [ln for ln in added_lines if is_assertion_line(ln, dedicated_test_file)]
-    r_attrs = [ln for ln in removed_lines if TEST_ATTR_RE.search(ln)]
-    a_attrs = [ln for ln in added_lines if TEST_ATTR_RE.search(ln)]
+    vocab = vocab or BUILTIN_VOCABULARY
+    r_asserts = [
+        ln for ln in removed_lines if is_assertion_line(ln, dedicated_test_file, vocab)
+    ]
+    a_asserts = [
+        ln for ln in added_lines if is_assertion_line(ln, dedicated_test_file, vocab)
+    ]
+    r_attrs = [ln for ln in removed_lines if vocab.test_re.search(ln)]
+    a_attrs = [ln for ln in added_lines if vocab.test_re.search(ln)]
 
     if not (r_asserts or a_asserts or r_attrs or a_attrs):
         return None
@@ -807,7 +872,7 @@ def reconcile_moved_tests(findings, hunks):
     return reconciled, moved_count
 
 
-def scan_diff(text: str) -> tuple[list[Finding], int, int, int]:
+def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int]:
     """Return `(findings, rust_hunks_seen, test_hunks_examined, skipped_unknown_vocab)`.
 
     The fourth number is SKIPPED_UNKNOWN_VOCABULARY: a hunk in a dedicated test file with
@@ -820,6 +885,7 @@ def scan_diff(text: str) -> tuple[list[Finding], int, int, int]:
     themselves, so `render_report` counts it with the other three rather than having it
     threaded through a widened signature.
     """
+    vocab = vocab or BUILTIN_VOCABULARY
     findings: list[Finding] = []
     rust_hunks = 0
     test_hunks = 0
@@ -830,7 +896,7 @@ def scan_diff(text: str) -> tuple[list[Finding], int, int, int]:
             continue
         rust_hunks += 1
         dedicated = is_dedicated_test_file(hunk.path)
-        verdict = classify_assertion_change(hunk.removed, hunk.added, dedicated)
+        verdict = classify_assertion_change(hunk.removed, hunk.added, dedicated, vocab)
         if verdict is None:
             # A production hunk is OUT OF SCOPE and is not counted -- that is the common
             # case and counting it would drown the number. A DEDICATED TEST FILE carrying
@@ -1438,6 +1504,29 @@ def build_parser():
         "--max-findings", type=int, default=40, help="cap on printed WEAKENED rows"
     )
     parser.add_argument(
+        "--assert-macro",
+        action="append",
+        default=[],
+        dest="assert_macros",
+        metavar="NAME",
+        help="treat NAME! as an assertion, in addition to the builtins (repeatable; "
+        "bare macro name, no '!'). The builtin vocabulary is Rust's own -- a foreign "
+        "project writing its oracle as `eqnice!(a, b)` is invisible by default and is "
+        "COUNTED in SKIPPED_UNKNOWN_VOCABULARY. That count is the input to this flag: "
+        "the tool reports which names it could not read, you hand them back. Names are "
+        "escaped and matched whole-token, so they are data and never patterns.",
+    )
+    parser.add_argument(
+        "--test-macro",
+        action="append",
+        default=[],
+        dest="test_macros",
+        metavar="NAME",
+        help="treat NAME! as a test declaration, in addition to #[test]/#[tokio::test] "
+        "(repeatable; bare macro name, no '!'). For a suite written as "
+        "`rgtest!(name, |dir, cmd| { .. })`, where there is no #[test] attribute to find.",
+    )
+    parser.add_argument(
         "--pair-verdicts",
         metavar="LEDGER",
         help="cross this classifier with a counterfactual verdict ledger "
@@ -1486,16 +1575,17 @@ def _run(args):
     blind_commits = []
     if args.pair_verdicts:
         return run_pairing(args)
+    vocab = Vocabulary(args.assert_macros, args.test_macros)
     if args.stdin:
         text = sys.stdin.read()
-        findings, rust_hunks, test_hunks, skipped = scan_diff(text)
+        findings, rust_hunks, test_hunks, skipped = scan_diff(text, vocab)
         window = "(diff on stdin)"
         commits = -1
     elif args.from_ref and args.per_commit:
         shas = git_commit_shas(args.from_ref, args.to_ref)
         findings, rust_hunks, test_hunks, skipped = [], 0, 0, 0
         for sha in shas:
-            f, rh, th, sk = scan_diff(git_diff_one_commit(sha))
+            f, rh, th, sk = scan_diff(git_diff_one_commit(sha), vocab)
             for finding in f:
                 finding.path = f"{sha[:8]} {finding.path}"
             findings += f
@@ -1508,7 +1598,7 @@ def _run(args):
         commits = len(shas)
     elif args.from_ref:
         findings, rust_hunks, test_hunks, skipped = scan_diff(
-            git_diff(args.from_ref, args.to_ref)
+            git_diff(args.from_ref, args.to_ref), vocab
         )
         window = f"{args.from_ref}..{args.to_ref}"
         commits = git_commit_count(args.from_ref, args.to_ref)
