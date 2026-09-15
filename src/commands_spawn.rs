@@ -3640,6 +3640,74 @@ mod tests {
         cleanup_spawn_worktree(repo, &info).expect("cleanup after manual delete");
     }
 
+    /// Guard for the Day-198 flake probe, which came back BRANCH B: it did
+    /// not reproduce.
+    ///
+    /// `test_worktree_cleanup_after_manual_delete` failed once in CI with
+    /// `git worktree add failed: preparing worktree (detached head c04...`
+    /// — 1 failure in 5586. Probed at **32 consecutive runs** (20 of the
+    /// single test, 12 of the whole module under libtest's default
+    /// parallelism) with **zero failures**, so the cause is UNDETERMINED and
+    /// is deliberately not guessed at: naming a mechanism I did not measure
+    /// would be the confident-wrong-diagnosis defect.
+    ///
+    /// What the probe DID settle is which shared-state classes the code
+    /// rules out *by construction*, and that is the property pinned here:
+    /// the worktree path is derived from the CALLER's own repo root, so
+    /// every test's worktree lives under that test's own
+    /// `tempfile::tempdir()` and two tests can never contend for one path.
+    /// A future edit resolving the root from the process CWD, from
+    /// `std::env::temp_dir()`, or from any other ambient location would
+    /// reintroduce the shared-path class — and would flake in CI three days
+    /// later instead of failing here. That class is invisible to
+    /// `tests/global_state_races.rs`, which enumerates process globals and
+    /// has no notion of a shared *path*.
+    ///
+    /// STATED LIMIT: this pins ONE fixture's path derivation. It is **not** a
+    /// claim that the spawn test family is race-free, and it does not fix
+    /// the residual it cannot reach — `spawn-{task_id}-{ts}` carries a
+    /// SECOND-granularity clock, so two calls sharing a task id inside one
+    /// second would collide. No test does that today; the thing separating
+    /// concurrent names is the **task id**, never the timestamp.
+    #[test]
+    fn worktree_path_is_under_the_callers_own_repo_root() {
+        let tmp = setup_temp_repo();
+        let repo = tmp.path();
+
+        // ANTI-VACUOUS, asserted FIRST: the fixture must genuinely create a
+        // worktree, or every containment assertion below is satisfied by
+        // having nothing to contain.
+        let info = create_spawn_worktree(repo, 99).expect("create worktree");
+        assert!(
+            info.path.exists(),
+            "fixture created no worktree — every assertion below would be vacuous"
+        );
+
+        // PRESENCE (real evidence, not a boundary pin): the path is under
+        // THIS test's tempdir rather than any shared or ambient location.
+        let root = repo.canonicalize().expect("canonicalize tempdir");
+        let wt = info.path.canonicalize().expect("canonicalize worktree");
+        assert!(
+            wt.starts_with(&root),
+            "worktree path left the caller's repo root: {} is not under {}",
+            wt.display(),
+            root.display()
+        );
+
+        // PRESENCE: distinct task ids yield distinct paths — the property
+        // `test_list_spawn_worktrees` silently relies on when it creates two
+        // worktrees in one repo inside the same second.
+        let other = create_spawn_worktree(repo, 100).expect("create second worktree");
+        assert_ne!(
+            info.path, other.path,
+            "two task ids produced one path — the task id is the only thing \
+             separating concurrent worktree names"
+        );
+
+        cleanup_spawn_worktree(repo, &info).expect("cleanup first");
+        cleanup_spawn_worktree(repo, &other).expect("cleanup second");
+    }
+
     #[test]
     fn test_list_spawn_worktrees() {
         let tmp = setup_temp_repo();

@@ -160,7 +160,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // REGISTER_DRIFT_GRACE_LINES and so only warned on the stderr of a *passing*
     // test. That is Day-174's eight-day silence verbatim: the loop's only consumer
     // of `cargo test` reads the exit code. Number pasted from what the gate printed.
-    ("src/cli.rs", 7146), // Day 197: the restricted-note drift guard (#887 residue).
+    ("src/cli.rs", 7214), // Day 198: paid from a task that does not touch cli.rs, so the number cannot re-incur.
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
