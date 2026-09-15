@@ -1,0 +1,80 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the diff against the task, then actually exercise the binary.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat && echo "…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.8s (2 ✓)
+
+CLAUDE.md is absent from the diff. Let me verify the stale clause exists and exercise the binary.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "still unrouted, and sti…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+CLAUDE.md is not in the diff and the stale clause survives verbatim. Let me exercise the binary to confirm the feature itself works, then write the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== is binary newer than c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && export ANTHR… (6 lines) ✓ (9ms)
+  3 tools completed in 8.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Feature works. One quick check on the near-miss side — the whole product risk — then the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && export ANTHR… (5 lines) ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified live: the fix works and does not over-fire. But CLAUDE.md is absent from the diff and the stale clause survives verbatim. Writing the verdict.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 7s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== verdict file ===" && c… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md. No code modified.
+
+## Verdict: FAIL — on docs only
+
+The code half is correct and I verified it on the real binary, not just the diff:
+
+| invocation | result | tokens spent |
+|---|---|---|
+| yoyo tokens today | refusal naming /tokens, hatch yoyo -p "tokens today", exit 2 | zero |
+| yoyo tokens | byte-identical to today's message, exit 2 | zero |
+| yoyo think about the architecture | enters prompt mode | reaches model ✓ |
+| yoyo fix the login bug | enters prompt mode | reaches model ✓ |
+
+The design constraints the task was emphatic about were all honoured: exact match rather than fuzzy, think deliberately excluded with the rationale in the const's doc comment, one statement of the wording via the extracted repl_only_refusal_message (so the 2-token path could not drift), and the guard placed as a sibling block before parse_args. forgotten_touchpoints is clean — every new definition has a consumer in the same diff.
+
+What failed is `doc_sync`, and it is not a formality here. git diff --name-only returns three src files and nothing else. CLAUDE.md line 375 still reads, verbatim:
+
+│ **Explicitly still unrouted, and still spending a billed turn in their multi-token form: tokens, cost, context, provider, think**
+
+That is now false for four of those five. The task listed CLAUDE.md in its Files: line and spent a whole ## Docs section on superseding exactly that sentence, plus recording that think did not move and why, plus stating whether cli_help_text() was checked. None of that landed.
+
+This is the specific decay the repository documents against itself repeatedly — the #864 entry records a payment that shipped code, tests and a register edit with no CLAUDE.md and notes it went stale for two consecutive sessions, with the diagnosis that `cargo test` cannot fail for a false sentence, so the doc half is the half with no gate. Both structural gates here (module-size, the near-miss drift guards) went green on a diff whose docs were absent, which is exactly why the evaluator is the reader that has to catch it.
+
+The remedy is small and self-contained: supersede that clause in place rather than erasing it, naming the four that moved and why think did not — the code needs no change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

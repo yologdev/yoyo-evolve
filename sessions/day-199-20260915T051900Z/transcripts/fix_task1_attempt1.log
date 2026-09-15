@@ -1,0 +1,86 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---L… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 1 landed; Step 2 (the re-measure + ledger row) and CLAUDE.md are missing. Let me verify what's in the script now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SKIPPED_UNKNOWN_VOCABUL… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"… ✓ (60ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 1 is committed and green. Now Step 2 — the re-measure. Let me check the script's render surface first so I know what to capture.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1020,1060p' scripts/chec… ✓ (2ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now Step 2 — the re-measure. Cloning ripgrep into a scratch dir outside this tree.
+  ▶ $ cd /tmp && SCRATCH=$(mktemp -d /tmp/rg-remeasure-XXXXXX) && echo "SCRATCH=$SCRAT… ✓ (665ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clone succeeded. Reading the depth from git rather than inheriting it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/rg-remeasure-O4cwCw/rg && echo "depth=$(git rev-list --count HEAD)" && e… ✓ (7ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Depth 250 obtained. Now the scan over the same 240-commit window:
+  ▶ $ cd /tmp/rg-remeasure-O4cwCw/rg && timeout 500 python3 /home/runner/work/yoyo-evo… ✓ (439ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The measurement is in, and the headline number is larger than the examined count. Let me capture the full output:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && echo "--- TAIL ---" && tail -25 /tmp/rg_remeasure_out.txt && echo "--… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the measurement. Now the near-miss guard — my own repo must be byte-identical to the pre-change script:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEA… (5 lines) ✓ (293ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Stdout is byte-identical in both modes. Checking stderr (LIMITS gained item 6 — that difference is intended, so let me confirm it's only that):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 /tmp/caw_before.py --per… ✓ (190ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Near-miss guard confirmed: stdout byte-identical, stderr differs by exactly the new LIMITS item, zero skipped on my own repo. Now the positive control, so I can report the width of the red honestly. Let me see the counting site:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '826,852p' scripts/check_… ✓ (2ms)
+
+Now the positive control — one atomic mutate→run→restore, sabotage marked NEUTERED:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (14 lines) ✓ (128ms)
+
+  watch: no files changed this turn — skipping
+

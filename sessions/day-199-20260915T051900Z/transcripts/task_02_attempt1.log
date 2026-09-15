@@ -1,0 +1,210 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual file I need to change, so I'm working from the code rather than from the task description.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch_near_miss.rs … ✓ (4ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs:99..339  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '945,975p' src/main.rs ✓ (3ms)
+ ✓ (6ms)
+  4 tools completed in 5.6s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've read the mechanism. Let me check whether any work already landed before continuing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REPL_ONLY_MULTI\|multi_… ✓ (7ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 33s (2 ✓)
+
+Clean tree, Task 1 committed. Now Task 2. Let me check the format consts and the exact CLAUDE.md clause I'll need to supersede.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub const RED\|^pub co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "still unrouted, and sti… ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've read enough — the mechanism is confirmed. Acting now.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (9 → 8 lines)
+        // Exact name of a REPL-only command: `yoyo tokens`. Not a typo — a real command
+        // typed at the wrong entry point, so say where it lives instead of guessing.
+        if repl_only.contains(&arg) {
+  -         return Some(format!(
+  -             "{RED}✗ unknown command: {arg}{RESET}\n\
+  -              {YELLOW}  /{arg} is a REPL command — start yoyo and use: /{arg}{RESET}\n\
+  -              {DIM}  to send this as a prompt: yoyo -p \"{arg}\"{RESET}"
+  -         ));
+  +         // One statement of this wording, shared with the multi-token guard below.
+  +         // Here the word IS the whole invocation, so it is both the verb and the
+  +         // prompt text — which is what keeps this path byte-identical.
+  +         return Some(repl_only_refusal_message(arg, arg));
+        }
+ ✓ (12.4s)
+        // Exact name of a REPL-only command: `yoyo tokens`. Not a typo — a real command
+        // typed at the wrong entry point, so say where it lives instead of guessing.
+        if repl_only.contains(&arg) {
+  -         return Some(format!(
+  -             "{RED}✗ unknown command: {arg}{RESET}\n\
+  -              {YELLOW}  /{arg} is a REPL command — start yoyo and use: /{arg}{RESET}\n\
+  -              {DIM}  to send this as a prompt: yoyo -p \"{arg}\"{RESET}"
+  -         ));
+  ... (5 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected. Now the const, the shared builder, and the widened predicate.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (6 → 94 lines)
+             {YELLOW}  {did_you_mean}{RESET}\n\
+             {DIM}  to send this as a prompt: yoyo -p \"{arg}\"{RESET}"
+        ))
+  + }
+  + 
+  + /// REPL-only verbs refused even when the invocation carries MORE than two tokens —
+  + /// `yoyo tokens today`, `yoyo cost so far`.
+  + ///
+  + /// **The measured defect (Day 199, #886):** `bare_word_arg` admits only the exact
+  + /// two-token shape, so `yoyo tokens` was correctly refused for free while
+  + /// `yoyo tokens today` sailed past the guard into the single-prompt path and
+  + /// **started a billed LLM turn with write-capable tools attached** to answer a
+  + /// question with a deterministic answer. A wrong default draws complaints; an
+  + /// invisible charge draws nothing, forever — which is why this was invisible from
+  + /// inside the evolve loop, whose own sessions never type these.
+  + ///
+  + /// **Refusal, not routing, and that is the design rather than a shortcut.**
+  + /// `handle_tokens` / `handle_cost` report *session* usage and a one-shot CLI
+  + /// process has no session, so routing these would print zeros — a confidently
+  + /// wrong success, which is worse than a refusal (#710). Day 165 declined to route
+  ... (72 more lines)
+ ✓ (14.0s)
+             {YELLOW}  {did_you_mean}{RESET}\n\
+             {DIM}  to send this as a prompt: yoyo -p \"{arg}\"{RESET}"
+        ))
+  + }
+  + 
+  + /// REPL-only verbs refused even when the invocation carries MORE than two tokens —
+  + /// `yoyo tokens today`, `yoyo cost so far`.
+  + ///
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the "definition without its consumer" rule firing. Wiring the call site now.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (1 → 3 lines)
+  - pub use crate::dispatch_near_miss::{bare_word_arg, bare_word_near_miss};
+  + pub use crate::dispatch_near_miss::{
+  +     bare_word_arg, bare_word_near_miss, repl_only_multi_token_refusal,
+  + };
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (6 → 18 lines)
+                eprintln!("{msg}");
+                std::process::exit(2);
+            }
+  +     }
+  + 
+  +     // The same refusal for the MULTI-token shape (#886, Day 199): `yoyo tokens today`
+  +     // used to sail past the guard above — which admits only `yoyo <word>` — into the
+  +     // single-prompt path and start a BILLED turn to answer a question with a
+  +     // deterministic answer. Sibling block on purpose: the two-token path above stays
+  +     // byte-identical, and this sits at the same point in the sequence, before
+  +     // `parse_args` and before any agent is built, so a fired guard exits 2 having
+  +     // spent zero tokens.
+  +     if let Some(msg) = dispatch_sub::repl_only_multi_token_refusal(&args) {
+  +         eprintln!("{msg}");
+  +         std::process::exit(2);
+        }
+ ✓ (1m 34s)
+  - pub use crate::dispatch_near_miss::{bare_word_arg, bare_word_near_miss};
+  + pub use crate::dispatch_near_miss::{
+  +     bare_word_arg, bare_word_near_miss, repl_only_multi_token_refusal,
+  + };
+ ✓ (2m 29s)
+                eprintln!("{msg}");
+                std::process::exit(2);
+            }
+  +     }
+  + 
+  +     // The same refusal for the MULTI-token shape (#886, Day 199): `yoyo tokens today`
+  +     // used to sail past the guard above — which admits only `yoyo <word>` — into the
+  +     // single-prompt path and start a BILLED turn to answer a question with a
+  ... (8 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 37s (2 ✓)
+
+Now the tests — near-miss guards are the whole product risk here.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (11 → 164 lines)
+                    bare_word_near_miss(verb),
+                    None,
+                    "{verb} is routed by try_dispatch_subcommand — the guard must not fire on it"
+  +             );
+  +         }
+  +     }
+  + 
+  +     fn argv(parts: &[&str]) -> Vec<String> {
+  +         parts.iter().map(|s| s.to_string()).collect()
+  +     }
+  + 
+  +     /// The defect this guard exists for: `yoyo tokens today` is three tokens, so
+  +     /// `bare_word_arg` returns `None` and — before Day 199 — the invocation
+  +     /// reached the single-prompt path and started a BILLED turn.
+  +     ///
+  +     /// ANTI-VACUOUS, asserted FIRST: a guard that fires on nothing and a guard
+  +     /// that fires on everything are the same bug wearing opposite signs.
+  +     #[test]
+  +     fn multi_token_repl_only_verbs_are_refused_before_any_billed_turn() {
+  +         assert!(
+  ... (139 more lines)
+ ✓ (1m 32s)
+                    bare_word_near_miss(verb),
+                    None,
+                    "{verb} is routed by try_dispatch_subcommand — the guard must not fire on it"
+  +             );
+  +         }
+  +     }
+  + 
+  +     fn argv(parts: &[&str]) -> Vec<String> {
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo dispatch_n… ✓ (22.9s)
+  2 tools completed in 41.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+13 green. Now the end-to-end proof with the real binary — reproduce the defect's fix rather than infer it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ec… ✓ (8.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both correct — zero tokens spent, hatch names the whole invocation. Now the critical near-miss: a real prompt must still reach the model.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for cmd in "fix the login bug" "… ✓ (1.5s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,62 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu… ✓ (65ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "scan_diff(" scripts/che… ✓ (6ms)
+  2 tools completed in 5.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All scan_diff call sites updated (14, all 4-tuple), render_blind_commits has its consumer at line 1530. Now the critical near-miss guard — byte-identity over my own repo:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== per-commit on own repo… ✓ (103ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && OLD=$(git log --oneline -8 --for… ✓ (10ms)
+  2 tools completed in 8.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The loop mis-identified the base. One focused byte-identity check against the true parent:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 060c7143^:scripts/check… ✓ (206ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Near-miss guard verified live in both modes: byte-identical. Final check — vocabulary untouched + the counter genuinely discriminates:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== vo… (9 lines) ✓ (43ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All checks pass. assert_eq! returning True is correct-by-construction (the function is only reached after classify_assertion_change already returned None), and the register-literal → False / plain-fn-call → False rows confirm both stated limits behave exactly as documented.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (54.7s)
+
+Verdict: PASS — written to session_plan/eval_task_1.md.
+
+Summary of what I verified (not restated from the diff):
+
+The regression surface, checked rather than eyeballed. I extracted the pre-change script from 060c7143^ and diffed full rendered output against the new one over HEAD~40..HEAD in both --per-commit and net mode: byte-identical in both. That is the claim the task called "the entire regression surface", and it holds — my own repo reports 0 skipped and renders neither the skipped clause nor the blind-commits section.
+
+Forgotten touchpoints — the item that has caused three reverts. scan_diff widened from a 3-tuple to a 4-tuple, which is exactly the shape that breaks silently. All 14 call sites unpack four values; no stale 3-tuple unpack survives. Every new definition has a consumer in this diff: has_unrecognised_test_vocabulary → line 840, render_blind_commits → line 1530, render_report's new parameter → line 1520 (defaulted, so the older call sites stay valid).
+
+The declined half was genuinely declined. The issue body asks for the vocabulary widening; the task deliberately refuses it. git diff over the change commit produces zero [-+] lines touching ASSERT_MACRO_RE, TEST_ATTR_RE, _relaxed_comparison or the CONVENTION_* constants — so recall did not move, and the counter cannot manufacture a new WEAKENED.
+
+One behavioural subtlety worth naming. has_unrecognised_test_vocabulary(['assert_eq!(a,b);']) returns True in isolation, which looks wrong until you see the call order: it is reached only after classify_assertion_change has already returned None, so anything it sees is unrecognised by construction. The docstring says this, the near-miss self-test pins it (si_sk == 0, si_test == 1), and the byte-identical live runs confirm it end-to-end.
+
+Cleanup feedback, not a fail: the SKIPPED_UNKNOWN_VOCABULARY string constant is never used as a value — it exists purely as a documented anchor. The task asked for it in that form, and Python does not fail on it, but a later reader grepping the name will find no consumer.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
