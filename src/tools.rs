@@ -1580,6 +1580,48 @@ fn build_sub_agent_tool_at_depth(
 /// identical tools, prompt, thinking level, turn cap, skills and shared state,
 /// differing only in which model answers. A second builder would be a second
 /// place for the sub-agent's contract to drift.
+///
+/// **#881 step 0 (Day 199) — the per-dispatch blocker was PROBED and is CONFIRMED.** The
+/// 13-day-old claim carried forward unchanged — *"`SubAgentTool::execute` is yoagent's, so a
+/// per-dispatch `read_only` argument needs a parameters schema I do not own"* — was **read
+/// rather than assumed**, because a reason field is a deterrent nothing grades. It is the
+/// **first of seven probed blockers to hold**, against six falsified on reading (#864's
+/// register reasons ×4, #892's visibility claim, #902's `--safe-mode` claim). Four findings,
+/// each with a citation so the answer is re-derivable rather than believed:
+///
+/// 1. **The schema is a hardcoded literal with no seam.** `sub_agent.rs:364-375` returns a
+///    `serde_json::json!` block advertising exactly one property, `task`, required. It takes
+///    `&self` and reads **nothing** from `self`, so it is not overridable *or* configurable at
+///    construction, and no builder sets it (the full `with_*` list is `sub_agent.rs:166-317`).
+/// 2. **`execute`'s signature is wide and its body is narrow.** It takes
+///    `params: serde_json::Value` (`sub_agent.rs:377-381`) yet reads only `params.get("task")`
+///    (`sub_agent.rs:385-389`), dropping every other key silently. The second half is the half
+///    that matters, and it is why the wide signature is not a loophole: **the schema is the
+///    gate, not the `Value`** — a model can only send a field the schema advertises, so an
+///    extra argument is never populated in the first place.
+/// 3. **Every knob is construction-time.** `with_tools`, `with_system_prompt`, `with_max_turns`,
+///    `with_shared_state` and the rest are builders on the struct (`sub_agent.rs:166-317`), and
+///    `tools` is a `Vec<Arc<dyn AgentTool>>` fixed at construction (`sub_agent.rs:54`);
+///    `execute` rebuilds a fresh `Vec` per call (`sub_agent.rs:392-396`) but always from that
+///    same fixed set. **`ToolMiddleware` was the most plausible seam and is a DIFFERENT
+///    mechanism rather than this one**: `types.rs:1146-1148` is
+///    `async fn before_tool(&self, call: &ToolCallRequest<'_>) -> ToolDecision`, which
+///    intercepts the **child's own tool calls** once the child is already running — a veto at
+///    call time rather than a tool absent from the list — and it is itself installed at
+///    construction (`sub_agent.rs:210`).
+/// 4. **There is no rival primitive.** `lib.rs:105` exports exactly one delegation tool,
+///    `pub use sub_agent::SubAgentTool;`; its neighbours (`lib.rs:97-98`, `Agent` /
+///    `agent_loop`) are the loop itself rather than a dispatchable tool. No `Explore`, no
+///    preset, no task-typed variant.
+///
+/// **What this changes: nothing, deliberately.** The probe answers whether the seam EXISTS; it
+/// builds nothing and closes no gap. `--read-only-subagents` stays a **session-wide** switch,
+/// `read_only_child_disallowed` and `RESTRICTED_REMOVED_TOOLS` are untouched, and **#881 stays
+/// open** — now blocked by a **measured, dated** fact instead of an inherited assumption. If a
+/// later yoagent adds the seam this marker goes stale **loudly** rather than silently, which is
+/// the entire point of pinning it.
+///
+/// <!-- yoagent-version-claim: 0.18.1 -->
 fn sub_agent_tool_for(
     config: &AgentConfig,
     provider_name: &str,
