@@ -75,6 +75,26 @@ UNKNOWN = "UNKNOWN"
 # safety properties and for why the count is printed rather than quietly subtracted.
 MOVED = "MOVED"
 
+# NOT A VERDICT. A hunk in a dedicated test file that has a real diff and yet yields no
+# classification at all, because NOTHING IN IT WAS RECOGNISABLE to this vocabulary.
+#
+# It must NEVER be summed into WEAKENED / STRENGTHENED / UNKNOWN / MOVED, and never into
+# `test_file_hunks_examined`. It is a fifth NUMBER, in exactly the sense that
+# `ProviderScan.unread_streams` is a number beside a hit count rather than a kind of hit:
+# a verdict says what a hunk DID, this says the hunk was never read.
+#
+# WHY IT EXISTS: without it, an instrument reading CLEAN and an instrument reading NOTHING
+# produce identical output. Measured on ripgrep (day 198): two of three planted weakenings
+# never fired, and not because they were judged innocent -- they were never in scope, with
+# `test_file_hunks_examined = 0` on both. The published `WEAKENED 0 over 240 foreign
+# commits` was taken over a population that structurally excluded most of that repo's
+# tests, and the report gave no way to learn that. That collapse is the one thing this
+# repo refuses everywhere else: CiScan's could-not-run branch, UngradedScan
+# .unparseable_excluded, ProviderScan.unread_streams, PAIRING_COULD_NOT_CHECK,
+# PRODUCTIVITY_COULD_NOT_CHECK, NeverForecastGroups.age_unobservable. This classifier was
+# the one instrument that never got it.
+SKIPPED_UNKNOWN_VOCABULARY = "SKIPPED_UNKNOWN_VOCABULARY"
+
 
 # The one statement of how a verdict -- or the ABSENCE of one -- is spelled in a message.
 # `None` is NOT `UNKNOWN` and must never render as it: `None` means the hunk was scanned
@@ -360,6 +380,39 @@ FN_NAME_RE = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)")
 CONTAINS_NEEDLE_RE = re.compile(r"contains\(\s*&?(?:r#*)?\"((?:[^\"\\]|\\.)*)\"")
 INT_LITERAL_RE = re.compile(r"(?<![\w.])(\d+)(?![\w.])")
 RELAXED_OPS = ("<=", ">=", "<", ">")
+
+
+MACRO_CALL_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*!\s*[(\[{]")
+ATTR_RE = re.compile(r"^\s*#!?\[")
+
+
+def has_unrecognised_test_vocabulary(lines: list[str]) -> bool:
+    """Did this hunk carry a MACRO CALL or ATTRIBUTE this vocabulary does not know?
+
+    This is a COUNTING rule, never a classification rule. It produces no verdict, adds no
+    shape, and cannot manufacture a WEAKENED -- it only decides whether a hunk the
+    classifier declined counts as A HOLE IN THE DENOMINATOR or as legitimately out of
+    scope. It is reached only when `classify_assertion_change` already returned None, so
+    any macro or attribute it sees is unrecognised by construction.
+
+    WHY IT IS NARROWER THAN "a test file with a real diff", which is what the first
+    version of this counter asked. Run against my own repo, that version reported 3
+    skipped hunks, and all three were `("src/cli.rs", 7146),` lines in
+    tests/module_size.rs's GRANDFATHERED_OVERSIZED_MODULES debt register. Day 197's
+    convention census PRE-REGISTERED that exact shape as `not in scope`, and said why:
+    a register literal carries no assertion, so `None` is the right answer and "out of
+    scope" and "unjudgeable" are different facts. Counting a DATA edit as blindness is
+    this task's own defect one level down -- an instrument that cannot tell "nothing to
+    read here" from "could not read it" -- and it would have made my own repo, whose
+    register churns every session, permanently look partly blind when it is not.
+
+    THE STATED LIMIT: a foreign oracle written as a plain function call (`check(a, b);`)
+    carries no `!` and no `#[`, so it is NOT counted as skipped. The number is therefore a
+    LOWER BOUND on the blindness, which is the direction that under-claims rather than
+    crying wolf -- and the measured ripgrep case (`eqnice!`, `rgtest!`) is squarely inside
+    it.
+    """
+    return any(MACRO_CALL_RE.search(ln) or ATTR_RE.search(ln) for ln in lines)
 
 
 def is_rust_source(path: str) -> bool:
@@ -754,8 +807,14 @@ def reconcile_moved_tests(findings, hunks):
     return reconciled, moved_count
 
 
-def scan_diff(text: str) -> tuple[list[Finding], int, int]:
-    """Return `(findings, rust_hunks_seen, test_hunks_examined)`.
+def scan_diff(text: str) -> tuple[list[Finding], int, int, int]:
+    """Return `(findings, rust_hunks_seen, test_hunks_examined, skipped_unknown_vocab)`.
+
+    The fourth number is SKIPPED_UNKNOWN_VOCABULARY: a hunk in a dedicated test file with
+    a real diff that this vocabulary could not read at all. It is counted here and summed
+    into NOTHING -- see the constant for why. `is_dedicated_test_file` is REUSED rather
+    than a second "is this a test file?" predicate being written: two copies of a rule
+    agree the day they are written and diverge forever after (#835 is the receipt).
 
     The tuple shape is unchanged: the MOVED count is derivable from the findings
     themselves, so `render_report` counts it with the other three rather than having it
@@ -764,22 +823,29 @@ def scan_diff(text: str) -> tuple[list[Finding], int, int]:
     findings: list[Finding] = []
     rust_hunks = 0
     test_hunks = 0
+    skipped_unknown_vocab = 0
     hunks = parse_unified_diff(text)
     for hunk in hunks:
         if not is_rust_source(hunk.path):
             continue
         rust_hunks += 1
-        verdict = classify_assertion_change(
-            hunk.removed, hunk.added, is_dedicated_test_file(hunk.path)
-        )
+        dedicated = is_dedicated_test_file(hunk.path)
+        verdict = classify_assertion_change(hunk.removed, hunk.added, dedicated)
         if verdict is None:
+            # A production hunk is OUT OF SCOPE and is not counted -- that is the common
+            # case and counting it would drown the number. A DEDICATED TEST FILE carrying
+            # an UNRECOGNISED macro or attribute is the honest denominator hole; a pure
+            # data edit (a debt-register literal, a fixture table) is out of scope too and
+            # is deliberately NOT counted. See has_unrecognised_test_vocabulary.
+            if dedicated and has_unrecognised_test_vocabulary(hunk.removed + hunk.added):
+                skipped_unknown_vocab += 1
             continue
         test_hunks += 1
         findings.append(
             Finding(hunk.path, hunk.header, verdict.verdict, verdict.shapes, verdict.detail)
         )
     findings, _ = reconcile_moved_tests(findings, hunks)
-    return findings, rust_hunks, test_hunks
+    return findings, rust_hunks, test_hunks, skipped_unknown_vocab
 
 
 # --------------------------------------------------------------------------------------
@@ -858,10 +924,37 @@ def render_conventions_limit(conventions=WRITTEN_CONVENTIONS) -> str:
     return "\n".join(lines) + "\n"
 
 
-LIMITS = _LIMITS_HEAD + render_conventions_limit()
+_LIMITS_VOCABULARY = """\
+  6. IT READS ONE DIALECT: `assert*!` macros and `#[test]` attributes. A repo that writes
+     its tests through its OWN macros is largely invisible to it. Measured on ripgrep,
+     whose integration suite is `rgtest!(name, |dir, cmd| { eqnice!(a, b) })`: 334
+     `eqnice!` call sites against 71 assert-macro lines, and 0 literal `#[test]`
+     attributes in tests/misc.rs. Such a repo reports a SMALL examined count and a LARGE
+     skipped one, and a `WEAKENED 0` over it is NOT A CLEAN BILL -- it is a reading over
+     the sliver the vocabulary could reach.
+     The skipped count is printed whenever it is non-zero, and in --per-commit mode a
+     commit that examined NOTHING while skipping something gets its own row, because a
+     window total averages that blindness away. It counts HUNKS the vocabulary missed,
+     NEVER ASSERTIONS: a skipped hunk may hold ten weakened assertions or none, so it is
+     an upper bound on WHERE TO LOOK and never a finding about what was done.
+     It is also a LOWER BOUND on the blindness itself: it counts a hunk only when an
+     unrecognised MACRO or ATTRIBUTE is present, so a foreign oracle written as a plain
+     function call is missed, and a pure data edit (a debt register) is correctly out of
+     scope rather than counted as unreadable.
+"""
+
+LIMITS = _LIMITS_HEAD + render_conventions_limit() + _LIMITS_VOCABULARY
 
 
-def render_report(findings, commits, rust_hunks, test_hunks, window, max_findings=40):
+def render_report(
+    findings,
+    commits,
+    rust_hunks,
+    test_hunks,
+    window,
+    max_findings=40,
+    skipped_unknown_vocab=0,
+):
     counts = Counter(f.verdict for f in findings)
     out = []
     out.append(f"assertion-weakening scan over {window}")
@@ -875,6 +968,21 @@ def render_report(findings, commits, rust_hunks, test_hunks, window, max_finding
     out.append(f"  UNKNOWN ...................... {counts[UNKNOWN]}")
     out.append(f"  MOVED ........................ {counts[MOVED]}")
     out.append("")
+    if skipped_unknown_vocab:
+        # Rendered ONLY when non-zero, in the shape the reject counters already use, so a
+        # repo in the standard dialect is byte-identical to before.
+        out.append(
+            f"  skipped, vocabulary could not read: {skipped_unknown_vocab} test-file "
+            "hunk(s)."
+        )
+        out.append(
+            "  The verdict counts above are over a NARROWER POPULATION THAN THE DIFF. This "
+            "is not"
+        )
+        out.append(
+            "  a verdict and is summed into none of them; it counts HUNKS, never assertions."
+        )
+        out.append("")
 
     weak = [f for f in findings if f.verdict == WEAKENED]
     if weak:
@@ -915,6 +1023,33 @@ def render_report(findings, commits, rust_hunks, test_hunks, window, max_finding
             out.append(f"      {f.detail}")
         if len(moved) > 10:
             out.append(f"  ... (+{len(moved) - 10} more elided)")
+    return "\n".join(out)
+
+
+def render_blind_commits(rows) -> str:
+    """Per-commit disclosure: commits the vocabulary could not read AT ALL.
+
+    ANTI-VACUOUS PER COMMIT, NOT PER WINDOW, and that is the half a careless fix gets
+    wrong. Day 198's window count was non-zero (4 examined) while the two blind plants
+    were 0 -- the gap was visible ONLY per commit. A window total that averages the
+    blindness away is this defect wearing a thinner coat.
+
+    A commit with zero examined test-file hunks and at least one skipped hunk has verdict
+    counts that are ZERO BY CONSTRUCTION rather than by judgement, and nothing else in the
+    report can distinguish that from a commit that was read and found clean.
+    """
+    if not rows:
+        return ""
+    out = [
+        "",
+        f"COMMITS THE VOCABULARY COULD NOT READ AT ALL ({len(rows)}): every test-file hunk",
+        "  in these was skipped, so their verdict counts are ZERO BY CONSTRUCTION rather",
+        "  than by judgement. Read a zero here as 'could not look', never 'looked, clean'.",
+    ]
+    for sha, n in rows[:20]:
+        out.append(f"  0 examined / {n} skipped   {sha[:8]}")
+    if len(rows) > 20:
+        out.append(f"  ... (+{len(rows) - 20} more elided)")
     return "\n".join(out)
 
 
@@ -1058,7 +1193,7 @@ def pair_one_sha(sha: str) -> dict:
     the classifier and publish it as a missing input.
     """
     try:
-        findings, rust_hunks, test_hunks = scan_diff(git_diff_one_commit(sha))
+        findings, rust_hunks, test_hunks, _skipped = scan_diff(git_diff_one_commit(sha))
     except GitRefUnreachable as exc:
         return {
             "pairing": PAIR_COULD_NOT_CHECK,
@@ -1348,34 +1483,53 @@ def main(argv):
 
 
 def _run(args):
+    blind_commits = []
     if args.pair_verdicts:
         return run_pairing(args)
     if args.stdin:
         text = sys.stdin.read()
-        findings, rust_hunks, test_hunks = scan_diff(text)
+        findings, rust_hunks, test_hunks, skipped = scan_diff(text)
         window = "(diff on stdin)"
         commits = -1
     elif args.from_ref and args.per_commit:
         shas = git_commit_shas(args.from_ref, args.to_ref)
-        findings, rust_hunks, test_hunks = [], 0, 0
+        findings, rust_hunks, test_hunks, skipped = [], 0, 0, 0
         for sha in shas:
-            f, rh, th = scan_diff(git_diff_one_commit(sha))
+            f, rh, th, sk = scan_diff(git_diff_one_commit(sha))
             for finding in f:
                 finding.path = f"{sha[:8]} {finding.path}"
             findings += f
             rust_hunks += rh
             test_hunks += th
+            skipped += sk
+            if th == 0 and sk > 0:
+                blind_commits.append((sha, sk))
         window = f"{args.from_ref}..{args.to_ref} (per-commit)"
         commits = len(shas)
     elif args.from_ref:
-        findings, rust_hunks, test_hunks = scan_diff(git_diff(args.from_ref, args.to_ref))
+        findings, rust_hunks, test_hunks, skipped = scan_diff(
+            git_diff(args.from_ref, args.to_ref)
+        )
         window = f"{args.from_ref}..{args.to_ref}"
         commits = git_commit_count(args.from_ref, args.to_ref)
     else:
         print("error: pass --from <ref> (with optional --to), or --stdin", file=sys.stderr)
         return 2
 
-    print(render_report(findings, commits, rust_hunks, test_hunks, window, args.max_findings))
+    print(
+        render_report(
+            findings,
+            commits,
+            rust_hunks,
+            test_hunks,
+            window,
+            args.max_findings,
+            skipped,
+        )
+    )
+    blind = render_blind_commits(blind_commits)
+    if blind:
+        print(blind)
     print()
     print(LIMITS, file=sys.stderr)
     return 0
@@ -1564,13 +1718,13 @@ def run_self_tests():
     check("parser found two hunks", len(hunks) == 2, len(hunks))
     check("parser got the rs path", hunks[0].path == "src/git.rs", hunks[0].path)
     check("parser got the md path", hunks[1].path == "CLAUDE.md", hunks[1].path)
-    findings, rust_hunks, test_hunks = scan_diff(diff)
+    findings, rust_hunks, test_hunks, _sk = scan_diff(diff)
     check("scan filtered the md out", rust_hunks == 1, rust_hunks)
     check("scan examined one test hunk", test_hunks == 1, test_hunks)
     check("scan flagged the eq->contains", findings[0].verdict == WEAKENED, findings[0].verdict)
 
     # -- an empty diff is clean, not an error ---------------------------------------------
-    findings, rust_hunks, test_hunks = scan_diff("")
+    findings, rust_hunks, test_hunks, _sk = scan_diff("")
     check("empty diff clean", (findings, rust_hunks, test_hunks) == ([], 0, 0))
     report = render_report([], 0, 0, 0, "empty")
     check("clean report says none", "WEAKENED candidates: none" in report, report)
@@ -1711,7 +1865,7 @@ def run_self_tests():
             '+    assert!(msg.contains("exa"));',
         ]
     )
-    nm_findings, nm_rust, nm_test = scan_diff(no_move_diff)
+    nm_findings, nm_rust, nm_test, _nm_sk = scan_diff(no_move_diff)
     check(
         "near-miss: a no-move diff renders byte-identically",
         render_report(nm_findings, 1, nm_rust, nm_test, "FIXTURE")
@@ -1766,7 +1920,7 @@ def run_self_tests():
             "+    }",
         ]
     )
-    ex_findings, _, _ = scan_diff(extraction_diff)
+    ex_findings, _, _, _ = scan_diff(extraction_diff)
     ex_verdicts = sorted(f.verdict for f in ex_findings)
     check(
         "1b502eacb937 shape: the extraction accuses nobody",
@@ -2102,7 +2256,7 @@ def run_self_tests():
 
     for conv_name, declared_verdict, _why in WRITTEN_CONVENTIONS:
         subject_path, fixture = conv_fixtures[conv_name]
-        conv_findings, conv_rs, _conv_test = scan_diff(fixture)
+        conv_findings, conv_rs, _conv_test, _conv_sk = scan_diff(fixture)
 
         # ANTI-VACUOUS, FIRST: the scanner must have SEEN the fixture. A fixture matching
         # nothing satisfies every "expected verdict" assertion below by having nothing to
@@ -2150,7 +2304,7 @@ def run_self_tests():
     # quietly reclassify it as convention noise and manufacture a clean bill over a real
     # coverage reduction.
     payoff_path, payoff_fixture = conv_fixtures[CONVENTION_REGISTER_PAYOFF]
-    payoff_findings, _rs, _th = scan_diff(payoff_fixture)
+    payoff_findings, _rs, _th, _payoff_sk = scan_diff(payoff_fixture)
     payoff = [f for f in payoff_findings if f.path == payoff_path]
     check(
         "conventions: the register-paid-to-empty row is WEAKENED, not reconciled away",
@@ -2182,7 +2336,7 @@ def run_self_tests():
             '+    assert!(msg.contains("exa"));',
         ]
     )
-    ord_findings, ord_rs, ord_test = scan_diff(ordinary_diff)
+    ord_findings, ord_rs, ord_test, ord_sk = scan_diff(ordinary_diff)
     check(
         "conventions NEAR-MISS: an ordinary diff still scores WEAKENED unchanged",
         [f.verdict for f in ord_findings] == [WEAKENED],
@@ -2197,6 +2351,128 @@ def run_self_tests():
         "conventions NEAR-MISS: ... and the hunk counts do not move",
         (ord_rs, ord_test) == (1, 1),
         (ord_rs, ord_test),
+    )
+
+
+    # ----------------------------------------------------------------------------------
+    # SKIPPED_UNKNOWN_VOCABULARY: an honest denominator.
+    #
+    # ANTI-VACUOUS FIRST. A counter that finds nothing and lets the report read clean is
+    # this defect wearing the opposite sign, and it is QUIETER than the bug -- so the very
+    # first assertion is that a genuine foreign-idiom hunk IS SEEN as skipped.
+    # ----------------------------------------------------------------------------------
+    foreign_idiom_diff = "\n".join(
+        [
+            "diff --git a/tests/misc.rs b/tests/misc.rs",
+            "index 1111111..2222222 100644",
+            "--- a/tests/misc.rs",
+            "+++ b/tests/misc.rs",
+            "@@ -10,4 +10,3 @@ rgtest!(feature_bar, |dir: Dir, mut cmd: TestCommand| {",
+            "     cmd.arg(\"--foo\");",
+            "-    eqnice!(expected, cmd.stdout());",
+            "     dir.create(\"x\", \"y\");",
+        ]
+    )
+    fi_findings, fi_rs, fi_test, fi_sk = scan_diff(foreign_idiom_diff)
+    check(
+        "vocabulary ANTI-VACUOUS: a real eqnice!/rgtest! hunk IS SEEN as skipped",
+        fi_sk == 1,
+        (fi_rs, fi_test, fi_sk),
+    )
+    check(
+        "vocabulary: ... and it yields NO verdict and does NOT enter test_file_hunks_examined",
+        fi_findings == [] and fi_test == 0 and fi_rs == 1,
+        (len(fi_findings), fi_test, fi_rs),
+    )
+
+    # NEAR-MISS 1 -- the entire regression surface. A test file in the STANDARD dialect is
+    # read, so it is examined and NOT skipped. This is every reading ever taken of my own
+    # repo; if it moved, the counter would be eating real data rather than reporting a hole.
+    standard_idiom_diff = "\n".join(
+        [
+            "diff --git a/tests/misc.rs b/tests/misc.rs",
+            "index 1111111..2222222 100644",
+            "--- a/tests/misc.rs",
+            "+++ b/tests/misc.rs",
+            "@@ -10,3 +10,3 @@",
+            "-    assert_eq!(msg, \"exact\");",
+            "+    assert!(msg.contains(\"exa\"));",
+        ]
+    )
+    si_findings, _si_rs, si_test, si_sk = scan_diff(standard_idiom_diff)
+    check(
+        "vocabulary NEAR-MISS: a STANDARD-dialect test hunk is examined, never skipped",
+        si_sk == 0 and si_test == 1 and [f.verdict for f in si_findings] == [WEAKENED],
+        (si_sk, si_test, [f.verdict for f in si_findings]),
+    )
+
+    # NEAR-MISS 2 -- a production hunk is OUT OF SCOPE, which is not the same fact as
+    # "the vocabulary could not read it". Counting src/ here would drown the number in
+    # every ordinary code edit in the repo and make it useless as a denominator.
+    production_diff = "\n".join(
+        [
+            "diff --git a/src/git.rs b/src/git.rs",
+            "index 1111111..2222222 100644",
+            "--- a/src/git.rs",
+            "+++ b/src/git.rs",
+            "@@ -1,2 +1,2 @@",
+            "-    let x = 1;",
+            "+    let x = 2;",
+        ]
+    )
+    _pd_f, pd_rs, pd_test, pd_sk = scan_diff(production_diff)
+    check(
+        "vocabulary NEAR-MISS: a src/ hunk is out of scope, NOT counted as skipped",
+        (pd_rs, pd_test, pd_sk) == (1, 0, 0),
+        (pd_rs, pd_test, pd_sk),
+    )
+
+    check(
+        "vocabulary: the ordinary conventions fixture reports zero skipped",
+        ord_sk == 0,
+        ord_sk,
+    )
+
+    # The rendered report: silent at zero (byte-identical), speaking when non-zero.
+    rep_zero = render_report([], 1, 1, 1, "FIXTURE")
+    rep_skip = render_report([], 1, 1, 0, "FIXTURE", 40, 3)
+    check(
+        "vocabulary: render is BYTE-IDENTICAL when nothing was skipped",
+        rep_zero == render_report([], 1, 1, 1, "FIXTURE", 40, 0),
+        None,
+    )
+    check(
+        "vocabulary: render NAMES the skipped hunks and says the population is narrower",
+        "skipped, vocabulary could not read: 3" in rep_skip
+        and "NARROWER POPULATION" in rep_skip,
+        rep_skip,
+    )
+    check(
+        "vocabulary: skipped is summed into NO verdict count",
+        "WEAKENED ..................... 0" in rep_skip
+        and "UNKNOWN ...................... 0" in rep_skip,
+        rep_skip,
+    )
+
+    # PER-COMMIT anti-vacuous row. Day 198's WINDOW count was non-zero while the blind
+    # plants were zero, so only the per-commit row can expose it.
+    check(
+        "vocabulary: a commit that examined NOTHING and skipped something gets its own row",
+        "deadbeef" in render_blind_commits([("deadbeefcafe", 2)])
+        and "ZERO BY CONSTRUCTION" in render_blind_commits([("deadbeefcafe", 2)]),
+        render_blind_commits([("deadbeefcafe", 2)]),
+    )
+    check(
+        "vocabulary NEAR-MISS: no blind commits renders nothing at all",
+        render_blind_commits([]) == "",
+        None,
+    )
+
+    # LIMITS item 6 is printed on EVERY run, clean or not.
+    check(
+        "vocabulary: LIMITS names the one dialect and refuses 'WEAKENED 0' as a clean bill",
+        "IT READS ONE DIALECT" in LIMITS and "NOT A CLEAN BILL" in LIMITS,
+        None,
     )
 
     if failures:
