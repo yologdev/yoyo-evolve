@@ -959,6 +959,18 @@ async fn main() {
         }
     }
 
+    // The same refusal for the MULTI-token shape (#886, Day 199): `yoyo tokens today`
+    // used to sail past the guard above — which admits only `yoyo <word>` — into the
+    // single-prompt path and start a BILLED turn to answer a question with a
+    // deterministic answer. Sibling block on purpose: the two-token path above stays
+    // byte-identical, and this sits at the same point in the sequence, before
+    // `parse_args` and before any agent is built, so a fired guard exits 2 having
+    // spent zero tokens.
+    if let Some(msg) = dispatch_sub::repl_only_multi_token_refusal(&args) {
+        eprintln!("{msg}");
+        std::process::exit(2);
+    }
+
     let Some(config) = parse_args(&args) else {
         return; // --help or --version was handled
     };

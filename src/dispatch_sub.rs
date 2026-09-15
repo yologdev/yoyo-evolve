@@ -12,7 +12,9 @@
 use crate::cli::{collect_repeatable_flag, load_config_file, print_help, Config, VERSION};
 // The bare-word near-miss guard moved to `dispatch_near_miss` (Day 170 pure move);
 // re-exported here so every existing call site stays byte-unchanged.
-pub use crate::dispatch_near_miss::{bare_word_arg, bare_word_near_miss};
+pub use crate::dispatch_near_miss::{
+    bare_word_arg, bare_word_near_miss, repl_only_multi_token_refusal,
+};
 // Only this module's tests read the table through the old path; re-exporting it
 // unconditionally would be an unused import in a non-test build.
 #[cfg(test)]

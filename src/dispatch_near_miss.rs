@@ -118,11 +118,10 @@ pub fn bare_word_near_miss(arg: &str) -> Option<String> {
     // Exact name of a REPL-only command: `yoyo tokens`. Not a typo — a real command
     // typed at the wrong entry point, so say where it lives instead of guessing.
     if repl_only.contains(&arg) {
-        return Some(format!(
-            "{RED}✗ unknown command: {arg}{RESET}\n\
-             {YELLOW}  /{arg} is a REPL command — start yoyo and use: /{arg}{RESET}\n\
-             {DIM}  to send this as a prompt: yoyo -p \"{arg}\"{RESET}"
-        ));
+        // One statement of this wording, shared with the multi-token guard below.
+        // Here the word IS the whole invocation, so it is both the verb and the
+        // prompt text — which is what keeps this path byte-identical.
+        return Some(repl_only_refusal_message(arg, arg));
     }
 
     // Typo: pick the closest known name across both families, then report which
@@ -142,6 +141,94 @@ pub fn bare_word_near_miss(arg: &str) -> Option<String> {
          {YELLOW}  {did_you_mean}{RESET}\n\
          {DIM}  to send this as a prompt: yoyo -p \"{arg}\"{RESET}"
     ))
+}
+
+/// REPL-only verbs refused even when the invocation carries MORE than two tokens —
+/// `yoyo tokens today`, `yoyo cost so far`.
+///
+/// **The measured defect (Day 199, #886):** `bare_word_arg` admits only the exact
+/// two-token shape, so `yoyo tokens` was correctly refused for free while
+/// `yoyo tokens today` sailed past the guard into the single-prompt path and
+/// **started a billed LLM turn with write-capable tools attached** to answer a
+/// question with a deterministic answer. A wrong default draws complaints; an
+/// invisible charge draws nothing, forever — which is why this was invisible from
+/// inside the evolve loop, whose own sessions never type these.
+///
+/// **Refusal, not routing, and that is the design rather than a shortcut.**
+/// `handle_tokens` / `handle_cost` report *session* usage and a one-shot CLI
+/// process has no session, so routing these would print zeros — a confidently
+/// wrong success, which is worse than a refusal (#710). Day 165 declined to route
+/// them for this reason and Day 187 recorded it again.
+///
+/// **Exact first-token match, never fuzzy and never derived from
+/// `KNOWN_COMMANDS`.** The derived set includes `fix`, so a fuzzy or wholesale
+/// rule would begin refusing `yoyo fix the login bug` — and bare positional args
+/// as a prompt is a **real feature** the Day-165 guard was built to protect. An
+/// honest refusal that eats a real prompt is a worse product than a billed turn.
+///
+/// **`think` is deliberately EXCLUDED and must not be added back:**
+/// `yoyo think about the architecture` is a plausible imperative prompt, and
+/// refusing it is the worse error. Excluding a verb costs one billed turn on a
+/// rare typo; including a wrong one costs a user their actual prompt.
+///
+/// **The accepted cost, stated rather than hidden:** `cost` is a verb as well as a
+/// noun, so `yoyo cost out this refactor` **is** refused (pinned by test, in that
+/// direction, deliberately). The refusal names the `yoyo -p "..."` hatch on the
+/// line below it, so the remedy is one retype and zero dollars — where the
+/// opposite error is money spent on a wrong answer.
+pub const REPL_ONLY_MULTI_TOKEN_VERBS: &[&str] = &["context", "cost", "provider", "tokens"];
+
+/// Compose the "that command lives in the REPL" refusal.
+///
+/// **One statement, two callers.** The bare-word path passes the word as both the
+/// verb and the prompt text (so its output is byte-identical to before this
+/// existed); the multi-token path passes the verb plus the whole invocation, so
+/// the `-p` hatch names what the user actually typed rather than a prefix of it.
+/// Two copies of this wording would agree the day they were written and diverge
+/// forever after.
+fn repl_only_refusal_message(verb: &str, prompt_text: &str) -> String {
+    format!(
+        "{RED}✗ unknown command: {verb}{RESET}\n\
+         {YELLOW}  /{verb} is a REPL command — start yoyo and use: /{verb}{RESET}\n\
+         {DIM}  to send this as a prompt: yoyo -p \"{prompt_text}\"{RESET}"
+    )
+}
+
+/// Extract the REPL-only verb from a MULTI-token invocation: `yoyo tokens today`.
+///
+/// Deliberately narrow, and every clause is load-bearing:
+/// - `args.len() >= 3` — the two-token shape is `bare_word_arg`'s business and is
+///   left byte-identical, so the two guards can never both claim one invocation.
+/// - `args[1]` must not start with `-` — `yoyo -p "tokens today"` is the very hatch
+///   this guard's own message names, and it must reach the prompt path.
+/// - `args[1]` must be an **exact** member of `REPL_ONLY_MULTI_TOKEN_VERBS`.
+///
+/// Everything else returns `None` and keeps today's behaviour byte-for-byte.
+/// `args[0]` is the binary path.
+pub fn repl_only_multi_token_verb(args: &[String]) -> Option<&str> {
+    if args.len() < 3 {
+        return None;
+    }
+    let verb = args[1].as_str();
+    if verb.starts_with('-') {
+        return None;
+    }
+    if !REPL_ONLY_MULTI_TOKEN_VERBS.contains(&verb) {
+        return None;
+    }
+    Some(verb)
+}
+
+/// The whole multi-token guard: the message to print, or `None` meaning "keep
+/// today's behaviour, send it to the model".
+///
+/// Pure — no I/O, no exit, no side effects. The hatch quotes **everything the user
+/// typed after the binary**, not just the verb, so following it re-runs their
+/// actual invocation as a prompt.
+pub fn repl_only_multi_token_refusal(args: &[String]) -> Option<String> {
+    let verb = repl_only_multi_token_verb(args)?;
+    let typed = args[1..].join(" ");
+    Some(repl_only_refusal_message(verb, &typed))
 }
 
 #[cfg(test)]
@@ -291,6 +378,160 @@ mod tests {
                 bare_word_near_miss(verb),
                 None,
                 "{verb} is routed by try_dispatch_subcommand — the guard must not fire on it"
+            );
+        }
+    }
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The defect this guard exists for: `yoyo tokens today` is three tokens, so
+    /// `bare_word_arg` returns `None` and — before Day 199 — the invocation
+    /// reached the single-prompt path and started a BILLED turn.
+    ///
+    /// ANTI-VACUOUS, asserted FIRST: a guard that fires on nothing and a guard
+    /// that fires on everything are the same bug wearing opposite signs.
+    #[test]
+    fn multi_token_repl_only_verbs_are_refused_before_any_billed_turn() {
+        assert!(
+            !REPL_ONLY_MULTI_TOKEN_VERBS.is_empty(),
+            "the verb list is empty — this is a REFUSAL, not a clean scan: the guard \
+             could never fire and every multi-token invocation would still bill"
+        );
+
+        let msg = repl_only_multi_token_refusal(&argv(&["yoyo", "tokens", "today"]))
+            .expect("`yoyo tokens today` is the exact shape that used to bill");
+        assert!(
+            msg.contains("unknown command: tokens"),
+            "the refusal must name the verb: {msg}"
+        );
+        assert!(
+            msg.contains("/tokens"),
+            "the refusal must say where the command actually lives: {msg}"
+        );
+        // The hatch quotes what the user TYPED, not just the verb — following it
+        // re-runs their actual invocation rather than a prefix of it.
+        assert!(
+            msg.contains("yoyo -p \"tokens today\""),
+            "the -p hatch must name the whole invocation, not just the verb: {msg}"
+        );
+
+        // Every listed verb fires in its multi-token form.
+        for verb in REPL_ONLY_MULTI_TOKEN_VERBS {
+            assert!(
+                repl_only_multi_token_refusal(&argv(&["yoyo", verb, "so", "far"])).is_some(),
+                "{verb} is listed but its multi-token form still reaches the model"
+            );
+        }
+    }
+
+    /// THE ENTIRE REGRESSION SURFACE: every user who has already hit the
+    /// two-token guard. Extracting the shared message builder must not move one
+    /// byte of it, so this is a whole-value pin against a literal copy of the
+    /// wording — never a `contains`, and never a re-call of the builder, which
+    /// would agree with itself by construction.
+    #[test]
+    fn the_two_token_refusal_is_byte_identical_after_the_extraction() {
+        let expected = format!(
+            "{RED}✗ unknown command: tokens{RESET}\n\
+             {YELLOW}  /tokens is a REPL command — start yoyo and use: /tokens{RESET}\n\
+             {DIM}  to send this as a prompt: yoyo -p \"tokens\"{RESET}"
+        );
+        assert_eq!(
+            bare_word_near_miss("tokens"),
+            Some(expected),
+            "the two-token refusal changed — that is every user who already hits it"
+        );
+    }
+
+    /// The side that must NOT fire is a shipped feature: bare positional args as
+    /// a prompt. A discriminator tested only where it fires is vacuous green.
+    ///
+    /// NOTE ON WHAT THIS PROVES (Day 191): every row here asserts an ABSENCE
+    /// (`None`), which a dead branch satisfies identically — so these are
+    /// boundary pins against an over-firing guard, not evidence that the
+    /// refusal works. That evidence lives in the anti-vacuous test above.
+    #[test]
+    fn multi_token_guard_leaves_real_prompts_untouched() {
+        let prompts = [
+            // Ordinary imperative prompts — the Day-165 feature being protected.
+            &["yoyo", "do", "the", "thing"][..],
+            &["yoyo", "fix", "the", "login", "bug"][..],
+            &["yoyo", "write", "a", "test", "for", "foo"][..],
+            // `think` is deliberately NOT in the const: this is a plausible prompt
+            // and refusing it is the worse error.
+            &["yoyo", "think", "about", "the", "architecture"][..],
+            // The hatch the refusal message itself names must reach the model.
+            &["yoyo", "-p", "tokens", "today"][..],
+            // Two tokens is the other guard's business, not this one's.
+            &["yoyo", "tokens"][..],
+            &["yoyo"][..],
+        ];
+        for parts in prompts {
+            assert_eq!(
+                repl_only_multi_token_refusal(&argv(parts)),
+                None,
+                "{parts:?} must reach the prompt path unchanged"
+            );
+        }
+    }
+
+    /// PINNED IN THE DIRECTION IT LANDS, and named as a cost rather than hidden:
+    /// `cost` is a verb as well as a noun, so this legitimate-looking prompt IS
+    /// refused. Deliberate — the refusal names the `-p` hatch, so the remedy is
+    /// one retype and zero dollars, where the opposite error is money spent on a
+    /// wrong answer. If this is ever judged the wrong trade, delete `"cost"`
+    /// from the const; do not weaken the guard.
+    #[test]
+    fn cost_out_this_refactor_is_refused_and_that_is_the_accepted_cost() {
+        let msg =
+            repl_only_multi_token_refusal(&argv(&["yoyo", "cost", "out", "this", "refactor"]))
+                .expect("`cost` is in the const, so this shape is refused by design");
+        assert!(
+            msg.contains("yoyo -p \"cost out this refactor\""),
+            "the refusal must hand back the user's whole prompt so the remedy is \
+             one retype: {msg}"
+        );
+    }
+
+    /// A routed verb and a refused verb must never claim the same token — one
+    /// would shadow the other and the loser becomes either a dead route or a
+    /// refusal on a verb that actually works.
+    #[test]
+    fn no_routed_verb_is_ever_refused_by_the_multi_token_guard() {
+        for verb in REPL_ONLY_MULTI_TOKEN_VERBS {
+            assert!(
+                !ROUTED_SUBCOMMANDS.contains(verb),
+                "{verb} is BOTH routed and refused — the dispatcher would never be reached"
+            );
+        }
+        // And from the other direction, at the emission point.
+        for verb in ROUTED_SUBCOMMANDS {
+            assert_eq!(
+                repl_only_multi_token_refusal(&argv(&["yoyo", verb, "list"])),
+                None,
+                "{verb} is routed — refusing its multi-token form would break a working verb"
+            );
+        }
+    }
+
+    /// The message claims `/{verb} is a REPL command`. That claim must be TRUE,
+    /// so every listed verb has to actually exist as a slash command — otherwise
+    /// the refusal sends the user somewhere that does not exist, which is the
+    /// confidently-wrong-diagnosis defect one layer down.
+    #[test]
+    fn every_multi_token_verb_is_really_a_repl_command() {
+        let repl_only = repl_only_commands();
+        assert!(
+            !repl_only.is_empty(),
+            "repl_only_commands() came back empty — this is a REFUSAL, not a clean scan"
+        );
+        for verb in REPL_ONLY_MULTI_TOKEN_VERBS {
+            assert!(
+                repl_only.contains(verb),
+                "{verb} is refused with a message pointing at /{verb}, but no such \
+                 REPL command exists — the refusal would be a lie"
             );
         }
     }
