@@ -1,0 +1,138 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by probing yoagent's SubAgentTool source directly — reading only, no cargo.
+  ▶ $ ls ~/.cargo/registry/src/ 2>/dev/null && echo "---" && ls ~/.cargo/registry/src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^name = "yoagent"' -A2 … ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+yoagent 0.18.1 confirmed resolved and present. Now the probe — reading only.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.18.1/src && …  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.18.1/src && … ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check my current state first, then continue the probe efficiently.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- …  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.18.1/src && … ✓ (3ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+Clean tree — no changes made yet. Now the core of the probe:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.18.1/src && …  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.18.1/src && … ✓ (2ms)
+ ✓ (4ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the core answer. One more focused check on the two remaining questions, then I'll write the deliverable.
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.18.1/src && … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four questions answered — Branch B, the blocker is confirmed. Now let me locate the construction site and verify the marker count.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== marker count ===" && g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn sub_agent_tool_for" … ✓ (3ms)
+ ✓ (17ms)
+  2 tools completed in 17ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything needed is confirmed. Let me check the construction site's existing doc comment before inserting.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1570,1584p' src/tools.rs… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have everything. Let me confirm the exact marker syntax used in Rust files (getting this wrong fails the gate):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent-version-claim" … ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exact form confirmed: /// <!-- yoagent-version-claim: 0.18.1 -->. Now the deliverable — Branch B, the blocker is confirmed.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (2 → 44 lines)
+    /// place for the sub-agent's contract to drift.
+  + ///
+  + /// **#881 step 0 (Day 199) — the per-dispatch blocker was PROBED and is CONFIRMED.** The
+  + /// 13-day-old claim carried forward unchanged — *"`SubAgentTool::execute` is yoagent's, so a
+  + /// per-dispatch `read_only` argument needs a parameters schema I do not own"* — was **read
+  + /// rather than assumed**, because a reason field is a deterrent nothing grades. It is the
+  + /// **first of seven probed blockers to hold**, against six falsified on reading (#864's
+  + /// register reasons ×4, #892's visibility claim, #902's `--safe-mode` claim). Four findings,
+  + /// each with a citation so the answer is re-derivable rather than believed:
+  + ///
+  + /// 1. **The schema is a hardcoded literal with no seam.** `sub_agent.rs:364-375` returns a
+  + ///    `serde_json::json!` block advertising exactly one property, `task`, required. It takes
+  + ///    `&self` and reads **nothing** from `self`, so it is not overridable *or* configurable at
+  + ///    construction, and no builder sets it (the full `with_*` list is `sub_agent.rs:166-317`).
+  + /// 2. **`execute`'s signature is wide and its body is narrow.** It takes
+  + ///    `params: serde_json::Value` (`sub_agent.rs:377-381`) yet reads only `params.get("task")`
+  + ///    (`sub_agent.rs:385-389`), dropping every other key silently. The second half is the half
+  + ///    that matters, and it is why the wide signature is not a loophole: **the schema is the
+  + ///    gate, not the `Value`** — a model can only send a field the schema advertises, so an
+  + ///    extra argument is never populated in the first place.
+  ... (24 more lines)
+ ✓ (1m 47s)
+    /// place for the sub-agent's contract to drift.
+  + ///
+  + /// **#881 step 0 (Day 199) — the per-dispatch blocker was PROBED and is CONFIRMED.** The
+  + /// 13-day-old claim carried forward unchanged — *"`SubAgentTool::execute` is yoagent's, so a
+  + /// per-dispatch `read_only` argument needs a parameters schema I do not own"* — was **read
+  + /// rather than assumed**, because a reason field is a deterrent nothing grades. It is the
+  + /// **first of seven probed blockers to hold**, against six falsified on reading (#864's
+  + /// register reasons ×4, #892's visibility claim, #902's `--safe-mode` claim). Four findings,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now CLAUDE.md — the src/tools.rs bullet:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - And it removes the three file-write tools only — **`bash` remains, so this is a NARROWING, not a sandbox**: a read-only sub-agent can still write through `bash`, which the help text says outright rather than letting the flag's name imply more than it delivers.
+  + And it removes the three file-write tools only — **`bash` remains, so this is a NARROWING, not a sandbox**: a read-only sub-agent can still write through `bash`, which the help text says outright rather than letting the flag's name imply more than it delivers. **Day 199 (#881 step 0) — that "per-dispatch needs a schema I do not own" blocker was PROBED and is CONFIRMED, which makes it the first of seven probed blockers to HOLD.** The prior was strong and pointed the other way — six of six p… [yoyo: 2455 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 5s)
+  - And it removes the three file-write tools only — **`bash` remains, so this is a NARROWING, not a sandbox**: a read-only sub-agent can still write through `bash`, which the help text says outright rather than letting the flag's name imply more than it delivers.
+  + And it removes the three file-write tools only — **`bash` remains, so this is a NARROWING, not a sandbox**: a read-only sub-agent can still write through `bash`, which the help text says outright rather than letting the flag's name imply more than it delivers. **Day 199 (#881 step 0) — that "per-dispatch needs a schema I do not own" blocker was PROBED and is CONFIRMED, which makes it the first of seven probed blockers to HOLD.** The prior was strong and pointed the other way — six of six p… [yoyo: 2455 more bytes elided — diff lines are capped at 500 bytes]
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the stale marker count in CLAUDE.md:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "There are currently \*\… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (4 lines) ✓ (21ms)
+  2 tools completed in 3.3s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

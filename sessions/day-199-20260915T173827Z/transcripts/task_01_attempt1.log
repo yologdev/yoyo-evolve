@@ -1,0 +1,165 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of _relaxed_comparison in the target file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "_relaxed_comparison" sc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "INT_LITERAL_RE\|RELAXED… ✓ (4ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 425,460p scripts/check_as…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 520,600p scripts/check_as… ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 4.9s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Resuming. Let me check the tree state and the self-test harness shape.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "comparison\|relaxed" sc… ✓ (3ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+Clean tree — nothing landed yet. Let me see the self-test harness style and the call site.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 690,720p scripts/check_as…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def run_self_tests" scr… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, budget tight — acting now. Let me grab the exact test-harness shape in one call.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1647,1662p' scripts/chec… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the fix. Inserting the condition extractor and re-aiming _relaxed_comparison at the condition only.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/check_assertion_weakening.py (2 → 86 lines)
+  + def assert_condition(line: str) -> str:
+  +     """The CONDITION portion of an assert-macro line. The MESSAGE is not part of it.
+  + 
+  +     Everything from the macro's opening `(` up to the first TOP-LEVEL comma, where
+  +     top-level means depth 0 with respect to `(`/`[`/`{` and outside a string or char
+  +     literal (a message may legally contain a comma). A line carrying no `!(` macro call
+  +     is returned UNCHANGED, which is the pre-fix behaviour and every non-macro path.
+  + 
+  +     WHY (#921 Gap 2, measured rather than reasoned). Day 198's positive control planted
+  +     six weakening shapes into a scratch ripgrep clone; plant P4 scored UNKNOWN where
+  +     WEAKENED was correct:
+  + 
+  +         assert!(count >= 2, "flag '{long}' is less than 2 characters");
+  + 
+  +     `_relaxed_comparison` splits on the operator and requires exactly ONE integer literal
+  +     on the right. The assertion's MESSAGE carries a second digit, so the guard counted two
+  +     literals, broke out, and the shape returned None. That is a PARSER GUARD BREAKING ON A
+  +     LEGAL INPUT IT ALREADY CLAIMED TO HANDLE, not a judgement -- the condition was always
+  +     in scope and the message was never part of the comparison. It is generic rather than
+  +     ripgrep-shaped: it has always been in this code and surfaced only on source I did not
+  ... (66 more lines)
+ ✓ (1m 3s)
+  + def assert_condition(line: str) -> str:
+  +     """The CONDITION portion of an assert-macro line. The MESSAGE is not part of it.
+  + 
+  +     Everything from the macro's opening `(` up to the first TOP-LEVEL comma, where
+  +     top-level means depth 0 with respect to `(`/`[`/`{` and outside a string or char
+  +     literal (a message may legally contain a comma). A line carrying no `!(` macro call
+  +     is returned UNCHANGED, which is the pre-fix behaviour and every non-macro path.
+  + 
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Helper landed. Now re-aim the body at the condition.
+  ▶ edit scripts/check_assertion_weakening.py (2 → 7 lines)
+  +     # #921 Gap 2: judge the CONDITION, never the message. A digit in the message used to
+  +     # break the single-literal guard below and silently return None.
+  +     removed = assert_condition(removed)
+  +     added = assert_condition(added)
+  + 
+        r_eq = "==" in removed
+        a_eq = "==" in added
+ ✓ (1m 3s)
+  +     # #921 Gap 2: judge the CONDITION, never the message. A digit in the message used to
+  +     # break the single-literal guard below and silently return None.
+  +     removed = assert_condition(removed)
+  +     added = assert_condition(added)
+  + 
+        r_eq = "==" in removed
+        a_eq = "==" in added
+
+Now the self-tests, anchored before the failure report.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/check_assertion_weakening.py (1 → 87 lines)
+  +     # -- #921 Gap 2: a digit in the assertion MESSAGE must not kill comparison-relaxed ---
+  +     # ANTI-VACUOUS FIRST: the P4 fixture is genuinely SEEN by the scanner, and its
+  +     # condition is genuinely extracted, before any "expected N" below can be satisfied by
+  +     # having nothing to count.
+  +     p4_removed = '    assert!(count >= 3, "flag \'{long}\' is less than 2 characters");'
+  +     p4_added = '    assert!(count >= 1, "flag \'{long}\' is less than 2 characters");'
+  +     check(
+  +         "gap2 ANTI-VACUOUS: the P4 line is an assertion line at all",
+  +         is_assertion_line(p4_removed),
+  +         p4_removed,
+  +     )
+  +     check(
+  +         "gap2 ANTI-VACUOUS: the condition is extracted without the message",
+  +         assert_condition(p4_removed).strip() == "count >= 3",
+  +         assert_condition(p4_removed),
+  +     )
+  +     check(
+  +         "gap2 ANTI-VACUOUS: the message really does carry a second digit",
+  +         len(INT_LITERAL_RE.findall(p4_removed)) == 2,
+  +         INT_LITERAL_RE.findall(p4_removed),
+  ... (67 more lines)
+ ✓ (1m 3s)
+  +     # -- #921 Gap 2: a digit in the assertion MESSAGE must not kill comparison-relaxed ---
+  +     # ANTI-VACUOUS FIRST: the P4 fixture is genuinely SEEN by the scanner, and its
+  +     # condition is genuinely extracted, before any "expected N" below can be satisfied by
+  +     # having nothing to count.
+  +     p4_removed = '    assert!(count >= 3, "flag \'{long}\' is less than 2 characters");'
+  +     p4_added = '    assert!(count >= 1, "flag \'{long}\' is less than 2 characters");'
+  +     check(
+  +         "gap2 ANTI-VACUOUS: the P4 line is an assertion line at all",
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (115ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+self-tests passed, exit 0. Now the positive control — one atomic mutate→run→restore, sabotage marked NEUTERED.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && F=scripts/ch… (11 lines) ✓ (158ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control fired. I need the exact width — specifically whether any pre-existing test reddened (Day 190).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && F=scripts/ch… (8 lines) ✓ (104ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control: 6 red, all new (`gap2`), ZERO pre-existing — the mechanism was genuinely unguarded. Restored clean (0 markers). Now the docs anchor and the size gate.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'no `src/` file was touc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (5ms)
+ ✓ (177ms)
+  2 tools completed in 178ms (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
