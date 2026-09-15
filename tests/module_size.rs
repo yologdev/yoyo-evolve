@@ -238,7 +238,12 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
     // three regression tests covering no-worktree passthrough, the confined
     // common case, and widening a human-set allow list while preserving deny.
-    ("src/commands_spawn.rs", 4417),
+    // Day 198: +68 lines — the BRANCH-B guard for the worktree flake probe
+    // (worktree_path_is_under_the_callers_own_repo_root). Number pasted from
+    // what the gate itself printed, after `cargo fmt`, rather than hand-typed:
+    // a format pass after the final edit is what makes a pasted number stale in
+    // the shrinking direction, and #884 was reverted for exactly that class.
+    ("src/commands_spawn.rs", 4485),
     // Day 162 (#692): +108 lines — extract_last_assistant_text now stops at the
     // newest turn's boundary (no stale-turn fallback) plus the regression tests
     // pinning that a text-less newest turn yields None, not an older turn's text.
