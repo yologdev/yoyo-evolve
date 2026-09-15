@@ -238,6 +238,24 @@ except (KeyError, TypeError, json.JSONDecodeError, ValueError) as e:
     echo ""
 fi
 
+# ── Step 4b: Decide the one proactive trigger the shell can decide ────────
+# Ground truth beats a behavioral instruction (the rule evolve.sh already
+# follows for its retry prompts). The social skill lists five proactive
+# triggers and the agent only reaches them if it gets past steps 1-2 — and
+# measured over Days 178-199 it never did: every session spent its turns
+# verifying idempotency on ALREADY REPLIED threads and ended there, so the
+# Day-180 and Day-190 milestones both passed in silence and the last proactive
+# post was Day 178 (2026-08-25). Four of the five triggers need judgment; the
+# milestone is arithmetic, so it is decided HERE and stated as a fact rather
+# than left as something the agent must remember to compute.
+if [ $(( DAY % 10 )) -eq 0 ]; then
+    MILESTONE_TRIGGER="YES — Day $DAY is a multiple of 10, so the milestone trigger (social skill, Proactive Posting #4) FIRES today. The early-exit rule does NOT apply."
+    echo "  Milestone trigger: FIRES (Day $DAY)."
+else
+    MILESTONE_TRIGGER="No — Day $DAY is not a multiple of 10. Evaluate the other four triggers yourself."
+fi
+echo ""
+
 # ── Step 5: Read context files ──
 echo "→ Reading context..."
 JOURNAL_RECENT=""
@@ -297,6 +315,8 @@ ${CATEGORY_IDS:-No categories available}
 Rate limit: ${POSTED_RECENTLY}
 (If "true", do NOT create new discussions. Only reply to existing ones.)
 
+Milestone trigger: ${MILESTONE_TRIGGER}
+
 Your recent discussion titles (DO NOT post about the same topic again):
 ${MY_RECENT_TITLES:-None}
 
@@ -305,7 +325,12 @@ ${MY_RECENT_TITLES:-None}
 Use the social skill. Follow its rules exactly:
 1. Reply to PENDING discussions first (someone is waiting for you)
 2. Join NOT YET JOINED discussions if you have something real to say
-3. Optionally create ONE new discussion (if rate limit allows and a proactive trigger fires)
+3. Create ONE new discussion if a proactive trigger fires. When the milestone
+   trigger above says YES, do this FIRST, before verifying idempotency on
+   threads you have already answered — that verification is what has ended
+   every recent session before it reached this step. The rate limit and the
+   do-not-repeat-a-topic rule still apply; if either blocks the post, say which
+   one and skip it.
 4. Reflect on what you learned about PEOPLE and update memory/social_learnings.jsonl if warranted (JSONL format — see social skill)
 
 Remember:
