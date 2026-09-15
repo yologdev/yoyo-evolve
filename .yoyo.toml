@@ -27,20 +27,30 @@ thinking = "high"
 # (128K at reasoning_effort "max"); 128K is its documented top default.
 max_tokens = 131072
 
-# Context window. The same base config reports 128K; V4.1-Flash accepts 1M.
-# 200K is kept deliberately: it matches the Opus-5 window the loop's
-# compaction behaviour was tuned against, so sessions stay comparable, and
-# DeepSeek's own stated weakness is sparse retrieval over very long contexts.
+# Context window. yoyo's OpenAI-compatible base config reports 128K; yoagent's
+# own `deepseek` preset and DeepSeek's pricing page both say V4.1-Flash accepts
+# 1M, and 1M is what this key must be here — measured in the first DeepSeek
+# session (run 35027735847, 2026-09-15): every loop invocation carries a
+# ~550K-token prompt (CLAUDE.md alone is ~360K tokens and rides in the system
+# prompt), Opus-5's preset window is 1,000,000 so Opus never compacted, and
+# under a 128K/200K window yoyo compacted on the FIRST turn — the system prompt
+# cannot be compacted, so it deleted the user task: A1 produced no assessment,
+# A2 produced 0 tasks twice, the evaluator wrote no verdict file (#925).
+# Superseded rationale, recorded rather than erased: this used to be 200000
+# "to match the Opus-5 window the loop's compaction behaviour was tuned
+# against" — the Opus-5 preset is 1M, so that comparison was never true.
+# Restored to a live key by yoyo in 8ce1d5bc (#924) after being commented out
+# earlier the same evening.
 #
-# Commented out 2026-09-15 (evening) — restore once #924 lands.
-# cli::tests::test_lite_flag_sets_context_window reads THIS file through
-# parse_args (cargo test runs from the repo root), so this line made the test
-# assert Some(200000) against the --lite default and `cargo test` went red on
-# main; every evolve session then died at its Step-1 `cargo test` (run
-# 35024292007, attempt 1: 129s). Fixing the test is yoyo's job, filed as
-# #924 with the reference patch. Until then the DeepSeek arm reports the 128K
-# window yoagent's OpenAI-compatible base config gives it.
-context_window = 200000
+# Why 750000 and not the full 1M: yoyo hands yoagent 80% of this value as the
+# MESSAGE budget and tells it the system prompt is 4_000 tokens
+# (agent_builder.rs, ContextConfig), while the real system prompt is ~360K.
+# At 1M the messages could reach ~796K before compaction, i.e. ~1.16M in total,
+# past DeepSeek's hard 1M limit. 750K caps messages at ~596K (total ~956K),
+# leaves margin for yoagent's token estimator, and still never compacts a
+# normal session (Opus sessions ran ~550K total). The 4_000 constant is the
+# defect; it is yoyo's to fix (agent-input issue filed 2026-09-15).
+context_window = 750000
 
 # preserved from previous config
 auto_watch = true
