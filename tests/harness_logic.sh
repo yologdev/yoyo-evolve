@@ -35,7 +35,14 @@ L=$(budget_left 7200 "$(( $(date +%s) + 2400 ))")
 [ "$L" -ge 1190 ] && [ "$L" -le 1200 ] && ok "budget: job deadline clamps (2400-1200 margin)" \
     || bad "budget: job deadline clamps" "expected ~1200, got $L"
 L=$(budget_left 300 "$(( $(date +%s) + 99999 ))")
-check "budget: smaller of the two wins"     "$L" "300"
+# 299..300, not exactly 300: budget_left samples `date` once for SESSION_T0 and
+# session_secs_left samples it again, so a second boundary between the two
+# reads yields 299. The property is "the 300s budget beats the 99999s deadline",
+# and a one-second race is not a counter-example to it (CI run 35035989877
+# failed on exactly this, 2026-09-15; the clamp check above already tolerates
+# the same race with a 1190..1200 band).
+[ "$L" -ge 299 ] && [ "$L" -le 300 ] && ok "budget: smaller of the two wins (300s budget beats 99999s deadline)" \
+    || bad "budget: smaller of the two wins" "expected 299..300, got '$L'"
 
 # ── gate thresholds vs the timeouts they must cover ──────────────────────
 val() { grep -oE "^[[:space:]]*$1=[0-9]+" "$SCRIPT" | head -1 | cut -d= -f2; }
