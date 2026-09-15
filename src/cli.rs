@@ -2092,7 +2092,33 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     // Load config file defaults (CLI flags override these)
     // Read the file once and reuse raw content for permissions + directory parsing
     let (file_config, raw_config_content) = load_config_file();
+    parse_args_with_config(args, file_config, raw_config_content)
+}
 
+/// Everything after the config file has been read, with the file passed IN
+/// rather than looked up from the process CWD.
+///
+/// This is the `apply_effort_hint` / `apply_effort_hint_with` split (#924)
+/// applied to `parse_args`: the wrapper above does the early-exit dispatch, the
+/// quiet enabling and the single `load_config_file()` call, and hands the loaded
+/// pair to this decision half — the only caller, so production behaviour is
+/// byte-identical.
+///
+/// The point is the tests. `cargo test` runs with the process CWD at the
+/// repository root, so a test calling `parse_args(&args)` reads *this
+/// repository's own* `.yoyo.toml`, and a test asserting a DEFAULT was really
+/// asserting that the repo's config happened to be silent about that key.
+/// `c00b8d26` added `context_window = 200000` there and
+/// `test_lite_flag_sets_context_window` went red on `main` for a reason that
+/// had nothing to do with `--lite`. A test about a default now drives this with
+/// an empty map, which is the fixture it always meant to be — the same class as
+/// the Day-179 `NO_COLOR` pin (#836), a verdict that depended on ambient state
+/// outside the fixture.
+pub(crate) fn parse_args_with_config(
+    args: &[String],
+    file_config: HashMap<String, String>,
+    raw_config_content: String,
+) -> Option<Config> {
     // Apply config-file defaults for display/audio settings.
     // CLI flags (handled earlier in apply_cli_flags / parse_args) take priority.
     if !args.iter().any(|a| a == "--quiet" || a == "-q")
@@ -5700,8 +5726,44 @@ command = "server-two"
             "-p".to_string(),
             "hello".to_string(),
         ];
-        let config = parse_args(&args).expect("should parse");
+        // #924: drive the config-injecting half with an EMPTY config. Calling
+        // parse_args here read the repo's own .yoyo.toml and silently tested
+        // whether that file happened to be silent about context_window.
+        let config =
+            parse_args_with_config(&args, HashMap::new(), String::new()).expect("should parse");
         assert_eq!(config.context_window, Some(LITE_DEFAULT_CONTEXT_WINDOW));
+    }
+
+    /// Deliberately WEAK source-level guard, and its own doc comment says so: it
+    /// proves `parse_args` delegates to `parse_args_with_config` exactly once,
+    /// never that the delegation produces the right value. Its job is to fail
+    /// loudly if the seam is deleted and a test goes back to reading the
+    /// developer's own `.yoyo.toml` (#924). Both needles are assembled with
+    /// `format!` so the test cannot match its own source.
+    #[test]
+    fn parse_args_delegates_to_the_config_injecting_half() {
+        let source = include_str!("cli.rs");
+        let fn_needle = format!("{}fn {}{}", "", "parse_args", "(");
+        let call_needle = format!("{}{}", "parse_args", "_with_config(");
+        let body_start = source
+            .find(&fn_needle)
+            .expect("cli.rs must still define parse_args");
+        let rest = &source[body_start..];
+        let body_end = rest
+            .find("\n}\n")
+            .map(|i| body_start + i)
+            .unwrap_or(source.len());
+        let body = &source[body_start..body_end];
+        // Anti-vacuous, asserted FIRST: an empty slice satisfies every count.
+        assert!(
+            !body.is_empty(),
+            "the parse_args slice must not be empty; the needle matched nothing"
+        );
+        let calls = body.matches(&call_needle).count();
+        assert_eq!(
+            calls, 1,
+            "parse_args must delegate to parse_args_with_config exactly once; found {calls}"
+        );
     }
 
     #[test]
