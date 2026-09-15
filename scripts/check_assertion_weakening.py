@@ -538,6 +538,90 @@ def _pair_lines(removed: list[str], added: list[str], floor: float = 0.6):
     return pairs, unpaired_removed, remaining
 
 
+def assert_condition(line: str) -> str:
+    """The CONDITION portion of an assert-macro line. The MESSAGE is not part of it.
+
+    Everything from the macro's opening `(` up to the first TOP-LEVEL comma, where
+    top-level means depth 0 with respect to `(`/`[`/`{` and outside a string or char
+    literal (a message may legally contain a comma). A line carrying no `!(` macro call
+    is returned UNCHANGED, which is the pre-fix behaviour and every non-macro path.
+
+    WHY (#921 Gap 2, measured rather than reasoned). Day 198's positive control planted
+    six weakening shapes into a scratch ripgrep clone; plant P4 scored UNKNOWN where
+    WEAKENED was correct:
+
+        assert!(count >= 2, "flag '{long}' is less than 2 characters");
+
+    `_relaxed_comparison` splits on the operator and requires exactly ONE integer literal
+    on the right. The assertion's MESSAGE carries a second digit, so the guard counted two
+    literals, broke out, and the shape returned None. That is a PARSER GUARD BREAKING ON A
+    LEGAL INPUT IT ALREADY CLAIMED TO HANDLE, not a judgement -- the condition was always
+    in scope and the message was never part of the comparison. It is generic rather than
+    ripgrep-shaped: it has always been in this code and surfaced only on source I did not
+    write, because my own assertions rarely carry digits in their messages.
+
+    THE DIRECTION IS CONSERVATIVE BY CONSTRUCTION, which is what licenses landing it in
+    one pass: getting this scan wrong yields a SHORTER condition, hence fewer literals,
+    hence None -- so a mis-scan can only ever SUPPRESS a verdict and never manufacture
+    one. (Gap 1 widened the vocabulary and had to be careful precisely because recall is
+    the direction that manufactures accusations against commits I did not read.)
+
+    STATED LIMIT: this is NOT a Rust parser. It truncates at the first top-level comma, so
+    for an `assert_eq!(a, b)` the "condition" is `a` alone -- a comparison living in the
+    SECOND operand (`assert_eq!(x, y > 3)`) is invisible to it, which is the conservative
+    None rather than a wrong verdict. A comparison built through a helper, a macro or a
+    variable is likewise invisible, exactly as it was before.
+    """
+    n = len(line)
+
+    # The macro's opening paren: the first `!` whose next non-space char is `(`. Found by
+    # shape rather than by name, so it is vocabulary-free -- `eqnice!` and `assert!` are
+    # read alike, and ASSERT_MACRO_RE stays untouched (Gap 1 is closed; this is Gap 2).
+    open_paren = -1
+    i = 0
+    while i < n - 1:
+        if line[i] == "!":
+            j = i + 1
+            while j < n and line[j] in " \t":
+                j += 1
+            if j < n and line[j] == "(":
+                open_paren = j
+                break
+        i += 1
+    if open_paren < 0:
+        return line
+
+    start = open_paren + 1
+    depth = 0
+    k = start
+    while k < n:
+        c = line[k]
+        if c == '"':
+            k += 1
+            while k < n and line[k] != '"':
+                k += 2 if line[k] == "\\" else 1
+            k += 1
+            continue
+        if c == "'":
+            # A char literal, never a lifetime: require a closing quote right there.
+            m = k + (3 if k + 1 < n and line[k + 1] == "\\" else 2)
+            if m < n and line[m] == "'":
+                k = m + 1
+                continue
+            k += 1
+            continue
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+        elif c == "," and depth == 0:
+            break
+        k += 1
+    return line[start:k]
+
+
 def _relaxed_comparison(removed: str, added: str) -> str | None:
     """Did this one assertion get easier or harder to satisfy?
 
@@ -552,6 +636,11 @@ def _relaxed_comparison(removed: str, added: str) -> str | None:
     expectation is a different claim, not a looser one, and calling it weakening would be
     the kind of confident wrong verdict this tool exists to avoid.
     """
+    # #921 Gap 2: judge the CONDITION, never the message. A digit in the message used to
+    # break the single-literal guard below and silently return None.
+    removed = assert_condition(removed)
+    added = assert_condition(added)
+
     r_eq = "==" in removed
     a_eq = "==" in added
     r_rel = any(op in removed for op in RELAXED_OPS)
@@ -2778,6 +2867,92 @@ def run_self_tests():
         and "MUST NOT BE REMOVED" in LIMITS
         and "DOES NOT MAKE THE RULER INDEPENDENT OF ME" in LIMITS,
         None,
+    )
+
+    # -- #921 Gap 2: a digit in the assertion MESSAGE must not kill comparison-relaxed ---
+    # ANTI-VACUOUS FIRST: the P4 fixture is genuinely SEEN by the scanner, and its
+    # condition is genuinely extracted, before any "expected N" below can be satisfied by
+    # having nothing to count.
+    p4_removed = '    assert!(count >= 3, "flag \'{long}\' is less than 2 characters");'
+    p4_added = '    assert!(count >= 1, "flag \'{long}\' is less than 2 characters");'
+    check(
+        "gap2 ANTI-VACUOUS: the P4 line is an assertion line at all",
+        is_assertion_line(p4_removed),
+        p4_removed,
+    )
+    check(
+        "gap2 ANTI-VACUOUS: the condition is extracted without the message",
+        assert_condition(p4_removed).strip() == "count >= 3",
+        assert_condition(p4_removed),
+    )
+    check(
+        "gap2 ANTI-VACUOUS: the message really does carry a second digit",
+        len(INT_LITERAL_RE.findall(p4_removed)) == 2,
+        INT_LITERAL_RE.findall(p4_removed),
+    )
+    v = classify_assertion_change([p4_removed], [p4_added])
+    check("gap2 P4 verdict", v.verdict == WEAKENED, v)
+    check("gap2 P4 shape", S_COMPARISON_RELAXED in v.shapes, v.shapes)
+
+    # NEAR-MISS, and it runs in the OPPOSITE direction: a genuinely TIGHTENED comparison
+    # carrying the same message digit must still be STRENGTHENED and must never flip to
+    # WEAKENED. A classifier that fires on everything is this defect wearing the opposite
+    # sign and is quieter than the bug.
+    v = classify_assertion_change(
+        ['    assert!(count >= 1, "fewer than 2 characters");'],
+        ['    assert!(count >= 3, "fewer than 2 characters");'],
+    )
+    check("gap2 NEAR-MISS tightened verdict", v.verdict == STRENGTHENED, v)
+    check(
+        "gap2 NEAR-MISS tightened shape",
+        M_COMPARISON_TIGHTENED in v.shapes and S_COMPARISON_RELAXED not in v.shapes,
+        v.shapes,
+    )
+
+    # THE GUARD IS RE-AIMED, NOT DELETED: a condition genuinely carrying two integer
+    # literals must STILL return None. That guard exists to avoid false positives.
+    check(
+        "gap2 two literals IN THE CONDITION still refuse",
+        _relaxed_comparison(
+            "    assert!(a >= 2 + 3);",
+            "    assert!(a >= 1 + 3);",
+        )
+        is None,
+        _relaxed_comparison("    assert!(a >= 2 + 3);", "    assert!(a >= 1 + 3);"),
+    )
+
+    # STRING-AWARENESS: a comma inside the message must not truncate the condition early.
+    check(
+        "gap2 a comma in the message does not truncate the condition",
+        assert_condition('assert!(n > 4, "a, b, c");').strip() == "n > 4",
+        assert_condition('assert!(n > 4, "a, b, c");'),
+    )
+
+    # BYTE-IDENTICAL PASS-THROUGH -- the entire regression surface. Whole verdict tuple
+    # with ==, never a substring.
+    no_message = classify_assertion_change(
+        ["    assert!(lines.len() > 10);"],
+        ["    assert!(lines.len() > 2);"],
+    )
+    check(
+        "gap2 PASS-THROUGH no message",
+        (no_message.verdict, no_message.shapes) == (WEAKENED, [S_COMPARISON_RELAXED]),
+        no_message,
+    )
+    clean_message = classify_assertion_change(
+        ['    assert!(lines.len() > 10, "too few lines");'],
+        ['    assert!(lines.len() > 2, "too few lines");'],
+    )
+    check(
+        "gap2 PASS-THROUGH message with no digit",
+        (clean_message.verdict, clean_message.shapes)
+        == (WEAKENED, [S_COMPARISON_RELAXED]),
+        clean_message,
+    )
+    check(
+        "gap2 PASS-THROUGH a line with no macro call is returned unchanged",
+        assert_condition("    let x = foo(1, 2);") == "    let x = foo(1, 2);",
+        assert_condition("    let x = foo(1, 2);"),
     )
 
     if failures:
