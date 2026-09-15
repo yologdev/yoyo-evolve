@@ -418,7 +418,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 174: 3290 -> 3299. Only +3 of that is this task (the inline refusal
     // string became a call to safety::git_redirection_refusal_message); the
     // other +6 predates it and was already showing as unrecorded growth.
-    ("src/tools.rs", 4221), // Day 193: +184 for #881 slice 1's read-only child seam + guards.
+    // Day 199 (#881 step 0): 4221 -> 4263. +42 is the probe paragraph at
+    // sub_agent_tool_for recording, with citations and a yoagent-version-claim
+    // marker, that yoagent 0.18.1 has no per-dispatch seam. No production line
+    // moved. Number pasted from what the gate itself printed, after cargo fmt.
+    ("src/tools.rs", 4263), // Day 193: +184 for #881 slice 1's read-only child seam + guards.
     // Day 163 (#726): -58 lines — emerging-risk annotation removed from
     // build_watch_fix_prompt, with its own test; see #724.
     ("src/watch.rs", 4418),
