@@ -1,0 +1,130 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Step 0 — paying the register line — since it's a one-line fix that removes a live landmine.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli.rs src/commands_sp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'test_worktree_cleanup_a… ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.3s (2 ✓)
+
+Register drift confirmed: src/cli.rs recorded 7146, actual 7214 (+68, fatal at +101). Paying it now — this task doesn't touch cli.rs, so the number can't re-incur.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/cli.rs", 7146), // Day 197: the restricted-note drift guard (#887 residue).
+  +     ("src/cli.rs", 7214), // Day 198: paid from a task that does not touch cli.rs, so the number cannot re-incur.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn create_spawn_worktre… ✓ (1m 0s)
+  -     ("src/cli.rs", 7146), // Day 197: the restricted-note drift guard (#887 residue).
+  +     ("src/cli.rs", 7214), // Day 198: paid from a task that does not touch cli.rs, so the number cannot re-incur.
+ ✓ (1m 0s)
+  2 tools completed in 1m 0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: register line is paid. Now Step 1 — read the fixture's ambient inputs, then probe.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn repo_root' -A 18 src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'create_spawn_worktree('… ✓ (2ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.8s (2 ✓)
+
+Now I can answer the three hypotheses from the code, before running anything:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn run_git_in' -A 25 sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'set_var("HOME"\|set_va… ✓ (3ms)
+ ✓ (8ms)
+  2 tools completed in 9ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Budget is tight — moving to measurement. The code answers the hypotheses and points at a fourth one:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | tail … ✓ (202ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && pass=0; fail=0; for i in $(seq 1… ✓ (3.3s)
+  2 tools completed in 7.8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+20 of 20 in isolation. But isolation is the wrong condition — CI ran the whole binary in parallel. Two more measurements, then I land:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== A:… (6 lines) ✓ (2.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+BRANCH B fired. 20/20 single test, 12/12 whole module in parallel — 32 consecutive runs, zero failures. And the $HOME hypothesis I derived from the code is measured and falsified: a deleted and an unset $HOME both leave git worktree add at exit 0. Landing the guard.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (3 → 71 lines)
+            // Cleanup should still succeed (prune metadata).
+            cleanup_spawn_worktree(repo, &info).expect("cleanup after manual delete");
+  +     }
+  + 
+  +     /// Guard for the Day-198 flake probe, which came back BRANCH B: it did
+  +     /// not reproduce.
+  +     ///
+  +     /// `test_worktree_cleanup_after_manual_delete` failed once in CI with
+  +     /// `git worktree add failed: preparing worktree (detached head c04...`
+  +     /// — 1 failure in 5586. Probed at **32 consecutive runs** (20 of the
+  +     /// single test, 12 of the whole module under libtest's default
+  +     /// parallelism) with **zero failures**, so the cause is UNDETERMINED and
+  +     /// is deliberately not guessed at: naming a mechanism I did not measure
+  +     /// would be the confident-wrong-diagnosis defect.
+  +     ///
+  +     /// What the probe DID settle is which shared-state classes the code
+  +     /// rules out *by construction*, and that is the property pinned here:
+  +     /// the worktree path is derived from the CALLER's own repo root, so
+  +     /// every test's worktree lives under that test's own
+  +     /// `tempfile::tempdir()` and two tests can never contend for one path.
+  ... (51 more lines)
+ ✓ (1m 36s)
+            // Cleanup should still succeed (prune metadata).
+            cleanup_spawn_worktree(repo, &info).expect("cleanup after manual delete");
+  +     }
+  + 
+  +     /// Guard for the Day-198 flake probe, which came back BRANCH B: it did
+  +     /// not reproduce.
+  +     ///
+  +     /// `test_worktree_cleanup_after_manual_delete` failed once in CI with
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (2.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Test passes. Now the positive control — atomic mutate→run→restore, mutation landing in the production region (line ~1885; test module starts at ~3337):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (13 lines) ✓ (20.9s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control's width corrects my claim. It reddened 7 tests (130 passed; 7 failed), not 1 — so 6 pre-existing worktree fixtures also depend on that containment, the mechanism was already guarded, and the honest claim shrinks from "unguarded" to "this entry was uncovered". Restored byte-clean, 0 markers. Now the full gate:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 37s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now the tail step #920 died on — re-reading the gate after cargo fmt and the final edit:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_spawn.rs src/… ✓ (169ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

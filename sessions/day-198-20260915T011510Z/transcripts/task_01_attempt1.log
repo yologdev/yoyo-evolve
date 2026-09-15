@@ -1,0 +1,112 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the recorded reading to get the exact numbers, then set up the scratch clone.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat dreams/f… (7 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---D… ✓ (7ms)
+ ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+Now let me read the classifier's shape detection and test-file recognition — I need to know exactly what it's looking for before I plant.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^ASSERT_MACRO_RE/,/^def…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def classify_assertion… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me clone ripgrep and finish reading how test_file_hunks_examined is counted — in parallel.
+  ▶ $ SCRATCH=$(mktemp -d /tmp/fgnctl.XXXXXX) && echo "SCRATCH=$SCRATCH" > /tmp/scratc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def is_test_ish_line/,… ✓ (5ms)
+ ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.0s (2 ✓)
+
+Clone is at depth 250. Now let me look at ripgrep's actual test idioms — this is the crux.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ S=$(cat /tmp/scratch_path.txt | cut -d= -f2) && cd "$S/ripgrep" && echo "=== mac…  ▶ $ S=$(cat /tmp/scratch_path.txt | cut -d= -f2) && cd "$S/ripgrep" && echo "=== lit… ✓ (5ms)
+ ✓ (19ms)
+  2 tools completed in 20ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Major finding forming already. ripgrep's idiom is rgtest!/eqnice!, not #[test]/assert_eq!. Let me find exact plant sites — both idioms, so I can separate "shape blind" from "vocabulary blind".
+  ▶ $ S=$(cat /tmp/scratch_path.txt | cut -d= -f2) && cd "$S/ripgrep" && echo "=== rea…  ▶ $ S=$(cat /tmp/scratch_path.txt | cut -d= -f2) && cd "$S/ripgrep" && echo "=== fir… ✓ (5ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.1s (2 ✓)
+
+Now I have the idiom picture. Let me read the comparison shape's logic and confirm plant sites in one pass.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def _relaxed_compariso…  ▶ $ S=$(cat /tmp/scratch_path.txt | cut -d= -f2) && cd "$S/ripgrep" && echo "=== lit… ✓ (22ms)
+ ✓ (22ms)
+  2 tools completed in 23ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the full picture. ripgrep uses rgtest!/eqnice! (334 calls, zero literal #[test] in tests/), plus standard #[test]/assert_eq! in crates/. Let me plant in both idioms so I can separate vocabulary-blindness from shape-blindness.
+  ▶ $ S=$(cat /tmp/scratch_path.txt | cut -d= -f2) && cd "$S/ripgrep" && echo "=== (b)… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the plant. Six commits: three shapes × both idioms, plus the near-miss guard.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ S=$(cat /tmp/scratch_path.txt | cut -d= -f2) && cd "$S/ripgrep" && sed -n '8035,… ✓ (7ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All plant sites confirmed. Executing the plant — six commits, each a real edit to ripgrep's real code.
+  ▶ $ S=$(cat /tmp/scratch_path.txt | cut -d= -f2) && cd "$S/ripgr… (54 lines) ✓ (103ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All six landed. Now the control — run the classifier --per-commit over exactly those six.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ S=$(cat /tmp/scratch_path.txt | cut -d= -f2) && cd "$S/ripgrep" && python3 /home… ✓ (58ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Decisive result. Let me get the remainder and attribute each plant precisely — one run per commit, no inference.
+  ▶ $ S=$(cat /tmp/scratch_path.txt | cut -d= -f2) && cd "$S/ripgrep" && python3 /home…  ▶ $ S=$(cat /tmp/scratch_path.txt | cut -d= -f2) && cd "$S/ripgrep" && for i in 5 4 … ✓ (60ms)
+ ✓ (325ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 26.0s (2 ✓)
+
+Unambiguous per-plant attribution. Outcome 2: some fire, some do not — and the two blind ones are ripgrep's dominant idiom. Let me record it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (114 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== self-tests ===" && pyt… ✓ (27ms)
+ ✓ (63ms)
+  2 tools completed in 66ms (2 ✓)
+
+  watch: no files changed this turn — skipping
+
