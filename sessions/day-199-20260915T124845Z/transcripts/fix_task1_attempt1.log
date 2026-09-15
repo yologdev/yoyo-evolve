@@ -1,0 +1,155 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the file to understand what landed and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l script… (8 lines) ✓ (9ms)
+ ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.3s (2 ✓)
+
+The evaluator is right: only 1 of 3 files landed. Let me read the current implementation.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '360,470p' scripts/check_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "vocab\|Vocabulary\|BUIL… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me look at the existing self-test structure so my fixtures match the house style.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2400,2470p' scripts/chec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2440,2560p' scripts/chec… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+Now I understand the structure. Let me find where the Day-199 vocabulary block ends so I can add the five required fixtures.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "vocabulary NEAR-MISS: n…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2556,2578p' scripts/chec… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 3ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me look at the LIMITS block so I can add the extensible-not-discovered item.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^LIMITS\|^)" scripts/ch…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^LIMITS = /,/^\)$/' script… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '960,1015p' scripts/check… ✓ (3ms)
+  3 tools completed in 2.0s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the full picture. Let me add LIMITS item 7 (extensible-not-discovered) first.
+  ▶ edit scripts/check_assertion_weakening.py (7 → 21 lines)
+         unrecognised MACRO or ATTRIBUTE is present, so a foreign oracle written as a plain
+         function call is missed, and a pure data edit (a debt register) is correctly out of
+         scope rather than counted as unreadable.
+  +   7. THE VOCABULARY IS EXTENSIBLE, NOT DISCOVERED. `--assert-macro NAME` and
+  +      `--test-macro NAME` widen what counts as an assertion / a test declaration, and the
+  +      builtins are the default, so with no flags this reads exactly as it always has. But
+  +      NOTHING HERE INFERS A DIALECT: a repo whose macro names nobody supplies is still
+  +      invisible, and the operator learns the names to supply from the skipped count in
+  +      item 6. That is why the skipped count stays a permanent denominator disclosure and
+  +      MUST NOT BE REMOVED once a dialect is supplied -- widening covers the names you
+  +      hand it and says nothing about the ones you did not.
+  +      Supplied names are DATA, NOT PATTERNS (every extra is re.escape'd) and are matched
+  +      WHOLE-TOKEN, so `--assert-macro eqnice` reaches `eqnice!(a, b)` and reaches neither
+  +      the bare word `eqnice` nor `not_eqnice!`.
+  +      AND IT DOES NOT MAKE THE RULER INDEPENDENT OF ME. I wrote the classifier, the six
+  +      shape pairs and the prose filter; pointing them at a foreign repo removes my
+  +      conventions from the SUBJECT and nothing more.
+    """
+    
+    LIMITS = _LIMITS_HEAD + render_conventions_limit() + _LIMITS_VOCABULARY
+ ✓ (1m 19s)
+         unrecognised MACRO or ATTRIBUTE is present, so a foreign oracle written as a plain
+         function call is missed, and a pure data edit (a debt register) is correctly out of
+         scope rather than counted as unreadable.
+  +   7. THE VOCABULARY IS EXTENSIBLE, NOT DISCOVERED. `--assert-macro NAME` and
+  +      `--test-macro NAME` widen what counts as an assertion / a test declaration, and the
+  +      builtins are the default, so with no flags this reads exactly as it always has. But
+  +      NOTHING HERE INFERS A DIALECT: a repo whose macro names nobody supplies is still
+  +      invisible, and the operator learns the names to supply from the skipped count in
+  ... (12 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me add the five required fixtures. First let me check how S_TEST_REMOVED is produced.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '617,700p' scripts/check_… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me add the five required fixtures to run_self_tests().
+  ▶ edit scripts/check_assertion_weakening.py (6 → 207 lines)
+        check(
+            "vocabulary: LIMITS names the one dialect and refuses 'WEAKENED 0' as a clean bill",
+            "IT READS ONE DIALECT" in LIMITS and "NOT A CLEAN BILL" in LIMITS,
+  +         None,
+  +     )
+  + 
+  +     # ----------------------------------------------------------------------------------
+  +     # EXTENSIBLE VOCABULARY (#921 Gap 1). The block above pins the BLIND direction -- a
+  +     # foreign-dialect hunk is counted as skipped and yields no verdict. These rows pin the
+  +     # CURE: the SAME input, seen when the operator hands the names back. The pair is the
+  +     # whole claim, so both halves are asserted here side by side rather than one of them
+  +     # being inferred from the block above.
+  +     #
+  +     # Every row drives the REAL scan_diff, never vocab.assert_re one layer below it: a
+  +     # regex assertion would pass on a pattern that compiles correctly and is wired to
+  +     # nothing, which is exactly the shape blind round 97 found three sessions running.
+  +     # ----------------------------------------------------------------------------------
+  +     eqnice_vocab = Vocabulary(("eqnice",))
+  + 
+  +     # ROW 1, ANTI-VACUOUS, ASSERTED FIRST. Without the extra the fixture must be genuinely
+  ... (186 more lines)
+ ✓ (1m 20s)
+        check(
+            "vocabulary: LIMITS names the one dialect and refuses 'WEAKENED 0' as a clean bill",
+            "IT READS ONE DIALECT" in LIMITS and "NOT A CLEAN BILL" in LIMITS,
+  +         None,
+  +     )
+  + 
+  +     # ----------------------------------------------------------------------------------
+  +     # EXTENSIBLE VOCABULARY (#921 Gap 1). The block above pins the BLIND direction -- a
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (74ms)
+  2 tools completed in 1m 22s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Self-tests pass. Now Step 2 — re-measure ripgrep. Let me clone it to /tmp (never under this working tree).
+  ▶ $ cd /tmp && rm -rf /tmp/rg921 && D=$(mktemp -d /tmp/rg921XXXX) && echo "DIR=$D" &… ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The safety guard caught my rm -rf. Let me use mktemp -d alone.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && D=$(mktemp -d) && echo "$D" > /tmp/rg921_dir.txt && git clone --depth… ✓ (786ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

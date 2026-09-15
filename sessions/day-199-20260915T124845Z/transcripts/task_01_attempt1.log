@@ -1,0 +1,263 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the classifier to see exactly what I'm working with.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '360,470p' scripts/check_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ASSERT_MACRO_RE\|TEST_A… ✓ (6ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+Now let me read the classifier core and the scan/CLI plumbing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '520,680p' scripts/check_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '800,880p' scripts/check_… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I hit a context limit while reading. Let me check the current state before continuing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Nothing changed yet. Let me look at the CLI plumbing and callers I need to thread through — targeted, to keep context tight.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_test_ish_line\|is_as…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1411,1520p' scripts/chec… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have what I need. Making the first concrete change now — the extensible vocabulary.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (5 → 60 lines)
+    # assert!, assert_eq!, assert_ne!, assert_matches!, debug_assert!, debug_assert_eq!, ...
+  - ASSERT_MACRO_RE = re.compile(r"\b(?:debug_)?assert(?:_eq|_ne|_matches)?!")
+  + BUILTIN_ASSERT_PATTERN = r"\b(?:debug_)?assert(?:_eq|_ne|_matches)?!"
+  + # #[test] and #[tokio::test]. The attribute form, which is how Rust's own harness works.
+  + BUILTIN_TEST_PATTERN = r"#\[\s*(?:tokio::)?test\s*\]"
+  + 
+  + ASSERT_MACRO_RE = re.compile(BUILTIN_ASSERT_PATTERN)
+    ASSERT_EQ_RE = re.compile(r"\b(?:debug_)?assert_eq!")
+    PANICKY_RE = re.compile(r"\.expect\(|\.unwrap\(\)")
+  - TEST_ATTR_RE = re.compile(r"#\[\s*(?:tokio::)?test\s*\]")
+  + TEST_ATTR_RE = re.compile(BUILTIN_TEST_PATTERN)
+  + 
+  + 
+  + class Vocabulary:
+  +     """Which macro/attribute names count as an ASSERTION and as a TEST DECLARATION.
+  + 
+  +     WHY THIS IS EXTENSIBLE RATHER THAN A LONGER HARDCODED LIST. #921 measured the hole
+  +     and literally suggested adding `eqnice!` and `rgtest!` to the two regexes. That was
+  +     refused: hardcoding one foreign project's dialect into my classifier is a treadmill
+  +     (every new repo needs a new hardcode) and it puts someone else's vocabulary in my
+  ... (42 more lines)
+ ✓ (1m 19s)
+    # assert!, assert_eq!, assert_ne!, assert_matches!, debug_assert!, debug_assert_eq!, ...
+  - ASSERT_MACRO_RE = re.compile(r"\b(?:debug_)?assert(?:_eq|_ne|_matches)?!")
+  + BUILTIN_ASSERT_PATTERN = r"\b(?:debug_)?assert(?:_eq|_ne|_matches)?!"
+  + # #[test] and #[tokio::test]. The attribute form, which is how Rust's own harness works.
+  + BUILTIN_TEST_PATTERN = r"#\[\s*(?:tokio::)?test\s*\]"
+  + 
+  + ASSERT_MACRO_RE = re.compile(BUILTIN_ASSERT_PATTERN)
+    ASSERT_EQ_RE = re.compile(r"\b(?:debug_)?assert_eq!")
+  ... (13 more lines)
+
+Now thread the vocabulary through the three pure predicates and the classifier.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (10 → 14 lines)
+  - def is_assertion_line(line: str, dedicated_test_file: bool = False) -> bool:
+  -     if ASSERT_MACRO_RE.search(line):
+  + def is_assertion_line(line: str, dedicated_test_file: bool = False, vocab=None) -> bool:
+  +     vocab = vocab or BUILTIN_VOCABULARY
+  +     if vocab.assert_re.search(line):
+            return True
+        if dedicated_test_file and PANICKY_RE.search(line):
+            return True
+        return False
+    
+    
+  - def is_test_ish_line(line: str, dedicated_test_file: bool = False) -> bool:
+  -     return is_assertion_line(line, dedicated_test_file) or bool(TEST_ATTR_RE.search(line))
+  + def is_test_ish_line(line: str, dedicated_test_file: bool = False, vocab=None) -> bool:
+  +     vocab = vocab or BUILTIN_VOCABULARY
+  +     return is_assertion_line(line, dedicated_test_file, vocab) or bool(
+  +         vocab.test_re.search(line)
+  +     )
+ ✓ (1m 19s)
+  - def is_assertion_line(line: str, dedicated_test_file: bool = False) -> bool:
+  -     if ASSERT_MACRO_RE.search(line):
+  + def is_assertion_line(line: str, dedicated_test_file: bool = False, vocab=None) -> bool:
+  +     vocab = vocab or BUILTIN_VOCABULARY
+  +     if vocab.assert_re.search(line):
+            return True
+        if dedicated_test_file and PANICKY_RE.search(line):
+            return True
+  ... (10 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the classifier signature and its two predicate call sites.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (5 → 6 lines)
+        removed_lines: list[str],
+        added_lines: list[str],
+        dedicated_test_file: bool = False,
+  +     vocab=None,
+    ) -> HunkVerdict | None:
+ ✓ (1m 19s)
+        removed_lines: list[str],
+        added_lines: list[str],
+        dedicated_test_file: bool = False,
+  +     vocab=None,
+    ) -> HunkVerdict | None:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (4 → 9 lines)
+  -     r_asserts = [ln for ln in removed_lines if is_assertion_line(ln, dedicated_test_file)]
+  -     a_asserts = [ln for ln in added_lines if is_assertion_line(ln, dedicated_test_file)]
+  -     r_attrs = [ln for ln in removed_lines if TEST_ATTR_RE.search(ln)]
+  -     a_attrs = [ln for ln in added_lines if TEST_ATTR_RE.search(ln)]
+  +     vocab = vocab or BUILTIN_VOCABULARY
+  +     r_asserts = [
+  +         ln for ln in removed_lines if is_assertion_line(ln, dedicated_test_file, vocab)
+  +     ]
+  +     a_asserts = [
+  +         ln for ln in added_lines if is_assertion_line(ln, dedicated_test_file, vocab)
+  +     ]
+  +     r_attrs = [ln for ln in removed_lines if vocab.test_re.search(ln)]
+  +     a_attrs = [ln for ln in added_lines if vocab.test_re.search(ln)]
+ ✓ (1m 19s)
+  -     r_asserts = [ln for ln in removed_lines if is_assertion_line(ln, dedicated_test_file)]
+  -     a_asserts = [ln for ln in added_lines if is_assertion_line(ln, dedicated_test_file)]
+  -     r_attrs = [ln for ln in removed_lines if TEST_ATTR_RE.search(ln)]
+  -     a_attrs = [ln for ln in added_lines if TEST_ATTR_RE.search(ln)]
+  +     vocab = vocab or BUILTIN_VOCABULARY
+  +     r_asserts = [
+  +         ln for ln in removed_lines if is_assertion_line(ln, dedicated_test_file, vocab)
+  +     ]
+  ... (5 more lines)
+  2 tools completed in 2m 43s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now scan_diff — signature and its classifier call.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (1 → 1 lines)
+  - def scan_diff(text: str) -> tuple[list[Finding], int, int, int]:
+  + def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int]:
+ ✓ (1m 19s)
+  - def scan_diff(text: str) -> tuple[list[Finding], int, int, int]:
+  + def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int]:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (11 → 12 lines)
+  +     vocab = vocab or BUILTIN_VOCABULARY
+        findings: list[Finding] = []
+        rust_hunks = 0
+        test_hunks = 0
+  ···
+                continue
+            rust_hunks += 1
+            dedicated = is_dedicated_test_file(hunk.path)
+  -         verdict = classify_assertion_change(hunk.removed, hunk.added, dedicated)
+  +         verdict = classify_assertion_change(hunk.removed, hunk.added, dedicated, vocab)
+ ✓ (1m 20s)
+  +     vocab = vocab or BUILTIN_VOCABULARY
+        findings: list[Finding] = []
+        rust_hunks = 0
+        test_hunks = 0
+  ···
+                continue
+            rust_hunks += 1
+            dedicated = is_dedicated_test_file(hunk.path)
+  -         verdict = classify_assertion_change(hunk.removed, hunk.added, dedicated)
+  +         verdict = classify_assertion_change(hunk.removed, hunk.added, dedicated, vocab)
+  2 tools completed in 2m 44s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the two CLI flags.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (3 → 26 lines)
+        parser.add_argument(
+            "--max-findings", type=int, default=40, help="cap on printed WEAKENED rows"
+  +     )
+  +     parser.add_argument(
+  +         "--assert-macro",
+  +         action="append",
+  +         default=[],
+  +         dest="assert_macros",
+  +         metavar="NAME",
+  +         help="treat NAME! as an assertion, in addition to the builtins (repeatable; "
+  +         "bare macro name, no '!'). The builtin vocabulary is Rust's own -- a foreign "
+  +         "project writing its oracle as `eqnice!(a, b)` is invisible by default and is "
+  +         "COUNTED in SKIPPED_UNKNOWN_VOCABULARY. That count is the input to this flag: "
+  +         "the tool reports which names it could not read, you hand them back. Names are "
+  +         "escaped and matched whole-token, so they are data and never patterns.",
+  +     )
+  +     parser.add_argument(
+  +         "--test-macro",
+  +         action="append",
+  +         default=[],
+  ... (6 more lines)
+ ✓ (1m 19s)
+        parser.add_argument(
+            "--max-findings", type=int, default=40, help="cap on printed WEAKENED rows"
+  +     )
+  +     parser.add_argument(
+  +         "--assert-macro",
+  +         action="append",
+  +         default=[],
+  +         dest="assert_macros",
+  ... (13 more lines)
+
+Now wire it into _run's three scan_diff call sites.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (28 → 29 lines)
+        blind_commits = []
+        if args.pair_verdicts:
+            return run_pairing(args)
+  +     vocab = Vocabulary(args.assert_macros, args.test_macros)
+        if args.stdin:
+            text = sys.stdin.read()
+  -         findings, rust_hunks, test_hunks, skipped = scan_diff(text)
+  +         findings, rust_hunks, test_hunks, skipped = scan_diff(text, vocab)
+            window = "(diff on stdin)"
+            commits = -1
+        elif args.from_ref and args.per_commit:
+            shas = git_commit_shas(args.from_ref, args.to_ref)
+            findings, rust_hunks, test_hunks, skipped = [], 0, 0, 0
+            for sha in shas:
+  -             f, rh, th, sk = scan_diff(git_diff_one_commit(sha))
+  +             f, rh, th, sk = scan_diff(git_diff_one_commit(sha), vocab)
+                for finding in f:
+                    finding.path = f"{sha[:8]} {finding.path}"
+                findings += f
+  ···
+  ... (6 more lines)
+ ✓ (1m 20s)
+        blind_commits = []
+        if args.pair_verdicts:
+            return run_pairing(args)
+  +     vocab = Vocabulary(args.assert_macros, args.test_macros)
+        if args.stdin:
+            text = sys.stdin.read()
+  -         findings, rust_hunks, test_hunks, skipped = scan_diff(text)
+  +         findings, rust_hunks, test_hunks, skipped = scan_diff(text, vocab)
+  ... (13 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

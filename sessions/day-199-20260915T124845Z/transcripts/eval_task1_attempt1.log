@@ -1,0 +1,71 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task. Let me start by checking the key claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3; echo "=== … ✓ (12ms)
+ ✓ (40ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.0s (2 ✓)
+
+Critical: the diff touches only ONE file. Let me verify against the task's three required files and the self-test requirement.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== files in the task comm…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== eqnice/rgtest anywhere… ✓ (5ms)
+ ✓ (11ms)
+  2 tools completed in 11ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evidence is nearly decisive. One focused check: does the mechanism actually work, and are the required fixtures truly absent?
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/e… (12 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== self-test fn line rang… ✓ (9ms)
+ ✓ (112ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.8s (2 ✓)
+
+The mechanism works live. Let me check those 3 matches inside run_self_tests before judging Step 1.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1633' scripts/check_ass… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Full picture confirmed. Those 3 matches are the pre-existing Day-199 fixture (vocabulary ANTI-VACUOUS: a real eqnice!/rgtest! hunk IS SEEN as skipped) — it asserts the blind direction and is untouched by this diff. Zero new fixtures landed.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 20s)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+## What I found
+
+The code half is real and it works. I exercised it live rather than trusting the diff — feeding an eqnice! deletion through --stdin:
+
+| invocation | examined | WEAKENED | skipped |
+|---|---|---|---|
+| default | 0 | 0 | 1 |
+| --assert-macro eqnice | 1 | 1 | 0 |
+
+That is exactly the anti-vacuous pair the task specified: the same input, blind by default, seen when told. The Vocabulary class, re.escaped whole-token extras, and the threading through is_assertion_line → classify_assertion_change → scan_diff → _run are all sound, and the design decision to refuse #921's literal suggestion (hardcoding eqnice!/rgtest!) is the right call, well-argued in the docstring.
+
+But two of the three required deliverables are absent, and the commit touches 1 of 3 named files:
+
+1. **Zero of Step 1's five fixtures landed. `run_self_tests()` is untouched. The 3 `eqnice`/`rgtest` hits inside it are the *pre-existing* Day-199 fixture asserting the blind direction (`IS SEEN as skipped`). Missing: the with/without pair, the `rgtest!` row, the near-miss guard** the task calls "the half that matters" (an *added* `eqnice!` must stay `STRENGTHENED` — a classifier that fires on everything is this defect wearing the opposite sign), the byte-identical whole-tuple row, and the non-leak row. So --test passes vacuously with respect to the new flags, and the mandated positive control cannot be run — there are no new rows to redden.
+
+2. **Step 2, the re-measure, never happened.** The ledger still holds 4 rows and its newest is the Day-199 04:28 row (`skipped 37`), which *predates* this 11:19 commit. The task named the skipped count as "the grade on this task: if it does not fall, the widening did not reach the population." Nothing was measured, so whether the cure reaches ripgrep's population is still unknown.
+
+3. **CLAUDE.md untouched** despite new user-facing flags.
+
+forgotten_touchpoints genuinely passes — every new definition has its consumer in this same diff, including both the --per-commit and --from-ref branches. product_surface passes: the flags are opt-in on a scripts/ instrument, and I confirmed the default path is byte-identical in behaviour.
+
+The honest summary is that this landed the mechanism and skipped both the evidence that it is guarded and the measurement that was its stated grade.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
