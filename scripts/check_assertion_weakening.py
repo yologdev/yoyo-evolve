@@ -1007,6 +1007,20 @@ _LIMITS_VOCABULARY = """\
      unrecognised MACRO or ATTRIBUTE is present, so a foreign oracle written as a plain
      function call is missed, and a pure data edit (a debt register) is correctly out of
      scope rather than counted as unreadable.
+  7. THE VOCABULARY IS EXTENSIBLE, NOT DISCOVERED. `--assert-macro NAME` and
+     `--test-macro NAME` widen what counts as an assertion / a test declaration, and the
+     builtins are the default, so with no flags this reads exactly as it always has. But
+     NOTHING HERE INFERS A DIALECT: a repo whose macro names nobody supplies is still
+     invisible, and the operator learns the names to supply from the skipped count in
+     item 6. That is why the skipped count stays a permanent denominator disclosure and
+     MUST NOT BE REMOVED once a dialect is supplied -- widening covers the names you
+     hand it and says nothing about the ones you did not.
+     Supplied names are DATA, NOT PATTERNS (every extra is re.escape'd) and are matched
+     WHOLE-TOKEN, so `--assert-macro eqnice` reaches `eqnice!(a, b)` and reaches neither
+     the bare word `eqnice` nor `not_eqnice!`.
+     AND IT DOES NOT MAKE THE RULER INDEPENDENT OF ME. I wrote the classifier, the six
+     shape pairs and the prose filter; pointing them at a foreign repo removes my
+     conventions from the SUBJECT and nothing more.
 """
 
 LIMITS = _LIMITS_HEAD + render_conventions_limit() + _LIMITS_VOCABULARY
@@ -2562,6 +2576,207 @@ def run_self_tests():
     check(
         "vocabulary: LIMITS names the one dialect and refuses 'WEAKENED 0' as a clean bill",
         "IT READS ONE DIALECT" in LIMITS and "NOT A CLEAN BILL" in LIMITS,
+        None,
+    )
+
+    # ----------------------------------------------------------------------------------
+    # EXTENSIBLE VOCABULARY (#921 Gap 1). The block above pins the BLIND direction -- a
+    # foreign-dialect hunk is counted as skipped and yields no verdict. These rows pin the
+    # CURE: the SAME input, seen when the operator hands the names back. The pair is the
+    # whole claim, so both halves are asserted here side by side rather than one of them
+    # being inferred from the block above.
+    #
+    # Every row drives the REAL scan_diff, never vocab.assert_re one layer below it: a
+    # regex assertion would pass on a pattern that compiles correctly and is wired to
+    # nothing, which is exactly the shape blind round 97 found three sessions running.
+    # ----------------------------------------------------------------------------------
+    eqnice_vocab = Vocabulary(("eqnice",))
+
+    # ROW 1, ANTI-VACUOUS, ASSERTED FIRST. Without the extra the fixture must be genuinely
+    # blind -- if it were readable by default, every row below would pass by agreeing with
+    # nothing. `foreign_idiom_diff` is reused deliberately: proving the cure on the SAME
+    # bytes the blind half was measured on is stronger than a second hand-typed fixture
+    # that might differ in some way nobody noticed.
+    check(
+        "extensible ANTI-VACUOUS: the eqnice! fixture really IS blind by default",
+        fi_sk == 1 and fi_findings == [] and fi_test == 0,
+        (fi_sk, len(fi_findings), fi_test),
+    )
+    wf_findings, wf_rs, wf_test, wf_sk = scan_diff(foreign_idiom_diff, eqnice_vocab)
+    check(
+        "extensible: --assert-macro eqnice turns that same hunk into a WEAKENED verdict",
+        [f.verdict for f in wf_findings] == [WEAKENED],
+        [(f.path, f.verdict, f.shapes) for f in wf_findings],
+    )
+    check(
+        "extensible: ... as a DELETED ASSERTION, the shape the deletion actually is",
+        len(wf_findings) == 1 and S_ASSERTION_DELETED in wf_findings[0].shapes,
+        [f.shapes for f in wf_findings],
+    )
+    check(
+        "extensible: ... and it LEAVES the skipped count and ENTERS the examined count",
+        (wf_sk, wf_test, wf_rs) == (0, 1, 1),
+        (wf_sk, wf_test, wf_rs),
+    )
+
+    # ROW 2 -- the same pair for the TEST-DECLARATION half. A deleted `rgtest!` is a
+    # deleted test function; by default it is invisible, and `--test-macro rgtest` makes
+    # it S_TEST_REMOVED. Note only --test-macro is supplied here, so this row also proves
+    # the two flags are independent rather than one switch wearing two names.
+    rgtest_removed_diff = "\n".join(
+        [
+            "diff --git a/tests/misc.rs b/tests/misc.rs",
+            "index 1111111..2222222 100644",
+            "--- a/tests/misc.rs",
+            "+++ b/tests/misc.rs",
+            "@@ -10,4 +10,1 @@",
+            "-rgtest!(feature_bar, |dir: Dir, mut cmd: TestCommand| {",
+            '-    dir.create("x", "y");',
+            "-});",
+            " // unrelated trailing context",
+        ]
+    )
+    rg_blind_f, _rg_blind_rs, rg_blind_test, rg_blind_sk = scan_diff(rgtest_removed_diff)
+    check(
+        "extensible ANTI-VACUOUS: the rgtest! fixture really IS blind by default",
+        rg_blind_f == [] and rg_blind_test == 0 and rg_blind_sk == 1,
+        (len(rg_blind_f), rg_blind_test, rg_blind_sk),
+    )
+    rg_findings, _rg_rs, rg_test, rg_sk = scan_diff(
+        rgtest_removed_diff, Vocabulary((), ("rgtest",))
+    )
+    check(
+        "extensible: --test-macro rgtest scores the deleted test as WEAKENED/test-removed",
+        [f.verdict for f in rg_findings] == [WEAKENED]
+        and S_TEST_REMOVED in rg_findings[0].shapes,
+        [(f.verdict, f.shapes) for f in rg_findings],
+    )
+    check(
+        "extensible: ... and that hunk too leaves skipped and enters examined",
+        (rg_sk, rg_test) == (0, 1),
+        (rg_sk, rg_test),
+    )
+
+    # ROW 3 -- THE NEAR-MISS GUARD, AND IT IS THE HALF THAT MATTERS. Day 198's P6 plant
+    # ADDED an assertion and correctly scored STRENGTHENED; a widened matcher must not
+    # turn that into an accusation. A classifier that fires on everything is this defect
+    # wearing the opposite sign and is quieter than the bug, because a false WEAKENED is
+    # a public claim that someone's green was bought with test edits.
+    eqnice_added_diff = "\n".join(
+        [
+            "diff --git a/tests/misc.rs b/tests/misc.rs",
+            "index 1111111..2222222 100644",
+            "--- a/tests/misc.rs",
+            "+++ b/tests/misc.rs",
+            "@@ -10,2 +10,3 @@",
+            '     cmd.arg("--foo");',
+            "+    eqnice!(expected, cmd.stdout());",
+        ]
+    )
+    add_findings, _a_rs, add_test, add_sk = scan_diff(eqnice_added_diff, eqnice_vocab)
+    check(
+        "extensible NEAR-MISS: an ADDED eqnice! is STRENGTHENED, never WEAKENED",
+        [f.verdict for f in add_findings] == [STRENGTHENED],
+        [(f.verdict, f.shapes) for f in add_findings],
+    )
+    check(
+        "extensible NEAR-MISS: ... carrying the assertion-ADDED mirror shape",
+        len(add_findings) == 1 and M_ASSERTION_ADDED in add_findings[0].shapes,
+        [f.shapes for f in add_findings],
+    )
+    check(
+        "extensible NEAR-MISS: ... and it is examined, not skipped",
+        (add_sk, add_test) == (0, 1),
+        (add_sk, add_test),
+    )
+
+    # ROW 4 -- DEFAULT BYTE-IDENTICAL. The entire regression surface: every reading this
+    # tool has ever published was taken with the builtins alone. The WHOLE verdict tuple
+    # is compared, not a substring, so a shape list or a hunk count that moved would fail
+    # here rather than hiding behind a matching verdict word.
+    def _tuple(res):
+        f, rs, te, sk = res
+        return ([(x.path, x.verdict, tuple(x.shapes)) for x in f], rs, te, sk)
+
+    std_default = _tuple(scan_diff(standard_idiom_diff))
+    std_widened = _tuple(scan_diff(standard_idiom_diff, eqnice_vocab))
+    check(
+        "extensible DEFAULT: a standard assert_eq! hunk is IDENTICAL with the flags added",
+        std_default == std_widened,
+        (std_default, std_widened),
+    )
+    check(
+        "extensible DEFAULT: ... and an explicitly-empty Vocabulary matches the builtin one",
+        _tuple(scan_diff(standard_idiom_diff, Vocabulary())) == std_default,
+        None,
+    )
+    check(
+        "extensible DEFAULT: ... anti-vacuous -- that fixture really does produce a verdict",
+        std_default[0] and std_default[0][0][1] == WEAKENED,
+        std_default[0],
+    )
+    # ... and the SAME property for the test-attribute half, since the two patterns are
+    # compiled by the same helper and a regression could land in either one.
+    attr_diff = "\n".join(
+        [
+            "diff --git a/tests/misc.rs b/tests/misc.rs",
+            "--- a/tests/misc.rs",
+            "+++ b/tests/misc.rs",
+            "@@ -1,4 +1,1 @@",
+            "-#[test]",
+            "-fn still_works() {",
+            '-    assert_eq!(1, 1);',
+            "-}",
+            " // trailing",
+        ]
+    )
+    check(
+        "extensible DEFAULT: a #[test] removal is IDENTICAL with the flags added",
+        _tuple(scan_diff(attr_diff)) == _tuple(scan_diff(attr_diff, eqnice_vocab)),
+        (_tuple(scan_diff(attr_diff)), _tuple(scan_diff(attr_diff, eqnice_vocab))),
+    )
+
+    # ROW 5 -- WHOLE-TOKEN ONLY. A supplied name is data, not a pattern, and must not leak
+    # into a neighbouring identifier. Both directions are pinned: the bare word (no `!`)
+    # and a longer macro that merely ENDS with the supplied name. Without the `\b` and the
+    # required `!`, `--assert-macro eqnice` would silently start reading `not_eqnice!` as
+    # an assertion -- inventing a verdict out of a name nobody supplied.
+    leak_diff = "\n".join(
+        [
+            "diff --git a/tests/misc.rs b/tests/misc.rs",
+            "--- a/tests/misc.rs",
+            "+++ b/tests/misc.rs",
+            "@@ -10,3 +10,1 @@",
+            "-    let eqnice = compute(dir);",
+            "-    not_eqnice!(expected, cmd.stdout());",
+            " // trailing",
+        ]
+    )
+    leak_findings, _lk_rs, lk_test, _lk_sk = scan_diff(leak_diff, eqnice_vocab)
+    check(
+        "extensible: a supplied name is WHOLE-TOKEN -- bare `eqnice` and `not_eqnice!` "
+        "are not assertions",
+        leak_findings == [] and lk_test == 0,
+        [(f.verdict, f.shapes) for f in leak_findings],
+    )
+    # ... and the escaping half: a name is DATA, so a regex metacharacter is literal. An
+    # operator typing `.*` must not get a wildcard that reads every line as an assertion.
+    meta_findings, _m_rs, _m_test, _m_sk = scan_diff(
+        standard_idiom_diff, Vocabulary((".*",))
+    )
+    check(
+        "extensible: a supplied `.*` is ESCAPED to a literal, never compiled as a wildcard",
+        _tuple((meta_findings, _m_rs, _m_test, _m_sk)) == std_default,
+        [(f.verdict, f.shapes) for f in meta_findings],
+    )
+
+    # LIMITS item 7 is printed on EVERY run: extensible is not discovered, and the skipped
+    # count stays the denominator disclosure even once a dialect has been supplied.
+    check(
+        "extensible: LIMITS says the vocabulary is EXTENSIBLE, NOT DISCOVERED",
+        "EXTENSIBLE, NOT DISCOVERED" in LIMITS
+        and "MUST NOT BE REMOVED" in LIMITS
+        and "DOES NOT MAKE THE RULER INDEPENDENT OF ME" in LIMITS,
         None,
     )
 
