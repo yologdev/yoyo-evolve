@@ -1,0 +1,219 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me evaluate this task. The task is #926: measure the system prompt instead of hardcoding 4_000 tokens.
+
+Let me check the key claims:
+1. The diff replaces `system_prompt_tokens: 4_000` with a measured value.
+2. It uses `estimate_tokens` from yoagent.
+3. It handles the degenerate case.
+4. Tests added.
+5. CLAUDE.md updated?
+
+Let me look at the actual diff. The diff shows changes to:
+- .yoyo/risk_snapshots.jsonl (noise, auto-generated)
+- .yoyo/risk_weights.json (noise, auto-generated)
+- src/agent_builder.rs
+
+Wait — the task says Files: src/agent_builder.rs, src/cli.rs (only if needed), CLAUDE.md. But the diff only shows src/agent_builder.rs plus two auto-generated noise files. **No CLAUDE.md change!**
+
+That's a doc_sync issue. Let me verify by checking git diff on CLAUDE.md.
+
+Also, I need to check whether tests were added. The diff doesn't show any test changes in src/agent_builder.rs — the diff shows only the function additions and the ContextConfig site. Hmm, but the task requires tests. Let me check the actual repo state.
+
+Let me look at the file and check for tests. Also check whether `agent.system_prompt` is a valid field (does it exist?).
+
+Wait — critical question: does `Agent` have a public `system_prompt` field? The diff reads `&agent.system_prompt`. If that field doesn't exist, the build wouldn't pass — but build PASSED. So it exists. Actually let me verify.
+
+Let me run some focused checks.
+
+Key things to verify:
+1. Is `system_prompt_tokens: 4_000` gone and replaced with measured? — Yes in diff.
+2. Are there tests? The diff doesn't show tests. This is a big deal. Let me check `git diff HEAD~1` or the actual working tree.
+
+Actually, the diff shown may be incomplete/the committed diff. Let me check.
+
+Let me be efficient. Run:
+- `git log --oneline -3`
+- `git diff HEAD~1 --stat` or similar
+- grep for test functions in agent_builder.rs related to system_prompt_token_budget
+- grep CLAUDE.md for the 4_000 mention / agent_builder bullet
+
+Let me do that.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "system_prompt_token_bud… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The diff is only 3 files: two auto-generated noise files and `src/agent_builder.rs`. No CLAUDE.md update. No tests added in `src/agent_builder.rs` (the diff shows only +96 lines, all production code).
+
+Let me verify: are there tests for `system_prompt_token_budget`? grep for test names. Also check the module's test module.
+
+Critical: the task requires tests ("TESTS (assert at the emission point...)"). And CLAUDE.md docs. Let me check.
+
+Also check that `agent.system_prompt` is a real public field — build passed so presumably yes, but let me confirm it's the composed prompt (not something else). Actually the task said "the composed system prompt string (the one compose_system_prompt / with_system_prompt receives)". Let me look at the surrounding code.
+
+Let me run checks.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.1s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "system_prompt_token_bud…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "4_000\|4K\|system_promp… ✓ (7ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So CLAUDE.md was NOT updated (last CLAUDE.md commit is older). The task explicitly requires docs update: "CLAUDE.md's `agent_builder.rs` bullet: the constant is gone and the budget is now measured from the prompt that is actually composed. Correct any sentence that implies a fixed 4K."
+
+Let me check whether the CLAUDE.md agent_builder bullet mentions 4_000 / system_prompt_tokens. grep for that specific text.
+
+Also, **crucially, no tests were added** for the new functions. The diff is only production code (+96 lines) and no test module changes. Let me verify by checking the test module in agent_builder.rs for any references to system_prompt_token_budget.
+
+grep said only lines 989 and 1180 (production). No test names. Let me grep the tests module specifically.
+
+Actually the earlier grep searched `src/*.rs tests/*.rs` for `system_prompt_token_budget` and found only agent_builder.rs lines 989 & 1180. So there are NO tests calling the new function.
+
+The task explicitly requires tests:
+- Anti-vacuous assertion
+- Scaling assertion
+- Near-miss guard
+
+None of these exist. That's a significant miss.
+
+But wait — the task says "Add tests". The evaluator should FAIL if "The implementation doesn't match the task description". Missing tests is a partial miss. Hmm. But is missing tests a FAIL condition? The task explicitly lists TESTS as a section with requirements. And the harness runs `cargo test` which passes but with no new tests.
+
+However, let me be fair: the core implementation is present and correct. The question is whether missing tests and missing doc sync warrant FAIL.
+
+Let me think about the grading criteria:
+- doc_sync: behavior changed (system_prompt_tokens now measured), and CLAUDE.md was NOT updated. That's a FAIL on doc_sync.
+- The instructions: "If the task changed behavior, confirm the relevant docs (CLAUDE.md / README / docs/src) were updated in the same commit."
+
+So doc_sync = FAIL. And "A FAIL on any Checked line forces the overall Verdict to FAIL".
+
+Also tests missing — the task demanded tests. Let me verify there really are no tests by grepping the test module region.
+
+Let me also verify the CLAUDE.md agent_builder bullet actually says 4_000 or implies fixed number, to confirm doc owed.
+
+Let me check more carefully. Also check whether there's an issue: the code reads `&agent.system_prompt`. Is that field the composed prompt? Let me look at the code around 1140-1190. Actually the task said "with_system_prompt composed it a few statements above". Let me check whether `compose_system_prompt` is applied before. Let me read the build_agent function.
+
+Let me do focused reads.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.8s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1578 && /system_prompt_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "4_000\|4K\|system_promp… ✓ (3ms)
+ ✓ (11ms)
+  2 tools completed in 11ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I was cut off. Let me finish the verification quickly. I need to:
+
+1. Check that the diff implements the task
+2. Check tests exist for the new functions (the task required tests)
+3. Check the module-size register line was updated
+4. Check doc sync (CLAUDE.md)
+5. Write the verdict
+
+Key findings so far:
+- `system_prompt_token_budget` is defined at :989, used at :1180. Consumer exists. ✓
+- `system_prompt_over_window_message` defined at :1013, used at :1000. ✓
+- `estimate_tokens` imported from yoagent::context. ✓
+- The hardcoded `4_000` is replaced with `prompt_tokens`. ✓
+- BUT: I searched for tests referencing `system_prompt_token_budget` and got only 2 hits, both in agent_builder.rs (definition + call site). No tests reference it!
+
+Wait, the grep `grep -rn "system_prompt_token_budget" src/ tests/ | wc -l` returned 2. That means only the definition and the call site — NO tests. The task explicitly required tests at the emission point.
+
+Also the diff shown did NOT include any new tests in src/agent_builder.rs. The diff only shows the two new functions and the call site change. No test module additions.
+
+Let me verify: the diff stat said `src/agent_builder.rs | 96 +++...` — 96 insertions. Two functions with doc comments (~70 lines) + call site change (~13 lines). That roughly accounts for the 96 lines. No tests.
+
+Also: did CLAUDE.md get updated? The diff stat shows only 3 files: .yoyo/risk_snapshots.jsonl, .yoyo/risk_weights.json, src/agent_builder.rs. CLAUDE.md is NOT in the diff! The task explicitly said:
+
+"DOCS
+- CLAUDE.md's `agent_builder.rs` bullet: the constant is gone and the budget is now measured from the prompt that is actually composed. Correct any sentence that implies a fixed 4K."
+
+And the task description listed Files: src/agent_builder.rs, src/cli.rs, CLAUDE.md.
+
+So CLAUDE.md was NOT updated — doc_sync FAIL.
+
+Also the module-size register line: task said "Run `cargo test --test module_size` after the final edit and paste the literal `("src/agent_builder.rs", N)` line". The diff doesn't show tests/module_size.rs being changed. Let me check whether the register entry needs updating — the file grew by ~96 lines. Recorded at 3986. Now would be ~4082. The gate's register drift grace is 100 lines. 96 is within 100, so it's a warning not fatal. But the task said to paste the line. Hmm, but it said the gate WILL fire — and to paste its line. If tests/module_size.rs wasn't updated, and drift is ≤100, it's a warning (non-fatal). But the task instructed to update it. Actually re-reading: "Run `cargo test --test module_size` after the final edit and **paste the literal `("src/agent_builder.rs", N)` line the gate prints**". That implies pasting into the register. Let me check if that happened.
+
+Let me check the module_size register and whether tests passed (harness said Tests: PASS). Since drift +96 < 100 grace, warning only, test passes. But it should have been updated.
+
+Key failures:
+1. **No tests added** — the task explicitly required three tests (anti-vacuous, scaling, near-miss). The diff has none.
+2. **CLAUDE.md not updated** — explicitly required.
+
+Both are explicit requirements. Missing tests is a significant gap. The task's TESTS section is mandatory. And doc_sync is FAIL.
+
+Let me quickly confirm no tests exist and check module_size register, then write the verdict.
+
+Actually, I already have strong evidence: grep for the function name across src/ and tests/ returns 2 (def + call site). Let me double check there's no test calling it indirectly... unlikely. Let me do one quick confirmation.
+
+Let me also check that the call site is at the right place — `agent.system_prompt` field exists. Build passed so it compiles.
+
+Let me run a couple of quick checks and write the verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== tests referencing new … ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed:
+1. **No tests** were added for the new functions. The task's TESTS section is mandatory ("Anti-vacuous, asserted FIRST", "scaling assertion", "near-miss guard"). Zero tests reference `system_prompt_token_budget` or `system_prompt_over_window_message` in the test module.
+
+2. **CLAUDE.md not touched** — task explicitly required updating the agent_builder.rs bullet. The register entry also still says 3986 (which is fine since +96 < 100 grace, but task asked to paste the line).
+
+3. The core change IS implemented correctly: constant replaced with measured value from the actual composed prompt, degenerate case handled with saturating semantics + a named message, reusing yoagent's estimator.
+
+So intent_alignment: the core mechanism landed correctly, but the task explicitly required tests and doc updates that are absent. Missing tests is a required deliverable per the task description. Is that enough to FAIL?
+
+The task description's TESTS section is explicit and mandatory — three specific tests named. None exist. That's a substantial gap: the change alters behavior (the number fed to ContextConfig) with zero test coverage. Also doc_sync explicitly required CLAUDE.md update — absent.
+
+Per the instructions: "FAIL only if: The implementation doesn't match the task description". The implementation partially matches — the core is right but two explicitly-required deliverables (tests, docs) are missing. forgotten_touchpoints: every new definition has its consumer in THIS diff — YES, both functions have consumers (the call site). So forgotten_touchpoints PASS. But doc_sync FAIL.
+
+Actually wait — is there a v2 concern? The doc_sync requirement was explicit in the task. And missing tests — the task said "TESTS (assert at the emission point ...)". Those are requirements.
+
+Given doc_sync FAIL forces overall FAIL, and missing mandatory tests is a real gap, I'll write FAIL.
+
+Hmm, but let me be careful and fair. The instruction says "Do NOT fail for: Minor imperfections, Things that work but could be better". Are missing tests "minor"? The task explicitly enumerated required tests. A behavior change with zero coverage in a repo where tests are the sole gate... The task explicitly said "TESTS (assert at the emission point — the value the ContextConfig actually carries)". This is a stated requirement, not a nicety.
+
+Also doc_sync: the task explicitly says to update CLAUDE.md and "Correct any sentence that implies a fixed 4K." Not done. doc_sync FAIL → overall FAIL per the rules.
+
+Let me verify the register number note — actually the gate prints a warning since +96 < 100. Not fatal. Fine.
+
+One more consideration: does CLAUDE.md actually contain a sentence implying fixed 4K? The grep found "4K tokens" at line 7 but that's about max_tokens for DeepSeek, unrelated. The agent_builder bullet in CLAUDE.md — let me not over-search; the task said correct sentences implying fixed 4K. Regardless, CLAUDE.md wasn't modified at all, and the task required it.
+
+Verdict: FAIL.
+
+Reason needs to state what I verified. Let me write the file.
+
+Actually, let me reconsider whether this should be PASS with cleanup feedback. The core works and build/tests pass. But the two missing pieces are explicitly required deliverables in the task description. The evaluator rubric: FAIL if "The implementation doesn't match the task description". The task description explicitly required tests and doc updates; both are absent. doc_sync is a Checked line that, if FAIL, forces overall FAIL. That's decisive.
+
+Write FAIL.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md.
+
+FAIL. The core fix is implemented correctly (constant replaced by estimate_tokens measured off the actual composed prompt, degenerate case handled without panic, yoagent's estimator reused), but two explicitly mandatory deliverables are missing:
+
+1. **No tests** — the task mandated three (anti-vacuous, scaling, near-miss) at the emission point; `grep` across `src/` and `tests/` finds only the definition and the call site. A behavioral change to the value fed to ContextConfig ships with zero coverage.
+2. **CLAUDE.md untouched** — the DOCS section required correcting the agent_builder.rs bullet; git show --stat HEAD lists no CLAUDE.md change.
+
+forgotten_touchpoints and product_surface pass; doc_sync fails, which forces the overall FAIL.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

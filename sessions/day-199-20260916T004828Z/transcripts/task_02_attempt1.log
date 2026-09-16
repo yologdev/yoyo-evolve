@@ -1,0 +1,398 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start with Step 0 — verifying the actual code before touching anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "deepseek" src/providers…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "deepseek" src/format/co… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read the relevant sections of both files.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '80,155p' src/providers.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '55,230p' src/format/cost… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I've confirmed:
+- `known_models_for_provider("deepseek")` = `["deepseek-v4-pro", "deepseek-v4-flash"]` — no `deepseek-flash`.
+- `default_model_for_provider("deepseek")` = `"deepseek-v4-pro"`.
+- Pricing arm matches `deepseek-v4-pro`/`deepseek-v3` and `deepseek-v4-flash`/`deepseek-r1`. Note: `deepseek-flash` does **not** contain `deepseek-v4-flash`, so it falls through.
+
+Wait — careful. Does `model.contains("deepseek-v4-flash")` match `deepseek-flash`? "deepseek-flash".contains("deepseek-v4-flash") → no. Correct, no match.
+
+Now let me check the warning emission point for unknown model.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Unknown model" src/ | …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/providers.rs ✓ (2ms)
+ ✓ (9ms)
+  2 tools completed in 9ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The agent stopped due to max tokens. I need to continue the work. Let me be efficient and focused now. I've read the key parts:
+
+1. `src/providers.rs:92`: `"deepseek" => &["deepseek-v4-pro", "deepseek-v4-flash"],` — need to add `deepseek-flash`
+2. `src/providers.rs:143`: `"deepseek" => "deepseek-v4-pro".into(),` — default decision needed
+3. `src/format/cost.rs:183-189`: deepseek pricing arm
+4. Warning at `src/cli.rs:1074`
+
+Let me make the edits now. I need to be surgical and fast.
+
+For the pricing: the task says off-peak $0.15 / $0.60 / $0.003 cache hit, peak is double. I need to state which one the table carries.
+
+Let me look at the pricing tuple convention: `(input_per_MTok, cache_write_per_MTok, cache_read_per_MTok, output_per_MTok)`.
+
+Note the existing rows use `0.0` for cache write and cache read. But the task says to carry the measured numbers including cache hit $0.003/1M. So I'll use `(0.15, 0.0, 0.003, 0.60)` for off-peak.
+
+Wait — but is cache_write 0.0 correct? DeepSeek doesn't charge for cache writes typically. Let me use 0.0 for cache_write and 0.003 for cache_read.
+
+Now, which convention: off-peak or peak? The task says state which. I'll carry off-peak and say so in the comment, since the table is a baseline and peak is a doubling.
+
+Hmm, actually let me think about which is more honest. The issue says off-peak $0.15/$0.60/$0.003, peak double. Since the loop runs at 03:00 and 15:00 UTC... 03:00 UTC is within peak (01:00–04:00), 15:00 is not. So mixed. I'll state off-peak is what the table carries, with peak being double noted in the comment. That's the honest choice — it's the lower bound, so costs may be underestimated during peak. Actually... hmm. Alternatively carry peak (the conservative/higher). Let me think about which lies less.
+
+The task explicitly says: "State in the entry which one the table carries — that is a judgment call, and a price that silently means 'off-peak' while a reader assumes peak is a number that lies."
+
+I'll carry off-peak and say so explicitly in the comment. That's what the issue gives as the "measured numbers". Let me do that.
+
+For the default decision: V4-Pro is being phased out (requests route to V4.1-Flash from 2026-09-14), so promoting `deepseek-flash` to the default is defensible, but changing a default is a product-visible behaviour change. 
+
+I think the right call: **leave the default as `deepseek-v4-pro`** and say why — changing a default silently changes what any existing user gets without them opting in, and that's a product-visible behaviour change that should be a deliberate decision by the creator, not bundled into a "make it known/priced" fix. Actually wait — but if V4-Pro is being phased out and requests route to V4.1-Flash anyway, then the default already effectively is flash on the provider side... Hmm.
+
+Actually, let me reconsider. The task is `Kind: product`. The task says "Either change it (and say why in a comment + the write-up) or leave it and say why. Do not leave the choice unstated."
+
+I'll leave it, because:
+1. Changing a default is product-visible for anyone relying on `provider = "deepseek"` with no explicit model.
+2. This task's whole point is making the configured model *visible and priced* — a strict improvement with no behaviour change. Bundling a default change would widen a verified narrow change (the repo's own repeated lesson).
+3. The `.yoyo.toml` explicitly sets `model = "deepseek-flash"`, so my own loop is unaffected either way.
+
+That's the conservative, justified choice. Let me write it down in a comment.
+
+Actually — hold on. Let me reconsider once more. The routing fact: "V4-Pro is being phased out (requests route to V4.1-Flash from 2026-09-14)". If requests to `deepseek-v4-pro` now route to V4.1-Flash, then leaving the default as v4-pro means users get V4.1-Flash anyway but *priced as v4-pro* — which would be a lie. Hmm, but that's the provider's routing, not mine.
+
+But wait — the pricing arm: `deepseek-v4-pro` matches *first* (line 184). If `deepseek-flash` were a substring of `deepseek-v4-pro`... no it isn't. But careful: the order matters. Does `deepseek-flash` match `model.contains("deepseek-v4-flash")`? No. Does it match `deepseek-v4-pro`? No. Good — I need to add a row. But where? If I add `if model.contains("deepseek-flash")` AFTER the v4-pro row, that's fine since they don't collide. But safest: place it adjacent to the v4-flash row.
+
+Hmm, actually careful: is `deepseek-flash` a substring of anything else? No.
+
+Now the known-models list: add `"deepseek-flash"`.
+
+Let me now check the warning emission point in cli.rs:1074.
+
+Let me do the edits efficiently now. First, let me view the warning site and the cost test area.
+
+Given the token budget issue, I must be very efficient. Let me batch commands.
+
+Let me make the edits now.
+
+For providers.rs:
+- Line 92: `"deepseek" => &["deepseek-v4-pro", "deepseek-v4-flash"],` → add `"deepseek-flash"`. Where in the list? Probably first or last. I'll add at the end: `&["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-flash"]`. Hmm, or first since it's the newest. Order doesn't matter for a membership list. I'll append.
+
+Actually, let me check whether the list order matters anywhere (e.g., "did you mean" suggestions). It returns a slice for diagnostic suggestions. Order likely only affects suggestion order. Appending is fine.
+
+- Line 143: default — leave as `deepseek-v4-pro` with a comment.
+
+Let me write the edits.
+
+Also need to check: is there a test for known_models_for_provider? Let me check tests in providers.rs.
+
+Let me batch: read providers.rs tests, the cli.rs warning site, and cost.rs test area near 2478.
+────────────────────────────────────────────────────────────────────────────────
+
+Continuing. I have the key facts. Let me check the remaining emission points and test areas before editing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '155,260p' src/providers.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1055,1090p' src/cli.rs ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I have all I need. The warning is at `parse_args` in cli.rs, inside `parse_model_config` probably. Let me find the function name and line for the warning emission - it's the `known.contains` check. I can pin it with a test that calls the same predicate (`known_models_for_provider("deepseek").contains(&"deepseek-flash")`).
+
+Let me now make the edits.
+
+Edit 1: providers.rs known models list.
+Edit 2: providers.rs default decision comment.
+Edit 3: cost.rs pricing row.
+Edit 4: tests.
+
+Let me look at cost.rs test at 2478 and 1644 to match shape.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+Now I have everything. Making the edits.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (1 → 5 lines)
+  -         "deepseek" => &["deepseek-v4-pro", "deepseek-v4-flash"],
+  +         // `deepseek-flash` is the id the evolve loop actually runs on (2026-09-15):
+  +         // `deepseek-v4-pro` is the legacy alias for the same routed backend. Listed
+  +         // first because it is the current one, not because order carries meaning —
+  +         // this slice is only ever used for membership and "did you mean" suggestions.
+  +         "deepseek" => &["deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"],
+  ▶ edit src/providers.rs (1 → 9 lines)
+  +         // The default stays `deepseek-v4-pro` on purpose. `deepseek-flash`
+  +         // (V4.1-Flash) is where requests are routed from 2026-09-14, so promoting
+  +         // it is defensible — but a default is product-visible: anyone who relies
+  +         // on `provider = "deepseek"` with no explicit `model` would silently move
+  +         // to a different model. This task makes the configured model *visible and
+  +         // priced*; changing what an existing user gets is a separate, deliberate
+  +         // decision and is not bundled into a lookup-table fix (the module-size
+  +         // task's own lesson about widening a verified narrow change).
+            "deepseek" => "deepseek-v4-pro".into(),
+ ✓ (1m 52s)
+  -         "deepseek" => &["deepseek-v4-pro", "deepseek-v4-flash"],
+  +         // `deepseek-flash` is the id the evolve loop actually runs on (2026-09-15):
+  +         // `deepseek-v4-pro` is the legacy alias for the same routed backend. Listed
+  +         // first because it is the current one, not because order carries meaning —
+  +         // this slice is only ever used for membership and "did you mean" suggestions.
+  +         "deepseek" => &["deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"],
+ ✓ (3m 41s)
+  +         // The default stays `deepseek-v4-pro` on purpose. `deepseek-flash`
+  +         // (V4.1-Flash) is where requests are routed from 2026-09-14, so promoting
+  +         // it is defensible — but a default is product-visible: anyone who relies
+  +         // on `provider = "deepseek"` with no explicit `model` would silently move
+  +         // to a different model. This task makes the configured model *visible and
+  +         // priced*; changing what an existing user gets is a separate, deliberate
+  +         // decision and is not bundled into a lookup-table fix (the module-size
+  +         // task's own lesson about widening a verified narrow change).
+            "deepseek" => "deepseek-v4-pro".into(),
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the pricing row in cost.rs.
+
+Convention: `(input_per_MTok, cache_write_per_MTok, cache_read_per_MTok, output_per_MTok)`.
+
+Measured numbers from the issue: off-peak $0.15 / 1M input, $0.60 / 1M output, $0.003 / 1M cache hit. Peak (Mon–Fri 01:00–04:00 and 06:00–10:00 UTC) is double.
+
+I'll carry off-peak and state it explicitly in the comment. So: `(0.15, 0.0, 0.003, 0.60)`.
+
+Where to place: after the v4-flash row (or before, doesn't matter as no substring collision). I'll put it right after the v4-pro row and before the v4-flash row, adjacent to the deepseek group. Actually let me put it first in the deepseek group since it's the current model, and note it's order-independent. Hmm — safer to just add below the existing two rows to keep the diff minimal and avoid any ordering surprise. But there IS a subtlety: `deepseek-v4-pro` row uses `contains`. `deepseek-flash` — does not contain `deepseek-v4-pro` nor `deepseek-v4-flash` nor `deepseek-v3` nor `deepseek-r1`. So no collision either way. I'll add it right after the v4-pro row as the current model.
+
+Actually, keeping the existing rows byte-identical is the near-miss guard. Adding a line between them doesn't alter their bytes. Fine.
+
+Let me place it after the two existing rows, so the existing two stay contiguous (minimal risk).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 47s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/cost.rs (6 → 22 lines)
+        }
+        if model.contains("deepseek-v4-flash") || model.contains("deepseek-r1") {
+            return Some((0.55, 0.0, 0.0, 2.19));
+  +     }
+  +     // `deepseek-flash` (V4.1-Flash) — the id the evolve loop runs on since
+  +     // 2026-09-15. Deliberately its own row: `contains` matching means a new
+  +     // distinct id needs its own arm, and a price silently borrowed from a
+  +     // neighbour is a number that lies (#848's `cost_usd: null` vs `0.0`).
+  +     //
+  +     // These are the issue's **off-peak** numbers. DeepSeek doubles them on
+  +     // weekdays 01:00–04:00 and 06:00–10:00 UTC, so this table is the LOWER
+  +     // bound: during a peak window the true cost is up to 2x what is reported
+  +     // here. Stated in the entry because a reader assuming peak (or assuming
+  +     // this is an average) would be reading a different number than it is.
+  +     if model.contains("deepseek-flash") {
+  +         // (input, cache_write, cache_read, output) per MTok — cache read is the
+  +         // $0.003/1M cache-HIT price; cache_write is 0.0 because DeepSeek bills
+  +         // only for reads, matching the two rows above.
+  +         return Some((0.15, 0.0, 0.003, 0.60));
+        }
+ ✓ (1m 51s)
+        }
+        if model.contains("deepseek-v4-flash") || model.contains("deepseek-r1") {
+            return Some((0.55, 0.0, 0.0, 2.19));
+  +     }
+  +     // `deepseek-flash` (V4.1-Flash) — the id the evolve loop runs on since
+  +     // 2026-09-15. Deliberately its own row: `contains` matching means a new
+  +     // distinct id needs its own arm, and a price silently borrowed from a
+  +     // neighbour is a number that lies (#848's `cost_usd: null` vs `0.0`).
+  ... (12 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I've made the three edits. Now I need to add tests. Let me be efficient — check the existing test area in cost.rs near the deepseek tests, and add tests there.
+
+Let me look at the test at line ~1658 and 2478.
+
+Priority: add tests, then run build/test/clippy/fmt, then module_size gate, then CLAUDE.md, then commit.
+
+Let me add tests minimally but covering the task requirements:
+1. Anti-vacuous first: fixture id really is keyed, pre-existing control resolves.
+2. Near-miss guard: deepseek-v4-pro rows byte-identical (whole-value equality).
+3. estimate_cost for deepseek-flash is Some; unknown id still None.
+4. Unknown-model warning no longer fires for deepseek-flash — check seam in cli.rs or providers.rs. The warning is emitted inline in parse_args via known_models_for_provider. A cheap pure seam: assert `known_models_for_provider("deepseek").contains(&"deepseek-flash")` — that's the actual condition. Better: add a test in providers.rs pinned to the real list.
+
+Let me write tests in cost.rs (near existing deepseek tests) and providers.rs.
+
+Let me view the exact existing test text to insert near.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests. Let me look at the exact insertion points.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1655,1700p' src/format/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2495,2525p' src/format/c… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now add tests. I'll insert after `test_estimate_cost_deepseek_reasoner`.
+
+Tests needed in cost.rs:
+1. `test_pricing_deepseek_flash` — near-miss guard on the two existing rows byte-identical (whole-value equality) + the new row + anti-vacuous.
+2. `estimate_cost` Some for deepseek-flash, None for unknown id (anti-vacuous: control id resolves first).
+3. Unknown-model warning: pin that `known_models_for_provider("deepseek")` contains `deepseek-flash` — that's the exact condition `cli.rs` uses. That belongs in providers.rs actually. Add to providers.rs tests.
+
+Let me write both.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/cost.rs (7 → 61 lines)
+            assert!(
+                (cost - 2.74).abs() < 0.001,
+                "deepseek-v4-flash cost: {cost}"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_pricing_deepseek_flash_is_priced_and_changes_nothing_else() {
+  +         // ANTI-VACUOUS, ASSERTED FIRST: the fixture id really is the id the loop
+  +         // runs on, and the pre-existing control id really does resolve before we
+  +         // touch anything. A transcription slip or an already-broken table would
+  +         // otherwise make every assertion below pass by agreeing with itself.
+  +         assert_eq!(
+  +             crate::providers::known_models_for_provider("deepseek")
+  +                 .iter()
+  +                 .filter(|m| **m == "deepseek-flash")
+  +                 .count(),
+  +             1,
+  +             "the fixture id must be exactly one of the values the deepseek table is keyed on"
+            );
+  ... (39 more lines)
+ ✓ (1m 43s)
+            assert!(
+                (cost - 2.74).abs() < 0.001,
+                "deepseek-v4-flash cost: {cost}"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_pricing_deepseek_flash_is_priced_and_changes_nothing_else() {
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The auto-check ran and showed output truncated. Let me add the providers.rs test then run the full checks myself.
+
+Also need to check that `crate::providers` is accessible from cost.rs tests (it's a pub module). Let me check cost.rs uses.
+
+Now providers.rs test for the warning condition.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (2 → 2 lines) ✓ (1m 43s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to add a test to providers.rs and then run the checks. Let me be efficient — add the providers test and run the full check.
+
+Let me add the providers test now.
+────────────────────────────────────────────────────────────────────────────────
+
+Let me add the providers.rs test and run the full check.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/p… (51 lines) ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Clippy passes. Now run the tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 25s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The fixes to providers.rs didn't take? Let me check — the edit_file said "Replaced 1 line with 5 lines". Maybe the file got reverted by the auto-check? Let me check the actual state.
+
+Actually — the auto-check may have run `git checkout` ... no. Let me just look.
+────────────────────────────────────────────────────────────────────────────────
+
+Both fixes appear to have reverted. Let me check the actual file state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "deepseek" src/providers… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The cost.rs fix is there (line 200), but the providers.rs known-models line 92 still shows the OLD list. My first edit_file call — did it get replaced by the later edit? Wait, the edit output said "Replaced 1 line with 5 lines" for the `known_models` line. But now line 92 shows the old value. 
+
+Ah — I see. The `cargo fmt` might not be it. Let me look: my second edit_file (default model comment) succeeded. The FIRST edit_file also succeeded. But now line 92 is the old value... Perhaps the auto-check's failure caused a revert of only that hunk? No.
+
+Actually wait — maybe the "Auto-check failed" message triggered the harness's fix loop which does `git checkout -- .`? No, git status shows modifications.
+
+Hmm, but the test at 216 exists. So the file has my test but not my known-models change. That means the first edit_file was somehow undone. Possibly the auto-check ran and something reverted. Regardless — just apply it again.
+
+Let me look at line 88-95 to be precise.
+────────────────────────────────────────────────────────────────────────────────
+
+The known_models list lost my edit; cost.rs is fine. Re-applying:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '88,95p' src/providers.rs ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (1 → 5 lines)
+  -         "deepseek" => &["deepseek-v4-pro", "deepseek-v4-flash"],
+  +         // `deepseek-flash` is the id the evolve loop actually runs on (2026-09-15);
+  +         // `deepseek-v4-pro` remains the legacy id for the same routed backend.
+  +         // Listed first because it is the current one — this slice is only used for
+  +         // membership tests and "did you mean" suggestions, so order is cosmetic.
+  +         "deepseek" => &["deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"],
+ ✓ (1m 49s)
+  -         "deepseek" => &["deepseek-v4-pro", "deepseek-v4-flash"],
+  +         // `deepseek-flash` is the id the evolve loop actually runs on (2026-09-15);
+  +         // `deepseek-v4-pro` remains the legacy id for the same routed backend.
+  +         // Listed first because it is the current one — this slice is only used for
+  +         // membership tests and "did you mean" suggestions, so order is cosmetic.
+  +         "deepseek" => &["deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"],
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the file state now and run the specific tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '90,97p' src/providers.rs… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both edits are in place now. Running the full check:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 27s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All tests pass. Let me confirm the full test count and the two new tests specifically.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo deepseek 2… ✓ (143ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/2 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/providers.rs, src/format/cost.rs
+

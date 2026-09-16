@@ -1,0 +1,1086 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me start by reading the relevant source files to understand the current state. This is task #926: measure the system prompt instead of promising yoagent it is 4_000 tokens.
+
+Let me look at `src/agent_builder.rs` for `configure_agent`'s `ContextConfig` block.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && grep -n …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ContextConfig" src/agen… ✓ (2ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the agent_builder.rs around that site, and find `configure_agent`.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1000,1130p' src/agent_bu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn compose_system_promp… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The composed system prompt is in scope at the ContextConfig site — it's built at line 1012-1016 via `compose_system_prompt(&self.system_prompt, ...)`. But that's assigned to the agent via `with_system_prompt(...)` — so I need to bind it to a variable first to measure it.
+
+Let me look at the whole configure_agent function and the compose_system_prompt function.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.4s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '940,1000p' src/agent_bui…  ▶ $ ls ~/.cargo/registry/src/*/yoagent-0.18.1/src/ 2>/dev/null | head; grep -rn "pub… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 6ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The previous turn hit the token cap. I need to continue the work. Let me check what state the working tree is in.
+
+I was in the middle of step 0 — verifying the source. I confirmed:
+1. `system_prompt_tokens: 4_000` at src/agent_builder.rs:1098 ✓
+2. `compose_system_prompt` is called at line 1012 to build the system prompt, and the ContextConfig block is at 1096 — same function `configure_agent`, so the composed prompt IS in scope (well, it's consumed by `with_system_prompt` at line 1012; I'd need to bind it to a variable).
+3. `yoagent::context::estimate_tokens` exists at context.rs:21.
+
+Next: verify the compaction budget is `max_context_tokens - system_prompt_tokens` around :406-410. Then make the change.
+
+Let me be efficient now — the budget is nearly exhausted. Let me check the working tree state first and then do the edit quickly.
+
+Let me plan the edit:
+
+In `configure_agent`:
+```rust
+let effective_window = self.context_window.unwrap_or(model_context_window);
+let effective_tokens = (effective_window as u64) * 80 / 100;
+
+cli::set_effective_context_tokens(effective_window as u64);
+
+// Single choke point ...
+let system_prompt = compose_system_prompt(&self.system_prompt, &self.provider, &self.model);
+let system_prompt_tokens = estimate_tokens(&system_prompt);
+agent = agent
+    .with_system_prompt(system_prompt)
+    ...
+```
+
+Then at the ContextConfig site:
+```rust
+// The system prompt genuinely does not fit ... 
+agent = agent.with_context_config(ContextConfig {
+    max_context_tokens: effective_tokens as usize,
+    system_prompt_tokens,
+    ...
+});
+```
+
+Wait — what does yoagent do with system_prompt_tokens? Need to check the compaction budget computation. Let me look at context.rs around 400.
+
+Also need `estimate_tokens` imported: `use yoagent::context::{ContextConfig, ExecutionLimits};` → add `estimate_tokens`.
+
+Degenerate case: message budget `max_context_tokens - system_prompt_tokens` reaching zero or negative. In yoagent, need to see if it uses usize subtraction or saturating. Let me check.
+
+Let's do this fast with a few parallel commands.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && sed -n '15… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Key findings:
+1. `estimate_tokens` is `text.len().div_ceil(4)` — `usize` return.
+2. `compact_messages` uses `saturating_sub` for the budget — so it already can't panic. But the *value* passed is what matters: if `system_prompt_tokens > max_context_tokens`, the budget is 0, which means everything gets compacted. That's the "honest state" — the prompt genuinely doesn't fit.
+
+Hmm, but what's the degenerate behaviour I should define? The issue says: "With a very large system prompt the message budget `max_context_tokens - system_prompt_tokens` can reach zero or go negative — which is the *honest* state (the prompt genuinely does not fit). An unsigned subtraction would panic or wrap. Make it a defined, non-panicking behaviour and name it at the code."
+
+yoagent uses `saturating_sub` so no panic there. But the question is: should I clamp `system_prompt_tokens` to `max_context_tokens`? If I pass a value larger than max_context_tokens, yoagent gives budget 0 → compaction deletes everything → the "honest state". That's presumably what happened on the DeepSeek session.
+
+Actually wait — with `4_000` hardcoded and the prompt being ~360K tokens (well, the CLAUDE.md is huge, plus context), max_context_tokens was 200000*80/100 = 160000. The messages were compacted against a budget of 156000, so compaction thought there was plenty of room when actually the system prompt consumed 360K. So the *total* exceeded the real window, and... hmm, actually compaction fired on turn 1 and deleted the user task.
+
+Actually the mechanism: yoagent's compaction decides based on messages only against `budget = max_context_tokens - system_prompt_tokens`. With system_prompt_tokens=4000 and the real prompt being huge, `total_tokens(messages) <= budget` may have failed... Actually the report says compaction fired on turn 1. Either way, the fix is to measure the real prompt.
+
+So my change: measure `estimate_tokens(&system_prompt)`.
+
+Degenerate case handling: I should name what happens. Options:
+(a) Pass the measured count as-is (which could exceed max_context_tokens → yoagent's saturating_sub yields 0 budget → everything compacted).
+(b) Clamp to max_context_tokens and emit a warning.
+
+The issue says "Make it a defined, non-panicking behaviour and name it at the code, so a product user with a huge instruction file gets a stated outcome rather than an underflow."
+
+I think the cleanest: a pure function `system_prompt_budget(composed, max_context_tokens) -> SystemPromptBudget { measured, configured }` that clamps configured to max_context_tokens and reports whether it was clamped/exhausted. Then emit one honest stderr line when the system prompt alone meets or exceeds the window budget.
+
+Hmm, but the task says out of scope: "#926 half 2, the size warning ... Bundle it only if half 1 is already green and you have clock; otherwise say in the write-up that it is owed."
+
+So the warning is optional. But the degenerate case must be "defined, non-panicking behaviour and name it at the code". A comment naming it could suffice, but a pure function makes it testable.
+
+Let me keep it minimal and testable:
+
+```rust
+/// The system-prompt share of the compaction budget, measured from the prompt
+/// that is actually composed rather than assumed.
+///
+/// `estimate_tokens` is yoagent's own estimator — never a second tokenizer
+/// (two copies agree the day they are written and diverge forever after).
+///
+/// Degenerate case, stated rather than left to an unsigned subtraction: a
+/// composed prompt larger than the whole context budget leaves *no* room for
+/// messages, which is the honest state — the prompt genuinely does not fit.
+/// We clamp the reported figure to `max_context_tokens` so the message budget
+/// yoagent computes (`max_context_tokens - system_prompt_tokens`, itself a
+/// `saturating_sub`) is exactly zero rather than a wrapped or panic-ing
+/// number. `exhausted` says so, so a caller can report it instead of
+/// pretending the budget is fine.
+pub(crate) fn system_prompt_tokens(composed: &str, max_context_tokens: usize) -> (usize, bool) {
+    let measured = estimate_tokens(composed);
+    let exhausted = measured >= max_context_tokens;
+    (measured.min(max_context_tokens), exhausted)
+}
+```
+
+Hmm, but do I need the `exhausted` bool? The task says name the behaviour at the code. If I return a tuple, the bool must be consumed (clippy deada code? no, tuple fields are fine, but unused variable would warn). I'd use it to print a one-line notice — which is arguably the "half 2" warning but scoped to the degenerate case only. That seems right: bundling a full size warning is out of scope, but the degenerate case needs *a stated outcome*.
+
+Actually the task explicitly says: "Make it a defined, non-panicking behaviour and name it at the code, so a product user with a huge instruction file gets a stated outcome rather than an underflow." — "a product user ... gets a stated outcome" implies printing something. So yes, a one-line stderr notice in the degenerate case is in-scope (it's the *degenerate* case, not the general size warning which is #926 half 2).
+
+Let me write it with a pure renderer too so it's testable:
+
+```rust
+pub(crate) fn system_prompt_exhausted_note(measured: usize, max: usize, plain: bool) -> String
+```
+
+Hmm, that's getting bigger. Let me keep it tight but testable. Something like:
+
+```rust
+pub(crate) fn system_prompt_budget_note(measured: usize, max: usize) -> Option<String>
+```
+returning `Some(msg)` when exhausted, `None` otherwise. Pure, table-testable, `None` = byte-identical common path.
+
+Now the tests must assert at the emission point — "the value the `ContextConfig` actually carries". Hmm, `configure_agent` is private and returns an `Agent` — can I read the context config off an Agent? Probably not easily. Let me check if yoagent's Agent exposes context config... Probably `agent.context_config()`? Let me check quickly.
+
+Actually, a pragmatic "emission point" here: the pure function's output is what the config carries, and I can test it directly. But the task wants "the value the ContextConfig actually carries". Let me check if Agent has a getter.
+
+Let me grep for `with_context_config` and `context_config` in yoagent agent.rs.
+
+Given limited budget, let me do: check the getter; if none, test the pure seam + a source-level guard that the ContextConfig block reads the measured value (the weakest form). Actually `configure_agent` returns Agent, and Agent may have a public field/accessor. Let me check.
+
+Let me batch: grep agent.rs for context_config, and check how tests in agent_builder call configure_agent/build_agent.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "context_config" ~/.carg… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`agent.context_config` is a **public field** of `Option<ContextConfig>`. So I can assert at the emission point: `config.build_agent().context_config.unwrap().system_prompt_tokens`.
+
+Wait — is `context_config` public in the Agent struct? Line 51: `pub context_config: Option<ContextConfig>,`. Yes. 
+
+Now let me make the edits. Two files: src/agent_builder.rs and CLAUDE.md.
+
+Edit 1: import estimate_tokens.
+Edit 2: bind composed prompt, measure, handle degenerate, pass to ContextConfig, emit note.
+Edit 3: add pure functions.
+Edit 4: tests.
+Edit 5: CLAUDE.md.
+
+Let me look at the exact lines 1006-1030 and 1090-1110 to edit precisely. I have them from earlier output:
+
+```rust
+        // Single choke point for every system-prompt source (default, --system,
+        // --system-file, config): resolve_system_prompt has already picked one,
+        // so appending the grounding note here covers all of them (#664).
+        agent = agent
+            .with_system_prompt(compose_system_prompt(
+                &self.system_prompt,
+                &self.provider,
+                &self.model,
+            ))
+            .with_api_key(&self.api_key)
+            .with_thinking(self.thinking)
+            .with_skills(self.skills.clone());
+```
+
+and
+
+```rust
+        // Tell yoagent the context window size so its built-in compaction knows the budget.
+        // Uses 80% of the effective context window as the compaction threshold.
+        agent = agent.with_context_config(ContextConfig {
+            max_context_tokens: effective_tokens as usize,
+            system_prompt_tokens: 4_000,
+            keep_recent: 10,
+            keep_first: 2,
+```
+
+Note there's also line 1265 and 1310 — other `with_system_prompt(compose_system_prompt(...))` sites. Those are build_side_agent / build_architect_agent / sub-agent? Those don't set context config perhaps. Out of scope-ish; the task is about the ContextConfig site. But hmm, do those go through configure_agent? Let me check line 1260-1320 briefly. Actually the task says "Replace the constant with the count measured from the *same* string the agent is built with" — that's `configure_agent`. Line 1265/1310 are side agents; if they call configure_agent too then fine.
+
+Let me just check quickly. Actually, to be safe and small, I'll do the main site only and note it.
+
+Let me write the edit now.
+
+For the "plain" note, `format::is_plain_output()` exists. And `is_quiet()` gating — should the degenerate notice be silent under quiet? Hmm. This is a data-loss-adjacent condition. The precedent: trust prompt is deliberately NOT silenced; cost warning is deliberately not gated on quiet ("a spend alarm is not informational"). This one is an alarm about a broken configuration. I'll follow the cost-warning precedent: NOT gated on quiet, glyph-free under plain output. State it in a comment.
+
+Now write the code.
+
+```rust
+/// The number of tokens the *composed* system prompt actually occupies.
+///
+/// This is the value handed to yoagent's `ContextConfig.system_prompt_tokens`,
+/// which it subtracts from `max_context_tokens` to get the message budget the
+/// compactor works against. It used to be the constant `4_000` — a promise
+/// about a string nobody measured (#926). On a project with a large
+/// instruction file that promise is false by an order of magnitude, so the
+/// compactor believed it had room it did not have and fired on turn one,
+/// deleting the user's task.
+///
+/// The measurement is yoagent's own `estimate_tokens` — never a second
+/// tokenizer, because two copies of a rule agree the day they are written and
+/// diverge forever after.
+///
+/// **Degenerate case, defined rather than left to an unsigned subtraction:**
+/// a composed prompt at or above the whole context budget leaves *no* room for
+/// messages. That is the honest state — the prompt genuinely does not fit —
+/// and it is clamped here so the message budget yoagent computes (itself a
+/// `saturating_sub`) is exactly zero rather than a wrapped number. The second
+/// return value says the budget was exhausted, so the caller can say so out
+/// loud instead of silently pretending the session has room.
+pub(crate) fn system_prompt_tokens(composed: &str, max_context_tokens: usize) -> (usize, bool) {
+    let measured = estimate_tokens(composed);
+    if measured >= max_context_tokens {
+        (max_context_tokens, true)
+    } else {
+        (measured, false)
+    }
+}
+
+/// One stderr line for the degenerate case above, or `None` when the prompt
+/// fits — which is every ordinary project, and keeps the common path
+/// byte-identical.
+///
+/// Deliberately **not** gated on `is_quiet()`: `--quiet`'s documented scope is
+/// *informational* stderr output, and this is a warning that the session has no
+/// message budget at all. Same reasoning as the cost warning, which is also not
+/// silenced. Glyph-free under `is_plain_output()`.
+pub(crate) fn system_prompt_exhausted_note(
+    measured: usize,
+    max_context_tokens: usize,
+    plain: bool,
+) -> Option<String> {
+    if measured < max_context_tokens {
+        return None;
+    }
+    let marker = if plain { "warning: " } else { "⚠ " };
+    let dash = if plain { "-" } else { "—" };
+    Some(format!(
+        "{marker}the system prompt measures ~{measured} tokens against a {max_context_tokens}-token \
+         context budget {dash} it does not fit, so there is no room for messages.\n  \
+         The compaction budget is now zero (stated, not an underflow).\n  \
+         Shorten the project instruction file(s) or raise `context_window`."
+    ))
+}
+```
+
+Hmm, "raise `context_window`" — that's the config key. Fine as a hint.
+
+Wait — careful: em dash check. Under plain, I use "-". Good.
+
+Now the call site:
+
+```rust
+        let composed_system_prompt =
+            compose_system_prompt(&self.system_prompt, &self.provider, &self.model);
+        agent = agent
+            .with_system_prompt(composed_system_prompt.clone())
+            ...
+```
+
+Hmm, avoiding clone: I need the string later for measuring at the ContextConfig site. Options: compute the count right there and bind it, keep prompt moved into with_system_prompt.
+
+```rust
+        let composed_system_prompt =
+            compose_system_prompt(&self.system_prompt, &self.provider, &self.model);
+        let (system_prompt_tokens, prompt_exhausted) =
+            system_prompt_tokens(&composed_system_prompt, effective_tokens as usize);
+        agent = agent
+            .with_system_prompt(composed_system_prompt)
+            .with_api_key(&self.api_key)
+            .with_thinking(self.thinking)
+            .with_skills(self.skills.clone());
+```
+
+and
+
+```rust
+        agent = agent.with_context_config(ContextConfig {
+            max_context_tokens: effective_tokens as usize,
+            // Measured from the string composed above, never a constant: see
+            // `system_prompt_tokens` for the degenerate case (#926).
+            system_prompt_tokens,
+```
+
+and after the ConfigConfig block (or before), emit:
+
+```rust
+        if let Some(note) = system_prompt_exhausted_note(system_prompt_tokens, effective_tokens as usize, is_plain_output())
+            .filter(|_| prompt_exhausted)
+```
+
+Hmm — `system_prompt_exhausted_note` recomputes the predicate. I return bool from system_prompt_tokens AND have the note check measured < max. Two statements of the same rule → drift. Better: make the pure function return the note-ish data, i.e. have ONE function.
+
+Simplify: one pure function that returns the configured count and the note:
+
+Actually cleanest:
+
+```rust
+pub(crate) fn system_prompt_budget(
+    composed: &str,
+    max_context_tokens: usize,
+    plain: bool,
+) -> (usize, Option<String>) {
+    let measured = estimate_tokens(composed);
+    if measured < max_context_tokens {
+        (measured, None)
+    } else {
+        (max_context_tokens, Some(...))
+    }
+}
+```
+
+One statement, one predicate, returns both facts. Tests assert both. 
+
+Hmm, but `plain` inside a "decision" function — fine, the codebase does that a lot (rtk_announcement(quiet, plain)).
+
+Then call site:
+```rust
+let (system_prompt_tokens, prompt_budget_note) =
+    system_prompt_budget(&composed_system_prompt, effective_tokens as usize, is_plain_output());
+if let Some(note) = &prompt_budget_note {
+    eprintln!("{note}");
+}
+```
+
+Careful: `is_plain_output` import path — in agent_builder.rs what's used? `crate::format::is_plain_output()`. Let me check existing usage.
+
+Let me now also double check `estimate_tokens` import: `use yoagent::context::{ContextConfig, ExecutionLimits};` → add `estimate_tokens`.
+
+Tests: in the existing `#[cfg(test)] mod tests` of agent_builder.rs. I'll add:
+
+```rust
+#[test]
+fn system_prompt_budget_measures_the_composed_prompt() {
+    // ANTI-VACUOUS, asserted FIRST: the fixture really is the string handed to
+    // the config, so the assertions below cannot be satisfied by nothing.
+    let composed = compose_system_prompt("You are Jarvis.", "groq", "llama-4-70b");
+    assert!(!composed.trim().is_empty());
+    assert!(composed.contains("You are Jarvis."));
+
+    let (small, note) = system_prompt_budget(&composed, 160_000, false);
+    assert!(note.is_none(), "a small prompt owes no note");
+    assert_eq!(small, estimate_tokens(&composed));
+
+    // Scaling, strong form: a much larger prompt yields a much larger count,
+    // and each equals the estimator on the same string.
+    let big = compose_system_prompt(&"x".repeat(400_000), "groq", "llama-4-70b");
+    let (large, note_big) = system_prompt_budget(&big, 160_000, false);
+    assert!(large > small * 10, "{large} vs {small}");
+    assert_eq!(large, 160_000); // clamped: exhausted
+    assert!(note_big.is_some());
+}
+
+#[test]
+fn a_small_prompt_yields_a_small_number_not_a_constant() {
+    // NEAR-MISS GUARD: the constant this replaced was 4_000 for every prompt.
+    let tiny = compose_system_prompt("hi", "groq", "m");
+    let (n, note) = system_prompt_budget(&tiny, 160_000, false);
+    assert!(n < 4_000, "got {n}");
+    assert!(note.is_none());
+    let mid = compose_system_prompt(&"y".repeat(40_000), "groq", "m");
+    let (n2, _) = system_prompt_budget(&mid, 160_000, false);
+    assert_ne!(n2, n);
+    assert_eq!(n2, estimate_tokens(&mid));
+}
+```
+
+Hmm wait: `compose_system_prompt(&"x".repeat(400_000), ...)` — estimate_tokens = 400_000/4 = 100_000 plus the note, under 160_000. Need the big one to exceed max: use 800_000 chars → 200_000 tokens > 160_000. Let me use `"x".repeat(800_000)`.
+
+And the exhausted note test:
+```rust
+#[test]
+fn exhausted_prompt_states_a_zero_budget_instead_of_underflowing() {
+    let composed = "x".repeat(800_000);
+    let (configured, note) = system_prompt_budget(&composed, 160_000, false);
+    assert_eq!(configured, 160_000);
+    // Byte-level, not eyeballed: the note is glyph-free under plain output.
+    let plain = system_prompt_budget(&composed, 160_000, true).1.unwrap();
+    assert!(plain.is_ascii());
+    assert!(!plain.contains('—'));
+    assert!(note.unwrap().contains("does not fit"));
+}
+```
+
+Hmm the non-plain one contains em dash. And assert `plain.is_ascii()`.
+
+Also an emission-point test: the value ContextConfig carries. Can I build an AgentConfig and call build_agent and inspect `agent.context_config`? `build_agent` may need API key / network? It builds an agent; `configure_agent` just configures. Tests at line 1546 etc. construct AgentConfig and call... let me check one test to see what build_agent does without network. Line 1546: `system_prompt: "Test prompt.".to_string()`, likely in `test_side_agent_...`. Let me check a test that calls build_agent to model it.
+
+Given budget, let me check line 1540-1580 and 2412-2425.
+
+Actually `test_configure_agent_applies_all_settings` at 2412 already invokes something. Let me look.
+
+I'll do it in the next batch, then write all edits.
+
+Let me be efficient: read those test regions and then write.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2400,2440p' src/agent_bu… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to be efficient with tokens. Let me make the edit now.
+
+The plan:
+1. Add helper `system_prompt_token_budget(composed, plain) -> (usize, Option<String>)` pure function computing estimate_tokens, and a warning when it's a large fraction... Actually keep it simpler.
+2. In configure_agent: build composed prompt once, store in a variable, pass to with_system_prompt, and use estimate_tokens(&composed) for system_prompt_tokens. Guard the degenerate case: if system_prompt_tokens >= max_context_tokens, clamp to a defined value with a stated message.
+
+Let me write the code.
+
+Add import: `use yoagent::context::estimate_tokens;` — check it's exported. `yoagent::context::{ContextConfig, ExecutionLimits}` is imported at line 9. Add estimate_tokens there.
+
+Now the degenerate case: `max_context_tokens: effective_tokens as usize` and system_prompt_tokens can exceed it. yoagent does `max_context_tokens.saturating_sub(system_prompt_tokens)` so budget 0 — no panic. But `compaction_target(budget)` may compute something. Also our own display uses cli::set_effective_context_tokens. Let's define: clamp configured system_prompt_tokens to at most `max_context_tokens` (so the arithmetic is honest and non-negative), and print a one-line warning naming both numbers.
+
+Actually the honest state: the prompt does not fit. Best behavior: clamp to max_context_tokens so budget = 0, and emit a warning. Let me write a pure helper:
+
+```rust
+/// The system-prompt token term for yoagent's `ContextConfig`.
+///
+/// yoagent's compaction budget is `max_context_tokens - system_prompt_tokens`
+/// computed against the message list, so this number IS the prompt's claim on
+/// the window. It was hardcoded to `4_000` (#926): on a session whose composed
+/// system prompt is far larger — this repo's own CLAUDE.md is ~360K tokens —
+/// yoagent believed it had the whole window for messages, compaction fired on
+/// turn one, and it deleted the *user task*. The number is now measured from
+/// the same string `with_system_prompt` receives, through yoagent's own
+/// `estimate_tokens` (never a second tokenizer: two copies agree the day they
+/// are written and diverge forever after).
+///
+/// DEGENERATE CASE, deliberate and named here rather than left to underflow:
+/// a composed prompt can be larger than the whole window. The arithmetic
+/// `max_context_tokens - system_prompt_tokens` is an unsigned subtraction, so
+/// reporting a value above `max_context_tokens` would give yoagent a budget of
+/// zero by way of `saturating_sub` while our own display said something else.
+/// We clamp to `max_context_tokens` — the honest reading, "the prompt does not
+/// fit" — which yields a message budget of exactly zero, and the caller prints
+/// a stated outcome so a product user with a huge instruction file learns why
+/// nothing is being kept rather than watching compaction eat the task.
+pub(crate) fn system_prompt_token_budget(
+    composed: &str,
+    max_context_tokens: usize,
+    plain: bool,
+) -> (usize, Option<String>) {
+    let measured = estimate_tokens(composed);
+    if measured <= max_context_tokens {
+        return (measured, None);
+    }
+    (max_context_tokens, Some(system_prompt_over_window_message(measured, max_context_tokens, plain)))
+}
+```
+
+And message:
+
+```rust
+pub(crate) fn system_prompt_over_window_message(measured: usize, max: usize, plain: bool) -> String {
+    if plain {
+        format!(
+            "system prompt is ~{measured} tokens but the context window is {max} — nothing left for messages. Reduce the prompt (a large project instruction file is the usual cause) or raise context_window."
+        )
+    } else {
+        format!(
+            "⚠ system prompt is ~{measured} tokens but the context window is {max} — no room left for messages.\n  Reduce the prompt (a large project instruction file such as CLAUDE.md is the usual cause) or raise `context_window`."
+        )
+    }
+}
+```
+
+Now in configure_agent:
+
+```rust
+let composed_prompt = compose_system_prompt(&self.system_prompt, &self.provider, &self.model);
+agent = agent
+    .with_system_prompt(composed_prompt.clone())
+    ...
+```
+
+Then at ContextConfig:
+```rust
+let max_context_tokens = effective_tokens as usize;
+let (system_prompt_tokens, over_window_note) =
+    system_prompt_token_budget(&composed_prompt, max_context_tokens, is_plain_output());
+if let Some(note) = over_window_note {
+    if !is_quiet() { eprintln!("{note}"); }
+}
+agent = agent.with_context_config(ContextConfig {
+    max_context_tokens,
+    system_prompt_tokens,
+    ...
+```
+
+But `composed_prompt` is moved into with_system_prompt? No, Agent::with_system_prompt takes impl Into<String>; passing composed_prompt.clone() works, or pass composed_prompt.clone() and keep original. Better: `agent.with_system_prompt(composed_prompt.clone())`.
+
+Wait, is_quiet is in format::* — yes `crate::format::is_quiet`. Fine.
+
+Note there are other `with_system_prompt(compose_system_prompt(...))` sites at 1265 and 1310 (side agents / architect). Task says only the main ContextConfig site. Keep those.
+
+Tests: need to assert at emission point — the value ContextConfig actually carries. Does Agent expose context_config? Yes: `pub context_config: Option<ContextConfig>` at agent.rs:51 — but it's behind a feature? Line 1146: `context_config: if self.context_management_disabled { None } else { Some(...) }` in some finished/built structure. Hmm, that's for the loop, not Agent. Let me check if Agent has a getter. `pub context_config` field at line 51 of agent.rs is in `AgentLoop`? Let me check quickly. Actually simpler: test the pure helper `system_prompt_token_budget` plus a scaling test using compose_system_prompt with different-sized bases, asserting the configured value equals estimate_tokens. But "assert at the emission point — the value the ContextConfig actually carries". If Agent doesn't expose it, I can test the helper that produces the ContextConfig field values. Let me check what struct has context_config at line 51.
+
+Let me be economical: check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ sed -n '40,60p' ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_agent_config" s… ✓ (3ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`Agent.context_config` is a public field. So I can assert at the emission point: `config.build_agent().context_config.unwrap().system_prompt_tokens`.
+
+Let me make the edit now.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+Now the edit:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (1 → 1 lines)
+  - use yoagent::context::{ContextConfig, ExecutionLimits};
+  + use yoagent::context::{estimate_tokens, ContextConfig, ExecutionLimits};
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (8 → 82 lines)
+            note
+        } else {
+            format!("{base}\n\n{note}")
+  +     }
+  + }
+  + 
+  + /// The system-prompt term for yoagent's `ContextConfig`, MEASURED from the
+  + /// composed prompt rather than promised as a constant (#926).
+  + ///
+  + /// Why this number is load-bearing rather than bookkeeping: yoagent's
+  + /// compaction budget is `max_context_tokens - system_prompt_tokens`, computed
+  + /// against the *message list* (`yoagent-0.18.1/src/context.rs`,
+  + /// `compact_messages`). So this value IS the prompt's claim on the window. It
+  + /// used to be hardcoded `4_000`, which is a promise about a string yoyo does
+  + /// not author — the prompt is whatever the user passed plus a project
+  + /// instruction file, and this repo's own `CLAUDE.md` is two orders of
+  + /// magnitude past it. On the first session where that happened, yoagent
+  + /// believed it had nearly the whole window for messages, compaction fired on
+  + /// turn one, and it deleted the **user task** — the planner then produced
+  + /// nothing and three sessions died the same way.
+  ... (59 more lines)
+ ✓ (14.0s)
+  - use yoagent::context::{ContextConfig, ExecutionLimits};
+  + use yoagent::context::{estimate_tokens, ContextConfig, ExecutionLimits};
+ ✓ (14.2s)
+            note
+        } else {
+            format!("{base}\n\n{note}")
+  +     }
+  + }
+  + 
+  + /// The system-prompt term for yoagent's `ContextConfig`, MEASURED from the
+  + /// composed prompt rather than promised as a constant (#926).
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The second edit landed (82 lines added) but the auto-check ran mid-edit and reported an unterminated string at 3144 — that's from the first edit's check? Actually the messages are interleaved. The E0765 at 3144 seems to be from a stale check of the first edit (the file had been partially...). Hmm, no — "unterminated double quote string" at 3144 with an escaped quote in a test — that's a pre-existing test string? Let me just apply the configure_agent edit and then build to see the real state.
+
+Actually wait — the E0765 might be a real problem introduced by... no, my edits didn't touch line 3144. It's likely the auto-check raced with the edit (it ran while file was being written). Let me proceed and then run the full check.
+
+Now edit configure_agent.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.6s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (12 → 18 lines)
+            // Single choke point for every system-prompt source (default, --system,
+            // --system-file, config): resolve_system_prompt has already picked one,
+            // so appending the grounding note here covers all of them (#664).
+  +         //
+  +         // The composed string is bound to a local because the `ContextConfig`
+  +         // below must be told ITS size (#926) — measuring a second, separately
+  +         // composed prompt would be a second copy of a rule that agrees today
+  +         // and diverges forever after.
+  +         let composed_prompt = compose_system_prompt(
+  +             &self.system_prompt,
+  +             &self.provider,
+  +             &self.model,
+  +         );
+            agent = agent
+  -             .with_system_prompt(compose_system_prompt(
+  -                 &self.system_prompt,
+  -                 &self.provider,
+  -                 &self.model,
+  -             ))
+  +             .with_system_prompt(composed_prompt.clone())
+  ... (3 more lines)
+ ✓ (248ms)
+            // Single choke point for every system-prompt source (default, --system,
+            // --system-file, config): resolve_system_prompt has already picked one,
+            // so appending the grounding note here covers all of them (#664).
+  +         //
+  +         // The composed string is bound to a local because the `ContextConfig`
+  +         // below must be told ITS size (#926) — measuring a second, separately
+  +         // composed prompt would be a second copy of a rule that agrees today
+  +         // and diverges forever after.
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's a pre-existing syntax error at line 3144-3150? That's odd — "unterminated double quote string" in a test at line 3144. Wait, was that pre-existing? Let me check git diff to see if I broke it. Actually the error appeared after my first edit (the import) — that first error was unused import; then after the second edit, the unterminated string error. So my second edit (adding the function) broke something? Let me look at that region.
+
+Actually the error is at line 3144 which is likely in a test. My inserted function with `\` line continuations in format! strings... Hmm, the error message shows the *content* of the test string being cut off at "the " — suggesting the raw source has a string literal that got misparsed. Let me look at the actual file around 3090-3160.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3130,3175p' src/agent_bu… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+This is a pre-existing file state? No — this looks corrupt. Let me check git diff for this region — did I accidentally? I only made two edits: import line and the function+configure_agent. My edits wouldn't touch line 3144.
+
+Wait — maybe the "Auto-check" output shown is stale/parallel and the file is fine. Let's check git status/diff to see if the file has this corruption vs HEAD.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && git stash lis… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The file lost ~929 lines! Something truncated the file. And sed printed nothing for lines 3170+ meaning the file is shorter than 3170. My write via edit_file shouldn't have done that... but the auto-check may have raced? Or one of my edits had a bad match and replaced a large chunk? The second edit replaced "8 lines with 82 lines" — fine. The third replaced 12 with 18.
+
+Hmm, 1007 changed lines with 929 deletions. Let me see git diff to inspect. Perhaps the file was truncated by something. Let me check the file end.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs && ta… ✓ (7ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The file now ends abruptly at line 3152, mid-string. That means the file was TRUNCATED — the diff shows -929 lines. My edit_file calls appear to have caused a truncation? Let me look at the raw git diff to understand. Actually the `wc -l` output was 3152 but the original file was much longer (it had tests around line 3200+). Let me check: original file had ~3966 lines (registered at 3986). The `git diff --stat` says 1007 lines changed, 97 insertions, 929 deletions. So something deleted ~929 lines.
+
+This is bad. The file is corrupted. Wait — did my `write_file`? No, I used edit_file. Hmm. But one of the "Auto-check failed" outputs showed the error at line 3144/3150 with an unterminated string. Actually, that suggests the file was ALREADY truncated by a previous turn — possibly the earlier "Agent stopped: Max tokens" interrupted a tool call mid-write? 
+
+Actually, more likely: my first edit_file call happened and then the auto-check ran... no.
+
+Let me check git diff more carefully to see what got deleted. The safest route: restore src/agent_builder.rs from HEAD and redo my edits cleanly.
+
+But wait — that would lose whatever was there. Let me first check what the diff deleted. Let me get a summary of the deletion hunks.
+
+Actually the file is clearly corrupt (unterminated string at EOF). The right move: restore from git and re-apply my change.
+
+Let me do that carefully.
+
+Actually hold on. Let me check whether the file at HEAD was 3152 lines already... `git show HEAD:src/agent_builder.rs | wc -l`. The registered module size was 3986 lines. Let me check.
+
+Plan:
+1. `git checkout -- src/agent_builder.rs`
+2. Verify file length and integrity (`cargo build`).
+3. Re-apply my two edits.
+
+Let me do it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD:src/agent_builder.… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: the working tree file was truncated to 3152 lines. The corruption happened somewhere. Restore from HEAD and re-apply edits.
+
+Note: the truncation might have been caused by the session boundary (max tokens) interrupting something. Either way, restore.
+
+Let me restore and verify.
+────────────────────────────────────────────────────────────────────────────────
+
+The working file got truncated (3986 → 3152 lines). Restoring from HEAD and re-applying cleanly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git checkout -- src/agent_builde… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Restored. Now re-apply edits one at a time, verifying after each.
+
+Edit 1: import estimate_tokens.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (21ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (92 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, I put "!" instead of the warning glyph. Let me use the actual ⚠ glyph. I wrote `! system prompt` — I should use the emoji. Let me check what glyph the other messages use. Looking at CLAUDE.md: `⚠ A project-local .yoyo/commands/ offered...`. And `project_mcp_refusal_message`. Let me use `⚠`. Actually in cli.rs messages, they use `⚠`. Let me just fix it to use the emoji directly.
+
+Also I need to check the code style — I used `\u{2014}` in a Python string which will be written literally as `\u{2014}` in Rust which is the em dash escape. Actually in Rust, `\u{2014}` inside a format! string is a valid unicode escape. That's fine but the surrounding code likely uses the literal char. Let me set it to the literal em dash for consistency.
+
+Let me fix both: the `!` and the `\u{2014}`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now wire it in configure_agent. Let me view that region and apply the edit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (59 lines) ✓ (8.5s)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5634 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::effective_disallowed_tools_pairs_shared_state_with_sub_agent ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::every_connect_failure_arm_reports_the_error_it_was_handed ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::every_connect_failure_arm_escapes_the_values_it_interpolates ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::external_servers_json_table ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_bui...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+The system-prompt-chokepoint gate flags that `.with_system_prompt(...)` must pass an approved composer directly. I changed it to `composed_prompt.clone()` — a local var. That's a bypass per the gate.
+
+Let me look at the gate to see what it accepts. The approved composers are `compose_system_prompt(` / `sub_agent_system_prompt(`. Let me check the gate's ARG_WINDOW_LINES window logic.
+
+Simplest fix: keep the inline `compose_system_prompt(...)` inside `with_system_prompt(...)` and measure separately via the same call — but that would compose twice (task says don't re-compose a second prompt to measure).
+
+Alternative: extract a helper that composes AND returns the measured count, e.g. `fn compose_system_prompt_with_budget(...) -> (String, usize)`. Then at the call site... still `.with_system_prompt(prompt.clone())` which is not an approved composer.
+
+Let me read the gate to see how it detects.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,120p' tests/system_pro… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The gate scans a 2-line window after the `.with_system_prompt(` call for an approved composer. My edit puts the composer on a prior line (bound to a local). 
+
+Note there's also a "dead code" concern: `compose_system_prompt` must still be called at a production call site or `UnusedApprovedComposer` fires.
+
+Best approach: keep the inline call, and get the composed string separately without recomposing. Options:
+
+Option A: compose once into a local, and at the call site inline `compose_system_prompt(...)`... no, that's two compositions.
+
+Option B: introduce a single new function `compose_system_prompt_measured(base, provider, model, max_context_tokens, plain) -> (String, usize, Option<String>)` that composes *once* and measures. Then the call site becomes:
+
+```rust
+let (composed_prompt, prompt_tokens, over_window_note) = compose_system_prompt_measured(...);
+...
+agent = agent.with_system_prompt(composed_prompt.clone())
+```
+
+Still the same gate problem.
+
+Option C: reorder — do the `with_system_prompt(compose_system_prompt(...))` inline as before, and compute the token count from a clone obtained... Without recomposing we need the string. We could compose once into a variable `composed`, then call `.with_system_prompt(composed.clone())` — gate fails.
+
+Hmm. The gate accepts a window of 2 lines after the call token. Actually the window is `lines[i..window_end]` where window_end = i+1+2. So lines i, i+1, i+2 — three lines. If I write:
+
+```rust
+agent = agent
+    .with_system_prompt(compose_system_prompt(
+        &self.system_prompt,
+        &self.provider,
+        &self.model,
+    ))
+```
+that's within the window (the composer appears on the same line as `.with_system_prompt(`). Good.
+
+But I also need the string. What if I restructure so the measurement happens *inside* the composer itself? E.g. change `compose_system_prompt` to also record the count into a store... no, that's a global, hidden.
+
+Option D: Measure the *base* system prompt plus the note separately? No — must be the same string.
+
+Option E: The cleanest: have the composed string produced once by a wrapper, and have the wrapper's *name* used at the call site such that the window contains an approved composer. Since `APPROVED_COMPOSERS` are names ending in `(`, if I add my new composing function name... but the allow-list is a const in the test file and the test says the list only shrinks and each entry must be used. Adding `compose_system_prompt_measured(` to APPROVED_COMPOSERS would be a test change — allowed? The gate is a test that I'd be modifying. Hmm, that's editing a gate to accommodate my change; risky but legitimate if the new function genuinely composes.
+
+Actually wait — simpler: keep `.with_system_prompt(compose_system_prompt(...))` inline (byte-identical to before, gate satisfied), and separately measure... we need the string.
+
+What about: bind the composed string first, then call inline `compose_system_prompt` again? That recomposes — task explicitly forbids "re-composing a second prompt to measure".
+
+Option F: Make the composed prompt available *through* the existing call by having `compose_system_prompt` be called at the site and the result measured via a different route: compute the token count BEFORE the agent call, from... it needs the string.
+
+OK, Option G (cleanest and honest): change `compose_system_prompt` itself to be the measuring seam? No — it returns String.
+
+Option H: Have the *call site* be:
+```rust
+agent = agent
+    .with_system_prompt(compose_system_prompt_measured(
+        &self.system_prompt,
+        &self.provider,
+        &self.model,
+        &mut prompt_tokens,
+    ))
+```
+Hmm, out-param via &mut. That's one call, composing once, and it contains `compose_system_prompt` as a prefix of `compose_system_prompt_measured` — does `window.contains("compose_system_prompt(")` match `compose_system_prompt_measured(`? No, because "compose_system_prompt_measured(" doesn't contain "compose_system_prompt(" (the char after "compose_system_prompt" is "_", not "("). So it would not match. Good — the gate would fail.
+
+So I need to add my function name to APPROVED_COMPOSERS. But then the existing `compose_system_prompt(` entry must still be used somewhere in production — it won't be. That would fire `UnusedApprovedComposer`.
+
+Hmm, unless I keep `compose_system_prompt` used. Let me check how many production sites use it. Lines 1265, 1310 earlier were in `build_side_agent` etc. Let me check.
+
+Actually let me reconsider. Maybe the simplest design that satisfies both the gate and "one statement of the number": compose into a local, and at the with_system_prompt site pass a *reference* expression that still contains the composer... no.
+
+Alternative: Keep the call site exactly as it is today (inline compose_system_prompt), and make the *measurement* happen by having the composed string saved from within `compose_system_prompt`? That requires it to return both. But then the call site uses `.0`.
+
+Hmm, what about: the call site stays inline and unchanged:
+```rust
+agent = agent
+    .with_system_prompt(compose_system_prompt(
+        &self.system_prompt,
+        &self.provider,
+        &self.model,
+    ))
+    ...
+```
+and then later, for measuring, we recompose. The task says don't. But is recomposing actually harmful? It's a pure function; the "don't compose a second prompt" is about drift risk. `compose_system_prompt` is deterministic and pure, so `compose_system_prompt(base, provider, model)` twice yields identical strings. Actually the task says "thread the string (or its measured count) to the ContextConfig construction rather than re-composing a second prompt to measure." — explicitly the seam is the task. So the seam matters.
+
+Best solution: make the seam explicit by introducing ONE new function that composes and measures, and update the gate's APPROVED_COMPOSERS + keep other call sites using compose_system_prompt.
+
+Let me check other production call sites of compose_system_prompt.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "compose_system_prompt\|… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`src/tools.rs:1681` calls `compose_system_prompt` in production (inside `sub_agent_system_prompt`), so the APPROVED_COMPOSERS entry stays used even if agent_builder's site changes. 
+
+So the cleanest approach: 
+- Add `system_prompt_tokens` measurement via a `&mut` out param or restructure.
+
+Wait — actually simpler and fully in the spirit: make the call site use the composer inline while capturing the string:
+
+```rust
+let composed_prompt = compose_system_prompt(&self.system_prompt, &self.provider, &self.model);
+agent = agent
+    .with_system_prompt(composed_prompt.clone())
+```
+
+fails the gate.
+
+What if instead the gate's window picks up the composer because I keep the composer *within 2 lines after* the call token? The window is lines[i..i+3]. If I write:
+
+```rust
+agent = agent
+    .with_system_prompt(
+        composed_prompt.clone(), // from compose_system_prompt(&self.system_prompt, ...)
+    )
+```
+No — hacky and would be gaming the gate.
+
+Honest approach: introduce a new approved composer that both composes and measures, and register it. But the gate's own doc says the allow-list "only ever shrinks". Adding an entry is a widening of a security-ish allow-list. Hmm, but the new entry is a *strictly narrower* function (it composes via the same statement), so it's arguably fine. But it changes a gate, and the task file says files: src/agent_builder.rs, src/cli.rs, CLAUDE.md. Editing tests/system_prompt_chokepoint.rs is out of stated file scope.
+
+Better idea: Have `configure_agent` keep the exact inline call form, and obtain the measured count from a small helper that composes once and is called *as the argument*:
+
+Actually — what about restructuring so that the *with_system_prompt* call takes the composer's output inline, and we compute tokens inside a closure that captures... no.
+
+Hmm, let me reconsider: does the gate scan only production region (before `#[cfg(test)]`)? Yes. And it flags any `.with_system_prompt(` whose 3-line window lacks an approved composer.
+
+Alternative honest design: make a single function that returns both, named so it contains "compose_system_prompt(" — impossible.
+
+OK what about: keep `compose_system_prompt` at the call site and measure the composed prompt by *also* binding it — via a helper `measured_system_prompt(base, provider, model) -> (String, usize)`? At the call site:
+
+```rust
+let (composed_prompt, prompt_tokens) = measured_system_prompt(...);
+agent = agent.with_system_prompt(composed_prompt);  // gate fails
+```
+
+Unless... the gate reads `lines[i..i+3]` where i is the line containing `.with_system_prompt(`. What if the call site is written as:
+
+```rust
+        agent = agent
+            .with_system_prompt(composed_prompt)
+```
+window = those 2-3 lines. No composer.
+
+So any non-inline form fails.
+
+Therefore the design must be: the composer call is the argument. To measure, the composer's output must be reused. The only way to both inline it and reuse it is if the composer call site *is* where measurement happens inside the same expression... 
+
+Idea: use a `let` binding as the argument source but keep the composer inline by making the binding *itself* the argument extraction:
+
+```rust
+        let composed_prompt = compose_system_prompt(&self.system_prompt, &self.provider, &self.model);
+        let (prompt_tokens, over_window_note) = system_prompt_token_budget(&composed_prompt, effective_tokens as usize, is_plain_output());
+        if let Some(note) = over_window_note { eprintln!("{note}"); }
+        agent = agent
+            .with_system_prompt(composed_prompt)
+```
+
+Gate fires. So I must update the gate. Hmm.
+
+Wait — re-read the gate window: `let window_end = (i + 1 + ARG_WINDOW_LINES).min(end);` with `ARG_WINDOW_LINES = 2`. That's lines[i], lines[i+1], lines[i+2]. So 2 lines *after* the call line.
+
+So if I put the composer reference within 2 lines after `.with_system_prompt(`, it passes. E.g.:
+
+```rust
+        agent = agent
+            .with_system_prompt(composed_prompt)
+            .with_api_key(&self.api_key)  // line i+1
+            .with_thinking(self.thinking)                       // i+2
+```
+No composer.
+
+What if I keep the composition inline as the argument, and separately hold a clone for measurement:
+
+```rust
+        let composed_prompt = compose_system_prompt(&self.system_prompt, &self.provider, &self.model);
+        // ...
+        agent = agent
+            .with_system_prompt(compose_system_prompt(&self.system_prompt, &self.provider, &self.model))
+```
+That's two compositions — banned by the task. Well... actually it's *not* "a second prompt to measure"; it's the same prompt composed twice. The task's concern is "two copies agree today and diverge forever after" — that's about *implementations*, and about recomposing. It literally says "rather than re-composing a second prompt to measure."
+
+Hmm. But there IS a clean way: make the token measurement derive from the string the agent already holds. Does yoagent's `Agent` expose the system prompt? Let's check `agent.system_prompt` field. If the Agent stores it, I could read it after `.with_system_prompt(...)` and measure that — that's the actual string handed over, zero duplication, one composition. That's the ideal seam!
+
+Let me check yoagent Agent for a system_prompt accessor.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "system_prompt" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/y… ✓ (3ms)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+The gate scans production lines for `.with_system_prompt(` and requires an approved composer within `ARG_WINDOW_LINES = 2` lines after the call. My change is:
+
+```
+        let composed_prompt =
+            compose_system_prompt(&self.system_prompt, &self.provider, &self.model);
+        agent = agent
+            .with_system_prompt(composed_prompt.clone())
+```
+
+The composer is now *above* the call, not within 2 lines after. The gate's window is `lines[i..window_end]` — from the call site forward only. So I broke it.
+
+Two options: (a) keep the composition inline at the call site and measure from a separate variable — but that means composing twice or measuring a copy. (b) Reorder: call `with_system_prompt(compose_system_prompt(...))` inline (approved), and separately compute the measured count from the same inputs — but that's composing a second prompt to measure, which the task explicitly forbids.
+
+(c) The cleanest: keep the composer inline in the call, and capture it once via a `let` that is *also* the argument. Actually the gate only needs the window after the call to contain an approved composer. So:
+
+```
+agent = agent
+    .with_system_prompt(compose_system_prompt(
+        &self.system_prompt,
+        &self.provider,
+        &self.model,
+    ))
+```
+
+That's the original. To measure it, I need the string. Hmm.
+
+What about ordering: put the with_system_prompt call first (inline composer), then compute `composed_prompt` afterwards by... no, that composes twice.
+
+Alternative: bind the composed string BEFORE, then have the call site window contain the composer name in a comment? No — that's gaming the gate.
+
+Better approach: the gate's intent is "the argument to with_system_prompt is an approved composer". The honest fix that keeps one statement: make the call site itself pass the composed value via a wrapper function that IS approved, or change the gate's window.
+
+Hmm — but the gate is a test file `tests/system_prompt_chokepoint.rs` which is *not* protected. I can update it. But the safest and most in-spirit move: keep the composer inline at the call and thread the composed string out through a variable defined *at* the call site using a block. E.g.:
+
+```
+let composed_prompt = {
+    let p = compose_system_prompt(...);
+    agent = agent.with_system_prompt(p.clone());
+    p
+};
+```
+
+The window after `.with_system_prompt(` spans the call line plus 2 more lines — the argument is on the same line, so `window` = the call line joined with the next 2 lines. If the composer call appears *before* on the same line, that works: `agent = agent.with_system_prompt(compose_system_prompt(&self.system_prompt, &self.provider, &self.model))` — but rustfmt would wrap it.
+
+Cleanest legitimate fix: relax the gate by ALSO scanning a window *before* the call. But that weakens the detector.
+
+Actually, simplest correct thing: pass the argument inline exactly as before, and measure the string separately from the *same* inputs but through the same function — no wait.
+
+Let me reconsider: I can have the composer be the very next thing. Layout:
+
+```
+        let composed_prompt = compose_system_prompt(&self.system_prompt, &self.provider, &self.model);
+        agent = agent
+            .with_system_prompt(&composed_prompt)
+```
+
+Here `window` = the `.with_system_prompt(` line + 2 following lines. Those contain `.with_api_key(...)` etc. — no composer. Fails.
+
+So gate forward-window can't see it.
+
+Option: update the gate to look at a window *centred* on the call, i.e. also include lines before. That's actually an improvement: an approved composer producing a binding used by the call is exactly as safe. But the gate's doc says a small window is "the safe direction: it fails loudly rather than passing quietly."
+
+Given the constraint and honesty: the best is to keep the call site directly wrapping the composer (so the gate is satisfied structurally, unchanged), and get the composed string for measurement without a second composition. I can do that by wrapping in a small helper that both composes and is detectable... no.
+
+Actually — I could measure from the agent itself! yoagent exposes `pub system_prompt: String` on Agent (line 29). So after `.with_system_prompt(compose_system_prompt(...))`, read `agent.system_prompt`. Wait, is `Agent.system_prompt` public? Line 29: `pub system_prompt: String,` — yes! But is it on `Agent` or on an inner struct? Let me check. It's in the struct at line 51 `pub context_config` — same struct probably. Let me verify by checking if `agent.system_prompt` compiles.
+
+That's actually the ideal: measure the string the agent *actually carries*, which is even stronger than the composed local — it's the emission point. And the call site stays byte-identical to the original.
+
+Let me check whether that field is on `Agent`.
+
+Actually careful: there are 4 clones of `self.system_prompt` at lines 862/945/984/1021 — those look like `to_config()`/`clone_for...` methods. The struct might be `AgentConfig`-ish internal. Line 29 vs 51 - could be different structs (`AgentConfig` vs `Agent`). Let me just try it.
+
+Let me revert my with_system_prompt change back to the original inline form, and then read `agent.system_prompt`.
+
+But does `.with_system_prompt` return Agent with field accessible? Let's test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '20,55p' ~/.cargo/registr… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`Agent.system_prompt` is public. So I can keep the call site byte-identical and measure `agent.system_prompt` — which is the *actual* string the agent carries, the emission point. Even better.
+
+Let me revert the with_system_prompt change and measure from `agent.system_prompt`.
+
+But wait — `configure_agent` is called before `.with_skills()`. Order: with_system_prompt(...).with_api_key().with_thinking().with_skills(). Then tools. Then context_config. So `agent.system_prompt` is set. But is there `sub_agent_system_prompt` appending elsewhere? No, that's tools.rs for sub-agents.
+
+But careful: line 407-410 in agent.rs shows `with_system_prompt` may append. Actually that's in some other fn (`with_skills` maybe appends skill prompt fragments?). Let me check lines 400-415.
+
+Actually reading `agent.system_prompt` at the ContextConfig site captures whatever the agent carries at that moment — exactly right, and it accounts for anything appended in between. That's strictly the best.
+
+Let me restore the inline call site.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (54 lines) ✓ (8.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test system_prompt_… ✓ (186ms)
+
+  ✓ Watch passed after fix (attempt 2)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

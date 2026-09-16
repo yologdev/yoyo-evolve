@@ -1,0 +1,532 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me start by reading the current state of `src/agent_builder.rs` around the relevant functions, check the tests, module_size register, and CLAUDE.md bullet.
+
+Let me look at the code first.
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the current state of the implementation and the relevant files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '960,1060p' src/agent_bui… ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the call site and the full context.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '935,975p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1150,1215p' src/agent_bu… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me see the full `system_prompt_token_budget` and the exact call site, and look at existing tests structure in `agent_builder.rs` (is there a `#[cfg(test)]` module?). Also check if there's a sibling test file.
+
+Let me look for test modules in agent_builder.rs.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.8s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cfg(test)" src/agent_bu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '971,1030p' src/agent_bui… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me pick up where I left off. I was looking at the implementation. I need to:
+
+1. Add tests (the task's TESTS section)
+2. Update CLAUDE.md's `agent_builder.rs` bullet
+3. Re-paste the module-size register line for `src/agent_builder.rs`
+
+Let me first read the exact function signature and the call site to write correct tests.
+
+Let me re-read the function and the call site carefully.
+────────────────────────────────────────────────────────────────────────────────
+
+Let me re-read the exact implementation and call site so I can write correct tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "system_prompt_token_bud…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1570,1620p' src/agent_bu… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the call site context to understand the exact code. Let me view lines 1165-1200.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1160,1200p' src/agent_bu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '965,995p' src/agent_buil… ✓ (2ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need to write tests. The task says: "assert at the emission point — the value the `ContextConfig` actually carries". The strongest emission point available is a `ContextConfig` built via the same code path. But `configure_agent`/`build_agent` requires a provider and network potentially. Hmm.
+
+Let me check `build_agent`'s signature and whether it can be driven in a test. Actually, the evaluator said the tests should assert on the value the ContextConfig carries. Let me check if there is a way to build the ContextConfig in a test without spawning the agent.
+
+Actually, a cleaner approach: extract the ContextConfig construction into a pure function, or assert on the tuple `(prompt_tokens, note)` returned by `system_prompt_token_budget` which is what the config receives. But the task explicitly says "assert at the emission point — the value the `ContextConfig` actually carries".
+
+Hmm, the best emission point test would build the `ContextConfig` the way the production site does. But that's inside `build_agent` which builds a whole Agent (needs provider, might do network config creation — actually `create_model_config` just constructs config, no network).
+
+Let me check what `build_agent` does and whether it's testable. Let me look at the existing tests in agent_builder.rs for `build_agent`.
+
+Actually, let me reconsider. The strongest reasonable emission-point assertion:
+1. Build a `ContextConfig` by calling a helper that both production and test use. Currently production inlines the ContextConfig construction from the tuple. 
+
+A clean way: extract a pure function `context_config_for(prompt_tokens, effective_tokens) -> ContextConfig` and call it at the production site, then test that the returned ContextConfig has `system_prompt_tokens == estimate_tokens(prompt)`. That is a genuine emission point — the value the config carries.
+
+But wait — the task says "reuse yoagent's own estimator, no second tokenizer" and "one statement of the number". Extracting the ContextConfig build would be an extra refactor of working code. The evaluator said "focus on completing the missing functionality, not on refactoring what works."
+
+Hmm. Let me think about what test to write that is strong and honest.
+
+Option A: Test `system_prompt_token_budget` directly. The tuple's `.0` is exactly what's assigned to `system_prompt_tokens` at the call site. This is one layer below the config but the assignment is a direct field assignment. The task's phrasing "the value the `ContextConfig` actually carries" — I can assert the tuple equals what the config carries by also asserting the call-site wiring with a source-level guard? That's weak.
+
+Option B: Extract a small pure function that builds the ContextConfig from `(prompt_tokens, effective_tokens)`, used at the call site, and test it. This makes the emission point literally a `ContextConfig`.
+
+I think Option B is best and is what the evaluator wants. But it's a refactor. Actually it's tiny — one function that returns ContextConfig, called once. And it makes the degenerate clamp and the measured number both assertable at the true emission point.
+
+Hmm, but there's a risk: `ContextConfig` fields — I need to check which fields are set. Let me look at the full block.
+
+Actually let me reconsider once more. The task said:
+
+"TESTS (assert at the emission point — the value the `ContextConfig` actually carries)
+- **Anti-vacuous, asserted FIRST:** the fixture prompt really is the string handed to the config (assert the fixture is non-empty and is the composed value)"
+
+"the string handed to the config" — so the fixture should be a composed prompt (via `compose_system_prompt`). And "the value the ContextConfig actually carries" = `system_prompt_tokens`.
+
+So a test that:
+1. composes a prompt via `compose_system_prompt(base, provider, model)` — assert non-empty and equals composed value
+2. calls `system_prompt_token_budget(&composed, max, plain)` 
+3. asserts `.0 == estimate_tokens(&composed)`
+
+That's essentially option A but the config value is the tuple's first element assigned directly.
+
+To be strict about "the value the ContextConfig actually carries", I could extract the config-building into a function. Let me check whether that's clean.
+
+Let me view the exact full ContextConfig block.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.4s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1196,1240p' src/agent_bu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn estimate_tokens" ~/.… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me continue. I need to:
+1. Add tests (emission point assertions)
+2. Update CLAUDE.md
+3. Re-paste module-size register line
+
+Let me first find the exact final signature/line numbers and see the test module. Let me be efficient with context — I'll use grep to get exact line numbers and then make targeted edits.
+
+Let me check where the tests module ends and find a good insertion point. Actually, the evaluator says tests module is at line 1577. Let me add tests to that module.
+
+Let me first check the exact current text around the test module to insert.
+
+Actually — "assert at the emission point — the value the ContextConfig actually carries". The strongest emission point test would be to build an agent config and check the ContextConfig... but `build_agent` requires API keys and network setup probably. Let me check what build_agent does at the start.
+
+Actually a simpler emission point: the test should assert the value passed to `with_context_config`. Since `with_context_config` consumes the value, the way to test "the value the ContextConfig actually carries" is to call `system_prompt_token_budget` — but that's one layer below the ContextConfig construction.
+
+Hmm. The task says "assert at the emission point — the value the ContextConfig actually carries". Given constraints, I can build an AgentConfig and call build_agent with a small prompt, then read `agent.context_config.system_prompt_tokens`. But build_agent needs the model/provider/api_key.
+
+Let me look at build_agent's beginning.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn build_agent" src… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`build_agent` is drivable without network — it just constructs providers. So the emission point test can be:
+
+```rust
+let config = AgentConfig { ... system_prompt: <big>, ... };
+let agent = config.build_agent();
+assert_eq!(agent.context_config.system_prompt_tokens, estimate_tokens(&agent.system_prompt));
+```
+
+Does `Agent` expose `context_config` publicly? Let me check yoagent's Agent struct.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub context_config\|pu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "context_config\b" ~/.c… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`context_config` is `Option<ContextConfig>` and public. And `ContextConfig.system_prompt_tokens` is presumably pub. Let me check.
+
+Also I need to check what fields `AgentConfig` has to construct one in a test. That could be a lot of fields. Let me check whether there's a test helper already constructing AgentConfig.
+
+Let me check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AgentConfig {" src/agen…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "system_prompt_tokens" ~… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I have everything I need. Let me be efficient now — write the tests and the CLAUDE.md edit, then run everything.
+
+Key facts confirmed:
+- `estimate_tokens(text) = text.len().div_ceil(4)`
+- `Agent` has `pub system_prompt: String` and `pub context_config: Option<ContextConfig>`
+- `ContextConfig` has `pub system_prompt_tokens: usize`
+- `ContextConfig` is `Clone` (used with `.clone()`), and probably `Debug`/`PartialEq`? Line 1220 in their test does `assert_eq!(config.system_prompt_tokens, 4_000)` — accessing field, not comparing whole struct.
+- `system_prompt_token_budget` is `pub(crate)`, `system_prompt_over_window_message` is `pub(crate)`.
+- Tests module at line 1577 in `src/agent_builder.rs`, `use super::*;`
+- `test_agent_config(provider, model) -> AgentConfig` helper at 1631.
+
+Now I'll add tests at the end of the tests module in `src/agent_builder.rs`. I need drive at the emission point: `config.build_agent().context_config.unwrap().system_prompt_tokens`.
+
+Let me check test_agent_config's full body so my tests work. Let me get it quickly and then write.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1631,1660p' src/agent_bu… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me write the tests. I'll append them to the tests module in `src/agent_builder.rs`.
+
+The plan:
+1. Test `system_prompt_token_budget_measures_the_same_string_the_agent_is_built_with` — drive a big composed prompt through build_agent, read `agent.context_config`, assert equals `estimate_tokens(&agent.system_prompt)`, assert anti-vacuous first (prompt is non-empty, and it's the composed value).
+2. Scaling: two sizes move with them.
+3. Near-miss: small prompt yields a small number, not a constant.
+4. Degenerate case: oversize prompt clamps to max and emits the message.
+
+But there's an issue: `build_agent()` for provider "anthropic" requires... let's check. `anthropic_preset` etc. The existing tests use `test_agent_config("anthropic", "claude-sonnet-5").build_agent()`? Let me check what existing tests do — line 1691+ etc. Let me look at one existing test that calls build_agent.
+
+Actually let me just check quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_agent()" src/agen…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1730,1770p' src/agent_bu… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`config.build_agent()` works with "anthropic" and requires no network. 
+
+Now: the call site passes `&agent.system_prompt`. Does `configure_agent` modify `agent.system_prompt` before? No — `with_system_prompt` is applied in main.rs before build_agent presumably. The task says "the call site reads the same `agent.system_prompt` the `with_system_prompt` call composed" — confirmed by the evaluator.
+
+So in tests: `config.build_agent()` → the Agent's `system_prompt` field is what was in `config.system_prompt`. And context_config should carry `estimate_tokens(&agent.system_prompt)`.
+
+Wait — is `with_system_prompt` applied in build_agent? Let me check configure_agent... Actually grep for `with_system_prompt` in agent_builder.rs.
+
+Let me now write the tests. I need `is_plain_output()` — the call site passes it; can't control in tests easily. `system_prompt_token_budget` takes `plain` as a param so I can test both.
+
+Test plan (append to tests module):
+
+```rust
+    // ---- #926: the system-prompt budget is MEASURED, not promised ----
+
+    /// The anti-vacuous fixture: a composed prompt large enough to matter.
+    fn composed_prompt_of(bytes: usize) -> String {
+        compose_system_prompt(&"a".repeat(bytes), "deepseek", "deepseek-v4-flash")
+    }
+
+    #[test]
+    fn anchored_budget_...() {}
+```
+
+Hmm, careful: `compose_system_prompt` appends the identity note; the resulting length = base.len() + 2 + note.len().
+
+Tests:
+
+1. `test_configured_system_prompt_tokens_equals_estimate_on_the_same_string`:
+```rust
+let mut config = test_agent_config("anthropic", "claude-opus-4-6");
+config.system_prompt = composed_prompt_of(40_000);
+let agent = config.build_agent();
+// ANTI-VACUOUS FIRST
+assert!(!agent.system_prompt.is_empty(), ...);
+assert_eq!(agent.system_prompt, config.system_prompt, "the fixture must be the string handed to the config");
+let cc = agent.context_config.expect("build_agent must set a ContextConfig");
+assert_eq!(cc.system_prompt_tokens, estimate_tokens(&agent.system_prompt), "...");
+```
+Wait — does `build_agent` call `with_system_prompt`? Let me check. If yes, `agent.system_prompt == config.system_prompt`. If build_agent composes the prompt (compose_system_prompt called inside), then it would be different from config.system_prompt. Let me grep.
+
+2. Scaling: two sizes.
+3. Near-miss: small prompt → small number, not 4000.
+4. Degenerate: `config.context_window = Some(100)` with a huge prompt → clamps to 100 and the message names both numbers.
+
+Let me check how `effective_tokens` is computed — need to know if `context_window` config overrides. Let's read lines 1165-1185 fully (untruncated).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.1s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1166 && NR<=1186' src/a…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_system_prompt" src… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I see — line 1402 is inside `build_architect_agent` or `build_editor_agent`, not the main build path. Let me check where the main prompt is set on the agent — perhaps in Agent::from_provider via model_config, or elsewhere. Actually the grep for `with_system_prompt` shows only one site at 1402 and the doc mention at 974. But CLAUDE.md says "The system prompt is composed at the single `with_system_prompt` call site (`compose_system_prompt` → `model_identity_note`)". Hmm, maybe the main path uses `agent.system_prompt = ...` directly.
+
+Let me check line 1380-1410 and search for `system_prompt =`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "system_prompt" src/agen… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So at line 1081-1085 in `configure_agent`, the agent gets `.with_system_prompt(compose_system_prompt(&self.system_prompt, &self.provider, &self.model))`. Then at 1180 the ContextConfig is built reading `&agent.system_prompt`.
+
+Now let me write the tests. Test plan (emission point = the value the ContextConfig actually carries):
+
+1. **Anti-vacuous first**: fixture prompt really is the string handed to the config. I'll assert the fixture is non-empty and equals the composed value from `compose_system_prompt`.
+
+2. **Scaling assertion (strong form)**: two composed prompts of very different size yield configured counts that move with them, and configured value == `estimate_tokens` on that same string.
+
+3. **Near-miss guard**: a SMALL prompt yields a small number, not a constant.
+
+I should write these as tests in `src/agent_builder.rs`'s test module where possible — but the emission point is a built agent's `context_config`. I can drive `AgentConfig::build_agent()` and read `agent.context_config`. But `configure_agent` is called with a context_window derived from provider/model config. The `AgentConfig` has `context_window: Option<usize>`. So I can set context_window to a known value and assert `agent.context_config.unwrap().system_prompt_tokens == estimate_tokens(&config_expected_prompt)`.
+
+Wait — but the composed prompt on the agent: `compose_system_prompt(&self.system_prompt, &self.provider, &self.model)`. So I can compute the same string in the test via `compose_system_prompt` and compare with `agent.system_prompt`.
+
+Best: assert `agent.context_config.as_ref().unwrap().system_prompt_tokens == estimate_tokens(&agent.system_prompt)`. That's the strong form: configured value equals `estimate_tokens` on that same string. And using the agent's own `system_prompt` field guarantees it's the composed value.
+
+Hmm, but the task says "the configured value equals `estimate_tokens` on that same string". Using `agent.system_prompt` is exactly that. And to make it non-vacuous, assert `agent.system_prompt` equals `compose_system_prompt(base, provider, model)` where base is the fixture — proving the fixture is the string handed to the config.
+
+Let me check whether `build_agent()` succeeds and what it does — it may need network? No, `build_agent` constructs providers locally. Let's check existing tests calling `config.build_agent()` — yes, tests at 1761 etc. call it. Good.
+
+Also I need to check `effective_tokens` computation. Let me look at lines 1140-1182 fully to know whether context_window config matters.
+
+Let me just read the whole configure_agent ContextConfig region. Let me print lines 1140-1200 with sed but the tool truncates... I'll use awk to print in chunks of 15 lines.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1140 && NR<=1168' src/a… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1060 && NR<=1100' src/a… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I now have everything I need. Let me write the tests. I'll add them at the end of the existing `#[cfg(test)] mod tests` in `src/agent_builder.rs`.
+
+Plan for tests:
+
+```rust
+// ---- #926: the system-prompt term is MEASURED, not promised ----
+
+/// The composed prompt the fixture hands to `with_system_prompt`, built the
+/// same way `configure_agent` builds it — so the anti-vacuous assertion below
+/// is about the real value and not a stand-in.
+fn composed_prompt_of(base: &str) -> String {
+    compose_system_prompt(base, "deepseek", "deepseek-v4-flash")
+}
+
+#[test]
+fn system_prompt_budget_is_the_real_composed_prompt_and_never_zero_alone() {
+    // ANTI-VACUOUS, FIRST: the fixture must be a real composed prompt, or
+    // every assertion below is satisfied by measuring nothing.
+    let small = composed_prompt_of("Test prompt.");
+    let big = composed_prompt_of(&"x".repeat(400_000));
+    assert!(!small.is_empty(), "the fixture prompt must be non-empty");
+    assert!(!big.is_empty(), "the fixture prompt must be non-empty");
+    assert!(big.starts_with("xxx"), "the fixture must be the base we passed");
+    assert!(big.contains("deepseek-v4-flash"), "the fixture must be composed, not raw");
+    assert!(big.len() > small.len() * 100, "...");
+    ...
+}
+```
+
+Wait — need a test that asserts the config value equals estimate_tokens. We can't easily inspect `ContextConfig` from outside since `system_prompt_token_budget` returns the tuple. But the test asks "assert at the emission point — the value the ContextConfig actually carries". Two layers:
+1. Direct: `system_prompt_token_budget(composed, max, plain)` returns `estimate_tokens(composed)` — this IS the value that goes into ContextConfig. Good.
+2. Connected: build a real agent and assert `agent.context_config` carries the measured value. Since `context_config` is a pub field on Agent, I can do this! Let me check `agent.context_config`.
+
+From yoagent agent.rs:51: `pub context_config: Option<ContextConfig>,` — public field. And `ContextConfig.system_prompt_tokens` is pub. So `config.build_agent().context_config.unwrap().system_prompt_tokens` gives the emission point directly. Excellent — that's a much stronger test: it proves the wiring, not just the pure function.
+
+But careful: `build_agent()` for a test config with `context_window: None` uses model_context_window from `create_model_config`. For "anthropic"/"claude-opus-4-6"... For a non-listed provider like "deepseek"? Let me use "anthropic" with a known model. `create_model_config("anthropic", "claude-opus-4-6", None)` → context window probably 200_000. effective_tokens = 160_000. Then a test prompt of "Test prompt." → tiny. That proves small→small.
+
+For the big case, we need a very large prompt but `build_agent` also calls `build_tools` which may take time. It's fine; other tests already do `config.build_agent()`.
+
+To test scaling against estimate_tokens at the emission point:
+- small config: system_prompt = "Test prompt." → composed = small_composed. assert agent.context_config.unwrap().system_prompt_tokens == estimate_tokens(&small_composed)
+- big config: system_prompt = "y".repeat(400_000) → composed = big. assert == estimate_tokens(&big), and assert big_assigned > small_assigned.
+
+Also the near-miss guard: small prompt yields a small number, not a constant (i.e., not 4_000): `assert!(small_tokens < 4_000)` — and importantly assert `small_tokens != 4_000`. Hmm, "a SMALL prompt yields a small number, not a constant". So assert small_tokens is small (< some bound) and specifically that it tracks estimate_tokens rather than being a fixed 4_000. Assert `assert_ne!(small_tokens, 4_000, ...)`? That's a bit fragile if the prompt were exactly 16000 bytes. But small prompt is ~100 bytes so estimate is ~25. `assert!(small_tokens < 1_000)`.
+
+Also need a degenerate-case test: prompt larger than window → clamped to max, returns Some(note), message names both numbers, plain variant glyph-free. And that it doesn't panic (the message about underflow). Let's test with max_context_tokens small, e.g. 1_000 and a 400_000-byte prompt.
+
+Also test the message via `system_prompt_over_window_message` — plain and non-plain, and that plain is ASCII/em-dash free.
+
+Let's be careful about test runtime: building agents with 400KB prompts — `system_prompt_token_budget` just does len/4, cheap. `with_system_prompt` clones the string. Fine.
+
+Now, does `Agent` expose `context_config` publicly? Yes: line 51 `pub context_config: Option<ContextConfig>,` but that's in a struct — which struct? Let me verify it's `Agent`. Need to check. Let me grep.
+
+Also need to double check that after `configure_agent`, `agent.context_config` is `Some`.
+
+Another consideration: for the big prompt with default window 200_000 → 400_000 bytes/4 = 100_000 tokens, that's under 160_000, so no clamping. To trigger the degenerate case at the emission point I'd need a prompt > effective window. Could pass `context_window: Some(...)` in the test config — but note `context_window` field is the raw window (effective = 80%). Let me check cli ContextStrategy default etc. Setting `context_window: Some(10)` → effective = 8 tokens, so any prompt exceeds it → clamped + note. And the eprintln goes to stderr during a passing test — fine (libtest discards it).
+
+Hmm, but does `effective_window` of 10 break anything else in build_agent? `cli::set_effective_context_tokens(10)` — that's a global write! There's a `GLOBAL_SETTERS` gate in `tests/global_state_races.rs`. `configure_agent` calls `cli::set_effective_context_tokens(...)` which is a global setter. Other existing tests in this module already call `build_agent()` without `#[serial]`... Let me check whether `set_effective_context_tokens` is in GLOBAL_SETTERS and whether existing tests here are registered. If existing build_agent tests are fine, mine are too. Let me check.
+
+Let me grep GLOBAL_SETTERS for set_effective_context_tokens and check registered races.
+
+Actually the safest path: use the pure function for the degenerate case (no agent build), and use `build_agent` for the scaling/emission-point tests exactly like the existing tests do. That keeps the risk minimal.
+
+Let me check the race gate quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_effective_context_t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' ~/.cargo/registry… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`agent.context_config` is a public field. 
+
+Now check GLOBAL_SETTERS: `set_effective_context_tokens` is in the list. That means any `#[test]` in `src/` that directly *calls* one of the 40 names must be `#[serial]` or registered. But `build_agent()` calls it transitively via `configure_agent` — the gate only detects *direct* calls in the test body. Existing tests call `config.build_agent()` directly (not `set_effective_context_tokens`), so they're fine. My tests will call `build_agent()` too — indirect, so not flagged.
+
+Good. Now let me write the tests. Let me look at the very end of the test module to append before the final `}`.
+
+Also, I want a test that checks the composed prompt used for measurement equals the one handed to `with_system_prompt`. At the emission point: `agent.system_prompt` is what `configure_agent` set (via `with_system_prompt`). So assert `agent.context_config.unwrap().system_prompt_tokens == estimate_tokens(&agent.system_prompt)`. That's the strongest form: it ties the configured value to the *agent's own* prompt string, which is literally the string `with_system_prompt` received. 
+
+Let me write:
+
+```rust
+    // ---- #926: the system-prompt term is MEASURED, never promised ----
+
+    /// The same source string `configure_agent` hands to `with_system_prompt`,
+    /// so a fixture here is the real composed value and not a stand-in.
+    fn composed_for_test(base: &str) -> String {
+        compose_system_prompt(base, "deepseek", "deepseek-v4-flash")
+    }
+
+    #[test]
+    fn system_prompt_budget_measures_the_prompt_the_config_actually_carries() {
+        // ANTI-VACUOUS, ASSERTED FIRST: the fixture must be a real composed
+        // prompt. A dead measurement satisfies every equality below by
+        // having nothing to measure.
+        let small_base = "Test prompt.";
+        let big_base = "x".repeat(BIG_PROMPT_BYTES);
+        let small = composed_for_test(small_base);
+        let big = composed_for_test(&big_base);
+        assert!(!small.is_empty() && !big.is_empty(), "fixtures must be non-empty");
+        assert!(big.starts_with(small_base) == false); // n/a
+        ...
+    }
+```
+
+Hmm, careful, `big.starts_with("xxx")`. Let me keep simple: assert `big.len() > small.len() * 50`.
+
+Then the emission-point assertions by building agents:
+
+```rust
+        let mut small_cfg = test_agent_config("deepseek", "deepseek-v4-flash");
+        small_cfg.system_prompt = small_base.to_string();
+        let small_agent = small_cfg.build_agent();
+        let small_cfg_out = small_agent.context_config.clone().expect("configure_agent must set a ContextConfig");
+```
+
+Wait: provider "deepseek" — is it supported by `create_model_config`? Let me check. It's in KNOWN_PROVIDERS presumably. The default `test_agent_config` uses "anthropic" in tests here; some tests use other providers. Let me use "anthropic"/"claude-opus-4-6" or "deepseek"/"deepseek-v4-flash" — but the test helper `test_agent_config` takes provider/model. `create_model_config` handles unknown providers via OpenAI-compat default presumably. Let me check what context_window it gives for an unknown provider — need it deterministic and > the composed prompt.
+
+Actually, simplest: pass `context_window: Some(X)` in the config to make the window explicit and deterministic, avoiding model-table dependence. E.g. `context_window: Some(200_000)` → effective = 160_000.
+
+For the degenerate case at the emission point: `context_window: Some(2_000)` → effective 1_600 tokens < big prompt tokens (400_000/4 = 100_000). So clamped to 1_600 and a note emitted.
+
+Hmm — careful: does an effective window of 1_600 break `build_agent` elsewhere? `cli::set_effective_context_tokens(2000)` only sets a global. No other budget math in configure_agent except our term. OK.
+
+But wait: is `context_window` field of AgentConfig the *raw* window? `let effective_window = self.context_window.unwrap_or(model_context_window);` yes.
+
+Now on assertion of `estimate_tokens` equality: `ContextConfig` — does it implement Clone + Debug and are fields pub? `pub system_prompt_tokens: usize` yes. `context_config` is `Option<ContextConfig>` pub. `ContextConfig` derives Clone? Let me check. I'll use `.as_ref().unwrap()` instead of clone to avoid needing Clone.
+
+Let me check ContextConfig derives.
+
+Then:
+
+```rust
+        let small_configured = small_agent.context_config.as_ref().unwrap().system_prompt_tokens;
+        assert_eq!(small_configured, estimate_tokens(&small_agent.system_prompt), "...");
+        assert_eq!(small_configured, estimate_tokens(&small), "the prompt the agent holds must be the composed one");
+        assert!(small_configured > 0 && small_configured < 1_000, "a small prompt must yield a small number, not a constant: {small_configured}");
+        assert_ne!(small_configured, 4_000, "the old constant must be gone");
+```
+
+Wait, `estimate_tokens(&small_agent.system_prompt)` vs `estimate_tokens(&small)`: they're equal by construction. Good — that proves the measured value equals both, i.e., it's the composed string.
+
+Big:
+```rust
+        let big_configured = big_agent.context_config.as_ref().unwrap().system_prompt_tokens;
+        assert_eq!(big_configured, estimate_tokens(&big_agent.system_prompt));
+        assert_eq!(big_configured, estimate_tokens(&big));
+        assert!(big_configured > small_configured * 50, "the budget must move with the prompt: {small_configured} vs {big_configured}");
+```
+
+This is the scaling assertion in strong form.
+
+Degenerate:
+```rust
+    #[test]
+    fn over_window_system_prompt_is_clamped_and_named_rather_than_underflowing() {
+        let mut cfg = test_agent_config("anthropic", "claude-opus-4-6");
+        cfg.system_prompt = "y".repeat(BIG);
+        cfg.context_window = Some(1_000); // effective = 800
+        let agent = cfg.build_agent();
+        let c = agent.context_config.as_ref().unwrap();
+        assert_eq!(c.max_context_tokens, 800);
+        assert_eq!(c.system_prompt_tokens, 800, "must clamp to the window, not wrap");
+        // message budget would be 0; the note names both numbers
+        let note = system_prompt_over_window_message(estimate_tokens(&agent.system_prompt), 800, false);
+        assert!(note.contains("800"));
+        ...
+    }
+```
+
+And a pure test for the message in both modes (glyph-free plain).
+
+Also assert for the fits-case that no note is returned (near-miss on the note side): `system_prompt_token_budget(&small, 160_000, false).1.is_none()`.
+
+Let me now check `ContextConfig` field pub and derive, plus `test_agent_config` visibility (it's in the same module, fine).
+
+Also need `BIG_PROMPT_BYTES` const — just use a literal `400_000`.
+
+Careful: writing 400KB prompts × several tests is fine.
+
+Now CLAUDE.md update: the evaluator wants the `agent_builder.rs` bullet corrected. Let me find sentences implying a fixed 4K. Let me grep CLAUDE.md for "system_prompt" / "4_000" / "ContextConfig".
+
+And the module_size register line: run `cargo test --test module_size` after fmt and paste the printed line. But the gate's printed remedy gives the literal register line. I need to update `GRANDFATHERED_OVERSIZED_MODULES` in `tests/module_size.rs` from 3986 → actual. The evaluator noted 4078. Adding tests will change it again.
+
+Note: `tests/module_size.rs` — is it a protected file? No, it's a test file. Task says paste the literal line. So I need to edit tests/module_size.rs. That's allowed (not in the protected list).
+
+Hmm, but the task's `Files:` line says `src/agent_builder.rs, src/cli.rs, CLAUDE.md`. The evaluator explicitly asked for the register line re-paste. I'll do it.
+
+Let me check ContextConfig quickly then write.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.5s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '130,175p' ~/.cargo/regis…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "4_000\|system_prompt\|C… ✓ (5ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+CLAUDE.md's agent_builder bullet starts at line 268 and is a gigantic single line. I need to find where it mentions the system prompt token budget / 4_000 / ContextConfig and add a Day-199 paragraph. Let me search within line 268 for relevant strings.
+
+The bullet's opening: "AgentConfig, build_agent, build_side_agent, create_model_config, MCP collision detection..., connect_external_servers, fallback retry logic. The system prompt is composed at the single `with_system_prompt` call site ..."
+
+I should append a **Day 199 (#926)** paragraph to the end of that bullet. Let me find the end of line 268 (the bullet is one line). Let me check where it ends — probably the line ends with the Day-193 paragraph. Let me extract the tail of line 268.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.9s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==268' CLAUDE.md | tail -… ✓ (5ms)
+
+  watch: no files changed this turn — skipping
+

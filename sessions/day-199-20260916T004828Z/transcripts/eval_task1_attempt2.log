@@ -1,0 +1,203 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me analyze the diff against the task.
+
+The task: measure the system prompt instead of promising yoagent it's 4_000 tokens.
+
+The diff:
+1. Adds `system_prompt_token_budget` function that measures tokens from the composed prompt using yoagent's `estimate_tokens`.
+2. Adds `system_prompt_over_window_message` for the degenerate case.
+3. Replaces `system_prompt_tokens: 4_000` with `system_prompt_tokens: prompt_tokens`.
+
+Let me check key things:
+- Does it reuse yoagent's estimator? Yes, `estimate_tokens` imported from `yoagent::context`.
+- Degenerate case handled: yes, clamps to max_context_tokens and returns a note.
+- The count comes from `agent.system_prompt` — the actual composed string.
+
+Wait, but the task step 0 says confirm the composed system prompt is in scope at the ContextConfig construction site. The diff reads `agent.system_prompt`. Is that field public? I need to verify. The build passed, so it must compile. But let me check whether `agent.system_prompt` actually carries the composed prompt — is `with_system_prompt` called before this? Let me look at the code around there.
+
+Let me check that the emission point is correct and whether tests were added. The task asked for tests:
+- Anti-vacuous first
+- Scaling assertion
+- Near-miss guard
+
+The diff shown does NOT include any tests! Let me check the full diff. The diff only shows src/agent_builder.rs changes (plus the risk_snapshots/weights noise). No test additions visible in the shown diff. But maybe the diff is truncated? The task says "CHANGES MADE (git diff)" — it shows the full diff presumably. Hmm, but the diff only shows up to the ContextConfig block. Let me check the actual repo to see if tests were added.
+
+Also CLAUDE.md doc update is required. The diff shown doesn't include CLAUDE.md changes. That's a missing touchpoint.
+
+Wait — the diff might be truncated in the prompt. Let me actually check the repo state. Since I have the filesystem, I should verify:
+1. Does the code compile (build passed).
+2. Are there tests for the new functions?
+3. Was CLAUDE.md updated?
+4. Was the module_size register line updated (agent_builder.rs is registered at 3986)?
+
+Let me check the repo.
+
+Actually wait — I should be careful. The diff shown seems to lack CLAUDE.md and tests. That would be a FAIL on doc_sync and possibly intent_alignment (missing tests). But let me verify by reading the actual files, not just the truncated diff.
+
+Let me run some focused checks.
+
+Important considerations:
+- `agent.system_prompt` — is this a public field on yoagent's Agent? Need to verify it exists. Build passed so presumably yes.
+- Is `with_system_prompt` called before this point in `build_agent`? Need to check.
+
+Let me look at the source.
+────────────────────────────────────────────────────────────────────────────────
+
+I'll verify the key claims against the actual repo state — the shown diff looks like it may be missing the tests and CLAUDE.md update the task required.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1140,1210p' src/agent_bu… ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check:
+1. Is `with_system_prompt` called before this point? Let me search.
+2. Are there tests for the new functions?
+3. Was CLAUDE.md updated?
+4. Was the module_size register updated?
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.6s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -30 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_system_prompt" src… ✓ (10ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Key findings:
+
+1. The commit only touched `.yoyo/risk_snapshots.jsonl`, `.yoyo/risk_weights.json` and `src/agent_builder.rs`. **No CLAUDE.md change** and **NO TESTS** added.
+
+2. The task explicitly required:
+   - DOCS: "CLAUDE.md's `agent_builder.rs` bullet: the constant is gone and the budget is now measured from the prompt that is actually composed."
+   - TESTS: anti-vacuous first, scaling assertion, near-miss guard.
+
+The grep for the new functions shows only the definition in src/agent_builder.rs at :989 and the call site at :1180. No test usages at all. So no tests were added for `system_prompt_token_budget`.
+
+Wait, let me verify the diff carefully. The diff shown does show a large addition in agent_builder.rs but I only saw the code portion. Let me check whether the diff contains a test module section further down that I didn't see. The `git show --stat` says `src/agent_builder.rs | 96 +++++...`. That's 96 lines changed. The shown diff includes:
+- import line change
+- ~72 lines of the two new functions
+- ~20 lines of the ContextConfig block change
+
+That's roughly 96. So there are NO tests in the diff. Let me double check by looking at the full diff for anything test-like.
+
+Also the module_size register — `src/agent_builder.rs` is registered at 3986 according to the task; the file grows by 96 lines so the register entry should be updated. Let me check whether tests/module_size.rs was updated. The stat shows it wasn't (only 3 files). So the module-size register line was NOT updated — this will cause a module_size test failure... but the harness says Tests: PASS. Hmm.
+
+Wait, let me check. Maybe the register has a grace band. The register entry is at 3986 (recorded), actual ~4078. That's +92 drift. `REGISTER_DRIFT_GRACE_LINES = 100`. So +92 is within grace → warning, run stays green. So tests pass but with a warning. The task said "paste the literal `("src/agent_builder.rs", N)` line the gate prints". They didn't update it. That's a minor issue (within grace band, green). But the task explicitly asked to paste it. Not updating it is a deviation but non-fatal (warning only).
+
+Actually wait — let me check the actual register value. Let me look.
+
+The bigger issues:
+1. No tests added — task explicitly required 3 test categories. This is a significant miss.
+2. CLAUDE.md not updated — task explicitly required it. doc_sync FAIL.
+
+Let me verify these are truly missing.
+
+Also I should verify the emission-point correctness: `agent.system_prompt` — is that the composed string? Let me check line 1084 context.
+
+Let me confirm the file struct. Let me check yoagent's Agent has a public `system_prompt` field.
+
+Build passed, so it compiles. Let me focus.
+
+Let me verify no tests were added anywhere (maybe a separate test file). grep showed only 2 hits. So no tests.
+
+Let me check the module_size register current state.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.1s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/agent_build…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'agent_builder.rs' tests… ✓ (3ms)
+ ✓ (9ms)
+  2 tools completed in 10ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I was verifying the diff. Let me summarize what I found so far:
+
+1. The diff adds `system_prompt_token_budget` and `system_prompt_over_window_message` to `src/agent_builder.rs`.
+2. Both new functions have consumers in the same diff (the call site at line 1180, and `system_prompt_over_window_message` is called by `system_prompt_token_budget`). So forgotten_touchpoints is OK for the function definitions.
+3. **No tests were added** — the grep for "fn test|#[test]|mod tests" in the diff returned nothing. The task explicitly required tests: anti-vacuous first, scaling assertion, near-miss guard. That's a clear miss.
+4. **CLAUDE.md was NOT updated** — the git show --stat shows only `.yoyo/risk_snapshots.jsonl`, `.yoyo/risk_weights.json`, `src/agent_builder.rs`. The task explicitly required CLAUDE.md's agent_builder.rs bullet be updated to correct sentences implying a fixed 4K.
+5. **The module-size register was NOT updated** — `tests/module_size.rs` still records 3986 while the file is now 4078 lines. That's an 92-line drift which is within the 100-line grace band so it's a warning not fatal... wait, REGISTER_DRIFT_GRACE_LINES = 100. 4078 - 3986 = 92, which is ≤ 100, so it's a warning, run stays green. So not fatal, but the task explicitly said "THE MODULE-SIZE GATE WILL FIRE — EXPECT IT AND PASTE ITS LINE" and to update the register line. Tests passed so the gate was in grace band. This is a missed touchpoint but not fatal.
+
+Key failures:
+- No tests added at all (task required three specific tests). This is a substantive miss — the task's TESTS section is explicit and the whole point about anti-vacuous + near-miss guards.
+- CLAUDE.md not updated (task required).
+
+Let me check one more thing to be sure before writing the verdict: does the file actually still pass with the register at 3986? 92 lines over is within grace. But wait — is the recorded value checked in the drift direction only? Yes, branch 2: grandfathered module above recorded lines → ≤100 warning. So it's green. Tests PASS was reported by harness, consistent.
+
+Actually let me double check whether there is a genuine correctness issue. The diff reads `&agent.system_prompt`. Is `system_prompt` a public field on `Agent`? It compiled (build PASS), so yes.
+
+But there's a subtle concern: `with_system_prompt` is called at line 1084, 1357, 1402 — three build paths. Are all of them before the ContextConfig site at ~1180? Line 1084 < 1180 yes. But 1357/1402 are in other functions (build_side_agent etc.) — do those also set ContextConfig? Probably separate. Not necessarily a problem. The main path installs the config from the composed prompt within build_agent. For side agents, the context config is presumably set inside the same helper... Actually if build_side_agent composes a prompt at 1357 but never calls system_prompt_token_budget, then side agents still use ContextConfig::default. That would be an incomplete fix but arguably out of scope. Let me quickly check.
+
+Actually — the more important issue: the task also said the docs MUST be updated and the tests MUST be added. Those are clear FAIL conditions. Let me do one quick check on whether side agents also get ContextConfig set, then write the verdict.
+
+I have enough for a FAIL. Let me do one quick focused check to strengthen the verdict, then write it.
+
+Actually I should be efficient. Let me check the side agent path quickly and the module_size register situation, then write the verdict.
+
+Let me run the two checks in parallel and then write the file.
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up where I left off. I have the key findings; one focused check remains before writing the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1340 && NR<=1440' src/a…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "4_000\|4000" src/agent_… ✓ (5ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed findings:
+
+1. **The core code change is implemented correctly**: `system_prompt_token_budget` measures the composed prompt with yoagent's own `estimate_tokens`, clamps to `max_context_tokens`, and returns a note. The call site reads `&agent.system_prompt` (the same string `with_system_prompt` received). Degenerate case handled with a stated comment.
+
+2. **NO TESTS ADDED** — the task's TESTS section is explicit and required three tests (anti-vacuous first, scaling assertion, near-miss guard). The diff contains zero `#[test]` fns. Clear miss.
+
+3. **CLAUDE.md NOT updated** — task explicitly required updating the `agent_builder.rs` bullet. The commit touched only `.yoyo/risk_snapshots.jsonl`, `.yoyo/risk_weights.json`, `src/agent_builder.rs`.
+
+4. **Module-size register not updated** — recorded 3986, actual 4078 (92 lines over, inside the ≤100 grace band so the gate stays green). The task explicitly instructed to paste the gate line. Missed, though non-fatal.
+
+5. Side agents (`build_side_agent`, `build_architect_agent`) compose a prompt via `with_system_prompt` but no `ContextConfig` — worth checking but likely pre-existing; not part of scope.
+
+The verdict: FAIL. The implementation of the fix is present and correct, but the task explicitly and specifically required tests (a whole TESTS section with anti-vacuous + scaling + near-miss guards), and required the CLAUDE.md doc update. Missing both. The tests requirement is not a minor imperfection — the task's own framing (positive controls, near-miss guards) makes clear that untested guards are the failure mode this repo has repeatedly paid for.
+
+Wait — but should I be fair? The instructions say "Do NOT fail for: Minor imperfections". Are the missing tests minor? No — the task explicitly names them as required deliverables ("TESTS (assert at the emission point...)" with three specific required assertions). This is a specified requirement, not stylistic. And doc_sync is explicitly a check where the task said CLAUDE.md must be updated. Per the rules: "A FAIL on any Checked line forces the overall Verdict to FAIL".
+
+doc_sync: FAIL (behavior changed, CLAUDE.md bullet not updated).
+intent_alignment: the main fix is implemented → but part of the intent (tests + docs) is missing. I'll mark intent_alignment PASS on the core code but overall FAIL driven by doc_sync and the missing tests. Hmm, but I need to be careful: forgotten_touchpoints is about definitions/consumers. The new functions DO have consumers in this diff. So forgotten_touchpoints: PASS.
+
+Actually, let me reconsider — is the missing test coverage better reflected in intent_alignment? The task's intent includes tests. I'll be honest: intent_alignment is partially met. I'll mark intent_alignment PASS (core change matches the task) and doc_sync FAIL, and mention the missing tests in the Reason as a required-deliverable miss. That forces overall FAIL via doc_sync.
+
+Let me write the verdict now. I should not re-run tests (harness did). Let me write the file.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.2s (2 ✓)
+
+Confirmed. Writing the verdict.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 13s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Done. Let me give a brief summary.
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md: FAIL.
+
+What I verified:
+
+| Check | Result |
+|---|---|
+| intent_alignment | PASS — the fix itself is right |
+| forgotten_touchpoints | PASS — both new fns have consumers in-diff |
+| doc_sync | FAIL — CLAUDE.md not touched |
+| product_surface | N/A — no product surface changed |
+
+The core change is correct: system_prompt_token_budget at src/agent_builder.rs:989 replaces the hardcoded 4_000 with a measurement of &agent.system_prompt — the same string with_system_prompt composed a few statements above — using yoagent's own estimate_tokens rather than a second tokenizer. The degenerate measured > max_context_tokens case clamps and returns a stated message rather than underflowing.
+
+Two required deliverables are missing, which is why this fails:
+
+1. **Zero tests.** `grep -n "fn test\|#\[test\]\|mod tests"` over the commit's diff returns nothing. The task's TESTS section named three specific required assertions (anti-vacuous first, scaling/emission-point equality, small-prompt near-miss guard). This repo's own history is that an untested guard is the exact failure mode — an unexercised branch reads the same as a correct one.
+2. **CLAUDE.md not updated.** `git show --stat HEAD` lists only `.yoyo/risk_snapshots.jsonl`, `.yoyo/risk_weights.json`, and `src/agent_builder.rs`. The task explicitly required correcting the agent_builder.rs bullet.
+
+Also noted as cleanup feedback, not a separate failure: the module-size register line was not re-pasted (tests/module_size.rs:140 records 3986 against an actual 4078 — 92 lines over, inside the ≤100 grace band, so the gate stayed green and the harness report of "Tests: PASS" is consistent).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
