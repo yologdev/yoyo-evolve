@@ -209,54 +209,26 @@ if require "override line located" "$OVR_LN" && require "item loop located" "$LO
         || bad "FAIL override nesting" "indented deeper than the item loop — an incomplete checklist would discard a stated FAIL"
 fi
 
-# ── cron cadence: evolve.yml owns it; docs and the job ceiling must agree ──
-# (WF/TMIN are re-derived here rather than reused: this block precedes the
-# budget section that also defines them, and an unbound var under `set -u`
-# aborted the check silently-ish.)
+# ── cron cadence: evolve.yml owns it, and nothing restates it ────────────
+# The doc-sync half was dropped on 2026-09-16 — CLAUDE.md deliberately no
+# longer names the schedule, because a value copied into prose goes stale
+# silently while the config keeps working. What survives is config-vs-config:
+# the job ceiling must fit the SMALLEST gap between runs, or a long run's
+# successor queues and is then cancelled, dropping a whole slot. Both cron
+# shapes are read — `0 */N * * *` and `0 h1,h2,... * * *`. Neither matching
+# is a REFUSAL, never a pass.
 WF="$(cd "$(dirname "$0")/.." && pwd)/.github/workflows/evolve.yml"
 TMIN=$(grep -oE 'timeout-minutes: [0-9]+' "$WF" | grep -oE '[0-9]+' | head -1)
-DOC="$(cd "$(dirname "$0")/.." && pwd)/CLAUDE.md"
-# Two cron shapes are recognised: a flat hour step (`0 */N * * *`, the shape
-# until 2026-09-15) and an explicit hour list (`0 h1,h2,... * * *`, the shape
-# since — two sessions a day at 03:00 and 15:00 UTC). The gap the job ceiling
-# must fit inside is the step for the first and the SMALLEST circular distance
-# between consecutive listed hours for the second; runs/day is 24/step or the
-# list length. Neither shape matching is a refusal, never a pass.
 CRON_SPEC=$(grep -oE "cron: '[^']+'" "$WF" | head -1 | sed -E "s/^cron: '(.*)'$/\1/")
-CRON_STEP=$(echo "$CRON_SPEC" | grep -oE '^0 \*/[0-9]+ \* \* \*$' | grep -oE '[0-9]+' | tail -1)
-CRON_HOURS=$(echo "$CRON_SPEC" | grep -oE '^0 [0-9]+(,[0-9]+)+ \* \* \*$' | cut -d' ' -f2)
-CRON_H=""; RUNS_PER_DAY=""; HOURS=""
-if [ -n "$CRON_STEP" ]; then
-    CRON_H=$CRON_STEP; RUNS_PER_DAY=$(( 24 / CRON_STEP ))
-elif [ -n "$CRON_HOURS" ]; then
-    HOURS=$(echo "$CRON_HOURS" | tr ',' '\n' | sort -n)
-    RUNS_PER_DAY=$(echo "$HOURS" | wc -l | tr -d ' ')
-    FIRST=$(echo "$HOURS" | head -1); PREV=""; CRON_H=24
-    for h in $HOURS; do
-        if [ -n "$PREV" ]; then g=$(( h - PREV )); [ "$g" -lt "$CRON_H" ] && CRON_H=$g; fi
-        PREV=$h
-    done
-    g=$(( 24 - PREV + FIRST )); [ "$g" -lt "$CRON_H" ] && CRON_H=$g   # wrap-around gap
-fi
-if require "evolve cron cadence extracted (hour step or hour list; got '$CRON_SPEC')" "$CRON_H"; then
-    if [ -n "$CRON_STEP" ]; then
-        check "CLAUDE.md states the real gap"      "$(grep -cE "flat ${CRON_H}h gap" "$DOC")" "1"
-        check "CLAUDE.md states the real runs/day" "$(grep -cE "~${RUNS_PER_DAY}/day" "$DOC")" "1"
-    else
-        # An hour list is documented by naming its hours ("03:00 and 15:00 UTC")
-        # and its count ("twice a day"); both are derived from the cron, never
-        # hand-typed here, so a re-scheduled cron fails this until the doc moves.
-        HOUR_PHRASE=$(echo "$HOURS" | awk -v n="$RUNS_PER_DAY" '{sep=(NR==1 ? "" : (NR==n ? " and " : ", ")); printf "%s%02d:00", sep, $1}')
-        case "$RUNS_PER_DAY" in
-            1) COUNT_PHRASE="once a day" ;;
-            2) COUNT_PHRASE="twice a day" ;;
-            *) COUNT_PHRASE="${RUNS_PER_DAY} times a day" ;;
-        esac
-        check "CLAUDE.md names the scheduled hours (${HOUR_PHRASE} UTC)" \
-            "$([ "$(grep -c "${HOUR_PHRASE} UTC" "$DOC")" -ge 1 ] && echo yes || echo no)" "yes"
-        check "CLAUDE.md states the real runs/day (${COUNT_PHRASE})" \
-            "$([ "$(grep -c "${COUNT_PHRASE}" "$DOC")" -ge 1 ] && echo yes || echo no)" "yes"
-    fi
+CRON_H=$(echo "$CRON_SPEC" | awk '{
+    if ($2 ~ /^\*\/[0-9]+$/) { sub(/^\*\//,"",$2); print $2; exit }
+    if ($2 ~ /^[0-9]+(,[0-9]+)+$/) {
+        n = split($2, h, ","); for (a = 1; a <= n; a++) for (b = a+1; b <= n; b++) if (h[a] > h[b]) { t = h[a]; h[a] = h[b]; h[b] = t }
+        m = 24 - h[n] + h[1]; for (a = 2; a <= n; a++) { g = h[a] - h[a-1]; if (g < m) m = g }
+        print m; exit
+    }
+}')
+if require "evolve cron gap extracted (got '$CRON_SPEC')" "$CRON_H"; then
     [ "$TMIN" -le "$(( CRON_H * 60 ))" ] \
         && ok "job ceiling ${TMIN}m fits inside the ${CRON_H}h cron gap" \
         || bad "job ceiling vs cron gap" "timeout-minutes=$TMIN exceeds the $(( CRON_H * 60 ))m gap — the next run queues and is then cancelled"
