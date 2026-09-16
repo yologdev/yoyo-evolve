@@ -1,0 +1,691 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by verifying the task's claims against the actual tree.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '975,1030p' src/agent_bui… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me see the full function including doc comment, and the call site and tests module.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '960,980p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (6ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read the full doc comment of system_prompt_token_budget (lines ~955-990) to know semantics, and confirm no test references it.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '945,990p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "system_prompt_token_bu… ✓ (4ms)
+ ✓ (68ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: no tests reference it. The grep output truncates lines but confirms only 2 hits in src/agent_builder.rs.
+
+Let me read the doc comment in full at lines 955-990.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:954..990 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check the `estimate_tokens` import and how to construct tests. Let me look at the tests module and check imports. `use super::*;` so estimate_tokens is available if imported at file top.
+
+Let me check the import.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "estimate_tokens" src/ag…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs src/f… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need to know the exact semantics of the module_size gate. Let me read the classification logic — for a module already over cap (grandfathered), drift past grace is fatal. Let's check how it classifies: recorded 3986, actual will be ~4078+new tests. Grace 100 → 4086 fatal. Adding tests to src/agent_builder.rs would push actual over 4086? Let's see. If actual after tests is e.g. 4078 + ~70 = 4148, recorded 3986, drift = 162 > 100 → fatal. So we MUST re-paste the register line with the new actual count.
+
+Wait — but if we paste the actual new count as the recorded value, then drift = 0 → fine. That's the point: paste exact actual.
+
+But careful: the module_size test itself counts lines of the file. Let me check how it counts (e.g. count of lines including blanks). Let me look at count_rs_lines / the gate code in tests/module_size.rs.
+
+Also there's a subtlety: "grandfathered module may shrink while still over cap" tests. Pasting exact count = fine.
+
+Let me now write the tests. I need to design fixtures:
+
+- anti-vacuous: fixture prompt's true estimate_tokens != 4000, and composed non-empty.
+- scaling: `system_prompt_token_budget(&composed, big, false).0 == estimate_tokens(&composed)`.
+- near-miss: short string with large max_context_tokens returns `(estimate_tokens(&s), None)`.
+- degenerate over-window: max_context_tokens below measured value clamps → returns (max_context_tokens, Some(note)) whose text names over-window condition; note None in near-miss case.
+
+Wait: the scaling test with "big" max_context — careful, estimate_tokens for composed may be moderate.
+
+Let me check estimate_tokens implementation in yoagent to know the heuristic (chars/4?).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.9s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/yoage…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,200p' tests/module_s… ✓ (4ms)
+ ✗ (2m 0s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+The find command timed out. Let me find yoagent source more carefully with a bounded search.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 2s (1 ✓, 1 ✗)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/ 2>/dev… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.18.1 && grep… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`estimate_tokens(text) = text.len().div_ceil(4)` — bytes/4. A 4000-token prompt = 16000 bytes. So to make a fixture whose estimate is != 4000, easy.
+
+Now let me write the tests. Append to the existing `mod tests` in src/agent_builder.rs. Let me check the end of the tests module to append before closing brace.
+
+Actually simplest: insert new tests right after the tests module opening or anywhere inside. Let me find the closing brace of the file — the module ends at end of file presumably (line 4078). Let me check the tail.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -40 src/agent_builder.rs &&… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now write tests appended before final `}` at line 4078. I'll use edit_file with the unique tail text.
+
+Tests to add:
+
+```rust
+    // ── system_prompt_token_budget (#926's missing half, #929) ───────────
+
+    /// A composed prompt whose measured size is neither zero nor the retired
+    /// `4_000` constant, so a function that returned the old promise would
+    /// redden the tests below instead of agreeing with them.
+    fn measured_fixture_prompt() -> String {
+        // 40 KB of ASCII → ~10_000 tokens by yoagent's `len/4` estimate,
+        // comfortably above the retired 4_000 and below the `big` window.
+        "the composed system prompt ".repeat(1600)
+    }
+```
+
+Hmm wait: "the composed system prompt " is 26 bytes * 1600 = 41600 bytes → 10400 tokens. Good, > 4000 and != 4000.
+
+Scaling test: `system_prompt_token_budget(&composed, big, false).0 == estimate_tokens(&composed)` where big e.g. 200_000. 10400 <= 200000 so returns measured. And assert measured != 4000, non-empty composed.
+
+Near-miss test: short string, e.g. "short" with max_context 200_000 → (estimate_tokens("short"), None) via assert_eq!.
+
+Degenerate: max_context below measured → clamp: returns (max_context, Some(note)). Use composed fixture (10400) with max_context = 1000. assert .0 == 1000 == max_context. note contains "system prompt is ~10400 tokens" and "1000". Also assert note is Some and mentions over-window. Also plain vs non-plain glyph? Table maybe. Keep focused.
+
+Also both directions pinned: note None in near-miss, Some in degenerate.
+
+Also anti-vacuous: assert estimate_tokens(&composed) != 4000 and composed non-empty — that's the anti-vacuous test. I'll put it in its own test named e.g. `system_prompt_budget_fixture_is_not_the_retired_constant`.
+
+Let me count exact token numbers rather than hardcode: use estimate_tokens(&composed) in assertions rather than literal 10400. For the note text check, build the expected substring via format!("~{}", measured) — or just check it contains the measured number. Let me check the note text: `"system prompt is ~{measured} tokens but the context window is {max_context_tokens} - no room left for messages."` and plain=false has "⚠ system prompt is ~{measured} tokens but the context window is {max} — no room left for messages."
+
+Assert on plain=true version to avoid the glyph: contains("no room left for messages"), contains(&format!("~{measured}")), contains(&format!("is {max}")). And for the non-plain: contains("no room left for messages") too. Maybe add a plain/non-plain pair. Keep it table-ish but simple.
+
+Also the char-boundary rule #250: the note doesn't truncate the prompt, so nothing to guard. The task says "if the note quotes the prompt, cut on a char boundary" — it doesn't quote it. I'll note that in a comment rather than invent.
+
+Also should I test that the clamp value equals max_context_tokens (no underflow)? Yes: assert_eq!(budget, max). And the saturating behavior claim.
+
+Let's also assert `system_prompt_token_budget("", 100_000, false) == (0, None)`? Empty is a real case (no system prompt). estimate_tokens("")=0, 0<=100000 → (0,None). That's a fine near-miss pin. But careful: is empty a realistic input? compose_system_prompt never returns empty. Skip; not needed.
+
+Now the scaling test name should be searchable and specific. Let me write.
+
+Then the module register line: run cargo test --test module_size and read actual count.
+
+Let's write the tests now.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll add the missing tests to the existing mod tests.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (8 → 107 lines)
+                take_external_failure_note(),
+                None,
+                "the note must stay one-shot"
+  +         );
+  +     }
+  + 
+  +     // ── system_prompt_token_budget (#926's guard, tested in #929) ─────────
+  +     //
+  +     // Day 199 (#926) replaced the hardcoded `4_000` with a MEASURED budget and
+  +     // shipped it with no tests at all; #929 is the receipt. The fixture below
+  +     // is the anti-vacuous anchor for every test in this block: its measured
+  +     // size is neither zero nor the retired constant, so a function that
+  +     // returned `4_000` would redden these by name rather than agreeing with
+  +     // them. yoagent's estimate is `len().div_ceil(4)`, so ~42 KB of ASCII is
+  +     // ~10_400 tokens — above the retired promise, below every window used here.
+  + 
+  +     /// A composed prompt whose measured size is neither zero nor `4_000`.
+  +     fn measured_fixture_prompt() -> String {
+  +         "the composed system prompt ".repeat(1600)
+  +     }
+  ... (85 more lines)
+ ✓ (2m 17s)
+                take_external_failure_note(),
+                None,
+                "the note must stay one-shot"
+  +         );
+  +     }
+  + 
+  +     // ── system_prompt_token_budget (#926's guard, tested in #929) ─────────
+  +     //
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Auto-check output truncated. Let me run the specific tests to see results.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib system_prompt_b… ✓ (153ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo system_pro… ✓ (149ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 4 pass. Now the positive control, run serially. Neuter the clamp or make the function return 4000. I'll do a single atomic command: mutate → run tests → restore.
+
+Plan: replace `let measured = estimate_tokens(composed);` with `let measured = 4000; // NEUTERED POSITIVE CONTROL` ... but then we need the anti-vacuous to fail. Actually simpler: make the function return the retired constant.
+
+Atomic command using python/perl to mutate, run tests, then git checkout the file (restore). But careful: git checkout would revert my new tests too since they're not committed! I must restore only the mutated portion. Better: copy the file to a temp backup, mutate, run, restore from backup.
+
+Let me do: cp src/agent_builder.rs /tmp/ab.bak; then sed mutation; cargo test; cp /tmp/ab.bak back; cargo test again.
+
+Mutation: replace `let measured = estimate_tokens(composed);` with `let measured = 4_000;` (retired constant). Then:
+- anti_vacuous test: measured fixture estimate != 4000 — that test doesn't touch the function; it stays green (it's a fixture guard). Fine, that's expected — it's the anchor.
+- scaling test: budget == estimate_tokens(&composed) → 4000 != 10400 → red.
+- near-miss: short "You are a coding agent." estimate = 24/4=6; returns (4000? no — measured=4000, max=200000, 4000<=200000 returns (4000, None) — expected (6,None) → red. Hmm, near-miss goes red too. That's fine but the task said "confirm the scaling/anti-vacuous test(s) go red by name while every near-miss stays green". With this mutation, near-miss goes red too. That's honesty: report what actually happened.
+
+Alternatively neuter the clamp: replace the clamp `max_context_tokens,` with `measured,`... Hmm, that would make the degenerate test fail on budget assert (budget == narrow_window) and maybe the note.
+
+Better mutation to demonstrate: keep estimate, but return the retired constant only when it fits? Let's just do the simple one and report the actual red set honestly: which tests reddens.
+
+Actually, the strongest single mutation for these tests: make `measured` the constant. Let's run and observe. I'll report exactly what happens.
+
+Note: cargo test --bin yoyo with name filter. In the mutation run, use the filter `system_prompt_budget` so we see the 4.
+
+Let me run it as one atomic command.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive control, run serially as one atomic mutate→run→restore command:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent… (16 lines) ✓ (52.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Mutation landed, 3 of 4 red (scaling, near-miss, degenerate), the anti-vacuous fixture test stayed green (it's a fixture guard, not a function guard — expected). Restored, green, no NEUTERED marker.
+
+Now the register line. Need the actual count the module_size test reports. Let me run cargo test --test module_size and find what it says for src/agent_builder.rs.
+
+But wait — I appended 107 - 8 = 99 net lines? Let's compute: wc -l now.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs src/f… ✓ (10.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Fatal as predicted. Actual = 4177. Paste 4177 into the register line, with a why in the commit message. Also optional: cost.rs 2790 → 2869. The gate says paste 2869 to clear the warning. Task says optional, do last. I'll do it — clears a standing warning and the gate explicitly instructs it. Hmm, "Do this last so skipping it cannot cost the core work". I'll do it since it's a one-line improvement and clears the warning; the gate instructs it.
+
+Actually careful: pasting cost.rs 2869 is honest (actual 2869). Do it.
+
+Let me edit line 140 with a comment saying why. Note the register line has a preceding comment block for agent_builder. I'll update the number and add a Day 200 note.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '134,142p' tests/module_s… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 5 lines)
+        // Day 174: +3 absorbed since Day 166 — the warning branch had no reader.
+  -     ("src/agent_builder.rs", 3986),
+  +     // Day 200 (#929): +191 — the tests `system_prompt_token_budget` was
+  +     // required to have when #926 replaced the hardcoded 4_000 with a
+  +     // measurement. Pasted from what the gate printed, not computed.
+  +     ("src/agent_builder.rs", 4177),
+ ✓ (1m 47s)
+        // Day 174: +3 absorbed since Day 166 — the warning branch had no reader.
+  -     ("src/agent_builder.rs", 3986),
+  +     // Day 200 (#929): +191 — the tests `system_prompt_token_budget` was
+  +     // required to have when #926 replaced the hardcoded 4_000 with a
+  +     // measurement. Pasted from what the gate printed, not computed.
+  +     ("src/agent_builder.rs", 4177),
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '275,282p' tests/module_s… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Update cost.rs line: paste 2869 and say why (Day 200: clearing a standing non-fatal warning). I should be honest: I didn't write those lines — they pre-exist at HEAD. Pasting the true value clears the warning. Say why in the comment.
+
+Is pasting a number I didn't cause honest? Yes — the register records the actual size; the warning exists because the recorded value is stale. But the gate warns "growth of an already-capped module is information, not an emergency... paste ... (and say why in the commit message)". I'll paste 2869 with a comment noting the +79 is pre-existing drift at HEAD, absorbed by re-pasting, not by my change.
+
+Hmm — but does absorbing pre-existing drift silently erase the information that cost.rs grew 79 lines without acknowledgment? The gate's remedy is to paste. Paired with a comment saying what happened, that's honest. Let me check git log to see whether cost.rs grew 79 unacknowledged.
+
+Actually cost.rs is in "Recently Changed Files" list, so recent work touched it. The +79 was already there before my session (I didn't touch cost.rs). The register says 2790, actual 2869. Let me check when it changed — but that's a tangent. The task lists it as optional and non-required. 
+
+Decision: do it, with an honest comment: "Day 200: 2790 -> 2869 (+79). Pre-existing drift at HEAD, not caused by this task; re-pasted so the standing warning stops being noise the next reader has to re-derive." Hmm, but "the next reader has to re-derive" — actually leaving a warning is information. The risk: absorbing someone else's unacknowledged growth erases the signal. The gate itself says paste or split. I'll do a middle path that's honest and doesn't overreach: paste the true value and record that this task did not add the lines.
+
+Actually, wait. Let me think about whether to do it at all. The task says "not required" and "Do this last so skipping it cannot cost the core work". The benefit: `cargo test --test module_size` prints "28 passed" with no warnings, which is the task's stated Verify criterion ("28 passed and the src/agent_builder.rs register warning gone"). The cost.rs warning isn't in the criterion. 
+
+Risk of doing it: an evaluator could see an unrequested drift absorption as scope creep — but the task explicitly sanctions it. And the gate prints the exact fix instruction. I'll do it, with the provenance recorded so no information is lost.
+
+Let me check when cost.rs grew — to write an accurate comment. Quick: git log --oneline -3 -- src/format/cost.rs, and check the line count at HEAD~.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -4 -- src/form… ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The +79 came from `836c329e` (Day 199 Task 2) and `529d4183` — the count has been 2869 since at least HEAD~3. The Day 192 comment records 2790 and the growth was never re-pasted. So the warning is standing from Day 199's work (model pricing row + tests).
+
+I'll paste 2869 with an honest comment: "Day 200: 2790 -> 2869 (+79), absorbed from Day 199's pricing-row work (#923) which landed without re-pasting; cleared here so the gate's output is signal again."
+
+Wait, more carefully — is that accurate? The +79 landed in Day 199 commits (836c329e / 529d4183). The register comment attributes 2790 to Day 192. So yes, Day 199 work grew it 79 without pasting. That's the honest statement. I can verify which commit added the lines... 2869 both at HEAD~1 and HEAD~3, so it grew between HEAD~3 and HEAD~3's parent? Actually HEAD~3 shows 2869 too, so the growth happened earlier than HEAD~3. Let me check a few more to name it accurately, or just not name a commit and say "pre-existing at HEAD". Let me find the commit that crossed 2790.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 3 4 5 6 7 8; do echo -n… ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline HEAD~8..HEAD~7… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, HEAD~7's cost.rs = 2869 and HEAD~8 = 2790, and the commit in between is 836c329e. Wait but earlier `git log --oneline -4 -- src/format/cost.rs` listed 836c329e as the most recent commit touching cost.rs. So 836c329e = Day 199 Task 2 grew cost.rs 2790 → 2869 (+79) without re-pasting the register. Precise and verifiable.
+
+Now edit the register line for cost.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 5 lines)
+  -     ("src/format/cost.rs", 2790), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     ("src/format/cost.rs", 2869), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     // Day 200 (#929): 2790 -> 2869 (+79). Not this task's growth — `836c329e`
+  +     // (Day 199 Task 2, the deepseek-flash pricing row) landed the lines without
+  +     // re-pasting, so the gate had been printing a warning nobody re-derived.
+  +     // Pasted here from what the gate printed, to stop the true signal being noise.
+ ✓ (1m 31s)
+  -     ("src/format/cost.rs", 2790), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     ("src/format/cost.rs", 2869), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     // Day 200 (#929): 2790 -> 2869 (+79). Not this task's growth — `836c329e`
+  +     // (Day 199 Task 2, the deepseek-flash pricing row) landed the lines without
+  +     // re-pasting, so the gate had been printing a warning nobody re-derived.
+  +     // Pasted here from what the gate printed, to stop the true signal being noise.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (203ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+28 passed, and no warnings printed (the tail shows nothing above test result). Let me confirm the full output has no WARNING lines.
+
+Then ARCHITECTURE.md update. Let me find the agent_builder.rs bullet.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (185ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The grep matched huge lines. I need to find the ARCHITECTURE.md bullet for agent_builder.rs specifically. Let me search for "system_prompt_token_budget" or the budget claim in ARCHITECTURE.md.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "" ARCHITECTURE.md && gr… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No mention. So ARCHITECTURE.md has a bullet for agent_builder.rs? Let me find the bullet structure. Search for "- `agent_builder.rs`" with fixed line start.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- " ARCHITECTURE.md | … ✓ (19ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The output was too large. Let me be careful now. I need to find where in ARCHITECTURE.md the per-file notes are structured, and specifically find the `agent_builder.rs` bullet so I can update the system-prompt budget note.
+
+Let me use a targeted search rather than dumping the whole file.
+
+Actually, ARCHITECTURE.md seems to have bullets starting at line 239 (`- main.rs`). There may be a section listing per-file notes. Let me find the `agent_builder.rs` bullet efficiently — search for a line that begins with "- `agent_builder.rs`" but limit output.
+
+Let me use grep -n with a tight pattern and then read just that region with read_file offset/limit.
+
+I must avoid dumping huge lines. Let me get line numbers only first.
+────────────────────────────────────────────────────────────────────────────────
+
+The ARCHITECTURE.md bullets are huge single lines. Let me locate the agent_builder.rs bullet by line number only, then read just that line.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `agent_builder.rs`' …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '{ if (length($0) > 90000) p… ✓ (5ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line 241 is the agent_builder.rs bullet. Let me check its length and whether it mentions the system prompt budget. I'll search within that line only.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '241p' ARCHITECTURE.md | … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The line is 20337 chars and does not contain "system_prompt_token_budget", "4_000", "#926", or "system-prompt" (grep exited 1 = no match). So the budget note isn't in the bullet yet. Let me see the tail of that bullet to find a good insertion point — but carefully, only the last portion.
+
+Let me print the last ~1200 chars of line 241.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '241p' ARCHITECTURE.md | … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I'll append a new paragraph to the agent_builder.rs bullet (line 241) covering the system-prompt budget note. I need to use edit_file with exact old_text. The old_text should be the tail I just saw, which is unique.
+
+I'll append after "...is the entire regression surface."
+
+Let me craft the addition. It must be accurate:
+- The system-prompt budget is measured from the composed prompt with yoagent's own `estimate_tokens`, never the retired `4_000` promise.
+- The degenerate over-window case is clamped to `max_context_tokens` (consistent with yoagent's own `saturating_sub`) and named by `system_prompt_over_window_message`, returning `Some(note)`; `None` means "fits".
+- Day 200 (#929): the tests the function was required to have when #926 shipped it, plus the register re-paste (+191).
+
+Let me write it concisely but in the house style. Keep it honest: I should state what the tests prove and their limits.
+
+Things to state honestly:
+- Four tests in the existing `mod tests`: anti-vacuous fixture, scaling, near-miss byte-identity (assert_eq), degenerate clamp+note in both plain and non-plain.
+- Positive control run serially: neutering `estimate_tokens(composed)` to `4_000` reddened three tests by name (the scaling, the clamp test, and... wait which three failed?). Let me recall: mutated run showed "test result: FAILED. 1 passed; 3 failed". The 4 tests: fixture_is_not_the_retired_constant, is_the_measured_size..., leaves_a_short_prompt_byte_identical, clamps_and_names_the_over_window_case.
+
+Which passed under the mutation? The short-prompt near-miss one: `estimate_tokens("You are a coding agent.")` = 26/4... len("You are a coding agent.") = 24 → div_ceil(4) = 6. And with mutation the function returns 4_000 for measured. Wait — for the short prompt, measured=4000 > max? No, max=200_000, so 4000 <= 200000 → returns (4000, None). But the test asserts (estimate_tokens(short), None) = (6, None) ≠ (4000, None). So it SHOULD have failed too. Hmm, but only 3 failed and 1 passed.
+
+Wait, the mutated run output was truncated: "... (1 passing tests omitted)" then "test ..._is_the_measured_size_not_the_retired_constant ... FAILED" then "... (2 more similar lines)" then "test result: FAILED. 1 passed; 3 failed".
+
+The "(2 more similar lines)" hides 2 more failure lines. So 3 failed. Which one passed? Let me figure out: with measured=4000 always:
+- fixture_is_not_the_retired_constant: doesn't call the function; it checks estimate_tokens(&composed) != 4000 and >0. That would still PASS (it only uses estimate_tokens directly). Yes → that's the 1 passing.
+- is_the_measured_size...: asserts budget == estimate_tokens(&composed) — 4000 vs ~10400 → FAILED.
+- leaves_a_short_prompt_byte_identical: asserts (6, None) vs (4000, None) → FAILED.
+- clamps_and_names_the_over_window_case: measured=4000 > 1000 → note produced with measured=4000, note contains "~4000" but test asserts contains "~{measured}" where measured=estimate_tokens(&composed)=~10400 → FAILED. Also budget==1000 clamp holds but the note assertion fails.
+
+So 3 failed (scaling, near-miss, clamp), 1 passed (the anti-vacuous fixture test, which doesn't call the function).
+
+Important: the task file said "confirm the scaling/anti-vacuous test(s) go red by name while every near-miss stays green". But actually the near-miss DID go red. That's a discrepancy I should report honestly! The task file predicted the near-miss stays green, but with this mutation (returning a constant 4000), the near-miss goes red too — which is fine/correct behavior (the near-miss is a regression surface that SHOULD be pinned; if the function returns 4000 for a short prompt, that's wrong but harmless... hmm).
+
+Actually wait — in the REAL code path, for the near-miss, the function returns `(measured, None)` where measured = estimate_tokens(short). If I neuter `measured = 4_000`, then for the short prompt the function returns (4000, None) instead of (6, None). That WOULD be a behavior change... but is it a *bug*? The near-miss asserts byte-identity to `(estimate_tokens(short), None)`. Under the neuter, it's (4000, None) — different. So it fails. That's correct: the near-miss asserts the measurement is real, so it's not purely a "silence" assertion.
+
+Hmm, but the task file said the near-miss should stay green because it's "assert_eq! of no-note case". Actually the point of the near-miss is that `None` is returned (no note). Under the neuter, `None` IS still returned. But my near-miss test ALSO asserts the budget value equals estimate_tokens, so it also pins the measurement.
+
+This is an honest finding worth reporting: the positive control's red was WIDER than the task file predicted (3 tests, including the near-miss, not just the scaling/anti-vacuous ones). That's the Day 190 lesson: "How WIDE a positive control's red is, is the scope of the claim." I should report this honestly rather than claim the near-miss stayed green.
+
+But wait — I should consider whether the near-miss SHOULD stay green under the intended mutation. The task's stated positive control was "neuter the clamp (or make the function return 4000)". I did "make the function return 4000" (in the measured variable). Under this lever, red is wide.
+
+I could run a second, more targeted control: neuter the CLAMP instead (leave the measurement real, remove the over-window branch). Then only the clamp test should go red, and the near-miss + scaling stay green. That would demonstrate the intended separation and give an honest, precise account.
+
+Let me do that: a second serial mutate→run→restore where I neuter the clamp (make the over-window branch return (measured, None)). Expected: only `clamps_and_names_the_over_window_case` fails; the other three stay green.
+
+Hmm, but the clamp test asserts budget == narrow_window (1000). If I neuter to return `(measured, None)`, budget = ~10400 ≠ 1000, and note = None → `.expect(...)` panics → FAILED. Others: scaling test uses big_window → unaffected (measured <= max) → green. Near-miss unchanged → green. Fixture test → green. Good, that's the precise separation.
+
+This gives me two positive controls, both restored, and an honest write-up: the wide lever reddened 3 including the near-miss (correctly, because every one of these tests pins the measurement when it should); the targeted clamp lever reddened exactly the clamp test while the near-miss stayed green.
+
+Actually — hold on. Is it a problem that the near-miss goes red under "return 4000"? The near-miss's job is to be the regression surface guard for ordinary users: "a short prompt in a large window returns (estimate, None)". If the function returned a constant 4000, would an ordinary user be harmed? The budget passed to ContextConfig would be 4000 instead of 6 — a 3994-token over-claim. That's the original bug in miniature (over-claiming leaves less room). So yes, the near-miss SHOULD catch it. Good — this is a correct, defensible design: the near-miss pins both the None AND the value.
+
+But the task file's prediction was narrow. I'll report the discrepancy honestly, per the repo's culture (superseded claims recorded, "recorded rather than erased").
+
+Let me run the second control serially.
+
+Then:
+- run full cargo test, clippy, fmt
+- update ARCHITECTURE.md
+- commit
+
+Let me proceed. I'm mindful of token budget; keep outputs small.
+
+Let me run the second positive control now.
+────────────────────────────────────────────────────────────────────────────────
+
+Line 241 is the agent_builder.rs bullet (20337 chars) and it has no budget note yet. Before writing it up, let me run a second, targeted positive control to characterize exactly which tests catch which break — the first lever reddened 3 of 4, which is wider than the task file predicted.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent… (20 lines) ✓ (52.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good: the targeted clamp lever reddened exactly 1 test (the clamp test), with the other 3 green — including the near-miss. And the wide lever (measured=4000) reddened 3 (all except the fixture test, which doesn't call the function).
+
+Now full checks: fmt, clippy, build, test.
+
+Let me run them. Output may be huge; grep for result lines.
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls restored, tree green. Now the full check suite:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (18.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — cargo fmt may have reformatted my test code, changing line counts. Let me re-check the line count of src/agent_builder.rs and re-run module_size, then run the full test suite.
+
+Also check tests/module_size.rs line count didn't change (my edit added comment lines to a test file — that file itself isn't in the register list, so fine).
+
+Let me check line count now.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs && ca… ✓ (10.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line count still 4177 after fmt, register matches, 28 passed, no warnings.
+
+Now the full test suite. It's 5641 tests — could take a while. Let me run it and grep for failures/summary.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 30s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green. 5640 passed (previously 5637 + my 4 new = but count says 5640... earlier the filtered run showed "5637 filtered out" out of 5641 total. Now 5640 passed + 1 ignored = 5641... hmm, earlier I saw "5641 tests" total. Now 5640 passed + 1 ignored = 5641. But I added 4 tests. Before my change it should have been 5637. Whatever — the earlier auto-check said "running 5641 tests" which was AFTER my edit. Consistent: 5637 + 4 = 5641.
+
+Let me verify no other test suites failed — the grep showed 15 "test result" lines all ok. Good. Also `tests/neutered_guards.rs` should be among them and passed (no NEUTERED markers remain — confirmed grep -c = 0).
+
+Now update ARCHITECTURE.md — append a paragraph to the agent_builder.rs bullet (line 241).
+
+Let me write the addition. It should be appended to the end of line 241. I'll use edit_file with the unique tail as old_text.
+
+The tail is:
+"A control-byte-free id and error still render **byte-identically**, which is every user whose config and servers carry none and is the entire regression surface."
+
+I'll append after it.
+
+Content to add (house style, dense):
+
+**Day 200 (#929, discharging #926's receipt) — the system-prompt budget is MEASURED, and the tests it shipped without now exist.** `system_prompt_token_budget(composed, max_context_tokens, plain)` returns `(estimate_tokens(composed), None)` when the composed prompt fits, and in the degenerate case returns `(max_context_tokens, Some(note))` — clamped to the window, consistent with yoagent's own `saturating_sub` in `compact_messages`, so the number handed to `ContextConfig` is the same number the consumer will compute; the retired hardcoded `4_000` was a promise about a string yoyo does not author (the prompt is the user's plus a project instruction file — this repo's own CLAUDE.md was two orders of magnitude past it), and on the first session where that happened compaction fired on turn one and deleted the user task. `None` means fits, which is every ordinary user. **#926 shipped this with zero tests and a stale register line**; four tests now live in the file's existing `mod tests` (not a second module): an anti-vacuous fixture guard (the fixture's measured size is neither zero nor `4_000`, so a function returning the retired constant cannot agree with these tests), scaling (`budget == estimate_tokens(composed)` — the configured value IS the measurement), the near-miss (a short prompt in a large window returns `(estimate_tokens(s), None)` — pinned with whole-value `assert_eq!` for both `plain` values, since byte-identity is the decision), and the degenerate case (clamp + a note naming the over-window condition, the measured size and the window, in both plain and non-plain form). **Positive control run twice, serially, each as one atomic mutate→run→restore, and the WIDTH of the two reds is recorded rather than the narrower one predicted:** neutering the measurement to `4_000` reddens **three** of the four (the fixture guard does not call the function, so it stays green) — *including the near-miss*, which is correct and is the Day-191 lesson applied: that test pins the value as well as the absence of a note, so a budget of 3994 over an ordinary user's 6-token prompt is caught; neutering **the clamp instead** reddens **exactly one** (the degenerate test) with the other three green, which is the separation the task file expected. No test was deleted or widened. The register entry moved **3986 → 4177**, pasted from what the gate printed; `("src/format/cost.rs", 2790)` was likewise re-pasted to **2869**, a drift of +79 that landed in `836c329e` (Day 199 Task 2) without the paste, so the gate had been printing a true-but-unread warning.
+
+That's long but consistent with the file style. Maybe trim slightly. It's fine.
+
+Let me get the exact tail text to anchor. From the earlier output:
+
+"A control-byte-free id and error still render **byte-identically**, which is every user whose config and servers carry none and is the entire regression surface."
+
+Let me apply the edit.
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now the ARCHITECTURE.md per-file note (appending to the existing agent_builder.rs bullet at line 241):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/ARCHITECTURE.md (1 → 1 lines)
+  - A control-byte-free id and error still render **byte-identically**, which is every user whose config and servers carry none and is the entire regression surface.
+  + A control-byte-free id and error still render **byte-identically**, which is every user whose config and servers carry none and is the entire regression surface. **Day 200 (#929, discharging #926's receipt) — the system-prompt budget is MEASURED, and the tests it was required to have now exist.** `system_prompt_token_budget(composed, max_context_tokens, plain)` returns `(estimate_tokens(composed), None)` when the composed prompt fits, and in the degenerate case returns `(max_context_tokens, So… [yoyo: 2854 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 31s)
+  - A control-byte-free id and error still render **byte-identically**, which is every user whose config and servers carry none and is the entire regression surface.
+  + A control-byte-free id and error still render **byte-identically**, which is every user whose config and servers carry none and is the entire regression surface. **Day 200 (#929, discharging #926's receipt) — the system-prompt budget is MEASURED, and the tests it was required to have now exist.** `system_prompt_token_budget(composed, max_context_tokens, plain)` returns `(estimate_tokens(composed), None)` when the composed prompt fits, and in the degenerate case returns `(max_context_tokens, So… [yoyo: 2854 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now check the module_size gate: is ARCHITECTURE.md gated? No, it's not a .rs file in the register. But there might be a different gate for docs (tests/doc_version_claims.rs). Let me just re-run the full check quickly on the affected tests, then commit.
+
+Actually the docs change might affect a doc-size test? Let me grep for ARCHITECTURE.md size checks. CLAUDE.md had a 40KB note. Let me quickly check tests referencing ARCHITECTURE.md.
+
+Let me run: cargo test 2>&1 | grep results — but that's 77s. Fine, but to save budget, run targeted: tests/doc_version_claims.rs and tests/module_size.rs. Actually the safest is a full cargo test run once more since the docs changed. It's ~77s. Let's do it, plus clippy/fmt quickly.
+
+Let me also double-check whether any test asserts on ARCHITECTURE.md line count / bullet existence.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ARCHITECTURE.md" tests… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '110,175p' tests/doc_vers… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+This test scans for yoagent version claim markers — my ARCHITECTURE.md text says "yoagent's own `estimate_tokens`" but no version claim marker. The marker is presumably `yoagent-version-claim:`. My addition doesn't include a version claim. Safe. But let me run the full test suite once more to be certain (docs changed).
+
+Let me run cargo test and capture the summary lines only.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 32s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 15 test suites ok (none with failures). fmt and clippy clean.
+
+Let me verify no failure lines: grep showed only "ok" lines. Let me double check there's no FAILED by running grep -c FAILED... Actually earlier run showed all ok. Good enough — but let me be certain by checking the overall exit code of cargo test.
+
+Let me run cargo test with exit code check quickly (it'll re-run, but cached compile so ~77s). Hmm. Instead, grep the last run output... I didn't save it. Let me just run `cargo test 2>&1 | grep -E "FAILED|failures:" | head` — but that re-runs.
+
+Actually the previous run's `grep -E "^test result"` piped through sort/uniq -c showed 15 unique lines all "ok". If any suite failed, the line would say "test result: FAILED". None did. And the command exited 0 overall (the `&&` chain continued to fmt/clippy). Note: cargo test's exit code is masked by the pipe to grep. So exit 0 of the pipeline isn't proof. But the absence of any "FAILED" in the result lines is strong.
+
+Let me do one more explicit confirmation cheaply: run cargo test and check exit status properly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test > /tmp/t.log 2>&1; ec… ✓ (1m 31s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+cargo test exit=0, 0 FAILED suites, 5884 passed / 0 failed across all suites.
+
+Now commit. Also I should confirm the git status only includes my intended files, and verify no leftover NEUTERED anywhere.
+
+Then commit with the message given.
+
+Also, the task mentions updating ARCHITECTURE.md — done. CLAUDE.md must not grow — I didn't touch it.
+
+Let me check git status and diff stat.
+────────────────────────────────────────────────────────────────────────────────
+
+All checks pass: cargo test exit 0, 5884 passed / 0 failed, fmt clean, clippy clean, no NEUTERED markers left. Committing:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (34ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (53ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Committed. Let me write a concise final report.
+
+Summary of what I did:
+1. Re-verified the task's claims against the tree: `system_prompt_token_budget` at src/agent_builder.rs:989, single call site :1180, no test referenced it (`grep -rn` showed only the definition + call site), register line 3986 vs actual 4078.
+2. Added 4 tests to the existing `mod tests` (src/agent_builder.rs).
+3. Positive control run twice serially (atomic mutate→run→restore):
+   - lever 1: measurement → 4_000: 3 of 4 red by name (fixture guard green because it doesn't call the function), including the near-miss. Restored → green.
+   - lever 2: clamp removed: exactly 1 red (degenerate test), other 3 green. Restored → green.
+4. Register: pasted 4177 (from what the gate printed) into tests/module_size.rs; also re-pasted src/format/cost.rs 2790 → 2869 (the optional item), noting it's pre-existing drift from 836c329e.
+5. ARCHITECTURE.md note appended to the agent_builder.rs bullet.
+6. Verified: cargo fmt --check ok, clippy -D warnings ok, build ok, cargo test 5884 passed/0 failed, module_size 28 passed with no warnings.
+7. Committed a4d2a5ab.
+
+Honest note: the task file predicted the near-miss stays green under the neuter; that prediction is wrong for the "return 4000" lever (it correctly goes red because it pins the value too). I recorded that.
+
+One thing I should be explicit about: the task asked to "confirm the scaling/anti-vacuous test(s) go red by name". The anti-vacuous fixture test did NOT go red under either lever — because it doesn't call the function at all; it's an anti-vacuous guard on the fixture, not on the function. That's worth stating plainly: it's an anti-vacuous guard, and the task file's phrasing ("scaling/anti-vacuous test(s) go red") conflates the two. Under lever 1 the *scaling* test went red; the *anti-vacuous* test stayed green by design. I should report that honestly.
+
+Also I did not change behavior of the function — confirmed.
+
+Let me write the final report concisely.
+────────────────────────────────────────────────────────────────────────────────
+
+Done. Committed as a4d2a5ab.
+
+## What I did
+
+Re-verified before planning (the task said to): system_prompt_token_budget is at src/agent_builder.rs:989, its only call site at :1180, and a repo-wide grep found zero tests referencing it. The register line read 3986 against an actual 4078. The objection in #929 still stood.
+
+1. Tests — four added to the file's existing mod tests (:1578), not a second module:
+• anti-vacuous fixture guard (fixture measures > 0 and ≠ 4000)
+• scaling: budget == estimate_tokens(composed)
+• near-miss: short prompt in a large window returns (estimate_tokens(s), None) — whole-value assert_eq!, both plain values
+• degenerate: prompt > window clamps to the window and returns a note naming measured size, window and the over-window condition
+
+2. Register — pasted the gate's own number, 4177. Also did the optional src/format/cost.rs re-paste (2790 → 2869); I checked the history and that +79 landed in 836c329e (Day 199 Task 2), so it was pre-existing unacknowledged drift.
+
+3. Docs — appended the note to ARCHITECTURE.md's agent_builder.rs bullet. CLAUDE.md untouched.
+
+## Positive controls (each one atomic mutate→run→restore, run serially)
+
+The width of the red was wider than the task file predicted, and I recorded what I actually saw:
+• Neuter the measurement to 4_000 → 3 of 4 red by name, including the near-miss. The task file expected the near-miss to stay green; it doesn't, and that is correct — that test pins the value as well as the note's absence, so it catches a 3994-token over-claim on an ordinary 6-token prompt (the Day-191 lesson). The anti-vacuous test stayed green under both levers because it never calls the function — it guards the fixture, not the function, which is a distinction the task file's phrasing conflated.
+• Remove the clamp instead → exactly 1 red (the degenerate test), other three green — the separation the task file expected.
+
+Both restored; no NEUTERED markers remain (grep clean).
+
+## Verification (all run, all green)
+• `cargo fmt -- --check` → OK
+• `cargo clippy --all-targets -- -D warnings` → clean
+• `cargo build` → OK
+• `cargo test` → 5884 passed, 0 failed, exit 0
+• `cargo test --test module_size → **28 passed**, and the src/agent_builder.rs` warning is gone
+
+Behaviour of system_prompt_token_budget was not changed — tests, a register paste and the doc note only.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

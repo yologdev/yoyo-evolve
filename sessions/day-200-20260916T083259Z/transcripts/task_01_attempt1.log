@@ -1,0 +1,1841 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me start by reading the relevant parts of the file. The task: add measured per-convention census to `scripts/check_assertion_weakening.py`.
+
+Let me explore the file.
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the key parts of the target file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && wc -l sc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '290,420p' scripts/check_… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read `scan_diff`, `render_report`, `render_conventions_limit`, the drift guard at 2445, and `run_self_tests`.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,1120p' scripts/check… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read the full scan_diff and render_report.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '964,1040p' scripts/check…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1108,1330p' scripts/chec… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the drift guard at :2445 and `run_self_tests`, plus the `Finding` class and `classify_assertion_change`, `register` shapes etc.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.4s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2380,2520p' scripts/chec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '420,700p' scripts/check_… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me see the full run_self_tests, especially the part at line ~2380-2500 (the conv fixtures and near-miss guard) and where near-miss compares the rendered report. Let me see the whole self-test region around 2300-2560.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2280,2400p' scripts/chec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2520,2700p' scripts/chec… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I understand the structure. Let me check the truncated conventions fixture part fully (lines 2300-2510) to see the fixtures. And figure out where the convention fixture loop is.
+
+Let me print lines 2340-2470 with full content.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2340,2470p' scripts/chec… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need to see the exact fixture contents. Let me print with cat -A? Actually sed's "... (N more similar lines)" is the reading tool's compression, not the file. Let me use `read_file` to read the specific ranges to get full content.
+
+Actually the bash tool output was truncated by sed? No — it says "... (N more similar lines)" which is odd for sed. That's the tool's own compression of similar lines. Let me read with read_file for exact lines.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:2338..2418 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:2417..2487 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I understand the fixtures. Note: these fixtures are multi-file diffs. The subject is one file. But the census is per whole scan; per-convention counts are counted from the whole scan. Hmm, but for a fixture that carries one convention shape, count >= 1.
+
+Let me now think about the design of the census.
+
+We need per-convention counts keyed by CONVENTION_* constants. Data from what scan already computes:
+
+1. `CONVENTION_MODULE_SPLIT`: hunks whose `#[test]` fns moved — the `reconcile_moved_tests`/`MOVED` path. So count MOVED findings that were created by reconcile where the moved test fn left a `#[test]` fn. Actually spec says "hunks whose `#[test]` fns moved". reconcile_moved_tests counts moved_count. But MOVED for module-split specifically: fns moved with the #[test] attribute. Note reconcile only fires when removed_test_fn_names is nonempty. A test fn moving. Hmm, but the module-split convention fixture has `- #[test]` `- fn lang_keywords_covers_rust() {` removed and added in another file. But wait — in the fixture, the removed lines also include an assert line; classify would produce WEAKENED (assertion deleted) → then reconcile detects the test fn moved → MOVED. Yes.
+
+So: count of MOVED findings where the removed hunk contains a `#[test]` attribute? Actually the spec: "hunks whose `#[test]` fns moved — the `reconcile_moved_tests` / `MOVED` path". Simplest measurable: MOVED count where the moved test fn was declared with #[test]. Since reconcile's `removed_test_fn_names` returns fn names; it doesn't check #[test]. Hmm. Test fn names found via FN_NAME_RE; but "removed_test_fn_names" can include any fn, not just #[test]. Actually the WEAKENED verdict requires there be a deleted assertion. In a non-test mod in a src file, a fn removal with asserts... possible but rare.
+
+I think the cleanest, honest approach: track per-convention counts in scan_diff based on the data available:
+
+- MODULE_SPLIT: number of MOVED findings produced by reconcile where the hunk's removed lines contain a `#[test]` attribute (vocab.test_re). That requires access to hunks in scan_diff after reconcile. We can compute: for each MOVED finding, find its hunk (by path, header) and check if vocab.test_re matches any removed line and there is at least one fn name moved.
+
+Hmm, this is getting complex and could be considered "new discriminator". But the spec table gives guidance. Let me design a straightforward implementation.
+
+Actually maybe simpler: the census can be computed from findings + hunks:
+
+```
+def convention_census(findings, hunks, vocab=BUILTIN_VOCABULARY) -> dict:
+```
+
+But the spec says add counts to scan_diff's return and print them in render_report. Hmm, "Add per-convention counts to `scan_diff`'s return (and print them in `render_report` beside the verdicts)".
+
+But scan_diff returns a 4-tuple. Adding a 5th element changes the signature, breaking callers/tests that unpack 4. There are many `scan_diff(...)` callers unpacking 4 variables. Let me count.
+
+Option: keep scan_diff's return of 4 values but make the first element... no.
+
+Better: add a 5th element (dict) and update all callers. But the spec says "the tuple shape is unchanged" comment currently. Hmm, that comment refers to MOVED count derivable. We're allowed to change the tuple shape since the task says "Add per-convention counts to scan_diff's return".
+
+But there are many unpack sites in self-tests using 4 vars. Let's count them.
+
+Actually a cleaner approach that preserves the existing 4-tuple exactly: compute the census in a separate pure function `convention_census(findings, hunks, ...)` and have `scan_diff` return it as a 5th tuple element. Callers that unpack 4 would break. Let me check how many unpack sites exist.
+
+Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "scan_diff(" scripts/che…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "scan_diff" scripts/ te… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Only used inside this file. Many 4-unpack sites. Changing the tuple to 5 would break them all. That's a lot of edits, but the task says "Do not edit or weaken any pre-existing self-test row." Unpacking edits aren't weakening rows but is a big diff.
+
+Alternative: make scan_diff return a 5th element but have many callers unpack with a star? Python doesn't allow `a,b,c,d,*_`. It does: `a, b, c, d, *_ = ...` works. But cleanest: keep the 4-tuple and add a separate function that computes the census alongside. But the task explicitly says "Add per-convention counts to `scan_diff`'s return".
+
+Hmm. But there's a subtlety: to attribute conventions you need `hunks` and the raw per-hunk data plus findings after reconcile. Computing in scan_diff is natural.
+
+Compromise that satisfies "add per-convention counts to scan_diff's return": return a 5th element, and update all unpack sites. That's ~20 sites. Since they're mostly self-tests with `_` names, adding `, _` is a mechanical, non-weakening edit. But the task says "Do not edit or weaken any pre-existing self-test row" — adding an unused 5th target is not weakening.
+
+Hmm, but a simpler trick: make the 5th element optional via a flag? No.
+
+Actually another approach: keep scan_diff's 4-tuple signature, but have it also return counts through... no.
+
+Let me reconsider: could I compute the census *inside* render_report / main from `findings` alone plus hunks? The scan has hunks locally. render_report only receives findings, counts. For MODULE_SPLIT, I need to know which MOVED findings had `#[test]` moved. The MOVED detail text says "MOVED: every removed test fn reappears..." — for module_split. But the detail doesn't say #[test]. Hmm, but a MOVED is only created by reconcile_moved_tests, which fires when a test fn was removed from a hunk that scored WEAKENED (assertion deleted). For MODULE_SPLIT convention, the moved fn had #[test]. Distinguishing module-split from "a non-test fn with assertions moved into another file" — the spec says "hunks whose `#[test]` fns moved". So we need hunks.
+
+I'll go with the 5th tuple element and update all callers. Let me count how disruptive. There are 24 unpack sites. Many are single-line. Manageable with careful edits. But there's risk: `_tuple(scan_diff(...))` comparisons — those compare whole tuples, e.g. "std_default == std_default". Adding a 5th dict element to the tuple is fine for `==` comparison? Two scans of the same diff produce equal dicts, so fine. And `_tuple(scan_diff(attr_diff)) == _tuple(scan_diff(attr_diff, eqnice_vocab))` — adding census dict; for these diffs, census should be all-zero in both, so equal. But wait — the census might differ between default and widened vocab? The test at 2799: `_tuple(scan_diff(standard_idiom_diff, Vocabulary())) == std_default`. Vocabulary() with no extras equals builtins; census should be identical. Fine.
+
+Hmm, but there's a risk the widened vocabulary changes test_hunks etc. That's pre-existing.
+
+Alternatively I can avoid touching call sites by making the census a 5th element and using a small helper that unpacks. Actually, all the unpack sites explicitly bind 4 names; Python will raise ValueError "too many values to unpack". So must edit.
+
+Hmm — wait. There's a neater option that keeps backward compat AND satisfies "add per-convention counts to scan_diff's return": return a namedtuple-like? No, still same arity issue.
+
+Let me just do it: change scan_diff to return a 5-tuple and update all call sites to add `, _census` where unused, or capture where useful. Actually the render_report signature needs the census; main calls render_report. Let me look at main and the callers at 1365, 1684, 1703 to wire it.
+
+Let me look at those regions.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.3s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:1340..1400  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:1660..1740 ✓ (1ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now, in per-commit mode, multiple scan_diff calls; census needs to be summed. In net mode one call.
+
+Design:
+- `scan_diff` returns `(findings, rust_hunks, test_hunks, skipped_unknown_vocab, convention_counts)` where convention_counts is a dict keyed by CONVENTION_* constants, always containing all five keys with int values (maybe including zeros). Actually keeping all five keys always is important for the drift guard ("fail if a WRITTEN_CONVENTIONS row has no counter").
+
+Now the definition of each counter. Let me define a pure helper `convention_counts(findings, hunks, vocab)`.
+
+Wait, `hunks` is needed for register-lines and file-rename/characterization etc. Let's define:
+
+- MODULE_SPLIT: count of MOVED findings whose source hunk removed at least one `#[test]`-attributed fn (i.e., `vocab.test_re.search` on removed lines) — spec: "hunks whose #[test] fns moved — the reconcile_moved_tests / MOVED path".
+
+Hmm. But actually maybe simpler and more faithful: MOVED findings where the hunk's removed lines contain a test attribute. There's a subtlety: a moved test fn may not carry `#[test]` on the removed lines (e.g. moved within file). But convention is about module-split. Let me implement: for each MOVED finding, look up its hunk by (path, header); if hunk removed lines include a test-re match AND removed_test_fn_names has a name, count MODULE_SPLIT.
+
+Actually reconcile requires removed_test_fn_names nonempty. So MOVED ⟹ a fn name was moved. Adding the `#[test]` check distinguishes test fns from production fns. Good.
+
+- FILE_RENAME: spec is interesting: "report which mechanism applied: in --per-commit mode a whole-file delete never reaches the classifier (git_diff_one_commit passes --diff-filter=d, i.e. EXCLUDED); in the net scan it is MOVED. The row's own text records that the Day-196 prediction named only the second — so report the mode, do not assume one mechanism."
+
+Hmm, so the census for FILE_RENAME should be derived from the mode. How do we know mode inside scan_diff? We don't. But we can measure FILE_RENAME as the MOVED findings where the hunk's path is a dedicated test file AND the whole file moved (i.e. the diff has a `--- /dev/null` or `+++ /dev/null`? Actually a rename shows as delete + add in the parse).
+
+Hmm. In the fixture, the deleted file `tests/gasp_doc_version.rs` hunk header is `@@ -1,8 +0,0 @@` and the file is a test file. The moved finding's detail says MOVED with the destinations. So FILE_RENAME could be counted as MOVED findings whose source path is a dedicated test file.
+
+But module-split fixture's source path is `src/format/highlight.rs` (not a dedicated test file). So the two are distinguishable: MODULE_SPLIT = MOVED from a non-dedicated-test file (src/...); FILE_RENAME = MOVED from a dedicated test file (tests/... or *_tests.rs).
+
+Hmm but that's a heuristic. Alternatively, distinguish by whether the hunk is a whole-file deletion (header `@@ -N,M +0,0 @@`). In the FILE_RENAME fixture, the deleted hunk is `@@ -1,8 +0,0 @@` — entire file (8 lines from line 1 to 0). In the module-split fixture, `@@ -1700,6 +1700,0 @@` — not from line 1, not whole-file (well, +1700,0 means 0 added lines but it's within the file).
+
+An honest discriminator: the hunk deletes the whole file. With parse_unified_diff we know header. Simpler robust discriminator: the removed hunk's counterpart is an addition in a NEW file (`+++ b/...` with `--- /dev/null`). Hmm. Do we have the file's `---`/`+++` lines? parse_unified_diff probably tracks path. Let me look at Hunk and parse_unified_diff.
+
+Also the spec says "report which mechanism applied" and "report the mode". Maybe the census should record, for FILE_RENAME, a value that is labeled by mechanism. But the deliverable is counts. Hmm.
+
+Let me re-read: "| `CONVENTION_FILE_RENAME` | report **which mechanism applied**: in `--per-commit` mode a whole-file delete never reaches the classifier (`git_diff_one_commit` passes `--diff-filter=d`, i.e. EXCLUDED); in the net scan it is `MOVED`. The row's own text records that the Day-196 prediction named only the second — so report the mode, do not assume one mechanism |"
+
+So the count for FILE_RENAME = MOVED findings where the moved thing is a whole test file rename. Effectively measuring MOVED-from-a-test-file. And the "report which mechanism" is about the prose/docs noting both mechanisms (EXCLUDED in per-commit, MOVED in net). Since census is additive per scan, and in per-commit mode whole-file deletes are excluded → count 0 there naturally, which IS reporting the mode implicitly. Hmm, but then the count would be 0 in per-commit mode even when a rename happened. That's a real property (the mechanism differs), and we should document it.
+
+I think a defensible implementation: FILE_RENAME counts MOVED findings whose source path is a dedicated test file AND whose removed hunk is a whole-file deletion (header `@@ -1,` .. `+0,0` or `--- /dev/null` on the add side). Let me check parse_unified_diff to see what's available.
+
+Let me read parse_unified_diff and Hunk.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.6s (2 ✓)
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:755..885 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now design the census function. Let me define it as a pure function `convention_census(findings, hunks, vocab)` returning a dict keyed by the five constants.
+
+Definitions:
+
+1. CONVENTION_MODULE_SPLIT: MOVED findings whose source hunk moved a `#[test]` fn AND the source file is NOT a dedicated test file (i.e., a test mod inside src/). Hmm — the module-split convention is: module-size gate forces pure moves of `#[test]` fns out of an oversized `src/` module into a new file. The source path `src/format/highlight.rs` is not a dedicated test file. The destination `src/format/highlight_lang.rs` — also not a dedicated test file (doesn't end _tests.rs). Hmm, actually in the fixture the destination is `src/format/highlight_lang.rs` which is `is_dedicated_test_file` false.
+
+2. CONVENTION_FILE_RENAME: MOVED findings from a dedicated test file, where the file itself was removed (whole-file deletion). The fixture: `tests/gasp_doc_version.rs` with header `@@ -1,8 +0,0 @@`, and the diff has `+++ /dev/null` for it. But parse_unified_diff sets path from `diff --git a/... b/...` line: parts = line.split(" b/",1) → for "diff --git a/tests/gasp_doc_version.rs b/tests/gasp_doc_version.rs", parts[1] = "tests/gasp_doc_version.rs". Then no `+++ b/` line (it's `+++ /dev/null`), so path stays. Good.
+
+So distinguishing MODULE_SPLIT vs FILE_RENAME: dedicated-test-file source → FILE_RENAME; else MODULE_SPLIT. That's clean and matches the two fixtures.
+
+But is this the honest discriminator? A module split could also happen from a `_tests.rs` file (is_dedicated_test_file includes `*_tests.rs`). Hmm! `src/format/highlight_tests.rs` is a dedicated test file. A module split moving a test module from `src/commands_risk_tests.rs`... Actually module-split is about moving test modules out of src/ modules into `_tests.rs` files or new files. Ugh.
+
+Let me think of a better discriminator grounded in the diff text itself rather than path class:
+
+- FILE_RENAME: the source file is entirely deleted — the hunk removes the whole file. Evidence available: the hunk's header `@@ -1,N +0,0 @@` (removed starts at line 1, zero added) — a whole-file deletion. In the fixture: `@@ -1,8 +0,0 @@` ✓. Module-split fixture: `@@ -1700,6 +1700,0 @@` — starts at line 1700, not 1, and N=6>0, so not whole-file ✗.
+
+Hmm, but module split could be the entire tail of a file? If a file ends and the test mod is at line 1700 of 1706, then the deletion could be `@@ -1700,6 +1700,0 @@` — starts at 1700 → not "from line 1". So whole-file deletion ⟺ removal starts at line 1 and results in 0 lines. Robust enough: header regex `@@ -1,\d+ \+0,0 @@`.
+
+But wait: what about a `_tests.rs` file that is moved? Then it's a whole-file deletion → FILE_RENAME. What about a module-split where the whole test-only file `src/x_tests.rs` is created? Source isn't deleted then.
+
+Hmm, actually a subtle case: module-split might move ALL tests out of a src file that only contained tests? Unlikely for src/*.rs oversized modules (they contain production code).
+
+I think using "whole-file deletion" as the FILE_RENAME discriminator is more faithful to "whole-file-test-rename" than path class. But then a module split that moves the entire test module of a small file... whatever; both are heuristics we document.
+
+Hmm, but there's risk: what about the FILE_RENAME convention in --per-commit mode? In per-commit mode `git_diff_one_commit` uses `--diff-filter=d`, so deleted files are dropped entirely → no hunk → count 0. That's the "EXCLUDED" mechanism, measured implicitly as 0. Good — and the census reports the mode via docs. Hmm, but can we report the mode in the count? The task says "report which mechanism applied". We could include it in the rendered report prose: e.g., the report line for the census says "in --per-commit mode a whole-file delete is EXCLUDED, so this counter reads 0 by mechanism." But render_report doesn't know the mode. We could pass mode into render_report... Actually _run knows. Hmm, but that widens render_report's signature further.
+
+Alternative: make the census dict value for FILE_RENAME possibly carry mechanism info? Spec says counts. Let me keep it a count, and document the two mechanisms in the ARCHITECTURE.md doc + a comment. And add the mode note to the rendered census block only if we can... The report's `window` string includes "(per-commit)" so a reader can tell. Good enough: the rendered census block can print a fixed line stating the two mechanisms. That satisfies "report which mechanism applied" in the sense that the reader is told both mechanisms and that per-commit mode excludes deletes, and the window line tells them which mode they're in. I'll make render_report print that as a prose line.
+
+Hmm, but the instruction "report which mechanism applied" is stronger. Could we make scan_diff know? scan_diff only gets text. In per-commit mode, deleted-file hunks are absent entirely — scan_diff can't know a file was deleted. So the honest mechanism report must come from the caller/mode. I'll thread a `mode` into render_report? Simpler: the census block in render_report includes a line tying it to the window string which contains "(per-commit)". I'll state both mechanisms and note that the counter is 0-by-mechanism in per-commit mode. That is a truthful disclosure.
+
+Actually, let me reconsider: we can pass `window` already; and we can detect "(per-commit)" in it. Cleaner to just always print the two-mechanism disclosure. I'll do that.
+
+3. CONVENTION_CHARACTERIZATION_INVERSION: "UNKNOWN rows with N removed / N added and no shape matched". So count UNKNOWN findings whose detail matches the "N assertion(s) removed, N added, no shape matched" shape with N==M (equal counts). Actually the UNKNOWN detail from classify: `f"{len(r_asserts)} assertion(s) removed, {len(a_asserts)} added, no shape matched"`. The characterization-inversion shape is an exact expectation that merely CHANGED — removed assertion replaced by added assertion, equal counts. So: UNKNOWN findings where removed count == added count and > 0.
+
+But wait: there's also the "out of scope" UNKNOWN path: `classify_assertion_change` returns None when no assertions/test-ish lines → not a finding. And UNKNOWN with 0 removed / N added? There's a shape for assertion-added → STRENGTHENED. UNKNOWN arises when there are assertions removed and added but no shape matched. Could also be e.g. 2 removed, 1 added with no shape matched? Then net count dropped → S_ASSERTION_COUNT_DROPPED → WEAKENED. So UNKNOWN with unequal counts is rare. Using equal-counts is faithful. I'll parse the detail: I could re-derive removed/added assertion counts. But detail is a string. Better: use the shapes? UNKNOWN findings have shapes == []. Hmm.
+
+Alternative cleaner: compute from the hunk: count assertion lines in removed and added using is_assertion_line with dedicated flag, and match UNKNOWN + equal nonzero. That reuses the same predicate. But careful, classify uses r_asserts = [ln for ln in removed if is_assertion_line(...)] plus test-ish? Let me check classify_assertion_change's start.
+
+Let me read classify_assertion_change start (around line 700-760).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:690..760 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. So I can recompute r_asserts/a_asserts for the hunk, or parse the detail string. Recomputing is cleaner and reuses the predicates. But careful with the `dedicated` flag — I have the path so I can call is_dedicated_test_file.
+
+Actually a simpler approach: I need a per-hunk census. Since scan_diff iterates hunks and calls classify_assertion_change, I could compute the census inline in the loop where I already have hunk, verdict, dedicated. That avoids a second pass and avoids re-deriving. But MODULE_SPLIT/FILE_RENAME need post-reconcile info (MOVED). And REGISTER_PAYOFF needs WEAKENED findings... Actually REGISTER_PAYOFF: "WEAKENED rows whose removed assertion is the empty-register anti-vacuous shape". Hmm the payoff fixture: removed `assert!(!REGISTERED_GIT_BYPASSES.is_empty(), "must not be empty");` → WEAKENED with S_ASSERTION_DELETED. So count WEAKENED findings where removed assertion is the empty-register anti-vacuous shape, i.e. an `assert!(!X.is_empty())` line removed. Discriminator: regex on removed lines for `assert!(!\s*\w+\.is_empty()`. Note the fixture has `is_empty()` inside `assert!(!REGISTERED_GIT_BYPASSES.is_empty(), ...)`. So regex: `assert!\s*\(\s*!` and `.is_empty()`.
+
+Hmm — but the spec says "WEAKENED rows whose removed assertion is the empty-register anti-vacuous shape". So need the removed assertion text. We have hunks.
+
+5. CONVENTION_REGISTER_LINES: "out-of-scope hunks (`is_assertion_line` false) whose text carries a register-literal shape — this one needs a small discriminator; it is the only genuinely new code". The register-literal shape: a tuple literal `("src/x.rs", 4307)` — a path string + integer. From the fixture: `('src/commands_search.rs', 4174),` → `+    ("src/commands_search.rs", 4307),`. So register-literal regex: something like `^\s*\(\s*"[^"]+\.rs"\s*,\s*\d+\s*\)` or more generally a tuple of a quoted string and a number. Let me define REGISTER_LITERAL_RE = `re.compile(r'\(\s*"[^"]*"\s*,\s*\d+\s*\)')` maybe requiring a `.rs` path? The register `('src/commands_search.rs', 4307)` — includes `.rs`. The docs mention `('src/x.rs', 4307)`. But there's also `("src/commands_search.rs", "run_grep", "argv built incrementally")` in the payoff fixture — that's a 3-tuple with a string second element, not a number. That hunk is the payoff case (in scope, WEAKENED).
+
+Hmm, what about the test register in tests/module_size.rs: `GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)]`. Those are the register lines.
+
+So REGISTER_LITERAL_RE should match a `("path.rs", <int>)` tuple. To be a bit generous and still specific: `\(\s*"[^"]*\.rs"\s*,\s*\d+\s*\)`.
+
+Now REGISTER_LINES counts out-of-scope hunks (verdict is None from classify, i.e., not a finding) whose removed+added text carries a register-literal shape. But careful: the "out of scope" hunk must be a rust hunk that classify returned None for. In the fixture, the change is `-    ("src/commands_search.rs", 4174),` / `+    ("src/commands_search.rs", 4307),` in tests/module_size.rs. classify returns None because no assert lines and no test attrs (is_assertion_line false for these — no assert macro, and it's a dedicated test file but no `.unwrap()`). So verdict None → count if REGISTER_LITERAL_RE matches removed or added lines.
+
+But careful about the register-payoff fixture: it also contains `("src/commands_search.rs", "run_grep", "argv built incrementally"),` removed, which does NOT match the int-tuple regex (second element is a string). Good. And that hunk also has the assert → in scope → WEAKENED. Fine.
+
+Now MODULE_SPLIT vs FILE_RENAME discriminator. Let me reconsider using the whole-file-deletion header. Actually wait — is there an even better discriminator tied to what the convention *is*?
+
+- module-split: a `#[test]` fn moved from a src module (non-dedicated-test-file) to another file.
+- whole-file-test-rename: an entire test file renamed (whole file deleted and re-added elsewhere).
+
+I'll use: MOVED finding → look up hunk. If the hunk's removed content constitutes a whole-file deletion (header matches `@@ -1,\d+ \+0,0 @@`) → FILE_RENAME. Else if the hunk removed a `#[test]` attribute → MODULE_SPLIT. That handles both fixtures and is textually grounded. Actually, simpler and robust: 
+
+def _is_whole_file_deletion(header): match `^@@ -1,\d+ \+0,0 @@`.
+
+Hmm, but header for a whole file with 1 line would be `@@ -1 +0,0 @@`. Use regex `^@@ -1(?:,\d+)? \+0,0 @@`.
+
+Then:
+- FILE_RENAME: MOVED where hunk is whole-file deletion and path is a dedicated test file.
+- MODULE_SPLIT: MOVED where hunk removed has a test attribute (vocab.test_re) and not whole-file-deletion.
+
+But careful: what if a MOVED finding is neither? Then it's counted in neither. The census sums need to be bounded by hunks in scope; a MOVED not attributed is fine (counts ≤ population). Test 4: "sum(convention counts) on a fixture cannot exceed the hunks in scope". Actually the sum over conventions of counts could exceed number of hunks? Each convention should count distinct hunks. MODULE_SPLIT and FILE_RENAME both count MOVED findings (distinct sets by discriminator). CHARACTERIZATION counts UNKNOWN findings. REGISTER_LINES counts out-of-scope hunks. REGISTER_PAYOFF counts WEAKENED findings. So each hunk is counted at most once per convention, but could be counted in two different conventions? A hunk can produce at most one finding (WEAKENED/MOVED/UNKNOWN/STRENGTHENED) or None. REGISTER_LINES counts None-out-of-scope hunks. REGISTER_PAYOFF counts WEAKENED. Since verdicts are exclusive, each hunk contributes to at most... FILE_RENAME/MODULE_SPLIT count MOVED; CHARACTERIZATION counts UNKNOWN; PAYOFF counts WEAKENED; LINES counts None. So each hunk contributes to at most one convention — unless a MOVED hunk also matched register-literal? No: MOVED hunk is in scope (finding exists). So the sum ≤ total hunks (rust hunks). 
+
+So test 4: `sum(census.values()) <= rust_hunks`. Good arithmetic statement.
+
+Now, implementation. I'll compute the census inside scan_diff, in the loop, and then a post-reconcile pass.
+
+Simplest: compute census in the loop for the OOS/UNKNOWN/PAYOFF categories using the hunk + verdict, and handle MOVED after reconcile.
+
+But reconciliation needs to know which hunks. Let me write a dedicated pure function:
+
+```python
+def convention_census(findings, hunks, oos_hunks, vocab=None) -> dict:
+```
+
+Hmm, I need OOS hunks (classify returned None) which aren't in findings. I could recompute: hunks that are rust source, and classify returns None. But that re-runs classify (cheap, pure). Actually that's clean and keeps scan_diff simple:
+
+```python
+def convention_census(findings, hunks, vocab=None) -> dict:
+    """Measured per-convention counts keyed by the CONVENTION_* constants."""
+    vocab = vocab or BUILTIN_VOCABULARY
+    counts = {name: 0 for name, _v, _w in WRITTEN_CONVENTIONS}
+    hunk_of = {(h.path, h.header): h for h in hunks}
+    for f in findings:
+        h = hunk_of.get((f.path, f.header))
+        if h is None:
+            continue
+        if f.verdict == MOVED:
+            if _is_whole_file_deletion(h.header) and is_dedicated_test_file(h.path):
+                counts[CONVENTION_FILE_RENAME] += 1
+            elif any(vocab.test_re.search(ln) for ln in h.removed):
+                counts[CONVENTION_MODULE_SPLIT] += 1
+        elif f.verdict == UNKNOWN:
+            r = [ln for ln in h.removed if is_assertion_line(ln, is_dedicated_test_file(h.path), vocab)]
+            a = [ln for ln in h.added if is_assertion_line(ln, is_dedicated_test_file(h.path), vocab)]
+            if r and len(r) == len(a):
+                counts[CONVENTION_CHARACTERIZATION_INVERSION] += 1
+        elif f.verdict == WEAKENED:
+            if any(REGISTER_ANTIVACUOUS_RE.search(ln) for ln in h.removed):
+                counts[CONVENTION_REGISTER_PAYOFF] += 1
+    for h in hunks:
+        if not is_rust_source(h.path):
+            continue
+        dedicated = is_dedicated_test_file(h.path)
+        if classify_assertion_change(h.removed, h.added, dedicated, vocab) is not None:
+            continue
+        if any(REGISTER_LITERAL_RE.search(ln) for ln in h.removed + h.added):
+            counts[CONVENTION_REGISTER_LINES] += 1
+    return counts
+```
+
+Wait, potential double count: a WEAKENED finding could also match register payoff. Good. A hunk with verdict None could match register literal. Good.
+
+Hmm but there's a subtlety: in the reconciliation, MOVED findings' `shapes` may include S_ASSERTION_DELETED. My MODULE_SPLIT requires vocab.test_re match on removed lines. In the module-split fixture, removed lines include `#[test]`. ✓.
+
+Now for the FILE_RENAME fixture: hunk header `@@ -1,8 +0,0 @@`, path `tests/gasp_doc_version.rs` (dedicated test file) ✓ → FILE_RENAME. And the added hunk in tests/doc_version_claims.rs is a separate hunk that produced... hmm. Let's think: the added file hunk `@@ -0,0 +1,8 @@` contains `+    #[test]` and `+ assert_eq!`. classify for that hunk: removed empty, added has attrs and asserts → M_TEST_ADDED + M_ASSERTION_ADDED → STRENGTHENED finding. Wait but that might create a second finding that breaks "exactly one finding for the subject file"? The subject_path is "tests/gasp_doc_version.rs", so only the deleted-file hunk matches. The added-file hunk has path tests/doc_version_claims.rs. Fine.
+
+But hold on: for the module-split fixture, the added hunk in `src/format/highlight_lang.rs` — `diff --git a/src/format/highlight_lang.rs b/src/format/highlight_lang.rs` → path = src/format/highlight_lang.rs. Added lines include #[test] → STRENGTHENED finding. And subject is src/format/highlight.rs. Fine.
+
+Now: the census for module-split fixture: MOVED finding for src/format/highlight.rs. Its hunk header `@@ -1700,6 +1700,0 @@` — not whole-file deletion. removed contains `#[test]` → MODULE_SPLIT = 1 ✓. Others 0. 
+
+FILE_RENAME fixture: MOVED for tests/gasp_doc_version.rs → FILE_RENAME=1. But also — does the src/format... no. OK. But careful: is `_is_whole_file_deletion` needed, or would path-based be enough? The module-split fixture source path is not a dedicated test file. The file-rename fixture path IS. Using just `is_dedicated_test_file(h.path)` would work for both fixtures. But a `*_tests.rs` module split would be misclassified as FILE_RENAME. Using whole-file-deletion header is more precise. But is it possible for a test file rename to not be a whole-file deletion? A rename with edits... then header wouldn't be -1..+0,0. Hmm. Then it'd fall into MODULE_SPLIT if #[test] present. Risk of misattribution.
+
+Given both fixtures, which discriminator to choose? The spec says for FILE_RENAME: "in --per-commit mode a whole-file delete never reaches the classifier (... EXCLUDED); in the net scan it is MOVED". This strongly implies the discriminator IS "whole-file delete". So use the whole-file-deletion header. If it's a whole-file delete of a .rs file and it's MOVED → FILE_RENAME. Module-split is the other MOVED case.
+
+But what about whole-file deletion of a *src* file (not a test file) that gets MOVED (test fn renamed... no, whole src file deletion that has moved test fns)? Rare. Should whole-file-delete require dedicated test file? The convention is literally "whole-file-test-rename". I'll require the path be a .rs (already) and be a whole-file deletion; the "test" part is implied because reconcile only fires when a test fn moved. I'll not require dedicated test file, to avoid an unmeasured extra condition... but the fixture path is a test file anyway. Hmm, requiring dedicated-test-file makes the claim narrower and both fixtures still pass. Let me require it — "whole-file-test-rename" literally says test file. Actually is_dedicated_test_file(path) is true for tests/ and *_tests.rs. The deleted test file in a rename would be a dedicated test file. I'll include it. Hmm, but a whole-file rename of `src/foo_tests.rs` → that IS a dedicated test file. Fine.
+
+Actually wait, simpler: I'll define FILE_RENAME = MOVED && whole-file deletion (regardless of test-file class, but reconcile guarantees a test fn moved). And MODULE_SPLIT = MOVED && not whole-file-deletion && removed has test attr. Hmm, if a whole src file is deleted with a test fn moved elsewhere... it's a rename at file granularity too. So "whole-file deletion" alone is the cleanest single discriminator. Let me go with: FILE_RENAME = MOVED && whole-file deletion. MODULE_SPLIT = MOVED && has test attr (and not already counted as FILE_RENAME). Since mutually exclusive via if/elif.
+
+Hmm, but what about a MOVED that is not a whole-file deletion and has no #[test] on removed lines? Then neither. Fine (sum bound holds).
+
+Let me now define the register anti-vacuous regex. The fixture: `-    assert!(!REGISTERED_GIT_BYPASSES.is_empty(), "must not be empty");`. Also there may be variants like `assert!(!X.is_empty())` or `debug_assert!`. Regex: `r"assert!\s*\(\s*!"` combined with `.is_empty()`. Let me define:
+
+REGISTER_ANTIVACUOUS_RE = re.compile(r"\b(?:debug_)?assert!\s*\(\s*!\s*\w[\w:.]*\.is_empty\(\)")
+
+Hmm, `!REGISTERED_GIT_BYPASSES.is_empty()` — after `!` comes `REGISTERED_GIT_BYPASSES`. `\w[\w:.]*` matches. Good.
+
+But actually, is that too narrow? The task says "the empty-register anti-vacuous shape". Good enough; document it.
+
+Now the register literal regex. Fixture: `    ("src/commands_search.rs", 4307),`. Regex: `\(\s*"[^"]*\.rs"\s*,\s*\d+\s*\)`.
+
+Now, where do register lines appear: tests/module_size.rs. Those are counted as REGISTER_LINES only if the hunk is out of scope (classify None). In the fixture, classify returns None ✓.
+
+Now the census must include STRENGTHENED? No convention is STRENGTHENED. Fine.
+
+Now: "No verdict may change... the census is purely additive output. Pin that." Test 2: near-miss — a scan with no in-scope hunks reports all-zero counts AND the verdict lines are byte-identical to before this change (assert_eq! on rendered report). Hmm, "a scan with no in-scope hunks reports all-zero counts". But if the census is printed in render_report, then render_report output for a scan with a register-lines hunk (out of scope) would differ from "before this change". The near-miss is about a diff with NO in-scope hunks AND no convention shapes → all zeros → the render must be byte-identical.
+
+Wait, requirement: "a scan with no in-scope hunks reports all-zero counts and the verdict lines are byte-identical to before this change (assert_eq! on the rendered report, not a contains)". So the rendered report must be byte-identical when all counts are zero. That means the census block must render ONLY when non-zero (like skipped_unknown_vocab). Good — that preserves byte-identity for ordinary scans. And for a fixture where a convention fires, a new block appears.
+
+But the census dict itself is returned always; render_report prints it only if any non-zero.
+
+Hmm, but then "no in-scope hunks reports all-zero counts" — a diff with no in-scope hunks but a register-literal line WOULD report REGISTER_LINES=1, not zero. So the near-miss fixture must genuinely have no convention shapes: e.g. the `production_diff` (a src/ hunk with plain let x). All counts zero. Good.
+
+Now signature of render_report: add `convention_counts=None` parameter. Callers: _run passes summed census; self-tests call render_report with positional args up to skipped. I'll add the param at the end with default None → treated as empty. Then existing self-test calls `render_report([], 1, 1, 1, "FIXTURE")` remain valid.
+
+Test: "render is BYTE-IDENTICAL when nothing was skipped" compares render_report(...,40,0) vs render_report(...,40,3) — wait no, rep_zero vs render_report([],1,1,1,"FIXTURE",40,0), and rep_skip uses 3 skipped. So rep_zero == that. With convention_counts default None → all zero → no census block. Fine.
+
+Now the drift guard extension: "fail if a WRITTEN_CONVENTIONS row has no counter". So a test: `set(counts.keys()) == set(name for ...)` for a census from some scan. Use convention_census of a fixture or empty: keys always exactly the five since we initialize from WRITTEN_CONVENTIONS. But that drift guard is trivially satisfied by construction... The point is to guard that a 6th convention added to WRITTEN_CONVENTIONS also gets a counter. If counts is initialized from WRITTEN_CONVENTIONS, adding a 6th would auto-add a key with 0 — never failing, and never counting. That's the "registered exception is silent" shape the task wants to avoid! So the census must NOT be built purely from the enumeration; the drift guard must catch a convention with no measuring code.
+
+Hmm. How to make the drift guard meaningful? Options:
+- Have each counter produced by an explicit mapping of convention → measuring function, and assert that mapping's keys == WRITTEN_CONVENTIONS keys. If someone adds a 6th convention, they must add a counter function; the drift guard checks `set(COUNTER_FOR) == set(names)`. But if we build the dict from COUNTER_FOR, adding a convention without a counter → drift guard fails ✓. But someone could trivially add `CONVENTION_X: lambda ...: 0`. Weak but consistent with the repo's "deliberately weak source-level guard" discipline.
+
+Let me design: define a dict `CONVENTION_COUNTERS` mapping convention name → a function that counts from a prepared context. But functions as dict values with docstrings... Let me instead structure as:
+
+```python
+def convention_census(findings, hunks, vocab=None):
+    ...
+    counts = {}
+    for name, counter in CONVENTION_COUNTERS.items():
+        counts[name] = counter(ctx)
+    return counts
+```
+
+Hmm that's a bigger refactor. Simpler faithful approach: build counts from explicit per-convention computation, then the drift guard asserts `set(counts) == {names}` where counts keys are the ones the code explicitly assigns. If I initialize `counts = {}` and only assign keys for conventions I actually measure, then adding a 6th convention without a counter leaves it missing → drift guard fails ✓. But then `counts[CONVENTION_X]` KeyError in render_report... I'd use `counts.get(name, 0)` in render.
+
+That's good: counts only contains keys with real counters. Drift guard: `set(census.keys()) == set(names)` fails if a convention is unmeasured. And test 1 anti-vacuous per convention ensures each counter can be non-zero.
+
+But careful: if counts lacks a key for a convention that simply didn't fire, that's fine — we need all five keys present when their counter code exists, even if the value is 0. So I'll explicitly assign all five keys (with += 0 style? no). Let me do:
+
+```python
+counts = {
+    CONVENTION_MODULE_SPLIT: 0,
+    CONVENTION_FILE_RENAME: 0,
+    CONVENTION_CHARACTERIZATION_INVERSION: 0,
+    CONVENTION_REGISTER_LINES: 0,
+    CONVENTION_REGISTER_PAYOFF: 0,
+}
+```
+This is a second enumeration that "agrees the day it is written and diverges after" — the exact anti-pattern the file warns about. Hmm. But it's the natural place where the counter identity lives, and the drift guard catches divergence immediately in self-tests. The repo's convention: "keyed by the existing CONVENTION_* constants — never new string literals". Using the constants as keys is fine. The drift guard catches an added sixth.
+
+I think building from an explicit set of measured constants + drift guard is acceptable and matches the task ("extend that guard; do not add a second enumeration"). Hmm, "do not add a second enumeration" — the task says the existing drift guard at :2445 already asserts every enumerated convention has a fixture — "extend that guard; do not add a second enumeration." So they mean don't write a second list of conventions. Using a dict literal keyed by constants IS arguably a second enumeration. 
+
+Better: derive counts keys from WRITTEN_CONVENTIONS (no second enumeration), but make the drift guard meaningful by asserting that each convention's counter *node was consulted*, i.e., a set of "MEASURED_CONVENTIONS" frozenset of constants that the census code explicitly computes. Hmm, that's still a second enumeration.
+
+Alternative clever approach: compute each count with an explicit if/elif chain that references the constant names inside a function, and have the drift guard inspect... no.
+
+Let me reconsider. The cleanest thing that satisfies both "single enumeration" and "guard is not vacuous":
+
+```python
+def convention_census(findings, hunks, vocab=None) -> dict:
+    counts = {name: 0 for name, _v, _w in WRITTEN_CONVENTIONS}
+    ...
+    # counter bodies use the constants
+    counts[CONVENTION_MODULE_SPLIT] += 1
+```
+With this, adding a 6th convention auto-adds a 0 key, and the drift guard (keys == names) passes vacuously — the "registered exception is silent" shape. To avoid vacuity, add a guard asserting that every convention name appears as a *subscript target* in the census source text? That's a source-level weak guard, which this repo does use ("deliberately weak source-level guard"). E.g.:
+
+```python
+check(
+  "census: every enumerated convention has a counter in the census",
+  all(f"counts[{name}]" in CENSUS_SOURCE for name in names),
+)
+```
+where CENSUS_SOURCE = inspect.getsource(convention_census). That directly catches "a WRITTEN_CONVENTIONS row has no counter" and is honest about being a source-text check. And it's not a second enumeration (no hardcoded list of names). I like this.
+
+But the task says test 3: "Drift guard extended (at :2445): fail if a WRITTEN_CONVENTIONS row has no counter — a convention enumerated in LIMITS but never counted in a report is the 'registered exception is silent' shape." So extending the guard at :2445 means adding a check in that same block. I can add it right after the fixture-completeness check: assert each convention has a counter. Using `inspect.getsource(convention_census)` and checking `counts[CONVENTION_X]` appears... but the source uses constant names, not literal names. So check `"counts[{name}]"`? The source text would contain `counts[CONVENTION_MODULE_SPLIT] += 1` — not the literal string "module-split". Hmm.
+
+So the source-text check should look for the CONSTANT identifier for each convention. But we only have the string name in WRITTEN_CONVENTIONS, not the constant identifier. Mapping name→constant identifier requires... the constants are only five; we could build a mapping? That's a second enumeration again.
+
+Alternative: check that the census source contains an assignment per convention by checking the constant's VALUE appears... no.
+
+Hmm. Let me step back and pick a design that makes the guard naturally non-vacuous.
+
+Design B: Define the counters as named functions and a registry keyed by the constants:
+
+```python
+def _count_module_split(ctx): ...
+def _count_file_rename(ctx): ...
+...
+CONVENTION_COUNTERS = {
+    CONVENTION_MODULE_SPLIT: _count_module_split,
+    CONVENTION_FILE_RENAME: _count_file_rename,
+    CONVENTION_CHARACTERIZATION_INVERSION: _count_characterization_inversion,
+    CONVENTION_REGISTER_LINES: _count_register_lines,
+    CONVENTION_REGISTER_PAYOFF: _count_register_payoff,
+}
+```
+
+Then census:
+```python
+def convention_census(findings, hunks, vocab=None):
+    ctx = ...
+    return {name: fn(ctx) for name, fn in CONVENTION_COUNTERS.items()}
+```
+
+Drift guard: `set(CONVENTION_COUNTERS) == {name for name,_v,_w in WRITTEN_CONVENTIONS}` — meaningful: adding a 6th convention to WRITTEN_CONVENTIONS without a counter fails ✓. But wait — the dict literal IS a second enumeration of the five names. Yes, but it's the counter registry; the drift guard ties it to WRITTEN_CONVENTIONS. The task's "do not add a second enumeration" refers to not re-listing the conventions' prose/predicted verdicts; the counter registry is exactly the thing that must be kept in sync, and the guard is what enforces it. Hmm, the task said "keyed by the existing CONVENTION_* constants — never new string literals (the const is the single authority; a second enumeration agrees the day it is written and diverges after)". A registry keyed by constants, guarded against WRITTEN_CONVENTIONS, satisfies "never new string literals" and the guard prevents divergence. I think Design B is closest to intent AND gives a non-vacuous drift guard. 
+
+But it's more code (six small functions). Simpler variant: keep one function but build counts via a registry mapping constant → small lambda/inline closure computing from a context. Even simpler: registry mapping constant → predicate over (finding, hunk):
+
+Hmm, the five counters have different shapes (MOVED-based, UNKNOWN-based, None-hunk-based, WEAKENED-based). A registry of predicate-based counter functions is clean.
+
+Let me go concrete. Define a small class `CensusInput`? Or just pass (findings, hunks, vocab) to each counter fn. Signature: `fn(findings, hunks, vocab) -> int`. Each counter re-derives what it needs. Slight duplication of hunk_of lookup — acceptable, or pass a precomputed context tuple.
+
+I'll define:
+
+```python
+def _moved_hunk_pairs(findings, hunks): ...
+```
+
+Hmm, let me just write each counter self-contained but factor the common lookup into a helper `_hunk_index(hunks)`.
+
+Counters:
+
+```python
+def _count_moved(findings, hunks, vocab, want_whole_file):
+    idx = _hunk_index(hunks)
+    n = 0
+    for f in findings:
+        if f.verdict != MOVED: continue
+        h = idx.get((f.path, f.header))
+        if h is None: continue
+        whole = _is_whole_file_deletion(h.header)
+        if whole != want_whole_file: continue
+        if not want_whole_file and not any(vocab.test_re.search(ln) for ln in h.removed):
+            continue
+        n += 1
+    return n
+```
+
+Maybe clearer to write two explicit functions. Let me write:
+
+```python
+def _hunk_by_finding(findings, hunks):
+    """Findings paired back to the hunk they came from, by (path, header)."""
+    idx = {(h.path, h.header): h for h in hunks}
+    return [(f, idx[(f.path, f.header)]) for f in findings if (f.path, f.header) in idx]
+```
+
+Note: reconcile_moved_tests reconstructs Finding with same path/header → lookup works.
+
+```python
+def _is_whole_file_deletion(header: str) -> bool:
+    m = re.match(r"^@@ -1(?:,\d+)? \+0,0 @@", header)
+    return bool(m)
+```
+
+Then:
+
+```python
+def count_module_split(findings, hunks, vocab):
+    return sum(
+        1 for f, h in _paired(findings, hunks)
+        if f.verdict == MOVED
+        and not _is_whole_file_deletion(h.header)
+        and any(vocab.test_re.search(ln) for ln in h.removed)
+    )
+
+def count_file_rename(findings, hunks, vocab):
+    return sum(
+        1 for f, h in _paired(findings, hunks)
+        if f.verdict == MOVED and _is_whole_file_deletion(h.header)
+    )
+
+def count_characterization_inversion(findings, hunks, vocab):
+    n = 0
+    for f, h in _paired(findings, hunks):
+        if f.verdict != UNKNOWN: continue
+        dedicated = is_dedicated_test_file(h.path)
+        r = [ln for ln in h.removed if is_assertion_line(ln, dedicated, vocab)]
+        a = [ln for ln in h.added if is_assertion_line(ln, dedicated, vocab)]
+        if r and len(r) == len(a):
+            n += 1
+    return n
+
+def count_register_lines(findings, hunks, vocab):
+    # out-of-scope hunks only: classify returned None
+    n = 0
+    for h in hunks:
+        if not is_rust_source(h.path): continue
+        if classify_assertion_change(h.removed, h.added, is_dedicated_test_file(h.path), vocab) is not None:
+            continue
+        if any(REGISTER_LITERAL_RE.search(ln) for ln in h.removed + h.added):
+            n += 1
+    return n
+
+def count_register_payoff(findings, hunks, vocab):
+    return sum(
+        1 for f, h in _paired(findings, hunks)
+        if f.verdict == WEAKENED
+        and any(REGISTER_ANTIVACUOUS_RE.search(ln) for ln in h.removed)
+    )
+```
+
+Then registry:
+
+```python
+CONVENTION_COUNTERS = {
+    CONVENTION_MODULE_SPLIT: count_module_split,
+    CONVENTION_FILE_RENAME: count_file_rename,
+    CONVENTION_CHARACTERIZATION_INVERSION: count_characterization_inversion,
+    CONVENTION_REGISTER_LINES: count_register_lines,
+    CONVENTION_REGISTER_PAYOFF: count_register_payoff,
+}
+
+def convention_census(findings, hunks, vocab=None) -> dict:
+    vocab = vocab or BUILTIN_VOCABULARY
+    return {name: fn(findings, hunks, vocab) for name, fn in CONVENTION_COUNTERS.items()}
+```
+
+Note: for register_lines, recomputing classify per hunk — O(n) but the diff is small. However, careful: scan_diff already iterated. Running classify twice is fine (pure). But wait — in scan_diff, the hunk loop must also count. Instead of recomputing in convention_census, I could keep it — simplicity over performance. But there's a subtle correctness issue: `classify_assertion_change` is deterministic, so recomputation yields the same None/non-None. Fine.
+
+Hmm, but there's one more issue: register_lines recomputation uses the same vocab (including extras). Fine.
+
+Now: does `count_register_lines` risk counting an in-scope hunk? No, we skip non-None.
+
+Now potential double-count/over-count risk for test 4 (sum ≤ rust_hunks): 
+- module_split + file_rename count MOVED findings (each finding is from a distinct hunk, since one finding per hunk).
+- characterization counts UNKNOWN findings.
+- payoff counts WEAKENED findings.
+- register_lines counts None hunks.
+All disjoint hunk classes. So sum ≤ #hunks that are rust source = rust_hunks. But careful: could the same hunk produce both a MOVED finding and be counted in register_lines? register_lines only counts hunks where classify returned None, MOVED requires a finding. Disjoint ✓. Sum ≤ rust_hunks ✓.
+
+Wait, one more: `_paired` uses findings; but in per-commit mode, paths get prefixed with sha in _run (`finding.path = f"{sha[:8]} {finding.path}"`) *after* scan_diff. So census computed inside scan_diff is unaffected. Good — I compute census inside scan_diff before returning.
+
+Now scan_diff returns 5-tuple. Update all call sites. Let me now also handle _run per-commit summing.
+
+Let me now check `run_self_tests`'s `_tuple` helper and comparison tests to ensure adding a dict doesn't break equality. Let me read lines 2780-2870.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:2780..2880 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`_tuple(res)` does `f, rs, te, sk = res` → will break with 5 elements. I need to update `_tuple` to `f, rs, te, sk, _census = res`. That's editing a pre-existing self-test helper — but not weakening assertions; it's a mechanical adaptation. Hmm, "Do not edit or weaken any pre-existing self-test row." The helper isn't a row. I think it's acceptable and necessary. But maybe safer: make `_tuple` robust to both arities: `f, rs, te, sk = res[:4]`. That's a minimal change. Actually even better: `f, rs, te, sk = res[0], res[1], res[2], res[3]`. I'll use slicing to avoid arity coupling.
+
+Hmm, but is it better to avoid changing scan_diff's arity altogether? Let me reconsider a design with zero signature change: make scan_diff return the same 4-tuple but attach the census to... no, tuples can't carry attributes. 
+
+Alternative: keep scan_diff's signature and add a separate public function `scan_diff_with_census(text, vocab)` that returns 5, with scan_diff delegating? Then render_report still needs the census, and _run would call scan_diff_with_census. Self-tests' existing 4-unpacks stay untouched! That's attractive: zero edits to pre-existing rows, and the arity change is isolated.
+
+But the task explicitly says "Add per-convention counts to `scan_diff`'s return". Hmm. Deviating from the task's stated mechanism... The task is a plan, and the real requirement is a measured census. But the task file is fairly prescriptive. Let me weigh: editing ~20 call sites to unpack a 5th value is mechanical and low-risk, and follows the task literally. I'll follow the task: change scan_diff to return 5, update all call sites, and mention it.
+
+Actually wait — there's a subtle danger: adding a 5th element to scan_diff's return and the byte-identity test at 2799 `_tuple(scan_diff(...)) == std_default` – I'll make _tuple slice. Fine.
+
+Let me also double check: `check` uses `extra` for reporting; `_tuple` result compared.
+
+Now let me also verify there isn't a test asserting the exact tuple length. Search "len(scan_diff" or something. The word "tuple shape is unchanged" comment in scan_diff docstring must be updated.
+
+Let me now check the truncated parts I haven't seen: lines 1360-1440 already seen partially; 1900-1930 (scan_diff("")) — empty diff → census all zeros.
+
+Also line 1684, 1703 in _run.
+
+Let me now write the code. First, locate insertion points:
+- Constants: add REGISTER_LITERAL_RE, REGISTER_ANTIVACUOUS_RE near other regexes. Where? After PANICKY_RE/TEST_ATTR_RE definitions (line ~545). Let me look at lines 536-560.
+
+Actually there's a cluster: ASSERT_MACRO_RE, ASSERT_EQ_RE, PANICKY_RE, TEST_ATTR_RE at ~540-546. I'll add the two register regexes plus the whole-file-deletion regex there, with comments.
+
+- Counter functions + registry + convention_census: place after reconcile_moved_tests (which ends ~line 960) and before scan_diff. They need MOVED, WEAKENED, UNKNOWN constants (defined earlier? let me check where MOVED etc. are defined). They're used in reconcile, so defined earlier. Also is_dedicated_test_file, classify_assertion_change — defined earlier (line ~702). Fine.
+
+- scan_diff: compute census and return.
+
+- render_report: new param + block.
+
+- _run: sum census across per-commit; pass to render_report.
+
+- self-tests: new tests + drift guard.
+
+Let me check the constants WEAKENED etc. and the exact line for the regex cluster.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^WEAKENED\|^STRENGTHENE…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:100..140 ✓ (0ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the regex cluster around 540-548.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:528..558  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:262..292 ✓ (1ms)
+ ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check the regex cluster area (~line 460-470 for MACRO_CALL_RE, ATTR_RE). Actually I saw earlier: after BUILTIN_VOCABULARY:
+```
+BUILTIN_VOCABULARY = Vocabulary()
+FN_NAME_RE = ...
+CONTAINS_NEEDLE_RE = ...
+INT_LITERAL_RE = ...
+RELAXED_OPS = ...
+MACRO_CALL_RE = ...
+ATTR_RE = ...
+```
+Located ~line 438-450. Let me just add the new regexes right after ATTR_RE. Let me find exact lines.
+
+Actually, cleaner: define the register regexes right before the counter functions (near the census code), keeping census-specific constants together. But convention constants block is at ~317, counters would go ~960. Regexes used only by counters — put them with the counters. Good, minimizes touching unrelated areas.
+
+Hmm, but `_is_whole_file_deletion` uses re.match inline; REGISTER_LITERAL_RE / REGISTER_ANTIVACUOUS_RE defined near counters.
+
+Now let me write the new code block. Insert after `reconcile_moved_tests` ends (line 962, before scan_diff at 964).
+
+Let me get exact text around 955-966.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:952..966 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now write the counter block. I'll insert between line 962 and 964.
+
+Let me write with careful comments in the repo's voice (explaining WHY).
+
+I'll write the code now.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll add the census block between reconcile_moved_tests and scan_diff:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (4 → 176 lines)
+        return reconciled, moved_count
+    
+    
+  - def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int]:
+  + # --------------------------------------------------------------------------------------
+  + # THE CONVENTION CENSUS: per-convention counts MEASURED from a scan, not derived by hand.
+  + #
+  + # WHY THIS BLOCK EXISTS. DREAM.md's next milestone is to run this classifier over a
+  + # FOREIGN repo and "take the same convention census Day 197 took of mine, and put the two
+  + # distributions side by side". The reading half was done (ripgrep, 240 commits, Day 198 and
+  + # the Day-199 re-measure), but the census half was PROXIED -- the recorded rows carry
+  + # `census_provenance: "DERIVED, not reported: the tool prints verdicts, not per-convention
+  + # counts"` and name the proxies in their own text (commits adding a `*.rs` for
+  + # `module-split`, whole-file renames for `whole-file-test-rename`, UNKNOWN rows for
+  + # `characterization-inversion`, the two register shapes grepped as literals). A proxy
+  + # census cannot be put side by side with a measured one, so the milestone's named
+  + # deliverable was unmet. This is the smallest change that unblocks it, and it is PURELY
+  + # ADDITIVE OUTPUT: every existing verdict, the skipped counter and `test_file_hunks_examined`
+  + # are byte-identical to before.
+  + #
+  ... (157 more lines)
+ ✓ (1m 19s)
+        return reconciled, moved_count
+    
+    
+  - def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int]:
+  + # --------------------------------------------------------------------------------------
+  + # THE CONVENTION CENSUS: per-convention counts MEASURED from a scan, not derived by hand.
+  + #
+  + # WHY THIS BLOCK EXISTS. DREAM.md's next milestone is to run this classifier over a
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now update scan_diff's docstring and body to return the census.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:1140..1190 ✓ (1ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check the current state of the file and continue.
+
+I was in the middle of editing `scan_diff`. I need to:
+1. Update the docstring + return to include the census dict
+2. Update `render_report` to take and print the census
+3. Update all callers of `scan_diff` (there are many in self-tests)
+4. Update `_run` to thread the census
+5. Extend the drift guard + add tests
+6. Run tests, positive control, docs
+
+Let me check the current state.
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check where I am.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n "d…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1125,1135p' scripts/chec… ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now update the scan_diff docstring and return.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1136,1150p' scripts/chec… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (15 → 21 lines)
+    def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int, dict]:
+  -     """Return `(findings, rust_hunks_seen, test_hunks_examined, skipped_unknown_vocab)`.
+  +     """Return `(findings, rust_hunks_seen, test_hunks_examined, skipped_unknown_vocab,
+  +     convention_census)`.
+    
+        The fourth number is SKIPPED_UNKNOWN_VOCABULARY: a hunk in a dedicated test file with
+        a real diff that this vocabulary could not read at all. It is counted here and summed
+  ···
+        than a second "is this a test file?" predicate being written: two copies of a rule
+        agree the day they are written and diverge forever after (#835 is the receipt).
+    
+  -     The tuple shape is unchanged: the MOVED count is derivable from the findings
+  -     themselves, so `render_report` counts it with the other three rather than having it
+  -     threaded through a widened signature.
+  +     The FIFTH element is the convention census and it is the ONE deliberate signature
+  +     widening in this tool's history. It was NOT derivable from the findings the way the
+  +     MOVED count is: `register-lines-only` counts hunks that produced NO finding at all,
+  +     and `whole-file-test-rename` vs `module-split` needs the hunk HEADER, which a `Finding`
+  +     does not carry a copy of. So it is returned rather than re-derived by a caller that
+  +     would have to re-parse the diff to get it -- and re-deriving would be the second
+  ... (5 more lines)
+ ✓ (1m 19s)
+    def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int, dict]:
+  -     """Return `(findings, rust_hunks_seen, test_hunks_examined, skipped_unknown_vocab)`.
+  +     """Return `(findings, rust_hunks_seen, test_hunks_examined, skipped_unknown_vocab,
+  +     convention_census)`.
+    
+        The fourth number is SKIPPED_UNKNOWN_VOCABULARY: a hunk in a dedicated test file with
+        a real diff that this vocabulary could not read at all. It is counted here and summed
+  ···
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (2 → 3 lines)
+        findings, _ = reconcile_moved_tests(findings, hunks)
+  -     return findings, rust_hunks, test_hunks, skipped_unknown_vocab
+  +     census = convention_census(findings, hunks, vocab)
+  +     return findings, rust_hunks, test_hunks, skipped_unknown_vocab, census
+ ✓ (1m 18s)
+        findings, _ = reconcile_moved_tests(findings, hunks)
+  -     return findings, rust_hunks, test_hunks, skipped_unknown_vocab
+  +     census = convention_census(findings, hunks, vocab)
+  +     return findings, rust_hunks, test_hunks, skipped_unknown_vocab, census
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now update render_report and the _run caller:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (9 → 10 lines)
+        window,
+        max_findings=40,
+        skipped_unknown_vocab=0,
+  +     census=None,
+    ):
+ ✓ (1m 19s)
+        window,
+        max_findings=40,
+        skipped_unknown_vocab=0,
+  +     census=None,
+    ):
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "out.append(f\"  MOVED "… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to add the census block. Key constraint: "a scan with no in-scope hunks reports all-zero counts AND the verdict lines are byte-identical to before this change (assert_eq! on the rendered report)". So when census is None (default) or all-zero, the report must be byte-identical.
+
+Design decision: render the census block only when census is provided AND non-zero total. Hmm, but that means a census with all zeros prints nothing — which is the "silent zero" problem. But the near-miss test requires byte-identity when all-zero...
+
+Actually re-read: "Near-miss: a scan with no in-scope hunks reports all-zero counts **and** the verdict lines are byte-identical to before this change (`assert_eq!` on the rendered report, not a `contains`)."
+
+So the whole rendered report must be byte-identical when counts are all zero. That means: render the census block only when the total is non-zero. Hmm, but then a clean repo gets no census, which is fine — the census is a contamination disclosure; zero contamination → nothing.
+
+Actually wait — that conflicts with anti-vacuous thinking. But the task explicitly requires byte-identity for the all-zero case. So gate on `any(census.values())`.
+
+Hmm, but actually there's a subtlety: the nearest-miss test render_report([], 1, 1, 1, "FIXTURE") == render_report([], 1, 1, 1, "FIXTURE", 40, 0). With census default None, both give None, fine. I'll add census=None default which renders nothing. And the self-test will pass an all-zero census dict and assert byte-identity.
+
+Let me write the census render as a pure function `render_convention_census(census)` returning "" when all zero, so it's testable.
+
+Now, where to place it? After the verdict counts / skipped block, before the WEAKENED candidates. Let me put it right after the skipped block.
+
+Also need it to say the mode asymmetry for file-rename. The render needs to know whether it's per-commit mode. I could pass a `per_commit` flag... Simpler: put that disclosure in LIMITS item 5's prose? But LIMITS item 5 already exists. Hmm, the task says "report the mode, do not assume one mechanism".
+
+Let me pass `per_commit: bool = False` to render_report... but that changes the signature more and the near-miss test uses positional args ending at skipped. Adding census as 8th positional and per_commit as 9th keyword-only-ish is fine.
+
+Actually simpler and less invasive: the census render function takes the census dict and renders the counts; the per-commit note can be unconditional prose in the block that names the mechanism explicitly — but that would claim something false in net mode. 
+
+Let me think about what's honest: in net scan, a whole-file rename appears as MOVED → counted in file-rename. In per-commit mode, deletions are excluded → file-rename is 0 by mechanism. A single sentence covering both: "whole-file-test-rename counts 0 in --per-commit mode BY MECHANISM: git_diff_one_commit passes --diff-filter=d, so a whole-file deletion never reaches the classifier."
+
+That's true in both modes and explains the zero. That's honest and mode-independent. I'll include that as a note in the block.
+
+Let me add a `render_convention_census(census)` function.
+
+Also need the counts printed "beside the verdicts" in render_report.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (18 → 20 lines)
+                "  a verdict and is summed into none of them; it counts HUNKS, never assertions."
+            )
+            out.append("")
+  + 
+  +     out.append(render_convention_census(census))
+    
+ ✓ (1m 18s)
+                "  a verdict and is summed into none of them; it counts HUNKS, never assertions."
+            )
+            out.append("")
+  + 
+  +     out.append(render_convention_census(census))
+    
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, that's off — I need the blank line handling right. Since out.append("") adds an empty string element and `"\n".join(out)` joins them, adding a "" element before the weak section is what the original did (out.append("") at 1319). Let me check that the structure is still right: original had
+
+```
+out.append(f"  MOVED ...")
+out.append("")
+if skipped: ... out.append("")
+weak = ...
+```
+
+So after MOVED there's always a blank. Then optional skipped block ends with blank. Then weak section appends "WEAKENED candidates..." directly.
+
+Now I changed it to:
+```
+out.append(MOVED)
+out.append("")
+if skipped: ... out.append("")
+out.append(render_convention_census(census))
+```
+Then weak section. If census is all-zero → render returns "" → appending "" adds an extra blank line, breaking byte-identity!
+
+Let me instead conditionally append. Better: make the census return "" when zero and do:
+
+```
+block = render_convention_census(census)
+if block:
+    out.append(block)
+```
+
+Let me fix.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (3 → 1 lines)
+  -     census_block = render_convention_census(census)
+  -     if census_block:
+  -         out.append(census_block)
+  +     out.append(render_convention_census(census))
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (2 → 4 lines)
+  -     out.append(render_convention_census(census))
+  +     census_lines = render_convention_census(census)
+  +     if census_lines:
+  +         out.append(census_lines)
+    
+ ✓ (1m 18s)
+  -     out.append(render_convention_census(census))
+  +     census_lines = render_convention_census(census)
+  +     if census_lines:
+  +         out.append(census_lines)
+    
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need to define `render_convention_census`. But there's an ordering issue — the census block ends with out.append("") which becomes an empty element, then weak section adds "WEAKENED candidates". Good, that gives a blank separator line.
+
+Wait: `render_convention_census` should return a multi-line string ending with ""? If it returns a string like "line1\nline2\n" and we append it as a single element, join gives "line1\nline2\n" + "\n" + next. That produces an extra blank... Let me just have it return a string that starts with a blank line and ends without trailing newline, i.e. `"\n  convention census...\n  ..."`. Hmm.
+
+Simpler: return the block text with a trailing empty string in a list, and out.extend. Let me make it return a str and use out.extend(block.split("\n")). Actually cleanest: have it return a str including a leading "" and trailing "" — i.e. build it so that when added to out via extend there's proper spacing.
+
+Let me define:
+
+```python
+def render_convention_census(census) -> str:
+    if not census or not any(census.values()):
+        return ""
+    lines = [
+        "",
+        "  WRITTEN-CONVENTION CENSUS (MEASURED, not derived -- one count per row of",
+        "  WRITTEN_CONVENTIONS; the classes are disjoint hunk counts, summed into no verdict):",
+    ]
+    for name, _v, _w in WRITTEN_CONVENTIONS:
+        lines.append(f"    {name} .. {census.get(name, 0)}")
+    lines.append("")
+    lines.append(...)
+    return "\n".join(lines)
+```
+
+and in render_report: `out.extend(block.split("\n"))` when block.
+
+But careful: `out.append(census_lines)` adds one element containing newlines; join then puts the whole block as lines... Actually `"\n".join(out)` where one element itself contains "\n" still renders correctly as multi-line. The only issue is trailing/leading blank lines. If block = "\n  WRITTEN...\n  ..." then join produces "...MOVED 0\n\n  WRITTEN" — wait out is ["...MOVED ...", "", block, "WEAKENED candidates..."]. join: "...MOVED ...\n" + "\n" + "\n  WRITTEN...\n...notes\n" + "\nWEAKENED candidates". Hmm, block starts with "\n" so there'd be two blank lines. Let me not lead with a blank, since there's already out.append("") after MOVED.
+
+So out = [..., "  MOVED ...", "", block, ...]. join → "  MOVED ...\n\n" + block + "\n" + "WEAKENED..." — good, block should NOT start with "\n" and should end with a trailing "\n"? No: join inserts "\n" between elements. So block should be "  WRITTEN-CONVENTION...\n  ...\n  note" with no trailing newline. Then join gives "...\n\n  WRITTEN...\n  note\nWEAKENED candidates". Need a blank between note and "WEAKENED candidates" → block should end with "\n" i.e. last element "" . Let me make lines end with "".
+
+OK: lines = ["  WRITTEN...", ..., "  notes...", ""] and return "\n".join(lines). Then block ends with "\n" so join adds block + "\n" + "WEAKENED" = "...notes\n\nWEAKENED". 
+
+But this whole trailing-\n thing only works because block is a single out element. That's fine.
+
+Let me write the function and place it just above render_report.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^def render_report" scr… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (1 → 46 lines)
+  + def render_convention_census(census) -> str:
+  +     """Render the MEASURED per-convention counts, or "" when there are none to report.
+  + 
+  +     WHY "OR NOTHING" AND NOT "ZEROES". The whole regression surface of this tool is every
+  +     reading already published, and a repo that carries none of my five conventions is the
+  +     common case -- including most foreign ones. Printing five zeroes there would rewrite
+  +     the report for every existing reading and leave a reader unable to tell "measured, and
+  +     the convention is genuinely absent" from "this build has no census at all". So the
+  +     block speaks only when a count is non-zero, the same shape the skipped-vocabulary
+  +     counter above already uses, and the empty case is byte-identical to before the census
+  +     existed. The zero IS still measured and IS asserted in the self-tests, which is where a
+  +     zero needs to be pinned; a rendered zero would be reassurance, not evidence.
+  + 
+  +     THE MODE DISCLOSURE IS UNCONDITIONAL AND TRUE IN BOTH MODES. `whole-file-test-rename`
+  +     counts 0 under `--per-commit` BY MECHANISM -- `git_diff_one_commit` passes
+  +     `--diff-filter=d`, so a whole-file deletion is excluded before the classifier can see
+  +     it -- while the net scan counts it as MOVED. The Day-196 prediction named only the
+  +     second mechanism, so a reader who sees a 0 here must be told which one produced it
+  +     rather than being left to assume the other.
+  +     """
+  ... (26 more lines)
+ ✓ (1m 19s)
+  + def render_convention_census(census) -> str:
+  +     """Render the MEASURED per-convention counts, or "" when there are none to report.
+  + 
+  +     WHY "OR NOTHING" AND NOT "ZEROES". The whole regression surface of this tool is every
+  +     reading already published, and a repo that carries none of my five conventions is the
+  +     common case -- including most foreign ones. Printing five zeroes there would rewrite
+  +     the report for every existing reading and leave a reader unable to tell "measured, and
+  +     the convention is genuinely absent" from "this build has no census at all". So the
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the `out.append(census_lines)` — census_lines is a multi-line string (no leading blank, ends with ""). That will be a single element. join gives "...\n\n<block>\n\n<next>". Wait: block ends with "\n" because line elements end with "". So block = "  WRITTEN...\n    ..\n  ...one.\n" -> actually "\n".join(lines) where lines[-1] == "" gives "...one." + "\n" + "" = "...one.\n". Then join over out: previous element is "" (from the MOVED blank) so "...MOVED 0" + "\n" + "" + "\n" + block = "MOVED 0\n\n  WRITTEN...\n" then + "\n" + "WEAKENED candidates" → "one.\n\nWEAKENED". 
+
+Now update the `_run` function to thread census.
+
+Actually wait — there's a problem. If census block renders, the "skipped" block's blank line handling is fine.
+
+Now for `_run`: accumulate census across per-commit loop. Need to sum dicts. Let me update.
+
+Also `pair_one_sha` uses 4-tuple unpack `findings, rust_hunks, test_hunks, _skipped = scan_diff(...)` → must become 5.
+
+Let me find all callers and update. Many are in self-tests using 4-element unpack. Simplest approach that keeps churn low: keep the 4-tuple unpacking working? No — Python requires exact count. I must update each.
+
+Let me list them with line numbers now (after edits).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "scan_diff(" scripts/che… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Many call sites. To minimize churn and risk of breaking pre-existing tests, I could make the census accessible without widening the return... but the task says "Add per-convention counts to `scan_diff`'s return". OK, let's do it but update all call sites.
+
+An option to reduce risk: define a helper `_unpack4(res)` — no. Better: just update each call site to unpack 5.
+
+For the `_tuple` helper at line ~3023: `f, rs, te, sk = res` → need `f, rs, te, sk, _cen = res`.
+
+Let me do them with sed carefully, or individual edits. Let me use python to do a targeted rewrite of the unpacking lines.
+
+Actually simplest: use sed on specific line numbers.
+
+Line 1594: `findings, rust_hunks, test_hunks, _skipped = scan_diff(...)` → add `, _census`
+1913: same → add `, _census`
+1920: `f, rh, th, sk = scan_diff(git_diff_one_commit(sha), vocab)` → add `, cen` and accumulate
+1932: multi-line — need to see.
+2143, 2149: add `, _c`
+2290 etc.
+
+Let me look at each context and edit properly. Let me do a python script to insert `, _census` before ` = scan_diff(` ends. Risky with multi-line.
+
+I'll do it manually with edits. Let's view the relevant regions.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1905,1945p' scripts/chec… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note: `finding.path = f"{sha[:8]} {finding.path}"` mutates the path in per-commit mode, which breaks the `_hunk_by_finding` lookup in `convention_census`! Because census is computed inside scan_diff before the mutation, so the census for each commit is computed correctly (with unprefixed paths). Good — census is computed inside scan_diff, before mutation. 
+
+But wait: `convention_census` is called inside `scan_diff` — yes, at the end, before returning. The mutation happens after. So per-commit census is correct. 
+
+Now update _run.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (40 → 47 lines)
+        if args.pair_verdicts:
+            return run_pairing(args)
+        vocab = Vocabulary(args.assert_macros, args.test_macros)
+  +     census = {name: 0 for name in CONVENTION_COUNTERS}
+        if args.stdin:
+            text = sys.stdin.read()
+  -         findings, rust_hunks, test_hunks, skipped = scan_diff(text, vocab)
+  +         findings, rust_hunks, test_hunks, skipped, census = scan_diff(text, vocab)
+            window = "(diff on stdin)"
+            commits = -1
+        elif args.from_ref and args.per_commit:
+            shas = git_commit_shas(args.from_ref, args.to_ref)
+            findings, rust_hunks, test_hunks, skipped = [], 0, 0, 0
+            for sha in shas:
+  -             f, rh, th, sk = scan_diff(git_diff_one_commit(sha), vocab)
+  +             f, rh, th, sk, c = scan_diff(git_diff_one_commit(sha), vocab)
+  +             # The census is summed from EACH COMMIT'S OWN SCAN, taken inside scan_diff
+  +             # before the path below is prefixed with the sha. Re-deriving it here from the
+  +             # mutated findings would look up a `(path, header)` pair that no longer exists
+  +             # and silently report zero for every convention -- a census that cannot fail.
+  ... (14 more lines)
+ ✓ (1m 19s)
+        if args.pair_verdicts:
+            return run_pairing(args)
+        vocab = Vocabulary(args.assert_macros, args.test_macros)
+  +     census = {name: 0 for name in CONVENTION_COUNTERS}
+        if args.stdin:
+            text = sys.stdin.read()
+  -         findings, rust_hunks, test_hunks, skipped = scan_diff(text, vocab)
+  +         findings, rust_hunks, test_hunks, skipped, census = scan_diff(text, vocab)
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1946,1962p' scripts/chec… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me continue. I need to pass census to render_report.
+
+Let me be efficient with context now.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (5 → 6 lines)
+                window,
+                args.max_findings,
+                skipped,
+  +             census,
+            )
+        )
+ ✓ (1m 18s)
+                window,
+                args.max_findings,
+                skipped,
+  +             census,
+            )
+        )
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now `pair_one_sha` at 1594 unpacks 4. That's fine (4-tuple unpack of a 5-tuple fails!). Actually unpacking a 5-tuple into 4 names raises ValueError. Let me fix all unpacking sites.
+
+Sites:
+- 1594: `findings, rust_hunks, test_hunks, _skipped = scan_diff(...)` → need 5
+- 1913/1920/1932 done
+- 2143, 2149
+- 2290 `nm_findings, nm_rust, nm_test, _nm_sk`
+- 2345 `ex_findings, _, _, _`
+- 2681, 2729, 2761, 2798, 2824, 2845, 2923, 2957, 2963, 2994 → all 4-unpack
+- 3019+ `_tuple` function needs update
+
+Let me add `_census` to each. Use sed carefully? Better to do targeted edits. Actually many are `_, _, _` patterns. Let me use python to do regex replacement.
+
+Simplest: make the extra unpacking tolerant by making `scan_diff` keep returning 4 and expose census separately? No — task says add to return.
+
+Alternative: use a small helper. Actually simplest and safest: do a mechanical regex replace in the file for the assignment patterns. Let me write a python one-liner:
+
+For lines matching `^(\s*)(\w+(?:, \w+)*) = scan_diff\(` — hard. Let me just handle each pattern individually with sed on specific known forms.
+
+Patterns:
+1. `findings, rust_hunks, test_hunks, _skipped = scan_diff(git_diff_one_commit(sha))`
+2. `findings, rust_hunks, test_hunks, _sk = scan_diff(diff)`
+3. `findings, rust_hunks, test_hunks, _sk = scan_diff("")`
+4. `nm_findings, nm_rust, nm_test, _nm_sk = scan_diff(no_move_diff)`
+5. `ex_findings, _, _, _ = scan_diff(extraction_diff)`
+6. `conv_findings, conv_rs, _conv_test, _conv_sk = scan_diff(fixture)`
+7. `payoff_findings, _rs, _th, _payoff_sk = scan_diff(payoff_fixture)`
+8. `ord_findings, ord_rs, ord_test, ord_sk = scan_diff(ordinary_diff)`
+9. `fi_findings, fi_rs, fi_test, fi_sk = scan_diff(foreign_idiom_diff)`
+10. `si_findings, _si_rs, si_test, si_sk = scan_diff(standard_idiom_diff)`
+11. `_pd_f, pd_rs, pd_test, pd_sk = scan_diff(production_diff)`
+12. `wf_findings, wf_rs, wf_test, wf_sk = scan_diff(foreign_idiom_diff, eqnice_vocab)`
+13. `rg_blind_f, _rg_blind_rs, rg_blind_test, rg_blind_sk = scan_diff(rgtest_removed_diff)`
+14. multiline `rg_findings, _rg_rs, rg_test, rg_sk = scan_diff(`
+15. `add_findings, _a_rs, add_test, add_sk = scan_diff(eqnice_added_diff, eqnice_vocab)`
+16. `leak_findings, _lk_rs, lk_test, _lk_sk = scan_diff(leak_diff, eqnice_vocab)`
+17. `meta_findings, _m_rs, _m_test, _m_sk = scan_diff(`
+
+A python regex: replace `, (renamed_thing)_... = scan_diff` — let me use regex on the pattern `^(\s*)([^=\n]*?),\s*([A-Za-z_][A-Za-z0-9_]*) = scan_diff\(` and add `, <name>_census`? But names like `_` repeat. Simpler: append `, _census` to the 4th slot: transform `X, Y, Z, W = scan_diff(` → `X, Y, Z, W, _census = scan_diff(`.
+
+Regex: `^(\s*[A-Za-z_][\w, ]*?), (\w+) = scan_diff\(` → hmm the tuple is 4 names separated by commas. So line looks like `    findings, rust_hunks, test_hunks, _skipped = scan_diff(...`.
+
+Regex: `^(\s*)((?:[A-Za-z_]\w*, ){3}[A-Za-z_]\w*)( = scan_diff\()` → `\1\2, _census\3`.
+
+That handles all `name = scan_diff(` lines. Also `_tuple` at 3019 needs the 5th element handled.
+
+Let me apply.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — `_census` unused variables in a Python script, fine (no lint). But careful: those tests are pure-python self-tests; unused locals fine.
+
+Hmm, but at line 2298 `_census` reused... fine.
+
+Actually, wait: in `run_self_tests`, some of them use `_census` more than once — that's fine in Python.
+
+Now `_tuple` at ~3027 needs updating since scan_diff returns 5 elements.
+
+Also the census self-tests. Let me update `_tuple`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3025,3040p' scripts/chec… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3018,3026p' scripts/chec… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (3 → 3 lines)
+        def _tuple(res):
+  -         f, rs, te, sk = res
+  +         f, rs, te, sk, _c = res
+            return ([(x.path, x.verdict, tuple(x.shapes)) for x in f], rs, te, sk)
+ ✓ (1m 18s)
+        def _tuple(res):
+  -         f, rs, te, sk = res
+  +         f, rs, te, sk, _c = res
+            return ([(x.path, x.verdict, tuple(x.shapes)) for x in f], rs, te, sk)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (168ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3090,3098p' scripts/chec… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (1 → 1 lines)
+  -         _tuple((meta_findings, _m_rs, _m_test, _m_sk)) == std_default,
+  +         _tuple((meta_findings, _m_rs, _m_test, _m_sk, _census)) == std_default,
+ ✓ (1m 18s)
+  -         _tuple((meta_findings, _m_rs, _m_test, _m_sk)) == std_default,
+  +         _tuple((meta_findings, _m_rs, _m_test, _m_sk, _census)) == std_default,
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (76ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Self-tests pass. Now let me write the new census self-tests. I need to add to `run_self_tests`.
+
+Requirements:
+1. Anti-vacuous per convention: a fixture carrying each shape yields count ≥ 1, asserted individually.
+2. Near-miss: a scan with no in-scope hunks reports all-zero counts AND verdict lines byte-identical to before.
+3. Drift guard extended: fail if a WRITTEN_CONVENTIONS row has no counter.
+4. Population conserved: sum(counts) <= hunks in scope.
+6. Positive control serial (I'll do this manually).
+
+Let me look at the conv_fixtures section and add census assertions in the loop, plus a new block. Let me find the end of the conventions block to insert.
+
+I already have `conv_fixtures` with fixtures per convention. I'll add to the loop: `conv_census = _census` — wait, in the loop I renamed to `_census`. Let me update the loop to use `conv_census` and assert the count for that convention >= 1.
+
+Careful: for REGISTER_LINES the fixture must produce count 1 for register-lines-only. For MODULE_SPLIT fixture: the source hunk is `@@ -1700,6 +1700,0 @@ mod tests {` — that's not `-1,... +0,0`, so it counts as module-split. Good. For FILE_RENAME fixture: `@@ -1,8 +0,0 @@` → whole-file deletion → file-rename. Good. For CHARACTERIZATION_INVERSION: UNKNOWN with 1 removed 1 added → 1. Hmm wait — actually the scan will classify `assert_eq!(ranking.len(), 0)` → `assert_eq!(ranking.len(), 1)`. Does it match a shape? Changed exact expectation → deliberately neither. So UNKNOWN with r=1, a=1. Good.
+
+For REGISTER_PAYOFF fixture: removed includes the anti-vacuous assert line → WEAKENED + REGISTER_ANTIVACUOUS_RE matches. But wait, is the hunk's verdict WEAKENED after reconcile_moved_tests? The fixture has removed `#[test]`? No, it removes an assert and a register tuple line, adds a comment. No `#[test]` removed. So stays WEAKENED. Good.
+
+But also the REGISTER_PAYOFF fixture's removed contains the register tuple `("src/commands_search.rs", "run_grep", "argv built incrementally")` — not the numeric register shape. Good; and it's in scope so register-lines wouldn't count it anyway.
+
+For REGISTER_LINES fixture (tests/module_size.rs with the numeric tuple): classify returns None (no assertion/test lines). Wait — removed `-    ("src/commands_search.rs", 4174),` added `+    ("src/commands_search.rs", 4307),`. No assert macro, no #[test]. So None → out of scope. Is it a dedicated test file? tests/module_size.rs → yes. `has_unrecognised_test_vocabulary`? MACRO_CALL_RE requires `!`; ATTR_RE requires `#[`. No match → skipped=0. Good. And REGISTER_LITERAL_RE matches → count 1.
+
+Now let me add these assertions. Also need to check counts don't collide: e.g. the module-split fixture — does it also count as characterization-inversion? The MOVED finding is MOVED, not UNKNOWN. register-lines: the hunks are in-scope (both produce findings) → excluded. So census for module-split fixture: module_split=1, others 0. Except... `src/format/highlight.rs` hunk: removed `#[test] fn lang_keywords_covers_rust() {...}`; added nothing. It has `#[test]` removed → in scope → WEAKENED initially; reconciled to MOVED (fn name reappears in highlight_lang.rs). Good. Second hunk in highlight_lang.rs added → M_TEST_ADDED → STRENGTHENED. Not MOVED. So module_split=1. file_rename=0 (header `@@ -1700,6 +1700,0 @@` doesn't match `^@@ -1,...,+0,0`). Good.
+
+Now the population conserved check: sum(census) <= rust_hunks. For each fixture.
+
+Let me now write the test block. I'll insert after the near-miss guard block (after line ~2745 area). Let me find where the ORDINARY near-miss check ends.
+
+Actually better: modify the convention loop to also assert per-convention count, and add a dedicated census block after the near-miss guard.
+
+Let me view the loop again with new line numbers.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2680,2745p' scripts/chec… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me add the per-convention census assertion inside the loop:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (5 → 5 lines)
+        for conv_name, declared_verdict, _why in WRITTEN_CONVENTIONS:
+            subject_path, fixture = conv_fixtures[conv_name]
+  -         conv_findings, conv_rs, _conv_test, _conv_sk, _census = scan_diff(fixture)
+  +         conv_findings, conv_rs, _conv_test, _conv_sk, conv_census = scan_diff(fixture)
+    
+            # ANTI-VACUOUS, FIRST: the scanner must have SEEN the fixture. A fixture matching
+ ✓ (1m 18s)
+        for conv_name, declared_verdict, _why in WRITTEN_CONVENTIONS:
+            subject_path, fixture = conv_fixtures[conv_name]
+  -         conv_findings, conv_rs, _conv_test, _conv_sk, _census = scan_diff(fixture)
+  +         conv_findings, conv_rs, _conv_test, _conv_sk, conv_census = scan_diff(fixture)
+    
+            # ANTI-VACUOUS, FIRST: the scanner must have SEEN the fixture. A fixture matching
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (2 → 28 lines)
+                        f"actual={verdict_name(subject[0].verdict)} shapes={subject[0].shapes}",
+                    )
+  + 
+  +         # MEASURED CENSUS, per convention, ASSERTED INDIVIDUALLY. This is the check the
+  +         # old proxy census could not make: a census that always returns 0 for a convention
+  +         # passes every "no counts" assertion, so each convention's own fixture must move
+  +         # ITS counter and no other. Asserted on the SUBJECT's count alone rather than on
+  +         # the whole dict, so a shared counter that fires on two conventions is caught by
+  +         # the per-fixture zeroes below rather than hidden behind a correct-looking sum.
+  +         check(
+  +             f"census[{conv_name}]: its own fixture yields a count >= 1",
+  +             conv_census.get(conv_name, 0) >= 1,
+  +             dict(conv_census),
+  +         )
+  +         check(
+  +             f"census[{conv_name}]: ... and NO OTHER convention's counter moves",
+  +             all(
+  +                 n == 0
+  +                 for other, n in conv_census.items()
+  +                 if other != conv_name
+  ... (8 more lines)
+ ✓ (1m 18s)
+                        f"actual={verdict_name(subject[0].verdict)} shapes={subject[0].shapes}",
+                    )
+  + 
+  +         # MEASURED CENSUS, per convention, ASSERTED INDIVIDUALLY. This is the check the
+  +         # old proxy census could not make: a census that always returns 0 for a convention
+  +         # passes every "no counts" assertion, so each convention's own fixture must move
+  +         # ITS counter and no other. Asserted on the SUBJECT's count alone rather than on
+  +         # the whole dict, so a shared counter that fires on two conventions is caught by
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (77ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All census checks pass. Wait — did they actually run? Let me verify the check names appear. `run_self_tests` only prints failures. Let me force a failure to confirm they're active... Actually better: I'll run the positive control later, which does exactly that.
+
+Now add:
+- Drift guard extension (counter registry keys == WRITTEN_CONVENTIONS names).
+- Near-miss byte-identical report check.
+
+Let me add the drift guard right after the existing fixture drift guard.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (5 → 23 lines)
+            "conventions: every enumerated convention has a fixture",
+            {name for name, _v, _w in WRITTEN_CONVENTIONS} == set(conv_fixtures),
+            (sorted(name for name, _v, _w in WRITTEN_CONVENTIONS), sorted(conv_fixtures)),
+  +     )
+  + 
+  +     # THE SAME DRIFT GUARD, EXTENDED TO THE CENSUS. A convention enumerated in LIMITS and
+  +     # measured by nothing is the "registered exception is silent in exactly the way a
+  +     # missing gate is" shape (d196): it would report a 0 that no reader can distinguish
+  +     # from "measured, genuinely absent". Asserted as a SET EQUALITY in both directions, so
+  +     # a sixth CONVENTION_* with no counter fails here, AND a counter with no enumeration
+  +     # row fails here rather than shipping a count into a report nothing accounts for.
+  +     check(
+  +         "census: every enumerated convention has a counter, and every counter a convention",
+  +         {name for name, _v, _w in WRITTEN_CONVENTIONS} == set(CONVENTION_COUNTERS),
+  +         (sorted(name for name, _v, _w in WRITTEN_CONVENTIONS), sorted(CONVENTION_COUNTERS)),
+  +     )
+  +     check(
+  +         "census: the rendered block names each convention from WRITTEN_CONVENTIONS",
+  +         all(name in render_convention_census({n: 1 for n in CONVENTION_COUNTERS})
+  +             for name, _v, _w in WRITTEN_CONVENTIONS),
+  ... (2 more lines)
+ ✓ (1m 18s)
+            "conventions: every enumerated convention has a fixture",
+            {name for name, _v, _w in WRITTEN_CONVENTIONS} == set(conv_fixtures),
+            (sorted(name for name, _v, _w in WRITTEN_CONVENTIONS), sorted(conv_fixtures)),
+  +     )
+  + 
+  +     # THE SAME DRIFT GUARD, EXTENDED TO THE CENSUS. A convention enumerated in LIMITS and
+  +     # measured by nothing is the "registered exception is silent in exactly the way a
+  +     # missing gate is" shape (d196): it would report a 0 that no reader can distinguish
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (81ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — the check names should show up in the passing output? Let's see how `check` prints passes. Let me look.
+
+Anyway, tests pass. But I need to verify the census tests actually fire. Let me run the positive control: neuter one counter and check the test goes red by name.
+
+Also I need the near-miss test (test #2): a scan with no in-scope hunks reports all-zero counts and verdict lines byte-identical. Let me add that.
+
+And test #4: population conserved — I added it in the loop. Let me also add a rendered-report byte-identity test.
+
+Let me first run the positive control serially.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (16 lines) ✓ (174ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (24 lines) ✓ (174ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Positive control: neutering `count_module_split` reddens exactly one test, by name, and restoring returns green. Confirmed. And no NEUTERED marker remains (restored from backup).
+
+Let me verify no marker remains.
+
+Now add the near-miss / byte-identity tests. Test #2: a scan with no in-scope hunks reports all-zero counts and the verdict lines byte-identical to before. I'll add that near the existing `ord_*` near-miss block.
+
+Let me add after the near-miss block around line 2769+.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "NEUTERED\|DO NOT COMMIT… ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (5 → 69 lines)
+            "conventions NEAR-MISS: ... and the hunk counts do not move",
+            (ord_rs, ord_test) == (1, 1),
+            (ord_rs, ord_test),
+  +     )
+  +     check(
+  +         "census NEAR-MISS: an ordinary diff moves NO convention counter",
+  +         all(n == 0 for n in _census.values()),
+  +         _census,
+  +     )
+  + 
+  +     # -- THE CENSUS IS PURELY ADDITIVE OUTPUT ---------------------------------------------
+  +     # The whole regression surface: every reading this tool has published. TWO halves are
+  +     # pinned, because either alone is satisfiable by a dead census.
+  +     #
+  +     # HALF 1 -- a diff in scope but carrying no convention shape renders BYTE-IDENTICALLY
+  +     # to what it rendered before the census existed. `assert_eq!` on the FULL rendered
+  +     # report, not a `contains`: a `contains` would pass a report that had gained five
+  +     # zero-lines as well as one that had gained none.
+  +     #
+  +     # HALF 2 -- a diff with NO in-scope hunks, where the zeroes are the honest answer for
+  ... (48 more lines)
+ ✓ (1m 19s)
+            "conventions NEAR-MISS: ... and the hunk counts do not move",
+            (ord_rs, ord_test) == (1, 1),
+            (ord_rs, ord_test),
+  +     )
+  +     check(
+  +         "census NEAR-MISS: an ordinary diff moves NO convention counter",
+  +         all(n == 0 for n in _census.values()),
+  +         _census,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The last check is convoluted and probably wrong (`render_report` positional args: findings, commits, rust_hunks, test_hunks, window, max_findings, skipped, census). Let me simplify it.
+
+scan_diff returns (findings, rust_hunks, test_hunks, skipped, census). render_report wants (findings, commits, rust_hunks, test_hunks, window, max_findings, skipped, census). So I can't just splat. Let me write it plainly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (23 → 15 lines)
+        # ... and the block DOES speak when a convention fired, so half 1 cannot be satisfied by
+        # a renderer that ignores the census entirely.
+  -     census_block = render_convention_census(_census)
+  +     ms_path, ms_fixture = conv_fixtures[CONVENTION_MODULE_SPLIT]
+  +     ms_f, ms_rs, ms_th, ms_sk, ms_census = scan_diff(ms_fixture)
+  +     ms_render = render_report(ms_f, 1, ms_rs, ms_th, "FIXTURE", 40, ms_sk, ms_census)
+        check(
+  -         "census ANTI-VACUOUS: a convention fixture's report NAMES the count",
+  -         f"{CONVENTION_MODULE_SPLIT} .. 1"
+  -         in render_report(
+  -             *[
+  -                 *scan_diff(conv_fixtures[CONVENTION_MODULE_SPLIT][1])[:4],
+  -             ],
+  -             "FIXTURE",
+  -             40,
+  -             0,
+  -             scan_diff(conv_fixtures[CONVENTION_MODULE_SPLIT][1])[4],
+  -         ),
+  -         render_report(
+  -             *scan_diff(conv_fixtures[CONVENTION_MODULE_SPLIT][1])[:4],
+  ... (14 more lines)
+ ✓ (1m 19s)
+        # ... and the block DOES speak when a convention fired, so half 1 cannot be satisfied by
+        # a renderer that ignores the census entirely.
+  -     census_block = render_convention_census(_census)
+  +     ms_path, ms_fixture = conv_fixtures[CONVENTION_MODULE_SPLIT]
+  +     ms_f, ms_rs, ms_th, ms_sk, ms_census = scan_diff(ms_fixture)
+  +     ms_render = render_report(ms_f, 1, ms_rs, ms_th, "FIXTURE", 40, ms_sk, ms_census)
+        check(
+  -         "census ANTI-VACUOUS: a convention fixture's report NAMES the count",
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (152ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green. Note: the checks that pass don't get printed. Let me confirm the new tests are actually being exercised by making sure the check count increased. Let me look for how it prints the pass count / verify with a quick isolated run.
+
+Actually, `self-tests passed` output — let's see whether it prints a count.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "self-tests passed\|def … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Checks are silent when passing. Let me verify my new named checks are actually reached and can fail — I already ran a positive control on `census[module-split]`. Let me also run a quick positive control on the drift guard and the byte-identity near-miss to make sure they're live.
+
+Positive control 2 (serial): make `convention_census` return all zeros → the per-convention `>= 1` tests should all go red (5 by name).
+
+Positive control 3 (serial): make `render_convention_census` emit zeroes unconditionally → the byte-identity near-miss tests should go red by name. 
+
+Let me run both serially.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (98ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (26 lines) ✓ (189ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting — the forced block reddened a *pre-existing* test: "near-miss: a no-move diff renders byte-identically". That's the existing test at ~line 2290-2350. Good — it shows the byte-identity discipline is already enforced elsewhere too, and my control fired. Let me check why mine (census ADDITIVE) didn't appear in the first 2... FAILED(2) so both were mine and the pre-existing? Let me see full list.
+
+Anyway it's red and restored green. But I want my own named tests to fire. Let me redo with the full failure list.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (173ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Only 2 failures. That first one is pre-existing. My `census ADDITIVE` test didn't fail — why? Because render_report with census=None... wait, when `render_convention_census` is forced to return a string unconditionally, `render_report(ord_findings, ..., _census)` gets a non-empty string → appended. But `render_report(ord_findings, ..., )` without census → census=None → my forced function returns "  FORCED CENSUS BLOCK" regardless of census being None! So both sides get the same forced block → equal → passes. That's why.
+
+Hmm, that reveals a weakness: my byte-identity test compares two calls that both go through the same function, so a "always print" bug is invisible there. The pre-existing "no-move diff renders byte-identically" test is the one that catches it (it presumably compares against a hard-coded expected string, or against a baseline captured before).
+
+So my near-miss test is weaker than required: the task says "a scan with no in-scope hunks reports all-zero counts and the verdict lines are byte-identical to before this change (`assert_eq!` on the rendered report, not a `contains`)". Byte-identical to *before this change*. Since `render_report`'s default keeps the pre-change signature, calling without the census arg gives the pre-change report — but only if the census block is gated on the census argument being non-None. My test should assert that specifically.
+
+Let me strengthen: assert that render_report WITHOUT the census arg contains no "WRITTEN-CONVENTION CENSUS" text, and that the report with an all-zero census equals it. That pins the gating directly and would have caught the forced-print control. Let me add that.
+
+Also let me check the pre-existing test at 2280-2350 to reuse its baseline approach.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2135,2175p' scripts/chec… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — the pre-existing test compares against a hard-coded literal. That's the strongest form and it catches the forced-print. I'll strengthen my near-miss test to also assert the census is *gated on the argument*, i.e. the literal baseline carries no census text. Let me add that explicitly.
+
+I'll add to the census ADDITIVE block:
+- assert the pre-change baseline literal (reconstructed without census) has no "WRITTEN-CONVENTION CENSUS" in it and equals the report rendered WITH an all-zero census.
+
+That second half pins the gate. Let me edit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (6 → 24 lines)
+            "census ADDITIVE: a diff with NO in-scope hunks renders BYTE-IDENTICALLY too",
+            render_report(empty_f, 0, empty_rs, empty_th, "FIXTURE", 40, empty_sk, empty_census)
+            == render_report(empty_f, 0, empty_rs, empty_th, "FIXTURE", 40, empty_sk),
+  +         None,
+  +     )
+  +     # THE GATE ITSELF, and it is the check that catches an "always print the block" bug --
+  +     # which the equality above CANNOT, since both sides would then carry the forced block
+  +     # and compare equal. A pre-change caller (no census argument) must render a report that
+  +     # does not mention the census at all, while an all-zero census must render the same
+  +     # bytes. Both halves are needed: without the first, a renderer that always prints is
+  +     # invisible; without the second, a renderer that never prints is invisible.
+  +     pre_change = render_report(empty_f, 0, empty_rs, empty_th, "FIXTURE")
+  +     check(
+  +         "census GATE: a pre-change caller's report never mentions the census",
+  +         "CONVENTION CENSUS" not in pre_change,
+  +         pre_change,
+  +     )
+  +     check(
+  +         "census GATE: ... and an all-zero census renders the SAME bytes as no census at all",
+  +         render_report(empty_f, 0, empty_rs, empty_th, "FIXTURE", 40, 0, empty_census)
+  ... (3 more lines)
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py.
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+I restored from /tmp/caw.bak earlier, which lost my new test edits. Let me check the current state of the file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "census ADDITIVE\|census… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Ugh — the restore wiped my test additions (the /tmp/caw.bak was taken before I added the additive tests... Actually wait, /tmp/caw.bak was made before the tests were added? Let me check: I made caw.bak at the positive control step, which was AFTER the census per-convention assertions were added. Let me verify.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "census\[" scripts/check… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — the restore was from caw.bak which DID include the per-convention census assertions and drift guard. What was lost were the two later edits: the "census NEAR-MISS" additive test block. Let me re-add it now, properly.
+
+Let me look at the current near-miss section around line 2790-2810.
+────────────────────────────────────────────────────────────────────────────────
+
+The restore kept my census assertions but lost the additive-render test block. Let me re-add it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "conventions NEAR-MISS: … ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (4 → 60 lines)
+            "conventions NEAR-MISS: ... and the hunk counts do not move",
+            (ord_rs, ord_test) == (1, 1),
+            (ord_rs, ord_test),
+  +     )
+  +     check(
+  +         "census NEAR-MISS: an ordinary diff moves NO convention counter",
+  +         all(n == 0 for n in _census.values()),
+  +         _census,
+  +     )
+  + 
+  +     # -- THE CENSUS IS PURELY ADDITIVE OUTPUT ----------------------------------------------
+  +     # The whole regression surface: every reading this tool has published. THREE checks,
+  +     # because any one of them alone is satisfiable by a dead census.
+  +     #
+  +     # The GATE is the middle one and it is the reason the other two are not enough: an
+  +     # equality between "census passed" and "census omitted" is passed VACUOUSLY by a
+  +     # renderer that always prints the block, since both sides would then carry it. So the
+  +     # pre-change bytes are pinned by NAME -- a report from a caller that passes no census
+  +     # must never mention one -- and separately an all-zero census must render those same
+  +     # bytes exactly.
+  ... (40 more lines)
+ ✓ (1m 18s)
+            "conventions NEAR-MISS: ... and the hunk counts do not move",
+            (ord_rs, ord_test) == (1, 1),
+            (ord_rs, ord_test),
+  +     )
+  +     check(
+  +         "census NEAR-MISS: an ordinary diff moves NO convention counter",
+  +         all(n == 0 for n in _census.values()),
+  +         _census,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (159ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ord_findings, ord_rs" s… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`_census` at 2813 is used in my new check, but the name starts with underscore. That's a test file, no lint. But let me rename for clarity — actually let me just keep it but make sure it's referenced (it is now). Fine.
+
+Now: the census per-convention assertions in the loop are inside the loop testing each convention's fixture. But `register-lines-only`'s fixture: the subject hunk is out-of-scope, so it produces a finding? No — declared verdict is None so no finding. And the census counts it via count_register_lines. That passed.
+
+Now run the full test suite. Also I need to VERIFY the "no verdict changed" constraint — byte-identical verdict output. Let me capture the report before/after my change on a real commit range.
+
+Let me first stash-compare: run the tool on HEAD~1..HEAD with the pre-change version (git show HEAD:scripts/...) vs current.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEA… (5 lines) ✓ (246ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Verdicts byte-identical on real ranges. But those ranges may have no census shapes. Let me force the additivity test with a synthetic diff carrying a convention shape so the block prints — and confirm the only delta is the appended census block.
+
+Let me construct a diff on stdin with a register-lines shape and compare.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/t… (15 lines) ✓ (111ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (57ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Excellent. The census works, verdicts are unchanged (only addition of the block). Now let's run clippy/debug/tests. Also verify the per-commit mode works and the census is summed there.
+
+Let me test per-commit mode on HEAD~3..HEAD.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (65ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Per-commit works. Let me test per-commit with a convention fixture — I can't easily. But the summing code path is exercised by --per-commit above (census all zeros). Let me write a quick ad-hoc python test to confirm per-commit summing works via a fake... Actually the `_run` per-commit path is only reachable with real git. Let me directly test the summation logic by simulating: call scan_diff per commit and sum. That's exactly what the code does. Good enough — but let me check via a real commit that has a convention shape. Search git log for commits touching tests/module_size.rs register lines.
+
+Actually, a simpler verification: check whether any recent commit in the shallow clone produces a non-zero census in per-commit mode.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-list --count HEAD; pytho… ✓ (120ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Per-commit census works — it found a register-lines-only hunk across 25 commits, and it confirms it's actually summing (zero in the aggregate test above since shorter range).
+
+Wait — but here `--per-commit` shows register-lines-only: 1, meaning the per-commit path summing works. 
+
+But note: `whole-file-test-rename` 0 in both modes here (no renames in range).
+
+Let me now verify the net-scan counterpart on the same range to see module-split/rename attribution works if any. Let me do a broader net scan of e.g. HEAD~40..HEAD.
+
+Now run the build/test/clippy/fmt gates.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (76ms)
+ ✓ (1.8s)
+  2 tools completed in 1.8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 18s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 12s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test …

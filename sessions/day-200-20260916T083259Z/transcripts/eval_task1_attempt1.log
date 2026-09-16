@@ -1,0 +1,320 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll verify the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (10ms)
+ ✓ (79ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Self-tests pass. Now let me check the census actually works end-to-end — run the tool on a diff containing a convention shape and see the census block print.
+
+Let me check the counters. Note the task said the census is printed in render_report. But also check: the `_run` in `--stdin` / net scan passes census. Yes.
+
+Let me actually exercise it with a fixture diff.
+
+Also the task mentioned near-miss test #2: "a scan with no in-scope hunks reports all-zero counts and the verdict lines are byte-identical to before this change (`assert_eq!` on the rendered report, not a `contains`)." They wrote checks. Let me verify by running.
+
+Let's test the module-split fixture e2e. I need to find the fixtures in the self-test to build a diff.
+
+Let me look at render_convention_census output live.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+Self-tests pass. Now let me actually exercise the feature end-to-end (not just trust the tests).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "conv_fixtures = " -A 60…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CONVENTION_MODULE_SPLIT… ✓ (5ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The fixtures match. Let me exercise the feature end-to-end via CLI with a stdin diff to see the census block actually prints.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.4s (2 ✓)
+
+Now let me exercise the feature end-to-end via the actual CLI (stdin path) rather than trusting unit tests.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (19 lines) ✓ (58ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The census block works end-to-end. Now let me verify the "purely additive" claim — the rendered report with no census is byte-identical. And verify the verdict lines unchanged. Let me check the register counters too.
+
+Let me test register-lines-only and register-paid-to-empty fixtures via stdin.
+
+Also verify the "no census" case — empty diff renders with no census block (already: render_convention_census returns "" when all zero).
+
+Let me test the register counters.
+────────────────────────────────────────────────────────────────────────────────
+
+Census block renders correctly. Let me verify the register counters (the only genuinely new discriminator) and the additive claim.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2648,2680p' scripts/chec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | tail -15 ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting: the commit only touches `scripts/check_assertion_weakening.py`. The task said Files: scripts/check_assertion_weakening.py, ARCHITECTURE.md. The docs update is missing!
+
+The task's Docs section says: "ARCHITECTURE.md's `check_assertion_weakening.py` entry: state that the convention census is now a **measured per-scan count** and that the Day-198/199 rows' `census_provenance: DERIVED` is the record of how it *was* — do not rewrite or back-fill those rows."
+
+That's a required deliverable and it's not in the commit. Let me confirm ARCHITECTURE.md was not changed.
+
+Also CLAUDE.md is not changed (the project instructions say new history goes in ARCHITECTURE.md, never CLAUDE.md). So doc_sync should be checked — ARCHITECTURE.md missing.
+
+Let me verify.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+The commit only touches one file — but the task explicitly listed ARCHITECTURE.md as a deliverable. Let me verify.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --name-only --format=%H…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MEASURED\|measured per-… ✓ (10ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The task's Docs section requires updating ARCHITECTURE.md's `check_assertion_weakening.py` entry. The commit does NOT touch ARCHITECTURE.md. That's a missing required touchpoint.
+
+Is that enough for a FAIL? The task listed Files: scripts/check_assertion_weakening.py, ARCHITECTURE.md. The Docs section is explicit. Let me double check whether ARCHITECTURE.md was modified in a later commit or in working tree (git status was clean/empty earlier — let me recheck).
+
+Earlier git status --short returned nothing (clean). So ARCHITECTURE.md is unchanged.
+
+Hmm. Doc_sync check: "If the task changed behavior, confirm the relevant docs (CLAUDE.md / README / docs/src) were updated in the same commit." ARCHITECTURE.md is the project's designated place for per-file history. Behavior changed (new output in report + signature). The task explicitly asked for it.
+
+But is this a FAIL? The rules say FAIL if the implementation doesn't match the task description. The implementation of the code matches, but the docs deliverable is missing. Doc_sync is a "Checked" line; FAIL on any Checked line forces overall FAIL.
+
+Hmm, but is doc sync really required here? Let me consider: the code change is to the scan tool, an evolve-kind internal tool. The task explicitly says Docs: ARCHITECTURE.md's entry. It's a specified deliverable. Missing.
+
+However, I should weigh: The evaluator rubric says "Do NOT fail for: minor imperfections, things that work but could be better". Missing a required docs update is not clearly a "minor imperfection" — it was an explicit instruction with detail.
+
+Let me verify the code more thoroughly first for correctness, then decide. Let me check for potential bugs:
+
+1. `count_register_lines` calls `classify_assertion_change` for every hunk — this re-runs classification. Fine.
+
+2. Potential double-counting: register-lines-only counts out-of-scope hunks; other counters count findings. Disjoint.
+
+3. `_run` census init `{name: 0 for name in CONVENTION_COUNTERS}` used for stdin/from_ref.
+
+4. Per-commit summing: c is per-commit census; summing works.
+
+Let me check the report path: `render_report(..., census)` — the call site passes census positionally after skipped. Good.
+
+Let me look at the actual diff for render_report signature and check the docstring claim about "byte-identical". Also check whether any existing verdict changed.
+
+One concern: the task explicitly required test #2: "Near-miss: a scan with no in-scope hunks reports all-zero counts and the verdict lines are byte-identical to before this change (`assert_eq!` on the rendered report, not a `contains`)." The diff added a check comparing render_report with census vs without. That's on the rendered report with assert on `==`. Good.
+
+Test #4: "Population conserved: sum(convention counts) on a fixture cannot exceed the hunks in scope". Added: `sum(conv_census.values()) <= conv_rs`. Good.
+
+Test #3: drift guard extended — set equality. Good.
+
+Positive control — not in the diff (it's a runtime action). Can't verify from diff; the task says run serially and restore. No NEUTERED marker present (let me verify).
+
+Let me check for NEUTERED markers and run the neutered_guards test.
+
+Also: verify that the census values in the code match the task's table. Task table:
+- CONVENTION_MODULE_SPLIT: hunks whose #[test] fns moved — MOVED path. Implemented: MOVED rows not whole-file deletions where removed carries test attr. ✓
+- CONVENTION_FILE_RENAME: report which mechanism applied. Implemented: MOVED rows with whole-file deletion header. + mode disclosure in render. ✓ (Though the task said "in --per-commit mode a whole-file delete never reaches the classifier ... so report the mode". The implementation reports via the disclosure text. Reasonable.)
+- CHARACTERIZATION_INVERSION: UNKNOWN rows with N removed / N added. implemented: len(r)==len(a) equal non-zero. Task said "UNKNOWN rows with N removed / N added and no shape matched" — equal counts. ✓
+- REGISTER_LINES: out-of-scope hunks carrying register-literal shape. ✓
+- REGISTER_PAYOFF: WEAKENED rows whose removed assertion is empty-register anti-vacuous. ✓
+
+Good.
+
+Now, let me verify the census is actually correct on a real reading — e.g., run the tool over the repo's own recent history and see non-zero counts. Actually let me run over a window with git. Let me run `--from-ref HEAD~50` on this repo and see the census. That would be a real end-to-end test.
+
+Let me do that quickly.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.3s (2 ✓)
+
+Let me run the census over real repo history (net scan) and check register fixtures, plus verify no NEUTERED markers.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/chec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "NEUTERED\|DO NOT COMMI… ✓ (4ms)
+ ✓ (59ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No NEUTERED markers — good. The `--from-ref HEAD~40` run — exit code 1? Let me check. Maybe it's a shallow clone (repo_is_shallow) or git needs a different invocation. Let me run without grep.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/chec… ✓ (58ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+It's `--from`, not `--from-ref`. Let me run properly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 180 python3 scripts/chec… ✓ (61ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No census block — meaning all counts were zero over HEAD~60? That seems unlikely... Actually the census block only prints when non-zero. Let me see the full report to check the scan actually ran.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 180 python3 scripts/chec… ✓ (64ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Shallow clone. Use a smaller window, HEAD~5 maybe.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 180 python3 scripts/chec… ✓ (62ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 180 python3 scripts/chec… ✓ (62ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The report printed. Let me see the rest to see if census block present and whether any verdicts.
+
+Actually the grep for "CONVENTION CENSUS" returned nothing — so all zeros in this window (HEAD~5 = assessment + task commits, which do touch scripts and md, no .rs). Fine.
+
+Let me run over a window containing .rs changes, e.g. --from HEAD~20 might fail if shallow (50 commits deep, HEAD~20 should work).
+
+Actually, let me instead verify the census on a per-commit run over a few commits that changed tests. Or simply test with the register fixtures via stdin. Let me construct the register-lines-only fixture manually. Actually I can extract fixtures from the self-test file. Simpler: trust the self-tests which passed and ran each fixture asserting count>=1 AND all other counters 0. That's strong evidence, and it ran.
+
+Let me just double-check one important claim: "No verdict may change... byte-identical". The diff also changed `scan_diff` signature from 4-tuple to 5-tuple. Are there other callers of scan_diff outside run_self_tests and _run? Let me grep.
+
+Also `render_report` callers — ensure all updated (optional param with default, so backward compatible).
+
+Let me grep for scan_diff callers.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "scan_diff(" --include=…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "render_report(" --incl… ✓ (58ms)
+ ✓ (120ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 27 scan_diff callers are inside check_assertion_weakening.py, and no external render_report callers. So forgotten touchpoints: the signature widening is fully consumed within the file. Let me verify all 27 call sites unpack 5 values (the self-tests passed, so they must). Actually cargo/python tests passing confirms runtime; but some paths (like run_pairing) only at runtime. The --test run covered run_pairing? Earlier output showed "COULD NOT CHECK: no UNEARNED rows" from self-tests, so run_pairing paths did execute. Good.
+
+Now the big question: ARCHITECTURE.md docs update missing.
+
+Let me weigh carefully. The task explicitly listed Docs: ARCHITECTURE.md's check_assertion_weakening.py entry. The CLAUDE.md says "New history goes in ARCHITECTURE.md, never here" and "Read ARCHITECTURE.md's entry for any file you are about to change." The task delivers a behavior change to the tool and a new census concept — the file's entry should record it. Not done.
+
+Is doc_sync FAIL warranted? The eval instructions: "If the task changed behavior, confirm the relevant docs (CLAUDE.md / README / docs/src) were updated in the same commit." ARCHITECTURE.md is not literally in that list (CLAUDE.md/README/docs/src), but it's the repo's designated history file and the task named it explicitly.
+
+Hmm. The listed set is "CLAUDE.md / README / docs/src". ARCHITECTURE.md is arguably the relevant doc for this change (per project conventions, CLAUDE.md explicitly says history goes to ARCHITECTURE.md). So it counts as the relevant doc.
+
+But does the missing doc force a FAIL? The rubric says "A FAIL on any Checked line forces the overall Verdict to FAIL". And FAIL is warranted if "The implementation doesn't match the task description". A named deliverable (Docs: ARCHITECTURE.md entry) is missing from the diff. That's a real, specified omission, not style.
+
+However, I should be careful not to over-fail. Let me weigh the severity: the code works, tests pass, feature verified. The missing piece is a documentation paragraph in ARCHITECTURE.md that the task explicitly listed in "Files:" and in the "Docs" section. That's a concrete, checkable requirement that was not met.
+
+Given the harness's strictness and that the task explicitly named the file in its Files line and Docs section, I think this should be flagged. But is it enough to fail the whole task? The rules say FAIL only if implementation doesn't match the task description. The task description includes "Files: scripts/check_assertion_weakening.py, ARCHITECTURE.md" and a Docs deliverable. Two of the requirements from the description are unmet.
+
+Hmm, but many evaluators would consider a missing doc update as "minor imperfection" — however the rubric explicitly lists "Things that work but could be better" vs "doesn't match the task description". A missing required file is a mismatch.
+
+Let me double check there isn't some other mechanism — maybe ARCHITECTURE.md entry was updated but I should check the working tree or a subsequent commit. git status was clean. Let me confirm the ARCHITECTURE.md `check_assertion_weakening.py` entry.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.6s (2 ✓)
+
+Let me check whether ARCHITECTURE.md's check_assertion_weakening.py entry mentions the census (maybe updated elsewhere).
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "check_assertion_weakeni…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ 2>/dev/null… ✓ (13ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md's entry for check_assertion_weakening.py (line 554) does NOT mention the new measured census. Last commit touching ARCHITECTURE.md was f067c400 (the move), not this task.
+
+So the Docs deliverable is definitely not done.
+
+Now — is that a FAIL? The task named ARCHITECTURE.md in Files and had a whole "Docs" section. The code is correct and tests pass. But the doc requirement is unmet.
+
+Let me consider how strict to be. The evaluation rubric says FAIL if "The implementation doesn't match the task description." The task description includes doc requirements. Missing doc = partial mismatch.
+
+However, weighing the "Do NOT fail for: minor imperfections, things that work but could be better". A missing doc paragraph... The task explicitly and specifically required it, and named the file. I lean toward marking doc_sync FAIL and overall FAIL? Hmm.
+
+But hold on — let me reconsider. Is doc_sync failure necessarily fatal? The rubric says: "A FAIL on any Checked line forces the overall Verdict to FAIL". So if I write doc_sync: FAIL, verdict must be FAIL.
+
+The judgment: is the missing ARCHITECTURE.md update material? In this repo, ARCHITECTURE.md is the authoritative per-file history, and CLAUDE.md mandates that any file you change gets its entry updated with new history. The task itself said so. It's a genuine, explicitly-required omission.
+
+But is it enough to reject the whole task? Many of these evolution tasks are graded on whether the code works. The doc update would be an easy fix and the code is sound. Hmm.
+
+Let me think about what the "correct" grading is. The rubric's purpose is to catch tasks that don't match. The docs requirement is explicit and part of the task. I think a fair strict-but-fair evaluator would flag doc_sync as FAIL, because the task explicitly enumerated the doc deliverable and it's absent.
+
+Actually, let me reconsider once more. The rubric's doc_sync line specifically says "CLAUDE.md / README / docs/src" — ARCHITECTURE.md is not listed there. But it says "the relevant docs". The task's Doc section is about ARCHITECTURE.md. Hmm. It's arguably not in the standard doc set. But the task explicitly asked.
+
+Given "FAIL only if: The implementation doesn't match the task description" — the description had a Docs requirement in a "Files:" line, so the implementation is incomplete relative to the description.
+
+I'll go with FAIL on doc_sync, overall FAIL. Hmm, but let me be careful — is this too harsh? Let me weigh the balance of consequences. If I PASS and the doc is missing, a required deliverable goes unchecked. If I FAIL, the session may revert a working code change over a missing doc paragraph. The harness's revert would discard the code — that's destructive.
+
+Hmm, that's a real concern: a FAIL probably means the task is reverted/re-done. Reverting a correct, tested implementation because a doc paragraph is missing is costly. But the task file is the contract.
+
+Let me look for guidance: the task's "Docs" section is a genuine requirement of the task. But is the doc update "behavior change reflected in CLAUDE.md/README/docs"? The behavior changed the tool's output. In this repo the convention is ARCHITECTURE.md, not CLAUDE.md. So doc_sync: FAIL is accurate.
+
+Hmm, I'm torn. Let me consider a middle ground: mark intent_alignment PASS, forgotten_touchpoints PASS, doc_sync FAIL, product_surface N/A. Overall FAIL with reason noting the code is complete and verified but the named ARCHITECTURE.md deliverable is absent and easy to add.
+
+Actually wait. Let me reconsider whether the doc omission is really "not matching the task description". The core deliverable — the measured census — is fully implemented, tested, and verified. The doc is a secondary requirement. The rubric's explicit list of FAIL conditions: "The implementation doesn't match the task description". A missing doc isn't really "the implementation". Hmm.
+
+But the rubric also has doc_sync as a Checked line that can be FAIL, which forces overall FAIL. So the rubric treats doc omissions as failable.
+
+I'll be strict but fair: the task explicitly enumerated ARCHITECTURE.md in its Files line and dedicated a Docs section with a specific instruction. It is absent. That's a documented requirement unmet. doc_sync FAIL.
+
+Hmm, but let me double check: maybe the evaluator instruction intends doc_sync to be about user-facing docs. This change is an internal tool's output. N/A is a legal verdict for doc_sync only if no behavior changed. Behavior DID change (report output). So N/A is not legal.
+
+Decision: FAIL, with doc_sync FAIL as the forcing line. I'll state clearly that the code is correct and the only gap is the missing ARCHITECTURE.md entry.
+
+Hmm, wait. Let me reconsider the severity once more. Actually, let me re-read: "Do NOT fail for: ... Things that work but could be better". Is the ARCHITECTURE.md entry "things that work but could be better"? No — it's a specified deliverable, not an optional improvement.
+
+But also consider: many evolve tasks' evaluations I've seen would consider missing ARCHITECTURE.md from a task that names it as a real defect. And CLAUDE.md hard rule: "New history goes in ARCHITECTURE.md, never here" and "Read ARCHITECTURE.md's entry for any file you are about to change." The task added new history to check_assertion_weakening.py. Per repo convention, ARCHITECTURE.md's entry must record it. It didn't.
+
+I'm fairly confident: FAIL on doc_sync.
+
+Hmm, but let me weigh the risk of over-failing. The instruction says "Be strict but fair. FAIL only if..." and lists four conditions. Condition 1: "The implementation doesn't match the task description". The task description has a Docs requirement. So condition 1 is arguably met (partial).
+
+Actually, hold on. Let me reconsider the framing of the four FAIL conditions — they're about the *implementation/feature*, and the doc_sync Checked line is separate. The instruction "A FAIL on any Checked line forces the overall Verdict to FAIL" means if doc_sync is genuinely FAIL, overall is FAIL. So the question is purely: is doc_sync PASS or FAIL?
+
+Given the task explicitly asked for the ARCHITECTURE.md update and it's absent, doc_sync = FAIL.
+
+Let me do one final check to be sure the ARCHITECTURE.md entry wasn't updated in some pending/uncommitted way, and that no other commit in this session did it. git status clean, HEAD is the task commit. Confirmed.
+
+Also, I should verify whether the task's own task_02.md exists (this is Task 1; there's a task_02.md). The eval is for task 1. Fine.
+
+Let me also confirm module_size doesn't owe a register line (no src touched) — quick but the harness said tests pass, and no src file touched. Fine.
+
+Let me clean up /tmp/census_fixture.diff? Not necessary but tidy. It's in /tmp, not the repo. Leave it.
+
+Now write the verdict.
+
+Actually, let me reconsider ONE more time whether to make this FAIL. Let me think about the intent of the eval harness. The eval agent is told: "judge the diff, don't explore the repo" and "if the task added or changed a USER-FACING FEATURE, actually try it". It emphasizes behavior. And "confirm the relevant docs (CLAUDE.md / README / docs/src) were updated in the same commit."
+
+ARCHITECTURE.md — is it "the relevant docs"? For this repo, yes, it's the designated history file mandated by CLAUDE.md. The task named it. So doc_sync FAIL.
+
+Final answer: FAIL.
+
+Hmm, actually let me pause and consider whether this is likely the "intended" answer. The task is very detailed and explicitly says "Docs: ARCHITECTURE.md's check_assertion_weakening.py entry: state that the convention census is now a measured per-scan count...". The agent implemented the code fully with extensive comments but forgot the doc. This is a classic "forgotten touchpoint" the eval is designed to catch. I'm confident.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.4s (2 ✓)
+
+Verified enough. Here's what I found:
+
+Code (verified working end-to-end):
+• Ran the CLI on a module-split fixture via --stdin: census block printed with module-split .. 1 and the other four at 0, plus the BY MECHANISM / --diff-filter=d mode disclosure. ✓
+• `python3 scripts/check_assertion_weakening.py --test → self-tests passed`, exit 0. ✓
+• Signature widening is self-contained: all 27 scan_diff( call sites and every render_report( site live inside check_assertion_weakening.py — no external caller breaks. ✓
+• No NEUTERED/SABOTAGE markers left behind. ✓
+• Counters keyed by the CONVENTION_* constants; drift guard extended to set-equality; anti-vacuous + near-miss + population-conserved checks added; no pre-existing self-test row edited (all forced destructuring updates only). ✓
+
+Missing deliverable: the commit touches only scripts/check_assertion_weakening.py. The task named ARCHITECTURE.md in its Files line and dedicated a Docs section to it ("state that the convention census is now a measured per-scan count…"). The check_assertion_weakening.py entry in ARCHITECTURE.md (line 554) does not mention the census, and the last commit touching ARCHITECTURE.md is f067c400 — not this task.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 30s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+The census implementation itself is solid and verified (I exercised the real CLI, not just the tests). The single blocking gap is the missing documentation deliverable: the task listed ARCHITECTURE.md in its Files line and gave a specific Docs instruction for it, but the commit changes only scripts/check_assertion_weakening.py. That's an explicit, named requirement left unmet — easy to fix by adding the entry, but absent as committed.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

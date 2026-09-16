@@ -1,0 +1,79 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the diff against the task. Key claims:
+
+1. Tests added to existing `mod tests` in src/agent_builder.rs — yes, 4 tests.
+2. Register line updated to 4177 — need to verify the actual line count.
+3. ARCHITECTURE.md updated.
+4. cost.rs register re-pasted to 2869.
+
+Tests PASS per harness. But I should verify the register numbers match the actual file size, since the task explicitly says leaving it un-pasted turns a warning into a hard failure. The harness said tests PASS — module_size test would fail if the register were wrong in the fatal direction. Let me check: REGISTER_DRIFT_GRACE_LINES = 100, recorded 3986 → 4086 fatal. New recorded 4177. If actual is >4277 or actual is much less... Actually the rule: recorded value must be >= actual (a register is a high-water mark). Let me check the actual line count of src/agent_builder.rs and src/format/cost.rs.
+
+Let me run a quick check.
+
+Also verify the tests actually reference `estimate_tokens` import and that `system_prompt_token_budget` exists.
+
+Let me do focused checks.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs src/f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn system_prompt_token_… ✓ (6ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both register lines match the actual file line counts exactly (4177 and 2869). 
+
+Now check the tests: the note contains "no room left for messages" - in plain form yes; in non-plain form the em dash is escaped but the text "no room left for messages" appears. The test asserts note.contains("no room left for messages") for both plain values — true.
+
+The test asserts note.contains(&format!("~{measured}")) — in plain it's "~{measured}" yes; in non-plain also "~{measured}". Good.
+
+Tests reference `estimate_tokens` — need to verify it's imported in the test module scope. `estimate_tokens` is used at line 994 in the function, imported at module level. The tests are in `mod tests` inside the same file presumably using `use super::*`. Let me verify quickly.
+
+Also the module_size test: 28 passed per task. Register matches exactly.
+
+Let me check the test module has `use super::*`.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.2s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1570,1600p' src/agent_bu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD~1 2>/dev/nu… ✓ (6ms)
+ ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Everything checks out. The diff is exactly the three described deliverables:
+- 4 tests extending the existing `mod tests` (which has `use super::*`, so `estimate_tokens` resolves).
+- register pastes matching actual line counts.
+- ARCHITECTURE.md bullet updated.
+
+The diff is +99 lines to agent_builder.rs, not +191 as the comment says. Hmm — the comment says "Day 200 (#929): +191" but the diff added 99 lines. Wait, 3986 → 4177 is +191. So the recorded value was 3986 and the actual is 4177, so +191 total. But the diff only added 99 lines to agent_builder.rs. That means before this task the file was already ~4078 (as the assessment said, +92 above 3986). So the register drift 3986 → 4177 includes the pre-existing 92 drift plus 99 new lines = 191. That's consistent. The comment "+191" describes the register movement, which matches.
+
+No behavior change (tests only + register + doc). No product surface change → N/A. Doc sync: ARCHITECTURE.md is the correct place per CLAUDE.md; updated. No behavior change but a doc note added — pass.
+
+Positive control: claimed run. Not verifiable from diff, but tests pass and the anti-vacuous test would catch return-4000. The task asked for it, and their receipt is in ARCHITECTURE.md. Good enough.
+
+Let me write verdict PASS.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+All three deliverables verified: the 4 tests extend the existing mod tests (which has use super::*, so estimate_tokens resolves), both register lines match the gate's actual line counts exactly (wc -l → 4177 and 2869, matching the pasted values), and ARCHITECTURE.md's bullet was updated.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 31s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+The diff is precisely the two missing deliverables plus the doc line:
+• **Tests**: 4 tests added to the existing `mod tests` (fixture anti-vacuous, scaling, short-prompt near-miss with `assert_eq!`, degenerate clamp+note) — matching exactly what #929 named.
+• **Register**: ("src/agent_builder.rs", 4177) confirmed against wc -l (4177), and the optional cost.rs re-paste to 2869 also matches its actual count.
+• **Docs**: ARCHITECTURE.md bullet updated in the file CLAUDE.md designates for per-file history.
+
+No behavior change, no product surface touched.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
