@@ -1,0 +1,660 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the task's target files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Early Exit Rule" skills…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^## \|^### " skills/soc… ✓ (6ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/skills/social/SKILL.md (40 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,170p' skills/social/… ✓ (1ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the existing integration test.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.4s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "skills_directory_loads_… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2236,2280p' tests/integr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' tests/integration… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me write the new Early Exit Rule section. First, let me draft it.
+
+Requirements:
+1. Evaluate five proactive triggers FIRST, before the reply sweep — with the cost reason.
+2. State an outcome per trigger, in the session's own words — name each of the five, say fired or not fired and why.
+3. Only then reply sweep, which may legitimately end the session.
+4. Include milestone derivation: DAY_COUNT % 10 == 0, prompt carries "Today is Day $DAY".
+5. Point at ## Proactive Posting for trigger definitions (one statement of the list, never two copies).
+
+Hmm, but the task says "Name each of the five". If I name each of the five, that's a second copy of the list. There's tension. The task says: "Point at `## Proactive Posting` for the trigger definitions rather than restating them — one statement of the list, never two copies that agree today." And also "Name each of the five, and say *fired* or *not fired and why*."
+
+Reconciliation: name each of the five by short label (e.g. trigger 1 through 5 with a one-word handle) — the labels are identifiers, the definitions live in Proactive Posting. Actually the safest interpretation: require the session to state an outcome for each of the five numbered triggers by their names in the Proactive Posting list, pointing there for the definitions. So I can reference `## Proactive Posting` triggers 1–5 by their short titles without restating what they mean. Actually restating the titles is a mild copy. Let me instead phrase it as: "For each of the five triggers in `## Proactive Posting`, state in your reasoning whether it fired, and if not, why." That names the set (five) but doesn't enumerate names. Hmm, "Name each of the five".
+
+Hmm. Test requirement: "assert ... that the section names all five triggers (or points at the one place that does)". So the test can be satisfied by "points at the one place that does" — i.e. referencing `## Proactive Posting`. Good. So the test predicate: slice contains a pointer to `## Proactive Posting`, mentions five triggers, requires a stated outcome per trigger, and permits exit.
+
+But the test must FAIL on today's text. Today's text contains none of that. Good.
+
+I'll include the five trigger titles as a compact ledger list? That risks the "two copies" concern. The task explicitly says name each of the five. But it also says point at the definitions rather than restating them. I'll name them by number + short handle, which is what allows the session to write "1. Journal breakthrough — not fired (no journal entry in the last 8h)". Hmm, that IS the list restated.
+
+Let me be careful and follow the stronger instruction: "Point at `## Proactive Posting` for the trigger definitions rather than restating them — one statement of the list, never two copies that agree today." I'll reference triggers by number 1–5 and point at the section. The phrase "Name each of the five" I'll satisfy by requiring the ledger to have five entries, each naming the trigger by its number and short title as given in `## Proactive Posting`. I can phrase the rule to say "write one line per trigger, headed by the trigger's number and title from `## Proactive Posting`" — that names them by reference, not by restatement.
+
+Hmm, but a guard test wants "names all five triggers (or points at the one place that does)". Pointing is fine.
+
+Actually, let me reconsider — maybe safest for the test: assert the slice mentions "Proactive Posting" (pointer) and "five" and requires "fired"/"not fired" per trigger, plus permits exit. I'll write the section accordingly and make sure the words exist.
+
+Let me now draft the section text.
+
+```markdown
+## Early Exit Rule
+
+**An early exit requires a stated ledger, not just an absence.** "No replies owed" is a reason to skip the *reply sweep*; it is never, by itself, a reason to end the session. Work in this order:
+
+**Step 1 — evaluate the five proactive triggers FIRST, before the reply sweep.** See `## Proactive Posting` for the definitions; that section is the single statement of the list, so read it there rather than trusting any paraphrase. The order is a cost argument, not a preference: the trigger check is cheap — one `DAY_COUNT % 10 == 0` test you can derive yourself, because the prompt already gives you `Today is Day N` (**do not** re-derive it from `DAY_COUNT` by reading files; the day in the prompt is the authority), two file mtimes you can get with one `stat`, and at most one `gh issue list` — while the thread sweep is many `gh api graphql` calls. Sweeping first spends the turns the cheap check needed, which is exactly how trigger 3 came to never be evaluated for 21 days (#927).
+
+**Step 2 — write the outcome of each of the five triggers.** In your own words, one line per trigger taken from `## Proactive Posting`, saying *fired* or *not fired and why*. "No trigger fired" must be something you **say**, never something you silently skip: a session that fires nothing should still be able to state which five it checked and why each was negative. That ledger is the deliverable; a silent zero is not evidence a check happened.
+
+**Step 3 — then the reply sweep** (`## Replying to Discussions`). An owed reply is still the top priority, and it legitimately ends the session — silence is fine when step 2's ledger says nothing fired and step 3 finds nothing owed. What changed is that the exit now requires the ledger to exist first.
+```
+
+Wait — careful about the milestone derivation. The task says: "Include the milestone trigger's derivation in the rule, since #927 notes it needs no harness change: the prompt already carries `Today is Day $DAY`, so `DAY_COUNT % 10 == 0` is derivable from what the session is given."
+
+Hmm, actually `DAY_COUNT % 10 == 0` — is DAY_COUNT a number? Let me check DAY_COUNT file.
+
+Actually the prompt says "Day 200". Let me check the DAY_COUNT file content.
+
+Also careful with my parentheses above — "the prompt already gives you `Today is Day N`" — let me verify what the social prompt contains. Let me check scripts/social.sh for the prompt.
+
+Also I shouldn't say "do not re-derive from DAY_COUNT by reading files" too forcefully — but it's fine guidance. Actually let me check whether social.sh passes DAY_COUNT.
+
+Let me check.
+
+Also note: the guard test needs deterministic substring-ish assertions. Let me keep the section with clear phrases like "Step 1", "Step 2", "Step 3", "five proactive triggers", "## Proactive Posting", "fired", "not fired and why", "reply sweep", "end the session".
+
+Let's check social.sh briefly.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.5s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DAY_COUNT && grep -n "DAY_CO… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. social.sh has `Today is Day $DAY`. Where does `$DAY` come from?
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DAY=" scripts/social.sh… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+DAY is computed from date, not from DAY_COUNT file. So DAY 200 = 200 days since birth. `% 10 == 0` works for milestone. The prompt says "Today is Day 200". So the session can derive `200 % 10 == 0`.
+
+Now write the new section.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll write the new Early Exit Rule section.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/skills/social/SKILL.md (3 → 11 lines)
+    ## Early Exit Rule
+    
+  - If there are no pending replies, no interesting discussions to join, and no proactive trigger fires — **end the session immediately.** Don't force conversation. Silence is fine.
+  + **An early exit requires a stated ledger, not merely an absence of work.** "No replies owed" is a reason to skip the *reply sweep*; it is never, by itself, a reason to end the session. Work in this order, and do not stop at step 2.
+  + 
+  + **Step 1 — evaluate the five proactive triggers FIRST, before the reply sweep.** The definitions live in `## Proactive Posting`; read them there. That section is the *single* statement of the list — never work from a paraphrase, here or anywhere else. The order is a cost argument you can check rather than a preference: the trigger check is cheap — one arithmetic test on the day the prompt already gave you, a couple of file mtimes, and at most one `gh issue list` — while the thread sweep … [yoyo: 150 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Step 2 — state an outcome for each of the five triggers, in your own words.** One line per trigger, taken from `## Proactive Posting`: *fired*, or *not fired and why*. "No trigger fired" must be something you **say**, never something you silently skip — a session that fires nothing should still be able to state which five it checked and why each was negative. The ledger is the deliverable; a silent zero is not evidence that a check happened.
+  + 
+  + **The milestone trigger needs no harness change.** The prompt opens with `Today is Day N`, so `N % 10 == 0` is derivable from what a session is already given — do not skip it for want of a day number.
+  + 
+  + **Step 3 — only then the reply sweep** (`## Replying to Discussions`). An owed reply is still the top priority, and finding one still legitimately ends the session. **Early exit is still allowed** when step 2's ledger says nothing fired and step 3 finds nothing owed: don't force conversation, silence is fine. What changed is that the exit now requires the ledger above to exist before it is taken.
+ ✓ (1m 18s)
+    ## Early Exit Rule
+    
+  - If there are no pending replies, no interesting discussions to join, and no proactive trigger fires — **end the session immediately.** Don't force conversation. Silence is fine.
+  + **An early exit requires a stated ledger, not merely an absence of work.** "No replies owed" is a reason to skip the *reply sweep*; it is never, by itself, a reason to end the session. Work in this order, and do not stop at step 2.
+  + 
+  + **Step 1 — evaluate the five proactive triggers FIRST, before the reply sweep.** The definitions live in `## Proactive Posting`; read them there. That section is the *single* statement of the list — never work from a paraphrase, here or anywhere else. The order is a cost argument you can check rather than a preference: the trigger check is cheap — one arithmetic test on the day the prompt already gave you, a couple of file mtimes, and at most one `gh issue list` — while the thread sweep … [yoyo: 150 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Step 2 — state an outcome for each of the five triggers, in your own words.** One line per trigger, taken from `## Proactive Posting`: *fired*, or *not fired and why*. "No trigger fired" must be something you **say**, never something you silently skip — a session that fires nothing should still be able to state which five it checked and why each was negative. The ledger is the deliverable; a silent zero is not evidence that a check happened.
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now write the guard test in tests/integration.rs next to skills_directory_loads_via_yoagent_skillset.
+
+The test must:
+- Slice between `## Early Exit Rule` and next `##` heading.
+- Anti-vacuous: slice non-empty and short enough to be a section, not the whole file.
+- Assert the section names all five triggers (or points at `## Proactive Posting`) and requires a stated outcome per trigger while still permitting the exit.
+- Assert `### Before replying` idempotency text still present (from the whole file, that's fine — it's a near-miss guard).
+- Doc comment says what it does not do.
+
+Let me write a helper to extract the section. Let me write the test.
+
+Predicate design — must fail on today's text:
+- slice must mention "Proactive Posting" (pointer) — today's text doesn't.
+- slice must mention "five" triggers — hmm, today's text has "no proactive trigger fires" (singular, no "five").
+- slice must require a stated outcome per trigger: look for both "not fired" and "fired"? Today's text has "no proactive trigger fires" — contains "fires". Not "fired". Careful with substring matches. Let me instead assert the slice contains the word "ledger" and "fired" ... today's text has "fires" not "fired". OK.
+- Still permits exit: contains "end the session" — today's text has that. So that clause alone doesn't discriminate but it's part of the property set.
+
+Better: use distinctive phrases but assert on *properties*, e.g. lowercase the slice.
+
+Let me define checks:
+1. slice non-empty and < 40% of file length (anti-vacuous: a renamed heading → empty slice → fail).
+2. slice mentions "Proactive Posting" (i.e., points at the trigger definitions).
+3. slice names the five: mentions "five" (as in "the five triggers").
+4. slice requires a per-trigger written outcome: mentions "fired" and "not fired" (pointing at the fired/not-fired pair).
+5. slice still allows exit: mentions "end the session".
+6. whole file still contains the idempotency text: "Idempotency — treat this as a hard rule".
+
+Check 5 would pass on old text too, but the conjunction fails. Good — but I should be careful that the test failure message is informative.
+
+Let me also make sure slices: `## Early Exit Rule` appears once in file? grep showed only line 20 for "Early Exit Rule". Good, but the new text mentions... let me check I didn't add "Early Exit Rule" elsewhere. I wrote "**Early Exit Rule**"? No, I wrote "Early exit is still allowed" and "## Early Exit Rule". The heading only. But `.find("## Early Exit Rule")` finds the heading. Also "Early exit is still allowed" contains "Early exit" not "## Early Exit Rule". Good.
+
+Also need the next `##` after the section: search for "\n## " after the heading index. Use `[after..].find("\n## ")`.
+
+Let me write it.
+
+Also I should double check the "short enough to be a section" bound. Let me use: slice must be at least 200 chars and at most 1/3 of the file. The section is ~1400 chars, file is maybe 13KB. Let me compute.
+
+Now write the test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -c skills/social/SKILL.md ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/integration.rs (5 → 102 lines)
+        assert!(
+            loaded_names.contains("skill-evolve"),
+            "skill-evolve meta-skill must be present"
+  +     );
+  + }
+  + 
+  + /// Guards the *ordering* contract in `skills/social/SKILL.md`'s
+  + /// `## Early Exit Rule` (#927).
+  + ///
+  + /// Why this exists: the rule used to read as a single sentence — "no pending
+  + /// replies, no interesting discussions, and no proactive trigger fires -> end
+  + /// the session" — and in practice only the first two clauses were ever tested,
+  + /// so a session could rule out replies and treat that as ruling out the
+  + /// session, leaving step 3 (the five `## Proactive Posting` triggers)
+  + /// unevaluated for 21 days / ~120 green runs. The fix is sequencing: evaluate
+  + /// the triggers FIRST, state an outcome per trigger, and only then sweep
+  + /// replies — with the exit still permitted once that ledger exists.
+  + ///
+  + /// What this test does NOT do, stated plainly so it is never described as
+  + /// proving the behaviour: it pins the *decision* against drift. It cannot see
+  ... (82 more lines)
+ ✓ (1m 19s)
+        assert!(
+            loaded_names.contains("skill-evolve"),
+            "skill-evolve meta-skill must be present"
+  +     );
+  + }
+  + 
+  + /// Guards the *ordering* contract in `skills/social/SKILL.md`'s
+  + /// `## Early Exit Rule` (#927).
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test integration so… ✓ (180ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the positive control: confirm the assertion fails on today's (pre-change) wording. Atomic mutate → run → restore. Use a scratch copy of the section? The task says "paste the current wording into a scratch string, confirm the assertion reddens on it, then restore."
+
+Best: mutate the skill file back to old wording, run test, restore — as one atomic command using git stash-free approach. Since the file is modified but not committed, I can use `git stash`? No — careful, don't lose work. Let me instead: save current file to temp, write old wording, run test, restore from temp. One atomic bash command with a trap.
+
+Actually simpler and safer: do it with a python script that edits only the section, runs cargo test, restores. Let me use git to get the original version: `git show HEAD:skills/social/SKILL.md`.
+
+Atomic command:
+
+```
+cd repo
+cp skills/social/SKILL.md /tmp/new.md
+git show HEAD:skills/social/SKILL.md > skills/social/SKILL.md
+cargo test --test integration social_skill_early_exit_rule_requires_trigger_ledger_before_exit 2>&1 | tail -5
+cp /tmp/new.md skills/social/SKILL.md
+diff <(git show HEAD:skills/social/SKILL.md) skills/social/SKILL.md >/dev/null && echo RESTORE_FAILED || echo restored
+```
+
+Note the test will fail with panic — cargo test returns nonzero, but `;` or `&&`? Use `;` to continue. Let's do it.
+
+Also I should verify the test genuinely fails on old text and not on some other reason. It should fail on the first assertion (Proactive Posting missing... actually the old section is: "\n\nIf there are no pending replies, no interesting discussions to join, and no proactive trigger fires — **end the session immediately.** Don't force conversation. Silence is fine.\n\n" — length ~ 180? Let me count: that's about 178 chars. Hmm, it might fail on the ≥200 anti-vacuous check instead. That's fine but I want the property assertion to be the one that fires ideally. Let me measure: "If there are no pending replies, no interesting discussions to join, and no proactive trigger fires — **end the session immediately.** Don't force conversation. Silence is fine." = roughly 172 chars. Plus "\n\n" = 174. So it'd fail anti-vacuous. That's a weaker demonstration — the guard would redden but for the wrong reason.
+
+The task says "Whatever predicate you choose, it must be the one that fails on today's text". Better to lower the anti-vacuous minimum so the property assertions do the failing. But anti-vacuous should catch a genuinely empty slice. The original wording is a real section of ~174 bytes, not empty. So set the floor lower, e.g. 120 bytes. Then the failure will be the "Proactive Posting" assertion — showing the property is what discriminates.
+
+Hmm, but "must say how many proactive triggers" — the old text says "no proactive trigger fires" singular. Let's keep floor at 120.
+
+Actually let me reconsider: anti-vacuous should catch "renamed heading → empty slice". A floor of 120 is enough for that. Let's set 120.
+
+Let me apply that edit, then run the positive control.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/integration.rs (1 → 1 lines)
+  -         section.len() >= 200,
+  +         section.len() >= 120,
+ ✓ (1m 20s)
+  -         section.len() >= 200,
+  +         section.len() >= 120,
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive control — restore the pre-fix wording, watch the guard redden, and restore, all in one atomic command:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp skills/social/SKILL.md /tmp/s… ✓ (198ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The test failed at line 2302. Let me check what line 2302 is — which assertion. Let me look.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2295,2310p' tests/integr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The failing assertion is the property assertion (line 2302 = the `section.contains("Proactive Posting")` assert). Good — the anti-vacuous check passed and the property check is the one that fires.
+
+Now let me confirm the restore is byte-identical and run the full verification suite.
+
+Also double-check the `### Before replying` assert: the whole-file check.
+
+Now run cargo fmt, clippy, build, test.
+────────────────────────────────────────────────────────────────────────────────
+
+The positive control fired on the property assertion (line 2302), not the anti-vacuous one. Restored byte-identically. Now full verification:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (2.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 26s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (1m 21s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green — no failures. Now check tests/neutered_guards.rs passes (it's part of the suite presumably). Let me grep for it.
+
+Also verify no marker.
+
+Now, the task says: Note the `Day N:` title convention in `session_plan/issue_responses.md` so it is not lost.
+
+Let me check if that file exists.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null; gr… ✓ (345ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now note the deferred Day N: deliverable in the issue-responses file so it isn't lost:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/issue_responses… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The file already notes the `Day N:` convention deferral in the #927 paragraph ("I am not doing the `Day N:` title convention in the same diff... It stays on #927 and is next up."). That's already recorded. The task says "Note it in `session_plan/issue_responses.md` so it is not lost." It's already there. I could add a small explicit marker to make it durable/unmistakable. Let me add a short explicit line since the task asked for it — but avoid duplicating. I'll add a compact explicit deferral line at the end of the #927 paragraph. Actually it's already explicit. Adding a redundant sentence is noise.
+
+Hmm — but the task explicitly instructs to note it. It IS noted. I'll leave it, and mention in my final summary that it was already recorded. Actually, to be safe and to make it unmistakable as a deferred deliverable, let me add one short line to the #927 section naming it as a tracked deferral. That's low cost.
+
+Let me add: "**Deferred on #927, explicitly: the `Day N:` title convention** (80 posts use it) — a real second deliverable, recorded here so it survives this session and is picked up next."
+
+Actually the existing text already says it. Adding a bolded heading line makes it greppable. I'll add it — small, surgical.
+
+Let me check: is session_plan/ part of a protected surface? Not listed in safety rules. Fine.
+
+Now, let me also verify the final section rendering, and update docs? The task says no README/CLAUDE.md/docs changes needed since skills/social/SKILL.md is the doc.
+
+Should I update ARCHITECTURE.md? CLAUDE.md says read ARCHITECTURE.md's entry for any file I'm about to change, and new history goes in ARCHITECTURE.md. I changed skills/social/SKILL.md and tests/integration.rs. Let me check ARCHITECTURE.md for entries on those files — I should read them and possibly add history. CLAUDE.md instruction is from the project; the task says "no README/CLAUDE.md/docs/src change". ARCHITECTURE.md is a separate record. Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "social/SKILL.md\|tests/… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md is huge (that one line is enormous). Let me check whether there's a per-file entry for skills/social/SKILL.md and tests/integration.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "" ARCHITECTURE.md && gr… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^### \|^## " ARCHITECTU… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No `## ` per-file headings in ARCHITECTURE.md; entries are bullet lines `- \`file\` — ...`. Let me look for a `social` entry.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "social" ARCHITECTURE.md… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '965,975p' ARCHITECTURE.m… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I was about to add an ARCHITECTURE.md note for the social skill change. Let me check the current state of the work: changes to skills/social/SKILL.md and tests/integration.rs are done and verified. I need to update ARCHITECTURE.md (per CLAUDE.md's instruction that history goes there), and note the deferred Day N: deliverable in session_plan/issue_responses.md, then run final checks and commit.
+
+Let me be efficient. First check git status.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git diff -… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — the restored file diff shows only the intended change. session_plan/issue_responses.md is untracked? It doesn't show as modified, so probably it's tracked and unchanged, or it's in .gitignore. Actually the "Recently Changed Files" listed session_plan/assessment.md but not issue_responses.md. Let me check if it's tracked.
+
+Actually git status shows only 2 modified files. So session_plan/issue_responses.md must be untracked but ignored, or already committed with the note. Wait — the task says "Note it in session_plan/issue_responses.md so it is not lost." But I see the file already exists and was read. Since Phase C (respond) handles issue responses... but the task told me to note it. Let me check whether it's tracked/gitignored.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git ls-files session_plan/ && gi… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+session_plan/ is gitignored, so my note there won't be committed — but I can still append it so it's not lost for Phase C / the next session (the file exists on disk). Let me append the deferred-deliverable note.
+
+Then update ARCHITECTURE.md — per CLAUDE.md, history goes there, and it says "Read ARCHITECTURE.md's entry for any file you are about to change." Let me check if there's an entry for skills/social/SKILL.md. Line 969 mentions `social` skill briefly. There's a "per-file notes" section. I should add a note about this change under the social skill's entry, and also verify whether tests/integration.rs has an entry.
+
+Let me search ARCHITECTURE.md for tests/integration.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "integration.rs" ARCHITE… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No dedicated entry for tests/integration.rs; there's a `skills` section around line 969. Let me look at the section around 960-975 and where skill file notes live. The `social` entry is a one-liner. I'll append the history note there.
+
+Let me look at the exact lines.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '955,972p' ARCHITECTURE.m… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll append the ARCHITECTURE.md history note for this change:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/ARCHITECTURE.md (2 → 2 lines)
+    Additional skills (`origin: yoyo`, eligible for skill-evolve to refine/retire):
+  - - `social` — community interaction via GitHub Discussions
+  + - `social` — community interaction via GitHub Discussions. **Day 200 (#927) — the `## Early Exit Rule` was re-sequenced, and the defect it fixes is an ORDERING one, not a wording one.** It read as a single sentence — *"no pending replies, no interesting discussions to join, and no proactive trigger fires — end the session"* — a three-clause conjunction whose **third clause was never being tested in practice**: the session spent turns 2–3 verifying idempotency on threads the formatter… [yoyo: 4827 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 19s)
+    Additional skills (`origin: yoyo`, eligible for skill-evolve to refine/retire):
+  - - `social` — community interaction via GitHub Discussions
+  + - `social` — community interaction via GitHub Discussions. **Day 200 (#927) — the `## Early Exit Rule` was re-sequenced, and the defect it fixes is an ORDERING one, not a wording one.** It read as a single sentence — *"no pending replies, no interesting discussions to join, and no proactive trigger fires — end the session"* — a three-clause conjunction whose **third clause was never being tested in practice**: the session spent turns 2–3 verifying idempotency on threads the formatter… [yoyo: 4827 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now note the deferred Day N: deliverable so it isn't lost:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (1 → 15 lines)
+  + - **#927 (executed, and it is the sequencing half only):** landed the `## Early Exit Rule` re-sequencing
+  +   in `skills/social/SKILL.md` — triggers evaluated **first**, a stated outcome per trigger, reply sweep
+  +   only after — plus the drift guard `social_skill_early_exit_rule_requires_trigger_ledger_before_exit`
+  +   in `tests/integration.rs`. `scripts/social.sh` was not touched (you reverted that, `7d282d67`).
+  + - **#927 — DEFERRED, and named here so it is not lost: the `Day N:` title convention.** 80 of my posts
+  +   use it and it is *"written down nowhere"* (your words). It is a real second deliverable and it did
+  +   **not** go in the sequencing diff — two deliverables in one task is how a task comes back
+  +   half-executed. Where it belongs: `## Proactive Posting` → `### How to create a new discussion` in
+  +   `skills/social/SKILL.md`, plus the same one-line statement wherever the title is actually supplied
+  +   (`scripts/social.sh` passes the prompt; the skill is the only surface I can safely edit). Next
+  +   session that touches the social skill should take it. It is a *wording/affordance* change, so unlike
+  +   the sequencing half it has no observable defect behind it — it needs a guard (a title-format
+  +   assertion in the same section slice) or it will drift back.
+  + 
+    **#930 — yopedia read API 500s (mine, `help wanted`, no replies yet): still open, still blocked,
+ ✓ (1m 19s)
+  + - **#927 (executed, and it is the sequencing half only):** landed the `## Early Exit Rule` re-sequencing
+  +   in `skills/social/SKILL.md` — triggers evaluated **first**, a stated outcome per trigger, reply sweep
+  +   only after — plus the drift guard `social_skill_early_exit_rule_requires_trigger_ledger_before_exit`
+  +   in `tests/integration.rs`. `scripts/social.sh` was not touched (you reverted that, `7d282d67`).
+  + - **#927 — DEFERRED, and named here so it is not lost: the `Day N:` title convention.** 80 of my posts
+  +   use it and it is *"written down nowhere"* (your words). It is a real second deliverable and it did
+  +   **not** go in the sequencing diff — two deliverables in one task is how a task comes back
+  +   half-executed. Where it belongs: `## Proactive Posting` → `### How to create a new discussion` in
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, I inserted the block but it lands right before "**#930 — yopedia..." which follows the #927 paragraph. Let me check the file to make sure the placement reads sensibly — the #927 paragraph ends with "It stays on #927 and is next up." then my new block. Let me verify.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '38,70p' session_plan/iss… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Placement is consistent. Final verification run — all four CI checks:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 19s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "test… ✓ (2m 37s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green (16 test binaries, all ok, no failures). Now review the final skill section text once more before commit, and check the guard test passes.
+
+Let me do a final read of the section.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '18,34p' skills/social/SK… ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four CI checks green. Committing:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (36ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The commit message has nested double quotes. I need to escape them. Use single quotes around the whole message, but the message contains double quotes, which is fine inside single quotes.
+
+The task's prescribed command used double quotes around the message containing inner double quotes. Let me use single quotes.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit -m 'Day 200 (22:36): … ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1 && git stat… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed as a421647e, tree clean.
+
+## What landed
+
+Step 1 — `skills/social/SKILL.md`, `## Early Exit Rule` re-sequenced. The old one-sentence rule — a three-clause conjunction whose third clause was never tested in practice — is replaced by an ordered sequence:
+
+1. **Evaluate the five triggers FIRST**, with the cost argument stated *in the rule* (trigger check = one arithmetic + two mtimes + at most one `gh issue list`; the thread sweep is many `gh api graphql calls and is what consumed the turns). It points at ## Proactive Posting` rather than restating the list.
+2. **State an outcome per trigger* — fired, or not fired and why*. "No trigger fired" must be said, not silently skipped.
+3. **Only then the reply sweep**, which may still legitimately end the session. Early exit and "silence is fine" are both preserved — what changed is that the exit now requires the ledger to exist.
+
+The milestone derivation (Today is Day N → N % 10 == 0) is written into the rule. scripts/social.sh untouched; frontmatter untouched.
+
+Step 2 — one guard test in `tests/integration.rs`, beside skills_directory_loads_via_yoagent_skillset: social_skill_early_exit_rule_requires_trigger_ledger_before_exit. It slices between ## Early Exit Rule and the next ##  heading, asserts anti-vacuity first (≥120 bytes, <1/3 of file), then pins properties — points at ## Proactive Posting, names the count, requires the fired/not fired pair, still contains end the session and silence is fine — plus a whole-file near-miss assertion that the ### Before replying idempotency discipline survives. Its doc comment states plainly that it pins the decision, not the behaviour.
+
+Positive control run, not assumed: one atomic cp → git show HEAD:skills/social/SKILL.md → test → restore. Against the pre-fix wording the guard FAILED at `tests/integration.rs:2302` — the property assertion, not the anti-vacuous one. Restored byte-identically, 0 markers in either file (neutered_guards green).
+
+Docs: ARCHITECTURE.md's social skill entry carries the history (including the superseded "never evaluates the triggers" diagnosis and the three observed runs), per CLAUDE.md's rule that per-file history goes there and not here. The deferred Day N: title convention — explicitly out of this diff — is recorded in session_plan/issue_responses.md with where it belongs and the note that, unlike the sequencing half, it has no observable defect behind it and will need a guard.
+
+Verification: cargo fmt -- --check OK · cargo build OK · cargo clippy --all-targets -- -D warnings clean · cargo test all 16 binaries green (0 failures). No src/ change, no product surface touched.
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check the current state. The task appears complete: committed a421647e, tree clean, all checks green.
+
+Let me verify the state and see if anything remains. The work was committed and verified. Let me check git log and status to confirm nothing remains.
+
+Maybe I should double-check that nothing is pending — e.g., whether the task expects anything else. Let me review:
+- Step 1: done
+- Step 2: done
+- Positive control: done
+- Docs: done
+- Commit: done
+
+One thing I might want to verify: the commit hash present on main, tree clean. Let me confirm and verify the test one more time, then report done. Also maybe check whether anything in session_plan/task_02.md listed remaining items.
+
+Let me look at task_02.md to see if there's anything I skipped.
+
+Also the task said the test should be next to `skills_directory_loads_via_yoagent_skillset` — done.
+
+Let me quickly verify tasks and be concise.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/task_02.md 2>/d… ✓ (3ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The task is complete. Everything was done and committed. Let me run the final verification suite once more to confirm green, and verify the key requirements are all in place. Then report done.
+
+Let me do a final check on each requirement:
+1. Slice scoped to section ✓
+2. Anti-vacuous first ✓
+3. Assert the property ✓
+4. Positive control ✓
+5. Doc comment states what it doesn't do ✓
+6. Near-miss: idempotency assertion ✓
+7. cargo test green ✓
+8. No scripts/social.sh change ✓
+9. Frontmatter untouched ✓
+10. Day N: noted in issue_responses.md ✓
+
+Let me run the four checks once to confirm nothing changed, and confirm the guard test passes.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+Everything from the task is committed and the tree is clean. Let me re-confirm the final state against each requirement.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== files in commit ===" &… ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Everything is verified. The work is complete. Let me give a final concise report.
+
+No remaining work — the task is fully done and committed. I should say so plainly rather than inventing more work.
+────────────────────────────────────────────────────────────────────────────────
+
+No remaining work — the task is complete and committed. Final state verified:
+
+Committed a421647e, working tree clean.
+
+| Requirement | Status |
+|---|---|
+| Step 1: Early Exit Rule re-sequenced in skills/social/SKILL.md | done — triggers first, stated outcome per trigger, sweep last, exit still permitted |
+| Step 2: one guard test in tests/integration.rs, beside the SkillSet test | done — social_skill_early_exit_rule_requires_trigger_ledger_before_exit |
+| Slice scoped to the section (not whole-file contains) | done — between ## Early Exit Rule and next ##  |
+| Anti-vacuous assertion first | done — ≥120 bytes, <1/3 of file |
+| Positive control on today's wording | run — FAILED at `tests/integration.rs:2302`, restored byte-identically, 0 markers |
+| Doc comment states what the guard does not do | done — pins decision, not behaviour; trace-reading is the report |
+| Near-miss: ### Before replying idempotency still asserted | done |
+| scripts/social.sh not touched | confirmed — absent from the commit |
+| Frontmatter score/uses/last_evolved not hand-edited | confirmed — no frontmatter lines in the diff |
+| cargo build && cargo test, clippy -D warnings, fmt --check | all green (16 test binaries, 0 failures) |
+| Day N: title convention noted, not half-done | recorded in session_plan/issue_responses.md as DEFERRED with where it belongs |
+
+One thing worth flagging plainly: the guard proves the wording before and after, and cannot see whether a session actually writes the ledger. That's stated in the test's own doc comment. Whether this fix works is decided by reading the next social run's trace — not by this commit.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

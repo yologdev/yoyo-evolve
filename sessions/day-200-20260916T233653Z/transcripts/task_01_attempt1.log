@@ -1,0 +1,729 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the task-relevant source: the counter, its caller, and the existing ledger schema.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat dreams/foreign_assertion_rea…  ▶ search 'count_register_lines|REGISTER_LITERAL_RE|REGISTER_ANTIVACUOU…' in scripts/check_assertion_weakening.py ✓ (7ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The search didn't find matches? Maybe the search tool path syntax. Let me grep with bash.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REGISTER_LITERAL_RE\|RE… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 990,1145p scripts/check_a… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the caller: how convention_census is used in scan_diff and where the census block is rendered, and whether --stdin mode emits it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1145,1290p scripts/check_… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check where the census block is rendered, in main(), and whether --stdin mode reaches it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_convention_censu… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1300,1400p scripts/check_… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`--stdin` mode DOES emit the census block (render_report is called with `census`). So the fixture can be `--stdin`.
+
+But wait: `count_register_lines` requires `is_rust_source(h.path)` and hunk not in scope of classify_assertion_change. Also in per-commit mode it works. In stdin mode, the whole diff is scanned in one scan - fine.
+
+Also note: the hunk must be a Rust source path. The task says plant in a Rust `tests/`-shaped path. Actually register-lines-only counts a hunk with a register literal that has NO assert-changes classified. If the hunk is in a test file path and there are no assert lines, classify returns None (out of scope) → counted. Good.
+
+Let me now design the fixture. Three hunks, each in its own file:
+- R- : tests/register_removed.rs — delete `    ("src/foo.rs", 1234),` from a table with another entry.
+- R+ : tests/register_added.rs — add `    ("src/baz.rs", 777),`
+- C : tests/control.rs — add a plain comment line.
+
+Hmm, but "each in its own file so the census can attribute them separately". But `count_register_lines` counts *hunks*, so three hunks in three files → count 3 if all fired (well, 2 for registers + control doesn't). Let's predict: register-lines-only = 2, everything else 0.
+
+Wait — but does the census actually distinguish? Each hunk counted separately. So predicted 2.
+
+Also I need to check: does adding a plain comment line to a non-test-file or test-file hunk matter? For control, if the path is a dedicated test file and there's no assert, is it "skipped unknown vocabulary"? has_unrecognised_test_vocabulary checks for unrecognized macro/attr. A plain comment won't trigger. Fine — control contributes 0 to register-lines-only.
+
+Now let me check `is_dedicated_test_file` and `is_rust_source`.
+
+Also the task says "in a Rust `tests/`-shaped path". Let me check is_dedicated_test_file.
+
+Also important: "The precondition. If the precondition turns out to be vocabulary-dependent (i.e. it depends on the assert classification), say so plainly". Indeed `count_register_lines` calls `classify_assertion_change` — so YES, the precondition is vocabulary-dependent: a hunk is only counted if the classifier returns None (out of scope). If a register hunk ALSO contained an assert macro that the vocabulary can't read... hmm, classify_assertion_change returns None if no assertions found. Let me read classify_assertion_change to say precisely what "out of scope" means.
+
+Let me read it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 900,995p scripts/check_as… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def classify_assertion_… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now `is_assertion_line` — does it check dedicated test file vs not. Let me check whether a plain comment `// note` in a test file could be an "assertion line"? No.
+
+Let me also check `is_dedicated_test_file` and `is_rust_source`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def is_rust_source" -A … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Important: `is_dedicated_test_file` requires path to start with `tests/` or end with `_tests.rs`. So a hunk in `tests/register_removed.rs` is a dedicated test file → PANICKY_RE applies. Fine.
+
+Note: for R- the file path `tests/register_removed.rs`. Also `count_module_split` and `count_characterization_inversion` use findings; register hunks produce no findings so contribute 0.
+
+Careful with `count_register_lines`: it iterates ALL hunks (not just findings), and requires `is_rust_source` and classify returns None. Good.
+
+Potential gotcha: the C control hunk — a plain comment added. classify returns None → out of scope. If it's in a dedicated test file with no assert... zero. Good.
+
+But wait — should the control be in the SAME file as the register table? The task says "change an ordinary non-register line in the same file (e.g. add a plain comment)". Hmm: "Three planted hunks, each in its own file so the census can attribute them separately" then "C (control) — change an ordinary non-register line in the same file". Slightly contradictory. Ambiguous. I think intent: three hunks each in own file; C is a control change to an ordinary non-register line. I'll put each in its own file for attribution, and make C's file structurally similar to the R files (a table with entries) but change a plain comment line — no, actually "same file" might mean same file as the register table but a hunk touching a non-register line. Hmm.
+
+Actually let's re-read: "Three planted hunks, each in its own file so the census can attribute them separately, in a Rust `tests/`-shaped path:" then bullet C: "change an ordinary non-register line in the same file (e.g. add a plain comment)."
+
+Could be interpreted: C also in its own file, change an ordinary non-register line. But if C is in the same file as the register table, then the diff has 2 hunks in one file... Actually in unified diff, separate hunks. If C is a separate hunk in the same file as R- (register_removed.rs), counting hunks attributes them separately already by hunk. Hmm.
+
+Design decision: I'll use three separate files, each its own file, and C's file will contain an equivalent register table so the control is a true near-miss — same file shape, one ordinary line changed, no register literal in the hunk. That's the strongest near-miss guard: it isolates the register literal as the discriminator rather than "a hunk in a tests/ file".
+
+Actually wait — a better near-miss: C changes an ordinary comment line inside the SAME register table (i.e. the hunk context includes register lines but the +/- lines don't). Hmm, but count_register_lines checks `h.removed + h.added` — the added/removed lines only, NOT context. So a hunk that changes a comment while register lines sit as context would still not fire. That's a great near-miss, and it tests exactly "does the counter read context lines?" So: C = a hunk inside the register table file that adds a plain comment line; register lines appear as context.
+
+Hmm, that requires the diff hunk to include context. When I hand-write the diff with `git diff` generation, context lines will be included automatically (3 lines). If the table has the register lines adjacent to the changed comment, they'd appear as context in the hunk (with a leading space). That's an excellent near-miss.
+
+But does that risk the "control hunk fires" outcome being a real discrimination test? Yes — that's exactly the point: it distinguishes "the counter reads the changed lines" vs "reads context".
+
+Hmm, but there's a subtlety: if the register context lines are within 3 lines and the comment change is adjacent, they appear as context. Good.
+
+Let me design:
+
+File A: `tests/register_paid_down.rs`
+Base:
+```rust
+// Size gate register.
+pub const GRANDFATHERED: &[(&str, usize)] = &[
+    ("src/foo.rs", 1234),
+    ("src/bar.rs", 567),
+];
+```
+Plant R-: delete the `    ("src/foo.rs", 1234),` line.
+→ hunk added/removed lines: only the removal → contains register literal → fires.
+
+File B: `tests/register_paid_up.rs`
+Base:
+```rust
+// Size gate register.
+pub const GRANDFATHERED: &[(&str, usize)] = &[
+    ("src/foo.rs", 1234),
+];
+```
+Plant R+: add `    ("src/baz.rs", 777),`.
+→ fires.
+
+File C: `tests/register_untouched.rs`
+Base:
+```rust
+// Size gate register.
+// Entries below are frozen at the day they were recorded.
+pub const GRANDFATHERED: &[(&str, usize)] = &[
+    ("src/foo.rs", 1234),
+    ("src/bar.rs", 567),
+];
+```
+Plant C: add a comment line right above the table entry, e.g. `    // parked: revisit after the split.` inserted as an added line among the tuple entries. The context would include register lines.
+
+Hmm, actually simpler and stronger: put C as adding a comment inside the table so the surrounding register lines are context:
+Base:
+```rust
+pub const GRANDFATHERED: &[(&str, usize)] = &[
+    ("src/foo.rs", 1234),
+    ("src/bar.rs", 567),
+];
+```
+After:
+```rust
+pub const GRANDFATHERED: &[(&str, usize)] = &[
+    // parked: revisit once src/foo.rs is split.
+    ("src/foo.rs", 1234),
+    ("src/bar.rs", 567),
+];
+```
+Added line = the comment only. Context lines include 3 lines after: `("src/foo.rs", 1234),`, `("src/bar.rs", 567),`, `];`. So register literals ARE in the hunk's context. Predicted count for C: 0 (counter reads removed+added only).
+
+That's the freshest, most informative near-miss. And it's a diff I can hand-write or generate via git in /tmp.
+
+Approach for running: try `--stdin` first. I need to construct the diff. Easiest: create the scratch repo in /tmp, commit base, apply the three edits, `git diff` → pipe to --stdin. That gives a real unified diff. But then it's a net diff of all three, which is fine for the stdin path (one scan, three hunks in three files, each attributed by path).
+
+Also do the per-commit variant? The task says "First try --stdin. If the census block is emitted in --stdin mode, this is the best fixture: the diff IS the record." So use --stdin. But I should verify. Note that per-commit sums census per commit — in a scratch repo each plant is its own commit; here a single commit with 3 files works too. Actually for the record, using --stdin with a saved diff file is most reproducible.
+
+Hmm — but wait. Is a net diff a problem? The task warns about `--from A --to B` net diffs cancelling one commit's change against another. Here the three plants are in different files and don't interact, so no cancellation. But to be safe and honest, I can do BOTH: --stdin (the record, diff saved) and a per-commit scratch repo run. Actually let's keep it focused: do --stdin as primary (saving the diff into the md), and also do a per-commit run in /tmp as a cross-check with three separate commits. That's cheap (local, no network).
+
+Let me now do STEP 1 first: write the pre-registration file BEFORE running anything. Critical ordering: land step 1 as its own commit before step 2.
+
+Let me first check git status and the DREAM.md milestone... Actually the task says DREAM.md is out of scope. Fine.
+
+Let me now write the prereg md. Steps:
+
+1. The counter's trigger condition, read from source, quoted.
+2. Predictions for each plant, and every other census row.
+3. Disambiguation rule sentences.
+4. Same for the three planned subjects.
+
+Then commit. Then step 2.
+
+Let me also check: is there a `dreams/` dir with other md files? Yes, active_dream_arc.md.
+
+Also check whether there's an existing convention/check that scans dreams/*.md for something (module_size gate? lint?). Let me check tests/ for anything referencing dreams/. And check `scripts/scan_commitments.py` might scan. Let's grep quickly for "dreams/" references in tests/scripts that could break.
+
+Let me check git status first.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Clean tree. Good. Now write STEP 1 file.
+
+I need to quote the code exactly. Let me get exact lines with numbers for citation:
+- line 1016 REGISTER_LITERAL_RE
+- 1084-1103 count_register_lines
+- 1127-1136 convention_census
+- 1155 census = convention_census(...) inside scan_diff
+- 1933-1938 stdin path in _run
+- 1384-1385 render_report calls render_convention_census
+- 1316 `if not census or not any(census.values()): return ""` — the block prints ONLY when non-zero!! Important: "a repo that carries none of my five conventions ... the block speaks only when a count is non-zero". That means for the CONTROL-only run the census block would be absent. But for the fixture with R's it will print all five rows. Good — this is a key fact for the pre-registration: a zero census prints NOTHING, so "block absent" == "all five rows zero".
+
+That's an important detail: my prediction must state that if nothing fires, the WRITTEN-CONVENTION CENSUS block is ABSENT entirely.
+
+Let me get exact line numbers by grep to cite accurately.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "" scripts/check_asserti… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "" scripts/check_asserti… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now confirm the `--stdin` path emits the census: yes, `_run` prints `render_report(..., census)` at the end for all paths.
+
+Now write STEP 1: `dreams/census_reach_preregistration.md`.
+
+I need to write it carefully and completely, then commit before running anything.
+
+Let me draft the predictions:
+
+Fixture hunks (each in its own file):
+- R- in `tests/register_paid_down.rs`: removed line `    ("src/foo.rs", 1234),` → predict register-lines-only = 1.
+- R+ in `tests/register_paid_up.rs`: added line `    ("src/baz.rs", 777),` → predict 1.
+- C in `tests/register_context.rs`: added plain comment line, register tuples present only as CONTEXT → predict 0.
+
+Total predicted register-lines-only = 2.
+
+Other rows:
+- module-split 0, whole-file-test-rename 0, characterization-inversion 0, register-paid-to-empty 0.
+
+Also state: the whole census block is rendered only if any row non-zero, so I predict the block IS present with exactly those five numbers.
+
+Also predict the other verdict counts: WEAKENED 0, STRENGTHENED 0, UNKNOWN 0, MOVED 0, test-file hunks examined 0, skipped 0? Hmm — careful. R- and R+ hunks: is_dedicated_test_file → tests/... → dedicated true. classify returns None (no assert/test lines) → in scan_diff, the None branch: `if dedicated and has_unrecognised_test_vocabulary(...)` → counts skipped. Does `// Size gate register.` or the tuple trigger has_unrecognised_test_vocabulary? Let me check that function — it looks for macro call or attribute not recognized. A tuple line `("src/foo.rs", 1234),` — MACRO_CALL_RE might match `( ... )` as a macro call if pattern is `\w+!\s*\(`? Let me read has_unrecognised_test_vocabulary.
+
+Important to predict correctly. Let me read it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def has_unrecognised_te… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Great: MACRO_CALL_RE requires `!` so a tuple line won't match. ATTR_RE requires `#[`. So skipped stays 0 for my fixture (assuming no `#[test]`/macro in the hunks). But careful: I must make sure the +/- lines don't include a macro call. Comment line and tuples — fine.
+
+BUT: careful with the control file — if the surrounding context contains `#[` or a macro... context lines aren't in removed/added. The has_unrecognised_test_vocabulary is called with `hunk.removed + hunk.added` only. Good.
+
+Hmm wait, in scan_diff, for the C hunk: classify returns None → dedicated → has_unrecognised(...) with removed+added = the comment line only → no macro → not skipped. Good: skipped = 0.
+
+Now, another consideration: for R- the file content. I want the hunk to include the register literal in added/removed lines. For R- (deletion), the removed line is the register literal → fires.
+
+Let me also make sure the fixture files are valid-ish Rust but that doesn't matter for the diff scan.
+
+Now predictions on other rows:
+- module-split: 0 (no MOVED findings).
+- whole-file-test-rename: 0 (no MOVED).
+- characterization-inversion: 0 (no UNKNOWN findings).
+- register-paid-to-empty: 0 (no WEAKENED findings; requires REGISTER_ANTIVACUOUS_RE in removed).
+
+Verdict counts: all 0; test-file hunks examined 0; rust hunks seen 3; skipped 0; commits -1 (stdin).
+
+Now for the per-commit cross-check: three commits, each plant its own commit. Then census summed per commit = register-lines-only 2 as well. rust_hunks 3 total. Fine.
+
+Now disambiguation sentences. Write them.
+
+If R fires and C does not → the ripgrep 0 means the counter has reach outside my history (it is not bound to my repo's paths/idioms), and ripgrep's 0 is at least a *capable* counter reporting zero, so "the census has no reach outside my own repo" (world 2) is falsified for this row. It does NOT license: that ripgrep lacks the convention (that needs the 3-subject census); it only shows the counter *can* fire on input I authored — one fixture I wrote is still not a foreign history, and I wrote the fixture with the regex in front of me.
+
+If R scores 0 → the counter cannot fire on the canonical shape even in a fixture built to satisfy the quoted regex: that would mean the trigger condition as read from source is wrong (a reading error or an unstated precondition), and it would put the 17 already published for my own history in scope as *unreproduced* — not necessarily wrong (my 17 came from a real run over my own history via the same code path) but no longer independently reproducible, so the separating row would need its own audit before the 3-subject census.
+
+If C fires too → the counter is not discriminating on the register literal at all (it fires on something else, e.g. any hunk in a tests/ path), so the row isn't a measurement of a convention; the 17 vs 0 would then be a count of tests/-path hunks that produced no finding, i.e. an artifact of how many non-assert test-file hunks each repo has.
+
+For the three planned subjects (§4): which should be able to fire register-lines-only at all?
+- macro-heavy foreign repo (e.g. a repo using own macros): fires only if it keeps a `("path.rs", N)` table in a hunk with no assertion change. A table is not a macro idiom → should be able to fire in principle, but its probability is a property of its history; the zero there is uninformative if the repo keeps no such table (I can check existence cheaply with a grep of the whole history for the literal — that's a *pre-condition census*, not the convention census). Key: for each subject, run a cheap "does this literal exist anywhere in the history at all" grep FIRST; if it's 0 across the whole history, that subject's census 0 is UNINFORMATIVE BY CONSTRUCTION and must be excluded from the "the row didn't move" tally.
+- plain-#[test] foreign repo: same.
+- my own second window: should be able to fire if that window contains a register edit; the day-191 7fc10e19 sha is NOT an ancestor of HEAD, so a second window of my history may also be 0 — and if my own second window is 0 on a different window, that would suggest the 17 is concentrated in a burst (d186: my history is non-stationary).
+
+Also state the pre-registered rule: if the literal exists in a subject's history but the census reads 0, that's a counter-reach failure; if the literal does not exist, the subject is excluded from the sample (and the exclusion is recorded, not silently dropped).
+
+Good. Now the second half: "state plainly whether the fixture can even emit the block" — note the block is emitted only when any row is non-zero. So a zero outcome in --stdin mode means NO census block at all → I must say that the absence of the block is the zero.
+
+Also worth noting: "the counter's trigger condition" — quote:
+
+```
+1016: REGISTER_LITERAL_RE = re.compile(r'\(\s*"[^"]*\.rs"\s*,\s*\d+\s*\)')
+1084: def count_register_lines(findings, hunks, vocab):
+1092:    n = 0
+1093:    for h in hunks:
+1094:        if not is_rust_source(h.path):
+1095:            continue
+1096:        if classify_assertion_change(
+1097:            h.removed, h.added, is_dedicated_test_file(h.path), vocab
+1098:        ) is not None:
+1099:            continue
+1100:        if any(REGISTER_LITERAL_RE.search(ln) for ln in h.removed + h.added):
+1101:            n += 1
+1102:    return n
+```
+
+Predicate in prose: a hunk increments the row iff (a) its path ends in `.rs`; (b) `classify_assertion_change(removed, added, dedicated, vocab)` returns `None`, i.e. the hunk's +/- lines contain NO assertion line (by the active vocabulary: `assert_re` plus, in a `tests/`-path or `*_tests.rs` file, PANICKY_RE `.unwrap()`/`.expect(`) and NO test attribute (`#[test]` or supplied test macro); (c) at least one of the hunk's REMOVED OR ADDED lines (never context) matches the literal regex.
+
+"produced no finding" as precondition = returns None from classify_assertion_change. Important: it's NOT "no finding was recorded" — the docstring says scope is re-decided with the same call, not inferred from absence of a finding.
+
+Vocabulary-dependent? YES, partially: condition (b) depends on the active vocabulary, so a hunk that contains an assertion macro the vocabulary cannot read would... hmm. Let's think. If a hunk in a foreign repo contains `eqnice!(a,b)` and a register literal, then with builtin vocabulary `assert_re` doesn't match eqnice → r_asserts/a_asserts empty; test_re doesn't match → returns None → so the hunk WOULD be counted by the register counter (condition b satisfied) even though it also carries an oracle the vocabulary can't see. So it's counted, not skipped. Conversely, if the register literal sits in a hunk alongside a recognized assert, the hunk is in scope and NOT counted (the "don't double count" rule). So: the register row and the assertion classifier are coupled — a hunk carrying an unrecognized oracle PLUS a register literal is counted as a register hunk (over-count direction), and a hunk editing a register literal alongside a recognized assert is not counted (under-count direction). Both are vocabulary-dependent. State that plainly. Also note the interaction with `has_unrecognised_test_vocabulary`: register hunks are NOT counted as skipped (day-197 design), so the register row is the only place such hunks land.
+
+Good — that's substantive finding #1 of step 1.
+
+Now write the file. Then commit step 1. Then step 2.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll write STEP 1 — the pre-registration, before running anything.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ write dreams/census_reach_preregistration.md (269 lines) ✓ (1m 19s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now commit STEP 1 before running anything.
+
+Let me check line 1155 for the scan_diff census call — I cited it. Let me verify.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1153,1157p' scripts/chec… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The census call is at a different line. Let me find it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "census = convention_cen… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I cited line 1155 incorrectly. Fix in the file (a correction commit will come with step 2, or fix now since it's a factual citation). I'll fix it and amend? Better: make a small follow-up commit correcting the line number — but the pristine ordering "prediction predates run" is preserved either way. Let me fix now and include it in step 1's commit via amend (amend keeps step 1 as a single commit before the run). Amending is fine since nothing depends on it.
+
+Now STEP 2: build fixture.
+
+Plan: create /tmp/census-reach-fixture/ with git repo, base commit with three files, then apply plants. Generate diff via `git diff` (net, uncommitted changes) → pipe to --stdin. Also then commit and run --per-commit over HEAD~1..HEAD? Actually per-commit cross-check: three separate commits, one per plant. Let me structure:
+
+1. Scratch repo: `git init`, create 3 files with base content, commit "base".
+2. Apply R- to file A, R+ to file B, C to file C → `git diff > /tmp/census-reach-fixture/plants.diff` → run `--stdin < plants.diff`.
+3. Then `git add -A && git commit` as one commit, and run `--per-commit --from HEAD~1` to cross-check (one commit). Hmm the cross-check value is limited. Alternatively make three commits sequentially, and run per-commit over HEAD~3..HEAD, which sums per commit — should still be 2. That's a stronger cross-check: each plant in its own commit, attributed separately, run in the mode ripgrep's 0 came from.
+
+Let me do: after recording stdin result, reset to base (git checkout .), then do three commits one at a time, then run --per-commit.
+
+Actually simpler: create two branches? Keep it simple with reset.
+
+Commands must be recorded in the md. Let me write a script file in /tmp? The task says record file contents AND commands. I'll record a heredoc reproduction script inline in the md.
+
+Let's build it now via a bash heredoc.
+
+Base file A (tests/register_paid_down.rs):
+```rust
+//! Size-gate debt register (fixture).
+//! Each entry is (path, line count at the day it was accepted).
+
+pub const GRANDFATHERED: &[(&str, usize)] = &[
+    ("src/foo.rs", 1234),
+    ("src/bar.rs", 567),
+];
+```
+Plant R-: remove the ("src/foo.rs", 1234), line.
+
+Wait: careful — does the removal hunk's removed lines contain a `#[` or macro? No.
+
+Base file B (tests/register_paid_up.rs):
+```rust
+//! Size-gate debt register (fixture).
+
+pub const GRANDFATHERED: &[(&str, usize)] = &[
+    ("src/foo.rs", 1234),
+];
+```
+Plant R+: add `    ("src/baz.rs", 777),` after the foo line.
+
+Base file C (tests/register_context.rs):
+```rust
+//! Size-gate debt register (fixture).
+
+pub const GRANDFATHERED: &[(&str, usize)] = &[
+    ("src/foo.rs", 1234),
+    ("src/bar.rs", 567),
+];
+```
+Plant C: insert `    // parked: revisit after the split.` before the foo line → added line = comment; context includes register tuples.
+
+Wait, for C: hunk will be:
+```
+@@ -3,4 +3,5 @@
+ pub const GRANDFATHERED: &[(&str, usize)] = &[
++    // parked: revisit after the split.
+     ("src/foo.rs", 1234),
+     ("src/bar.rs", 567),
+ ];
+```
+removed = [], added = ["    // parked..."]. classify: no asserts (comment isn't assert; `// parked:` contains no assert macro; PANICKY_RE? `.unwrap()`/`.expect(`? no) → None. dedicated (tests/) → has_unrecognised: no `!`/`#[` → not skipped. Then register regex on removed+added → comment doesn't match → 0.
+
+Now note: `//!` doc comment on line 1 — hunk context may include line 1? Only if within 3 lines. Not relevant.
+
+Important: does the file content contain anything that could match assert_re? Let me check BUILTIN_ASSERT_PATTERN. Let me look.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "BUILTIN_ASSERT_PATTERN\… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. `//! Size-gate debt register` contains no assert. But careful: the word "assert" alone doesn't match `assert!`. Fine.
+
+Now build the fixture. Let me write the reproduction script to /tmp and run it.
+
+Note: I should avoid running `git` destructive commands in the project root — I'm in /tmp, fine.
+
+Let me create the fixture.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ set -e (66 lines) ✓ (114ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `("src/foo.rs", 1234)` count is 3 in the diff because it appears in 3 places (context in C, context in R+ ... wait: in C it's context (1), in R- it's a removed line (-     ("src/foo.rs", 1234),) (1), in R+ it's context (1). So 3 total. My pre-registered prediction said grep -c counts 1 for R- — grep -c counts LINES matching, so across the whole diff it's 3. I pre-registered per-hunk counts. The honest reporting: per-hunk counts. Let me compute per-hunk counts with grep on the diff restricted to the file sections, or better, use `git diff -- tests/register_paid_down.rs | grep -c`.
+
+Note: grep -c counts matching lines; in R- file section it's 1. Let me redo the anti-vacuous check per file section, which is what "per hunk" means.
+
+Also important: R+ hunk changed lines = only the added `("src/baz.rs", 777),`. Good.
+
+And in C, the hunk's rem/added = only the comment. Register literal appears as context → my planned near-miss test.
+
+Now run the tool via --stdin.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/census-reach-fixture && echo "=== anti-vacuous, per-… (3 lines) ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The per-hunk literal counts include context lines. The right anti-vacuous check for R- and R+ is on the *changed* lines: line 21 (`-    ("src/foo.rs", 1234),`) and line 32 (`+    ("src/baz.rs", 777),`). The `^[+-][^+-]` grep shows the changed lines exactly: R-'s only changed line contains the literal; R+'s only changed line contains the literal; C's only changed line is the comment (no literal). That's the cleanest anti-vacuous evidence. 
+
+Note register_paid_up shows 2 because foo is context + baz is added. Fine.
+
+Now run the tool with --stdin.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (58ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The prediction hit exactly: register-lines-only = 2, all other rows 0, header -1/3/0, no skipped line. Now I need to:
+1. Run the per-commit cross-check in the scratch repo.
+2. Append the record to the md file.
+3. Append the ledger row.
+4. Run cargo build/test/clippy.
+5. Commit.
+
+Let me do the per-commit cross-check.
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction hit exactly on --stdin. Now the --per-commit cross-check, since that's the mode the ripgrep 0 was taken in.
+  ▶ $ set -e (32 lines) ✓ (186ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both modes: register-lines-only = 2, everything else 0. Prediction hit exactly.
+
+Now let me also grab the per-commit-per-commit breakdown to show attribution. Actually — I can run each commit individually to attribute per hunk. That would be strong evidence. Let me do it.
+
+Also I should check the --per-commit HEAD~1 --to HEAD style for each commit. Let's run 3 separate runs on each single commit.
+
+Note: `--from HEAD~1` with per_commit gives shas from git_commit_shas(from_ref, to_ref). Let me just do each commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/census-reach-fixture && for i in 3 2 1; do echo "--- commit HEAD~$i ---"… ✓ (180ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Per-commit attribution confirms: R- = 1, R+ = 1, C = 0 (the C commit's output has no census block at all — all rows zero, so `render_convention_census` returned ""). That is the pre-registered reading of an absent block: all five rows are zero, not "not measured".
+
+Now let me append the "after the run" section to the md file, then append the ledger row.
+
+Let me capture the exact sha/ts and the fixture record. Fixture saved at /tmp/census-reach-fixture/plants.diff. I should record the file contents and commands fully in the md so the control is reproducible from its own record.
+
+Let me now write the post-run section.
+
+Also note: the per-commit HEAD~1 run for the control commit didn't print the census block → confirms C = 0 in that mode too, attributed.
+
+Let me append the section to the md.
+────────────────────────────────────────────────────────────────────────────────
+
+Both modes agree, and per-commit attribution is exact: R- = 1, R+ = 1, C = 0 (C's census block is absent — all five rows zero). Now the post-run record.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat /tmp/census-reach-fixture/pl… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The stash -q -u / checkout removed... actually `git stash -q -u` stashed the working diff including plants.diff? No, plants.diff was untracked in the repo root, so `git stash -u` stashed it. Let me check the stash.
+
+Let me regenerate it or recover from stash.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/census-reach-fixture && git stash list && git stash show -p stash@{0} --… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/census-reach-fixture && git diff stash@{0} -- plants.diff | head -3; ech… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — `git diff stash@{0} -- plants.diff` was empty meaning plants.diff in working tree matches the stashed version. Good, recovered.
+
+But I should verify the diff content matches what I originally generated. Let me verify the anti-vacuous greps again on the recovered file: 3 (+1... double), 1, 1.
+
+Actually, safer: regenerate the diff fresh from the current repo state? No — the repo now has the three commits, so a working-tree diff is empty. The plants.diff recovered is the original. Let me just re-verify the greps.
+
+Also, I should store the fixture fully in the md (file contents + commands), which I have. Let me also copy the fixture diff into the md verbatim.
+
+Let me verify the recovered diff and its greps.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/census-reach-fixture && echo "=== recovered diff, re-verified ===" && gr… ✓ (63ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll append the run record to the pre-registration file.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> dream… (229 lines) ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the ledger row. Read the existing schema exactly. Existing rows have fields like: type, day, ts, repo, foreign, licence, window, mode, ...
+
+Let me check the full set of keys across all rows so my new row matches the schema.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the ledger row — first, the exact key schema of existing rows.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Row 2 is the existing `positive_control` row. Let me read it in full to match its schema exactly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (5 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I'll append my row, matching the schema: type, mode="positive_control", synthetic=true, day, ts, repo, foreign, licence, what_this_is, then the fields this task requires:
+
+- measured `convention_census` counts for the plant run, as printed → `convention_census`
+- `pre_registered_outcome` pointing at the md file's prediction, plus explicit hit/miss
+- the world the outcome selects, in step 1's committed words
+- what it does not license
+
+Also `plants` list with per-plant attribution, `window`, `scan_mode`, `anti_vacuous_control`, `clone_depth_obtained`/`shallow` — those two are 7/7 required in every row. Hmm, clone_depth_obtained is 7/7 and shallow 7/7. For a scratch fixture with no clone... I need to say something honest. I'll use a string value explaining: no clone was made — the primary reading is --stdin, and the cross-check used a /tmp scratch repo initialized locally, so depth is not applicable. Actually to keep parseability and schema, I'll set `clone_depth_obtained` to a string explaining "N/A (no clone: --stdin primary + a locally `git init`ed /tmp scratch repo, no network)" and `shallow: false`? Hmm, `shallow` false would be wrong too. Better: honest string for both? But other rows use int/bool. The task says "do not invent fields, and do not rewrite any existing row". It says "If, and only if, the existing schema cannot honestly express a scratch-fixture control, record the reading in the md file and say on the same line why the ledger was not used."
+
+The existing schema does have a `positive_control` mode row (day 198) which used a clone. Mine uses no clone and no network. I can express that honestly by giving `clone_depth_obtained` an explanatory string and `shallow` a value. Actually being a JSON line, type variance is acceptable as long as I explain. But cleaner: use `clone_depth_obtained: "not applicable (no clone)"` and `shallow: false` with a `clone` field explaining. Hmm `shallow: false` implies the repo is not shallow — for a locally init'ed repo with 4 commits, `git rev-parse --is-shallow-repository` would return false. That's actually literally true! The scratch repo is NOT shallow. So `shallow: false` is honest and `clone_depth_obtained` … there was no clone. I'll set it to the string "not applicable" — no, better keep it a number-free honest string. I'll do: "clone_depth_obtained": null, plus "clone": "..." explaining no clone. Hmm null is fine in JSON.
+
+Actually let me follow the day-198 schema as closely as possible while being honest: keep `clone_depth_obtained` as a string explanation. I'll use null and a `clone` note. Let's use:
+
+"clone": "NO CLONE WAS MADE and no network was used: the primary reading is `--stdin` (the diff IS the record) and the cross-check ran against a locally `git init`ed scratch repo at /tmp/census-reach-fixture with 4 commits, outside this tree, never vendored in. The day-198 control cloned ripgrep because the plants had to live inside ripgrep's own dialect; these plants are my own data shape, so a clone would add a network dependency without adding evidence.",
+"clone_depth_obtained": null,
+"shallow": false,
+"depth_provenance": "The scratch repo is NOT shallow -- `git init` + 4 local commits, so `--from HEAD~3` resolves exactly and the window is a window in COMMITS AND IN TIME simultaneously (LIMITS item 4 makes those different facts on a shallow clone; here they coincide). Stated rather than omitted because `shallow` is a field every other row carries."
+
+Good. Let me also include `commits_scanned`, `rs_hunks_seen`, `test_file_hunks_examined`, `verdicts`, `convention_census`, `skipped_unknown_vocabulary`(absent=0? Better state it), `census_provenance`, `anti_vacuous_control`, `plants`, `outcome`, `reading`/`the_finding`, `stated_limits`, `not_re_run`.
+
+Let me write it via python for correct JSON.
+
+ts: record the run ts 2026-09-16T22:58:46Z. Actually let me use the current time.
+
+Let me build it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (87 lines) ✓ (72ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Ledger appended and parseable. Now verify no existing row was rewritten: `git diff` should show only the appended line. Let me check.
+
+Then run the build/test/clippy checks, and the lint heredoc test maybe (script not changed, but pre-push hook runs on scripts/evolve.sh only). Also tests/neutered_guards.rs — no markers added.
+
+Run cargo build && cargo test && clippy && fmt.
+
+Also, should I check tests that assert on dreams/*.jsonl files? tests/blind_round_grades.rs uses dreams/experiments.jsonl, not this. Let me check if any test validates foreign_assertion_readings.jsonl schema (e.g. requiring specific fields like "licence"). Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "=== lin… ✓ (92ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Only 1 line added, 0 removed — no existing row rewritten. Good.
+
+Note: session_plan/task_01.md is untracked (from session plan). git status earlier showed clean-ish; `git status --short` showed nothing before... Actually the first git status --short output was empty. Now session_plan files appear in grep but they weren't in git diff --stat, so they're untracked/ignored. Fine.
+
+Now run cargo build, test, clippy, fmt.
+
+Also run the linter scripts to be safe? The task says run cargo build && cargo test, and clippy. Let's do fmt check too.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (204ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 18s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 19s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+All tests pass. Now verify the md file reads well and commit. Let me check the file's structure/ordering claim, then commit.
+
+Let me check git status and commit.
+────────────────────────────────────────────────────────────────────────────────
+
+All checks green. Verifying the step-1/step-2 commit ordering claim is checkable, then committing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -2 && echo "==… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ordering is verifiable in history: b7db07fd has the prediction without the run section.
+
+Now commit. The task file's commit message is prescribed. But I've already made step 1 its own commit (b7db07fd) — the task file says "Land step 1 as its own commit before starting step 2, and say so in the row." Good, done and stated.
+
+Now commit step 2 with the prescribed message.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done. Both steps landed, in the pre-registered order.
+
+## What I did
+
+Step 1 (`b7db07fd`, committed before any run). dreams/census_reach_preregistration.md — the prediction, written with the counter's source open and nothing executed:
+
+• **The trigger condition, read from source and quoted.** `count_register_lines` fires iff (a) `path.endswith(".rs")`, (b) `classify_assertion_change(...) is None`, (c) a literal matching `REGISTER_LITERAL_RE` sits in the hunk's removed + added lines — never context.
+• **A finding I did not expect: (b) is a *second, independent call* to the classifier, with `vocab` threaded in — so this row is not a pure literal grep. It's coupled to #921's gap in both directions: a register churn travelling with a *recognised* assertion edit is not counted (under-count), and a foreign hunk carrying an *unreadable* oracle *and* a register literal is** counted (over-count). Pre-registered as a confound for every foreign 0.
+• **Predictions on all five census rows**, the three header counts, all four verdict counts, block presence/absence — not just the row under test. register-lines-only = 2 (R- 1, R+ 1, C 0).
+• **The disambiguation rule completed in advance, in all three branches, plus the same three sentences for the three planned milestone subjects — including a pre-registered existence-check filter*, because a subject whose window contains no register literal at all contributes an uninformative-by-construction* zero, not a measurement.
+
+Step 2 (`e70208b8`). Fixture in /tmp/census-reach-fixture (no clone vendored, no network). Anti-vacuous greps per hunk, then both modes.
+
+## Result — HIT, and the prediction earned its keep
+
+| plant | change | register-lines-only |
+|---|---|---|
+| R- | delete ("src/foo.rs", 1234), | 1 |
+| R+ | add ("src/baz.rs", 777), | 1 |
+| C | plain comment; tuples are context only | 0 — census block absent |
+
+Identical under --stdin and --per-commit, and attribution is exact one commit at a time. World 2 is falsified for this row: the counter has reach outside my repo, so ripgrep's 0 is a zero from a live counter and is weak evidence that the debt-register shape is mine, not a generic Rust idiom. The C 0 branch also rules out the "fires on path shape, not the literal" defect.
+
+Two things I'm keeping honest about:
+• **My anti-vacuous grep check missed** — pre-registered at 1, measured 3, because I scoped it to the whole diff instead of per file. Recorded as a miss of the *check*, not the result; each hunk's changed lines are exactly the line intended.
+• **What it does not license**, at the same size as the result: one fixture I wrote shows the counter *can* fire outside my history; it cannot show what a real foreign history does, it says nothing about the over/under-count coupling, and it does not license the 17.
+
+Ledger row appended matching the existing schema (mode: "positive_control", synthetic: true, foreign: false, pre_registered_outcome with the hit and the check-miss, the world selected, and the residue) — 8 rows, still parseable, no existing row touched.
+
+Verification: cargo fmt --check, cargo build, cargo clippy --all-targets -- -D warnings, cargo test all green. scripts/check_assertion_weakening.py unchanged — that was the point.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

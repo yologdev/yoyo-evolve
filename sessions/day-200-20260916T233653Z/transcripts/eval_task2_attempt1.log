@@ -1,0 +1,124 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me judge the diff. The task asked for two steps: reframe the Early Exit Rule in skills/social/SKILL.md, and add one guard test in tests/integration.rs.
+
+Let me verify the actual files at HEAD match the diff and that the test's assertions actually fail on old text. The build/test already pass per harness. Let me do a quick focused check: read the section in the skill file, and confirm the test exists.
+
+Also check: ARCHITECTURE.md changed (allowed—history goes there). task said note Day N title convention in session_plan/issue_responses.md — the diff doesn't show that file changed. That's a minor out-of-scope note requirement. Hmm, the task said "Note it in session_plan/issue_responses.md so it is not lost." The diff doesn't include that. Is that a FAIL? It's a secondary instruction. Let me check if the file exists and contains the note (maybe it was already committed separately or the diff shown is only the task commit).
+
+Let me look at the repo.
+
+Also verify the positive control claim: the test must fail on today's text. I can do that check quickly: the old text is in the diff. Old section: "If there are no pending replies, no interesting discussions to join, and no proactive trigger fires — **end the session immediately.** Don't force conversation. Silence is fine." That section lacks "Proactive Posting", lacks "five", lacks "not fired". So the guard fails on old text. Good.
+
+Let me check the current file content and the test file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,70p' skills/social/SKI… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The skill change is present. Now check the test file, and whether session_plan/issue_responses.md got the note.
+
+Also, verify the "five triggers" section in Proactive Posting actually lists five triggers — that the reference is accurate. Let's check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Proactive Posting" -A 3…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Day N" session_plan/is… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+session_plan/issue_responses.md has the note. Good. Note that it's not in the git diff shown, but the file exists with the note — likely committed as part of the task commit? Let's verify it's committed.
+
+Actually the "CHANGES MADE (git diff)" shown only had 3 files. Let's check whether issue_responses.md was committed at a421647e.
+
+Also note: is session_plan tracked in git? Let me check.
+
+Also the file references "trigger 3 went unevaluated for 21 days" — slight detail; the issue said step 3. Fine.
+
+Step 1 says "Give the reason in the rule itself" — done. "Point at ## Proactive Posting" — done. Step 2 — done. Step 3 — done. Milestone derivation — done. scripts/social.sh untouched — check.
+
+Test requirements: scoped slice, anti-vacuous, property asserts, doc comment saying limit. Near-miss: "### Before replying" and idempotency text asserted. Check the exact string "Idempotency — treat this as a hard rule" exists — yes per line 40.
+
+Now positive control: does the test fail on the old text? Old section had no "Proactive Posting", no "five", no "not fired" → fails on assertion 1. Good.
+
+Let me quickly verify the committed test actually runs and passes on old text — no, harness says tests pass. I could run just the one test to confirm it executes (fast? cargo test compile maybe long). The harness ran the full suite; skip. But maybe run the single test quickly to confirm it's not vacuous-passing? A quick check: run the test with a scratch copy of the old text? That'd require modifying the file. Instead I can reason: the assertions are non-trivial.
+
+Actually let me do a cheap direct check of the property against the old text using grep-ish reasoning — no need.
+
+One more: does the old text (pre-fix) really lack "five" and "Proactive Posting"? From the diff: old line = "If there are no pending replies, no interesting discussions to join, and no proactive trigger fires — **end the session immediately.** Don't force conversation. Silence is fine." Yes lacks all three. So the guard reddens on old text. Good — the positive control is real.
+
+Check that scripts/social.sh wasn't modified in this commit.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.9s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat a421647e | tail …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2245,2250p' tests/integr… ✓ (5ms)
+ ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+session_plan/issue_responses.md is not in the commit? Let me check whether it's tracked and whether the note was committed at another commit or uncommitted/untracked.
+
+git status showed nothing (clean? earlier `git status --short | head -20` returned nothing). So session_plan/issue_responses.md content is committed somewhere — maybe in the session wrap-up commit of the previous session, or tracked in a prior commit. Let's check git log for that file and whether the note is in HEAD.
+
+Also frontmatter unchanged (score/uses/last_evolved untouched) — check the diff of skills/social/SKILL.md only shows the rule change. Yes: 10 lines changed, frontmatter not touched.
+
+Let me verify issue_responses.md is tracked and committed.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -2 -- session_… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, `git log -- session_plan/issue_responses.md` returned nothing?? The output starts with "- **#927 (executed..." — that's from sed. Wait, the git log output isn't shown. So the file may be untracked (ignored). git status --short also printed nothing → means the file is gitignored (untracked but ignored). So session_plan/ is gitignored — that's fine, the note exists on disk as required. Also note the file already documents the executed task including the deferred Day N convention. Good.
+
+Wait — but the note says "#927 (executed...)" — that's the writeback for this session; it exists. Fine.
+
+Now the doc_sync: the task said no README/CLAUDE.md/docs change; the skill file *is* the doc. ARCHITECTURE.md updated for history (per CLAUDE.md convention). So doc_sync PASS.
+
+Product surface: skills/social is an evolve-loop skill for yoyo's own social sessions, no CLI/default change. N/A or PASS. It's evolve-kind; it changes a skill prompt used by the social workflow — but that's the project's own loop, not product surface (skills are loaded by yoyo generally, but this is the repo's own skill set... actually skills/ in repo are the repo's own skills). CLAUDE.md says defaults must be product-safe; skill files are repo content, not shipped product defaults. Hmm — the skill file ships in the crates.io package? Let's think: skills/ dir is part of the repo; `skills_directory_loads_via_yoagent_skillset` reads ./skills. The social skill is for yoyo's own evolution. Not a product default. So product_surface: N/A (no config default/CLI flag/startup change).
+
+forgotten_touchpoints: new test function has consumer (cargo test auto-discovers #[test]). No new definitions in src. The skill change references `## Proactive Posting` which exists. The test asserts strings that exist ("### Before replying", "Idempotency — treat this as a hard rule") — verified line 40. PASS.
+
+One minor: task said the guard should "assert the slice is non-empty (and short enough to be a section)" — done (>=120 bytes, < text.len()/3). Good.
+
+Also should the test verify the section names all five triggers (or points at the one place that does) — it asserts points at ## Proactive Posting and lower.contains("five"). Acceptable.
+
+Anything about the ARCHITECTURE.md diff being huge prose? Fine, that's the repo convention.
+
+Let me do a quick sanity check that the test actually fails on old text — I could do this cheaply without mutating the repo file by simulating? Eh. Actually I can run the property checks against the old text quickly with python/grep to confirm the guard would redden. Cheap.
+
+Old section text = the single sentence. Does it contain "Proactive Posting"? No. So assertion 1 fails. That's trivially verifiable by inspection. Good enough.
+
+Verdict: PASS.
+
+Write the file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 30s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+What I actually checked:
+• `skills/social/SKILL.md:21-31 now states the ordered rule: triggers first (with the cost argument), a stated fired / not fired and why outcome per trigger, reply sweep only third, exit still permitted — and it points at ## Proactive Posting` (the single five-trigger list at lines 156-164) instead of restating it.
+• The diff (git show --stat a421647e) touches only ARCHITECTURE.md, skills/social/SKILL.md, tests/integration.rs — frontmatter score/uses/last_evolved and scripts/social.sh are untouched, as required.
+• The guard is scoped to the slice between ## Early Exit Rule and the next ##  heading, asserts anti-vacuity (≥120 bytes, <⅓ of file) before the property checks, and its doc comment states its limit ("pins the decision against drift… does not verify the behaviour").
+• Non-vacuity confirmed by inspection: the pre-fix sentence contains none of Proactive Posting, five, or not fired, so the guard reddens on today's wording.
+• Near-miss assertions target strings that really exist (### Before replying, Idempotency — treat this as a hard rule at line 40); no NEUTERED/SABOTAGE markers anywhere in either file.
+• The deferred Day N: title convention is recorded in session_plan/issue_responses.md.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
