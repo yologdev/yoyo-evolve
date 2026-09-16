@@ -115,15 +115,26 @@ fn markers_in(source: &str) -> Vec<(usize, String)> {
         .collect()
 }
 
-/// Every `*.rs` under `src/`, recursively, plus `CLAUDE.md` — the two places
-/// dependency claims are written. Paths are returned relative to the repo
-/// root so failure messages are copy-pasteable.
+/// Every `*.rs` under `src/`, recursively, plus `CLAUDE.md` and
+/// `ARCHITECTURE.md` — the places dependency claims are written. Paths are
+/// returned relative to the repo root so failure messages are copy-pasteable.
+///
+/// `ARCHITECTURE.md` joined the list on 2026-09-15, in the same diff that
+/// created it: CLAUDE.md's per-file notes and gate narratives were moved there
+/// wholesale to stop a 1.4 MB file being prepended to every prompt, and 3 of
+/// CLAUDE.md's 4 markers travelled with them. Without this line those 3 claims
+/// would have been silently unpinned by a move that touched no `src/` file and
+/// reddened no test — the anti-vacuous branch below would still pass on the 9
+/// markers in `src/`, so nothing would have said so. A move must not quietly
+/// drop the pin on a claim it relocates.
 fn scanned_files(root: &Path) -> Vec<String> {
     let mut out = Vec::new();
     collect_rs(&root.join("src"), root, &mut out);
     out.sort();
-    if root.join("CLAUDE.md").is_file() {
-        out.push("CLAUDE.md".to_string());
+    for doc in ["CLAUDE.md", "ARCHITECTURE.md"] {
+        if root.join(doc).is_file() {
+            out.push(doc.to_string());
+        }
     }
     out
 }
