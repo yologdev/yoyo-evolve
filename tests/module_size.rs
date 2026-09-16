@@ -137,7 +137,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 163 (#715): +4 lines — parent-side SharedStateTool so the documented RLM
     // store-then-reference step is executable.
     // Day 174: +3 absorbed since Day 166 — the warning branch had no reader.
-    ("src/agent_builder.rs", 3986),
+    // Day 200 (#929): +191 — the tests `system_prompt_token_budget` was
+    // required to have when #926 replaced the hardcoded 4_000 with a
+    // measurement. Pasted from what the gate printed, not computed.
+    ("src/agent_builder.rs", 4177),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
@@ -275,7 +278,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // and this file is the CLI dispatcher every subcommand route passes through.
     // The next task that has to grow this file should split it, not bump this.
     ("src/dispatch_sub.rs", 2162),
-    ("src/format/cost.rs", 2790), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+    ("src/format/cost.rs", 2869), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+    // Day 200 (#929): 2790 -> 2869 (+79). Not this task's growth — `836c329e`
+    // (Day 199 Task 2, the deepseek-flash pricing row) landed the lines without
+    // re-pasting, so the gate had been printing a warning nobody re-derived.
+    // Pasted here from what the gate printed, to stop the true signal being noise.
     // Day 183 (#865): 1763 -> 2044, i.e. 44 past the cap and inside the 50-line
     // grace band, for Python triple-quoted strings carried across lines (the
     // `TripleQuote` open/close branch plus 36 emission-point tests, most of them

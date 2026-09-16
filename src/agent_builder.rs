@@ -4075,4 +4075,103 @@ session will fail on the first turn with 'Tool names must be unique'."
             "the note must stay one-shot"
         );
     }
+
+    // ── system_prompt_token_budget (#926's guard, tested in #929) ─────────
+    //
+    // Day 199 (#926) replaced the hardcoded `4_000` with a MEASURED budget and
+    // shipped it with no tests at all; #929 is the receipt. The fixture below
+    // is the anti-vacuous anchor for every test in this block: its measured
+    // size is neither zero nor the retired constant, so a function that
+    // returned `4_000` would redden these by name rather than agreeing with
+    // them. yoagent's estimate is `len().div_ceil(4)`, so ~42 KB of ASCII is
+    // ~10_400 tokens — above the retired promise, below every window used here.
+
+    /// A composed prompt whose measured size is neither zero nor `4_000`.
+    fn measured_fixture_prompt() -> String {
+        "the composed system prompt ".repeat(1600)
+    }
+
+    #[test]
+    fn system_prompt_budget_fixture_is_not_the_retired_constant() {
+        let composed = measured_fixture_prompt();
+        assert!(
+            !composed.is_empty(),
+            "the fixture must be a real prompt, not an empty string"
+        );
+        let measured = estimate_tokens(&composed);
+        assert!(measured > 0, "an empty measurement would pass vacuously");
+        assert_ne!(
+            measured, 4_000,
+            "the fixture must not measure exactly the retired constant, or the \
+             tests below could not tell the measurement from the promise"
+        );
+    }
+
+    #[test]
+    fn system_prompt_budget_is_the_measured_size_not_the_retired_constant() {
+        let composed = measured_fixture_prompt();
+        let big_window = 200_000;
+        let (budget, note) = system_prompt_token_budget(&composed, big_window, false);
+        assert_eq!(
+            budget,
+            estimate_tokens(&composed),
+            "the configured value IS the measurement, not a promise"
+        );
+        assert_ne!(
+            budget, 4_000,
+            "a budget equal to the retired constant means the measurement was lost"
+        );
+        assert_eq!(note, None, "a prompt that fits must produce no note");
+    }
+
+    #[test]
+    fn system_prompt_budget_leaves_a_short_prompt_byte_identical() {
+        // The near-miss: every ordinary user. A short prompt in a large window
+        // must be indistinguishable from the no-note case, pinned by value.
+        let short = "You are a coding agent.";
+        assert_eq!(
+            system_prompt_token_budget(short, 200_000, false),
+            (estimate_tokens(short), None),
+            "the ordinary case must carry no note and report the measurement"
+        );
+        assert_eq!(
+            system_prompt_token_budget(short, 200_000, true),
+            (estimate_tokens(short), None),
+            "plain output must not change the ordinary case either"
+        );
+    }
+
+    #[test]
+    fn system_prompt_budget_clamps_and_names_the_over_window_case() {
+        let composed = measured_fixture_prompt();
+        let measured = estimate_tokens(&composed);
+        let narrow_window = 1_000;
+        assert!(
+            narrow_window < measured,
+            "the fixture must genuinely overflow the window ({measured} vs {narrow_window})"
+        );
+
+        for plain in [false, true] {
+            let (budget, note) = system_prompt_token_budget(&composed, narrow_window, plain);
+            // Clamped to the window, consistent with yoagent's own
+            // `saturating_sub` — never an underflow, never the measured value.
+            assert_eq!(
+                budget, narrow_window,
+                "the degenerate case clamps to the window (plain={plain})"
+            );
+            let note = note.expect("over-window must carry a note");
+            assert!(
+                note.contains("no room left for messages"),
+                "the note must name the over-window condition (plain={plain}): {note}"
+            );
+            assert!(
+                note.contains(&format!("~{measured}")),
+                "the note must report the measured size (plain={plain}): {note}"
+            );
+            assert!(
+                note.contains(&narrow_window.to_string()),
+                "the note must name the window it overflowed (plain={plain}): {note}"
+            );
+        }
+    }
 }
