@@ -6,7 +6,7 @@
 use std::io::IsTerminal;
 
 use yoagent::agent::Agent;
-use yoagent::context::{ContextConfig, ExecutionLimits};
+use yoagent::context::{estimate_tokens, ContextConfig, ExecutionLimits};
 use yoagent::openapi::{OpenApiConfig, OperationFilter};
 use yoagent::provider::{
     AnthropicProvider, ApiProtocol, BedrockProvider, GoogleProvider, ModelConfig, OpenAiCompat,
@@ -956,6 +956,78 @@ pub(crate) fn compose_system_prompt(base: &str, provider: &str, model: &str) -> 
     }
 }
 
+/// The system-prompt term for yoagent's `ContextConfig`, MEASURED from the
+/// composed prompt rather than promised as a constant (#926).
+///
+/// Why this number is load-bearing rather than bookkeeping: yoagent's
+/// compaction budget is `max_context_tokens - system_prompt_tokens`, computed
+/// against the *message list* (`yoagent-0.18.1/src/context.rs`,
+/// `compact_messages`). So this value IS the prompt's claim on the window. It
+/// used to be hardcoded `4_000`, which is a promise about a string yoyo does
+/// not author — the prompt is whatever the user passed plus a project
+/// instruction file, and this repo's own `CLAUDE.md` is two orders of
+/// magnitude past it. On the first session where that happened, yoagent
+/// believed it had nearly the whole window for messages, compaction fired on
+/// turn one, and it deleted the **user task** — the planner then produced
+/// nothing and three sessions died the same way.
+///
+/// The count comes from the same string `with_system_prompt` receives,
+/// through yoagent's own [`estimate_tokens`]. Deliberately NOT a second
+/// tokenizer: two copies of a rule agree the day they are written and diverge
+/// forever after (the `significant_braces` precedent). It shares the exact
+/// approximation yoagent itself budgets with, which is the property that
+/// matters — a "better" estimator here would disagree with the consumer.
+///
+/// DEGENERATE CASE, chosen here and named so a product user gets a stated
+/// outcome rather than an underflow: a composed prompt can be larger than the
+/// entire window. yoagent's own subtraction is `saturating_sub`, so a value
+/// above the window yields a message budget of zero — the honest reading, *the
+/// prompt does not fit* — and clamping the value to `max_context_tokens` keeps
+/// our number consistent with what the consumer will compute. The second half
+/// of the return value carries a one-line note for the caller to print.
+/// `None` means "fits", which is every ordinary user.
+pub(crate) fn system_prompt_token_budget(
+    composed: &str,
+    max_context_tokens: usize,
+    plain: bool,
+) -> (usize, Option<String>) {
+    let measured = estimate_tokens(composed);
+    if measured <= max_context_tokens {
+        return (measured, None);
+    }
+    (
+        max_context_tokens,
+        Some(system_prompt_over_window_message(
+            measured,
+            max_context_tokens,
+            plain,
+        )),
+    )
+}
+
+/// The stated outcome for the degenerate case above: the composed system
+/// prompt alone meets or exceeds the context window, so there is no message
+/// budget left. Says what happened, why, and the two user-side remedies —
+/// glyph-free under `is_plain_output()`, in the shape
+/// `project_mcp_refusal_message` already uses.
+pub(crate) fn system_prompt_over_window_message(
+    measured: usize,
+    max_context_tokens: usize,
+    plain: bool,
+) -> String {
+    if plain {
+        format!(
+            "system prompt is ~{measured} tokens but the context window is {max_context_tokens} - no room left for messages.\n  \
+             Reduce the prompt (a large project instruction file such as CLAUDE.md is the usual cause) or raise `context_window`."
+        )
+    } else {
+        format!(
+            "\u{26a0} system prompt is ~{measured} tokens but the context window is {max_context_tokens} \u{2014} no room left for messages.\n  \
+             Reduce the prompt (a large project instruction file such as CLAUDE.md is the usual cause) or raise `context_window`."
+        )
+    }
+}
+
 /// Holds all configuration needed to build an Agent.
 /// Extracted from the 12-argument `build_agent` function so that
 /// creating or rebuilding an agent is just `config.build_agent()`.
@@ -1093,9 +1165,29 @@ impl AgentConfig {
 
         // Tell yoagent the context window size so its built-in compaction knows the budget.
         // Uses 80% of the effective context window as the compaction threshold.
+        //
+        // `system_prompt_tokens` is MEASURED from the prompt the agent is
+        // actually carrying, not a constant (#926): yoagent budgets
+        // `max_context_tokens - system_prompt_tokens` for messages, so a fixed
+        // 4_000 was a promise about a string yoyo does not author. A project
+        // instruction file two orders of magnitude past that made compaction
+        // fire on turn one and delete the user task.
+        //
+        // Read back off the agent rather than off a local: `with_system_prompt`
+        // composed it a few statements above and nothing here re-composes it,
+        // so this IS the emission point — the string the model will receive —
+        // and no second prompt is built just to measure one.
+        let (prompt_tokens, over_window_note) = system_prompt_token_budget(
+            &agent.system_prompt,
+            effective_tokens as usize,
+            is_plain_output(),
+        );
+        if let Some(note) = over_window_note {
+            eprintln!("{note}");
+        }
         agent = agent.with_context_config(ContextConfig {
             max_context_tokens: effective_tokens as usize,
-            system_prompt_tokens: 4_000,
+            system_prompt_tokens: prompt_tokens,
             keep_recent: 10,
             keep_first: 2,
             // 200, not 50: as of yoagent 0.15 `truncate_tool_output_on_append`
