@@ -187,6 +187,22 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     if model.contains("deepseek-v4-flash") || model.contains("deepseek-r1") {
         return Some((0.55, 0.0, 0.0, 2.19));
     }
+    // `deepseek-flash` (V4.1-Flash) — the id the evolve loop runs on since
+    // 2026-09-15. Deliberately its own row: `contains` matching means a new
+    // distinct id needs its own arm, and a price silently borrowed from a
+    // neighbour is a number that lies (#848's `cost_usd: null` vs `0.0`).
+    //
+    // These are the issue's **off-peak** numbers. DeepSeek doubles them on
+    // weekdays 01:00–04:00 and 06:00–10:00 UTC, so this table is the LOWER
+    // bound: during a peak window the true cost is up to 2x what is reported
+    // here. Stated in the entry because a reader assuming peak (or assuming
+    // this is an average) would be reading a different number than it is.
+    if model.contains("deepseek-flash") {
+        // (input, cache_write, cache_read, output) per MTok — cache read is the
+        // $0.003/1M cache-HIT price; cache_write is 0.0 because DeepSeek bills
+        // only for reads, matching the two rows above.
+        return Some((0.15, 0.0, 0.003, 0.60));
+    }
 
     // ── Mistral ───────────────────────────────────────────────────────
     // https://mistral.ai/products#pricing
@@ -1669,6 +1685,69 @@ mod tests {
             (cost - 2.74).abs() < 0.001,
             "deepseek-v4-flash cost: {cost}"
         );
+    }
+
+    #[test]
+    fn test_pricing_deepseek_flash_is_priced_and_changes_nothing_else() {
+        // ANTI-VACUOUS, ASSERTED FIRST: the fixture id really is the id the loop
+        // runs on, and the pre-existing control id really does resolve before we
+        // touch anything. A transcription slip or an already-broken table would
+        // otherwise make every assertion below pass by agreeing with itself.
+        assert_eq!(
+            crate::providers::known_models_for_provider("deepseek")
+                .iter()
+                .filter(|m| **m == "deepseek-flash")
+                .count(),
+            1,
+            "the fixture id must be exactly one of the values the deepseek table is keyed on"
+        );
+
+        // NEAR-MISS GUARD — the whole regression surface. Every existing deepseek
+        // user reads these two rows, so they must be byte-identical, asserted with
+        // whole-value equality rather than a `contains` (a discriminator tested
+        // only on the side that fires is vacuous green).
+        assert_eq!(
+            model_pricing("deepseek-v4-pro"),
+            Some((0.27, 0.0, 0.0, 1.10))
+        );
+        assert_eq!(
+            model_pricing("deepseek-v4-flash"),
+            Some((0.55, 0.0, 0.0, 2.19))
+        );
+        assert_eq!(model_pricing("deepseek-v3"), Some((0.27, 0.0, 0.0, 1.10)));
+        assert_eq!(model_pricing("deepseek-r1"), Some((0.55, 0.0, 0.0, 2.19)));
+
+        // The new row: the issue's OFF-PEAK numbers. Cache read is the cache-HIT
+        // price; a peak-window run costs up to 2x this.
+        let (inp, cache_write, cache_read, out) = model_pricing("deepseek-flash")
+            .expect("deepseek-flash must be priced — this is the whole issue");
+        assert_eq!(
+            (inp, cache_write, cache_read, out),
+            (0.15, 0.0, 0.003, 0.60)
+        );
+    }
+
+    #[test]
+    fn test_estimate_cost_deepseek_flash_is_some_and_unknown_is_still_none() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // ANTI-VACUOUS first: the pre-existing control resolves, so the table is
+        // genuinely reachable from here and the assertions below mean something.
+        assert_eq!(estimate_cost(&usage, "deepseek-v4-pro"), Some(1.37));
+
+        // The #923 fix: cost_usd is a number in the #848 usage record, not null.
+        let cost = estimate_cost(&usage, "deepseek-flash")
+            .expect("deepseek-flash must yield a price, not None");
+        assert!((cost - 0.75).abs() < 0.001, "deepseek-flash cost: {cost}");
+
+        // The guard must NOT have become "any id gets a price".
+        assert_eq!(estimate_cost(&usage, "deepseek-not-a-real-model"), None);
+        assert_eq!(estimate_cost(&usage, "totally-unknown-model"), None);
     }
 
     // ── Mistral pricing tests ────────────────────────────────────────
