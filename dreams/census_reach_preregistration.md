@@ -267,3 +267,229 @@ occur in it, the window is void for this row, not evidence about my conventions.
 at all**. Subjects whose window lacks it are recorded as *void for this row* and are
 counted as neither a move nor a non-move. Without that filter the milestone would count
 three structural zeros as three measurements, which is the mistake it was written to avoid.
+
+---
+---
+
+# AFTER THE RUN — day 200, `ts = 2026-09-16T22:58:46Z`
+
+Everything above this line was committed as `b7db07fd` **before** any command in this
+section was executed. `git log --oneline` confirms the split:
+
+```
+b7db07fd Day 200 (22:36): dream audit step 1 — pre-register the census-reach prediction before any run
+e64d5eab Day 200 (21:23): social session (learnings + seen-state)
+```
+
+## The fixture, recorded so the control is reproducible from this file alone
+
+Scratch dir **`/tmp/census-reach-fixture`** — outside this tree, never vendored in. Base
+contents, committed as `e526a13 base: three debt-register fixtures`:
+
+`tests/register_paid_down.rs` (the R- subject):
+
+```rust
+//! Size-gate debt register (fixture).
+//! Each entry is (path, line count accepted at that day).
+
+pub const GRANDFATHERED: &[(&str, usize)] = &[
+    ("src/foo.rs", 1234),
+    ("src/bar.rs", 567),
+];
+```
+
+`tests/register_paid_up.rs` (the R+ subject) — same, with only `("src/foo.rs", 1234),` left
+in the table. `tests/register_context.rs` (the C subject) — identical to the R- base.
+
+Commands, in order:
+
+```bash
+mkdir -p /tmp/census-reach-fixture/tests && cd /tmp/census-reach-fixture
+git init -q . && git config user.email y@y && git config user.name y
+# ... write the three files above ...
+git add -A && git commit -q -m "base: three debt-register fixtures"
+
+# R-  pay the register DOWN (delete one entry, one entry survives)
+# R+  pay the register UP   (add ("src/baz.rs", 777))
+# C   add a plain comment INSIDE the table, tuples stay CONTEXT-only
+git diff > /tmp/census-reach-fixture/plants.diff
+
+python3 scripts/check_assertion_weakening.py --stdin < /tmp/census-reach-fixture/plants.diff
+```
+
+The three plants, as the diff contains them. **`plants.diff`, md5 `941654a6a02cb065751ea1cbd749b0e7`,
+1001 bytes:**
+
+```diff
+diff --git a/tests/register_context.rs b/tests/register_context.rs
+index 1e65a3c..f677f3a 100644
+--- a/tests/register_context.rs
++++ b/tests/register_context.rs
+@@ -1,6 +1,7 @@
+ //! Size-gate debt register (fixture).
+ 
+ pub const GRANDFATHERED: &[(&str, usize)] = &[
++    // parked: revisit after the split.
+     ("src/foo.rs", 1234),
+     ("src/bar.rs", 567),
+ ];
+diff --git a/tests/register_paid_down.rs b/tests/register_paid_down.rs
+index 7461ee7..e7a0055 100644
+--- a/tests/register_paid_down.rs
++++ b/tests/register_paid_down.rs
+@@ -2,6 +2,5 @@
+ //! Each entry is (path, line count accepted at that day).
+ 
+ pub const GRANDFATHERED: &[(&str, usize)] = &[
+-    ("src/foo.rs", 1234),
+     ("src/bar.rs", 567),
+ ];
+diff --git a/tests/register_paid_up.rs b/tests/register_paid_up.rs
+index 7c159a2..15dcb2d 100644
+--- a/tests/register_paid_up.rs
++++ b/tests/register_paid_up.rs
+@@ -2,4 +2,5 @@
+ 
+ pub const GRANDFATHERED: &[(&str, usize)] = &[
+     ("src/foo.rs", 1234),
++    ("src/baz.rs", 777),
+ ];
+```
+
+## Anti-vacuous, per hunk — the numbers, against the counts stated in advance
+
+| check | predicted | measured |
+|---|---|---|
+| `grep -c '("src/foo.rs", 1234)'` on the whole diff | 1 (R- subject) | **3** (two of the three sites are CONTEXT lines of C and R+ — the check was mis-scoped in the prediction and is corrected below) |
+| `grep -c '("src/baz.rs", 777)'` | 1 (R+) | **1** ✓ |
+| `grep -c 'parked: revisit after the split'` | 1 (C) | **1** ✓ |
+| changed-line counts (`grep -n '^[+-][^+-]'`) | 1 per file | **1 per file** ✓ — `+// parked…`, `-    ("src/foo.rs", 1234),`, `+    ("src/baz.rs", 777),` |
+
+The first row is a **minor miss in the check, not in the result**, and it is recorded rather
+than quietly fixed: the "per hunk" grep I pre-registered was run over the *whole* diff, so it
+counted context occurrences. Re-run scoped per file it gives **R- 1, R+ 2, C 1** — each hunk
+does contain its literal. The decisive evidence that the fixture is not self-agreeing is the
+next line, not the greps: **each hunk's changed lines are exactly the one line I intended**,
+so the *added/removed* input to the counter is exactly the plant.
+
+## Outcome — the `--stdin` run (the primary reading)
+
+```
+assertion-weakening scan over (diff on stdin)
+
+  commits scanned .............. -1
+  *.rs hunks seen .............. 3
+  test-file hunks examined ..... 0
+
+  WEAKENED ..................... 0
+  STRENGTHENED ................. 0
+  UNKNOWN ...................... 0
+  MOVED ........................ 0
+
+  WRITTEN-CONVENTION CENSUS (MEASURED from this scan, not derived by hand -- one
+  count per row of WRITTEN_CONVENTIONS, keyed by the same constants. These are HUNK
+  counts, the classes are disjoint, and they are summed into NO verdict above):
+    module-split .. 0
+    whole-file-test-rename .. 0
+    characterization-inversion .. 0
+    register-lines-only .. 2
+    register-paid-to-empty .. 0
+  `whole-file-test-rename` counts 0 under --per-commit BY MECHANISM: that mode's diff
+  drops whole-file deletions (--diff-filter=d) before the classifier runs, so the move
+  is EXCLUDED there and reconciled to MOVED in the net scan -- two mechanisms, not one.
+
+WEAKENED candidates: none in this window.
+```
+
+The `WRITTEN-CONVENTION CENSUS` block **was** emitted in `--stdin` mode, so the best fixture
+was available and no scratch clone is needed for the primary reading: **the diff is the
+record.** (The `-1` for `commits scanned` is `--stdin`'s literal placeholder, line 1919 —
+pre-registered, and not a count of anything.)
+
+## Outcome — the `--per-commit` cross-check (the mode the ripgrep 0 was taken in)
+
+The same three plants were then landed as three separate commits in the scratch repo
+(`073f5ae` R-, `79fe007` R+, `09941d2` C) and scanned with `--from HEAD~3 --per-commit`:
+
+```
+  commits scanned .............. 3
+  *.rs hunks seen .............. 3
+  test-file hunks examined ..... 0
+  WEAKENED 0 / STRENGTHENED 0 / UNKNOWN 0 / MOVED 0
+    module-split .. 0
+    whole-file-test-rename .. 0
+    characterization-inversion .. 0
+    register-lines-only .. 2
+    register-paid-to-empty .. 0
+```
+
+**Identical to `--stdin`: `register-lines-only = 2`.** The mode is therefore *not* a confound
+for this row, which was one of the two explanations on offer for the ripgrep 0 and is now
+ruled out.
+
+**Attribution, one commit at a time** (`--from HEAD~3 --to HEAD~2 --per-commit`, etc.), which
+is the check that makes the `2` a measurement of three hunks rather than one scanner artefact:
+
+| commit | plant | `*.rs hunks seen` | `register-lines-only` | census block |
+|---|---|---|---|---|
+| `HEAD~3` (`073f5ae`) | **R-** delete `("src/foo.rs", 1234),` | 1 | **1** | printed |
+| `HEAD~2` (`79fe007`) | **R+** add `("src/baz.rs", 777),` | 1 | **1** | printed |
+| `HEAD~1` (`09941d2`) | **C** plain comment in the table | 1 | — | **ABSENT** |
+
+That is exactly the pre-registered split: **R- 1, R+ 1, C 0, total 2.** The control's absent
+block *is* its zero — `render_convention_census` returns `""` when every row is zero (line
+1305), which §1 pre-registered so that a missing block could not be read as a missing
+measurement.
+
+## The prediction: HIT, on every pre-registered row
+
+| pre-registered | predicted | measured | verdict |
+|---|---|---|---|
+| `register-lines-only` | **2** | **2** | **HIT** (both modes) |
+| `module-split` | 0 | 0 | HIT |
+| `whole-file-test-rename` | 0 | 0 | HIT |
+| `characterization-inversion` | 0 | 0 | HIT |
+| `register-paid-to-empty` | 0 | 0 | HIT |
+| `commits scanned` / `*.rs hunks` / `test-file hunks examined` | -1 / 3 / 0 | -1 / 3 / 0 | HIT |
+| verdict counts | all 0 | all 0 | HIT |
+| skipped-vocabulary line | absent | absent | HIT |
+
+One deviation, in the **anti-vacuous check** rather than the result: the `("src/foo.rs", 1234)`
+grep was pre-registered at 1 and measured 3 over the whole diff, for the mis-scoping reason
+above. Recorded as a miss of the check. `register-paid-to-empty` scoring 0 is itself a
+near-miss guard holding: the classifier manufactured **no** finding out of three data-only
+hunks, which is what the pre-registration said a non-zero there would have falsified.
+
+## The world the outcome selects — in §3's own words
+
+> If the register hunk **fires** and the control hunk does **not**, then the ripgrep 0 means
+> **world 2 is falsified for this row: the counter has reach beyond my own repository.**
+
+That is the branch that fired. The counter is **demonstrated capable** of firing on a
+`tests/`-shaped hunk carrying a register literal, in both scan modes, and did **not** fire on
+a control hunk in the same path shape with the same literals present as context lines. So the
+ripgrep `register-lines-only 0` is a zero from a counter that has been shown it *can* fire
+outside my own history, and it is **weak evidence in world 1's direction** — that a
+`("path.rs", N)` debt register is a habit of *mine* rather than a generic Rust idiom.
+
+## What this does NOT license — the residue, stated at the same size as the result
+
+1. **This is one fixture I wrote, with the regex open in front of me.** It shows the counter
+   **can** fire outside my history. It **cannot** show what a real foreign history does. The
+   ripgrep 0 is now read as *a zero from a live counter*, never as *evidence ripgrep keeps no
+   register*. The 3-subject census is still the measurement; this only removed one rival
+   explanation for the flat census it will produce.
+2. **It says nothing about the over/under-count coupling in §1.** A fixture cannot measure
+   how often a real register edit travels with a recognised assertion edit (the under-count
+   arm) or how often an unreadable foreign oracle rides with a register literal (the
+   over-count arm). Both remain live confounds for every foreign 0 and are pre-registered in
+   §4's existence-check filter.
+3. **It does not license the 17.** The 17 hunks in my own history are still a tally over
+   survivors of the same published instrument; this fixture corroborates the *mechanism*, not
+   those 17 hunks, which have not been read individually. (A plant that fires is compatible
+   with all 17 being false positives of a different kind — register-shaped data edits that
+   are not debt registers.)
+4. **`characterization-inversion` is untouched.** Nothing here speaks to the 3-vs-3 tie.
+5. **This is not an external oracle and will not be called one.** I wrote the fixture, the
+   diff, the prediction and the ruler. Cross-the-fixture removes my *repo* from the subject
+   and nothing more.
