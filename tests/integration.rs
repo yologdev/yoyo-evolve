@@ -2242,6 +2242,103 @@ fn skills_directory_loads_via_yoagent_skillset() {
     );
 }
 
+/// Guards the *ordering* contract in `skills/social/SKILL.md`'s
+/// `## Early Exit Rule` (#927).
+///
+/// Why this exists: the rule used to read as a single sentence — "no pending
+/// replies, no interesting discussions, and no proactive trigger fires -> end
+/// the session" — and in practice only the first two clauses were ever tested,
+/// so a session could rule out replies and treat that as ruling out the
+/// session, leaving step 3 (the five `## Proactive Posting` triggers)
+/// unevaluated for 21 days / ~120 green runs. The fix is sequencing: evaluate
+/// the triggers FIRST, state an outcome per trigger, and only then sweep
+/// replies — with the exit still permitted once that ledger exists.
+///
+/// What this test does NOT do, stated plainly so it is never described as
+/// proving the behaviour: it pins the *decision* against drift. It cannot see
+/// whether a session actually writes the ledger — that is verified by reading
+/// the next social run's trace, which is a report, not a test. Breakage here
+/// means the wording reverted, not that posting works.
+#[test]
+fn social_skill_early_exit_rule_requires_trigger_ledger_before_exit() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("skills/social/SKILL.md");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+
+    let heading = "## Early Exit Rule";
+    let start = text
+        .find(heading)
+        .unwrap_or_else(|| panic!("skills/social/SKILL.md must contain the `{heading}` heading"));
+
+    // Slice to the NEXT `## ` heading so every assertion below is scoped to
+    // this section. A `contains` over the whole file would be satisfied by
+    // text elsewhere and is a vacuous guard.
+    let after = &text[start + heading.len()..];
+    let end = after
+        .find("\n## ")
+        .unwrap_or_else(|| panic!("`{heading}` must be followed by another `## ` heading"));
+    let section = &after[..end];
+
+    // Anti-vacuous first: an empty (or absurdly large) slice must redden as a
+    // MISSING/RENAMED SECTION rather than pass by asserting nothing.
+    assert!(
+        section.len() >= 120,
+        "the `{heading}` section looks empty or truncated ({} bytes) — a renamed \
+         heading should fail as a missing section, not pass vacuously",
+        section.len()
+    );
+    assert!(
+        section.len() < text.len() / 3,
+        "the `{heading}` slice is {} of {} bytes — the section delimiter moved, so \
+         this guard is no longer scoped to one section",
+        section.len(),
+        text.len()
+    );
+
+    let lower = section.to_lowercase();
+
+    // 1. It points at the one statement of the trigger list rather than
+    //    restating it (one statement, never two copies that agree today).
+    assert!(
+        section.contains("Proactive Posting"),
+        "`{heading}` must point at `## Proactive Posting` for the trigger \
+         definitions instead of restating (or omitting) them"
+    );
+
+    // 2. It names the set the ledger must cover.
+    assert!(
+        lower.contains("five"),
+        "`{heading}` must say how many proactive triggers the ledger covers"
+    );
+
+    // 3. It requires a stated outcome per trigger, using the fired/not-fired
+    //    pair the rule names.
+    assert!(
+        lower.contains("fired") && lower.contains("not fired"),
+        "`{heading}` must require a stated `fired` / `not fired and why` outcome \
+         per trigger — 'no trigger fired' has to be something the session says, \
+         not something it silently skips"
+    );
+
+    // 4. ...and it still permits the exit once that ledger exists. Narrowing
+    //    the rule into "never end early" would be a different, wrong change.
+    assert!(
+        lower.contains("end the session") && lower.contains("silence is fine"),
+        "`{heading}` must still permit the early exit when nothing fires and \
+         nothing is owed — this fix reorders the rule, it does not forbid silence"
+    );
+
+    // Near-miss: the reorder must not weaken the idempotency discipline the
+    // session is right to obey. This lives outside the slice (its own
+    // `### Before replying` subsection), so it is asserted against the file.
+    assert!(
+        text.contains("### Before replying")
+            && text.contains("Idempotency — treat this as a hard rule"),
+        "the `### Before replying` idempotency discipline must survive the \
+         reordering of `{heading}` — dropping the reply sweep is not the fix"
+    );
+}
+
 /// Validates the SharedState round-trip pattern used by `build_sub_agent_tool`.
 ///
 /// Since yoyo is a binary crate, integration tests can't call `build_sub_agent_tool`
