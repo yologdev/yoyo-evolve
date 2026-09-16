@@ -961,8 +961,181 @@ def reconcile_moved_tests(findings, hunks):
     return reconciled, moved_count
 
 
-def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int]:
-    """Return `(findings, rust_hunks_seen, test_hunks_examined, skipped_unknown_vocab)`.
+# --------------------------------------------------------------------------------------
+# THE CONVENTION CENSUS: per-convention counts MEASURED from a scan, not derived by hand.
+#
+# WHY THIS BLOCK EXISTS. DREAM.md's next milestone is to run this classifier over a
+# FOREIGN repo and "take the same convention census Day 197 took of mine, and put the two
+# distributions side by side". The reading half was done (ripgrep, 240 commits, Day 198 and
+# the Day-199 re-measure), but the census half was PROXIED -- the recorded rows carry
+# `census_provenance: "DERIVED, not reported: the tool prints verdicts, not per-convention
+# counts"` and name the proxies in their own text (commits adding a `*.rs` for
+# `module-split`, whole-file renames for `whole-file-test-rename`, UNKNOWN rows for
+# `characterization-inversion`, the two register shapes grepped as literals). A proxy
+# census cannot be put side by side with a measured one, so the milestone's named
+# deliverable was unmet. This is the smallest change that unblocks it, and it is PURELY
+# ADDITIVE OUTPUT: every existing verdict, the skipped counter and `test_file_hunks_examined`
+# are byte-identical to before.
+#
+# WHY A COUNTER REGISTRY RATHER THAN A SECOND LIST OF NAMES. The enumeration authority is
+# `WRITTEN_CONVENTIONS` (Day 196). This block keeps a REGISTRY keyed by the SAME
+# `CONVENTION_*` constants -- never a new string literal -- and the drift guard in
+# `run_self_tests` asserts the registry's keys and `WRITTEN_CONVENTIONS`' names are the
+# SAME SET. Adding a sixth convention to the enumeration without a counter fails that guard
+# (the "registered exception is silent in exactly the way a missing gate is" shape, d196)
+# instead of quietly reporting a zero nobody can distinguish from "measured, none found".
+#
+# EACH ATTRIBUTION IS A DISCRIMINATOR, NOT A CERTAINTY, AND EACH IS STATED HERE:
+#   * module-split and whole-file-test-rename are the TWO halves of the ONE `MOVED` path
+#     (reconcile_moved_tests). They are told apart by the diff TEXT, not by a mode:
+#     a whole-file deletion (`@@ -1,N +0,0 @@`) is a FILE rename, anything else that moved a
+#     `#[test]` fn is a MODULE split. The Day-196 prediction named only the `MOVED`
+#     mechanism for the rename; the per-commit reading never sees it at all, because
+#     `git_diff_one_commit` passes `--diff-filter=d` and the deletion is EXCLUDED before the
+#     classifier runs. That asymmetry is stated in the rendered block rather than hidden.
+#   * characterization-inversion is an UNKNOWN whose removed and added assertion counts are
+#     EQUAL and non-zero -- an exact expectation that merely CHANGED, which the classifier
+#     deliberately refuses to call weakening.
+#   * register-lines-only is an OUT-OF-SCOPE hunk (classify returned None) whose text
+#     carries a register-literal shape. It is the only genuinely new discriminator here.
+#   * register-paid-to-empty is a WEAKENED hunk whose removed assertion is the anti-vacuous
+#     `assert!(!REG.is_empty())` guard the register paid to empty deletes.
+# Every count is a count of HUNKS, and the five classes are disjoint (one hunk produces at
+# most one finding, and out-of-scope hunks produce none), so `sum(counts) <= rust_hunks`.
+# --------------------------------------------------------------------------------------
+
+# A debt-register literal: a tuple of a `*.rs` path string and a line number, e.g.
+# `("src/commands_search.rs", 4307)`. Deliberately requires BOTH halves -- the path suffix
+# AND the integer -- so an ordinary two-string tuple (the register's own descriptive rows,
+# like `("src/x.rs", "run_grep", "argv built incrementally")`) is NOT mistaken for the
+# counted shape. A single path-shaped string would match every `("x.rs", y)` pair in the
+# repo and this counter would cry wolf on code that is not a register at all.
+REGISTER_LITERAL_RE = re.compile(r'\(\s*"[^"]*\.rs"\s*,\s*\d+\s*\)')
+
+# The anti-vacuous guard a register carries while it is NON-empty. `!` directly followed by
+# the `.is_empty()` call is the shape; a message argument is allowed after it.
+REGISTER_ANTIVACUOUS_RE = re.compile(r"\b(?:debug_)?assert!\s*\(\s*!\s*\w[\w:.]*\.is_empty\(\)")
+
+# A whole-file deletion, as a unified-diff hunk header: it removes from line 1 and adds
+# zero lines. This is the discriminator between a file rename and a module split, and it
+# reads the RANGE rather than the path class, so a split out of a `*_tests.rs` file is not
+# silently relabelled a rename.
+WHOLE_FILE_DELETION_RE = re.compile(r"^@@ -1(?:,\d+)? \+0,0 @@")
+
+
+def _hunk_by_finding(findings, hunks):
+    """Findings paired back to the hunk they came from, by `(path, header)`.
+
+    `reconcile_moved_tests` rebuilds a `Finding` with the SAME path and header, so this
+    lookup also reaches a reconciled MOVED row. A finding whose hunk is absent is dropped
+    rather than attributed to the nearest hunk, which would put a count on a row the
+    counter never saw.
+    """
+    idx = {(h.path, h.header): h for h in hunks}
+    return [(f, idx[(f.path, f.header)]) for f in findings if (f.path, f.header) in idx]
+
+
+def count_module_split(findings, hunks, vocab):
+    """MOVED rows that are NOT whole-file deletions, where a `#[test]` fn walked next door."""
+    return sum(
+        1
+        for f, h in _hunk_by_finding(findings, hunks)
+        if f.verdict == MOVED
+        and not WHOLE_FILE_DELETION_RE.match(h.header)
+        and any(vocab.test_re.search(ln) for ln in h.removed)
+    )
+
+
+def count_file_rename(findings, hunks, vocab):
+    """MOVED rows whose source hunk is a WHOLE-FILE deletion -- a file-level move.
+
+    Zero in `--per-commit` mode BY MECHANISM, not by absence: `git_diff_one_commit` passes
+    `--diff-filter=d`, so the deletion is excluded before this can see it. That is the
+    half the Day-196 prediction left out, and the rendered block says so.
+    """
+    return sum(
+        1
+        for f, h in _hunk_by_finding(findings, hunks)
+        if f.verdict == MOVED and WHOLE_FILE_DELETION_RE.match(h.header)
+    )
+
+
+def count_characterization_inversion(findings, hunks, vocab):
+    """UNKNOWN rows with an EQUAL, non-zero count of assertions removed and added.
+
+    Re-derives the two assertion lists with the SAME predicate `classify_assertion_change`
+    uses, so the counter cannot drift from the classifier it is counting.
+    """
+    n = 0
+    for f, h in _hunk_by_finding(findings, hunks):
+        if f.verdict != UNKNOWN:
+            continue
+        dedicated = is_dedicated_test_file(h.path)
+        r = [ln for ln in h.removed if is_assertion_line(ln, dedicated, vocab)]
+        a = [ln for ln in h.added if is_assertion_line(ln, dedicated, vocab)]
+        if r and len(r) == len(a):
+            n += 1
+    return n
+
+
+def count_register_lines(findings, hunks, vocab):
+    """OUT-OF-SCOPE hunks carrying a register-literal shape.
+
+    Scope is re-decided with the same `classify_assertion_change` call, NOT inferred from
+    the absence of a finding: a finding can be absent for a hunk that never parsed, and
+    that is a different fact. A hunk that IS in scope is skipped here so a register line
+    edited alongside an assertion is not counted twice.
+    """
+    n = 0
+    for h in hunks:
+        if not is_rust_source(h.path):
+            continue
+        if classify_assertion_change(
+            h.removed, h.added, is_dedicated_test_file(h.path), vocab
+        ) is not None:
+            continue
+        if any(REGISTER_LITERAL_RE.search(ln) for ln in h.removed + h.added):
+            n += 1
+    return n
+
+
+def count_register_payoff(findings, hunks, vocab):
+    """WEAKENED rows whose removed assertion is the empty-register anti-vacuous guard."""
+    return sum(
+        1
+        for f, h in _hunk_by_finding(findings, hunks)
+        if f.verdict == WEAKENED
+        and any(REGISTER_ANTIVACUOUS_RE.search(ln) for ln in h.removed)
+    )
+
+
+# Keyed by the SAME constants `WRITTEN_CONVENTIONS` enumerates. The drift guard in
+# `run_self_tests` pins the two to one set; this dict must never grow a key that the
+# enumeration does not have, nor the reverse.
+CONVENTION_COUNTERS = {
+    CONVENTION_MODULE_SPLIT: count_module_split,
+    CONVENTION_FILE_RENAME: count_file_rename,
+    CONVENTION_CHARACTERIZATION_INVERSION: count_characterization_inversion,
+    CONVENTION_REGISTER_LINES: count_register_lines,
+    CONVENTION_REGISTER_PAYOFF: count_register_payoff,
+}
+
+
+def convention_census(findings, hunks, vocab=None) -> dict:
+    """The measured per-convention counts for one scan, keyed by `CONVENTION_*`.
+
+    PURE over data `scan_diff` has already parsed -- no second `git` call, no second
+    checkout, no tree walk. The counts are HUNK counts and the five classes are disjoint,
+    so `sum(census.values()) <= rust_hunks` for the same scan; the self-test states that
+    arithmetic so a counter that double-counts a hunk fails rather than merely looking big.
+    """
+    vocab = vocab or BUILTIN_VOCABULARY
+    return {name: fn(findings, hunks, vocab) for name, fn in CONVENTION_COUNTERS.items()}
+
+
+def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int, dict]:
+    """Return `(findings, rust_hunks_seen, test_hunks_examined, skipped_unknown_vocab,
+    convention_census)`.
 
     The fourth number is SKIPPED_UNKNOWN_VOCABULARY: a hunk in a dedicated test file with
     a real diff that this vocabulary could not read at all. It is counted here and summed
@@ -970,9 +1143,14 @@ def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int]:
     than a second "is this a test file?" predicate being written: two copies of a rule
     agree the day they are written and diverge forever after (#835 is the receipt).
 
-    The tuple shape is unchanged: the MOVED count is derivable from the findings
-    themselves, so `render_report` counts it with the other three rather than having it
-    threaded through a widened signature.
+    The FIFTH element is the convention census and it is the ONE deliberate signature
+    widening in this tool's history. It was NOT derivable from the findings the way the
+    MOVED count is: `register-lines-only` counts hunks that produced NO finding at all,
+    and `whole-file-test-rename` vs `module-split` needs the hunk HEADER, which a `Finding`
+    does not carry a copy of. So it is returned rather than re-derived by a caller that
+    would have to re-parse the diff to get it -- and re-deriving would be the second
+    statement of a rule this file keeps refusing to write. It is PURELY ADDITIVE: no
+    verdict, no counter above it, and no rendered byte of the pre-existing report changes.
     """
     vocab = vocab or BUILTIN_VOCABULARY
     findings: list[Finding] = []
@@ -1000,7 +1178,8 @@ def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int]:
             Finding(hunk.path, hunk.header, verdict.verdict, verdict.shapes, verdict.detail)
         )
     findings, _ = reconcile_moved_tests(findings, hunks)
-    return findings, rust_hunks, test_hunks, skipped_unknown_vocab
+    census = convention_census(findings, hunks, vocab)
+    return findings, rust_hunks, test_hunks, skipped_unknown_vocab, census
 
 
 # --------------------------------------------------------------------------------------
@@ -1115,6 +1294,51 @@ _LIMITS_VOCABULARY = """\
 LIMITS = _LIMITS_HEAD + render_conventions_limit() + _LIMITS_VOCABULARY
 
 
+def render_convention_census(census) -> str:
+    """Render the MEASURED per-convention counts, or "" when there are none to report.
+
+    WHY "OR NOTHING" AND NOT "ZEROES". The whole regression surface of this tool is every
+    reading already published, and a repo that carries none of my five conventions is the
+    common case -- including most foreign ones. Printing five zeroes there would rewrite
+    the report for every existing reading and leave a reader unable to tell "measured, and
+    the convention is genuinely absent" from "this build has no census at all". So the
+    block speaks only when a count is non-zero, the same shape the skipped-vocabulary
+    counter above already uses, and the empty case is byte-identical to before the census
+    existed. The zero IS still measured and IS asserted in the self-tests, which is where a
+    zero needs to be pinned; a rendered zero would be reassurance, not evidence.
+
+    THE MODE DISCLOSURE IS UNCONDITIONAL AND TRUE IN BOTH MODES. `whole-file-test-rename`
+    counts 0 under `--per-commit` BY MECHANISM -- `git_diff_one_commit` passes
+    `--diff-filter=d`, so a whole-file deletion is excluded before the classifier can see
+    it -- while the net scan counts it as MOVED. The Day-196 prediction named only the
+    second mechanism, so a reader who sees a 0 here must be told which one produced it
+    rather than being left to assume the other.
+    """
+    if not census or not any(census.values()):
+        return ""
+    lines = [
+        "  WRITTEN-CONVENTION CENSUS (MEASURED from this scan, not derived by hand -- one",
+        "  count per row of WRITTEN_CONVENTIONS, keyed by the same constants. These are HUNK",
+        "  counts, the classes are disjoint, and they are summed into NO verdict above):",
+    ]
+    for name, _verdict, _why in WRITTEN_CONVENTIONS:
+        lines.append(f"    {name} .. {census.get(name, 0)}")
+    lines.append(
+        "  `whole-file-test-rename` counts 0 under --per-commit BY MECHANISM: that mode's "
+        "diff"
+    )
+    lines.append(
+        "  drops whole-file deletions (--diff-filter=d) before the classifier runs, so the "
+        "move"
+    )
+    lines.append(
+        "  is EXCLUDED there and reconciled to MOVED in the net scan -- two mechanisms, not "
+        "one."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def render_report(
     findings,
     commits,
@@ -1123,6 +1347,7 @@ def render_report(
     window,
     max_findings=40,
     skipped_unknown_vocab=0,
+    census=None,
 ):
     counts = Counter(f.verdict for f in findings)
     out = []
@@ -1152,6 +1377,10 @@ def render_report(
             "  a verdict and is summed into none of them; it counts HUNKS, never assertions."
         )
         out.append("")
+
+    census_lines = render_convention_census(census)
+    if census_lines:
+        out.append(census_lines)
 
     weak = [f for f in findings if f.verdict == WEAKENED]
     if weak:
@@ -1362,7 +1591,7 @@ def pair_one_sha(sha: str) -> dict:
     the classifier and publish it as a missing input.
     """
     try:
-        findings, rust_hunks, test_hunks, _skipped = scan_diff(git_diff_one_commit(sha))
+        findings, rust_hunks, test_hunks, _skipped, _census = scan_diff(git_diff_one_commit(sha))
     except GitRefUnreachable as exc:
         return {
             "pairing": PAIR_COULD_NOT_CHECK,
@@ -1679,16 +1908,23 @@ def _run(args):
     if args.pair_verdicts:
         return run_pairing(args)
     vocab = Vocabulary(args.assert_macros, args.test_macros)
+    census = {name: 0 for name in CONVENTION_COUNTERS}
     if args.stdin:
         text = sys.stdin.read()
-        findings, rust_hunks, test_hunks, skipped = scan_diff(text, vocab)
+        findings, rust_hunks, test_hunks, skipped, census = scan_diff(text, vocab)
         window = "(diff on stdin)"
         commits = -1
     elif args.from_ref and args.per_commit:
         shas = git_commit_shas(args.from_ref, args.to_ref)
         findings, rust_hunks, test_hunks, skipped = [], 0, 0, 0
         for sha in shas:
-            f, rh, th, sk = scan_diff(git_diff_one_commit(sha), vocab)
+            f, rh, th, sk, c = scan_diff(git_diff_one_commit(sha), vocab)
+            # The census is summed from EACH COMMIT'S OWN SCAN, taken inside scan_diff
+            # before the path below is prefixed with the sha. Re-deriving it here from the
+            # mutated findings would look up a `(path, header)` pair that no longer exists
+            # and silently report zero for every convention -- a census that cannot fail.
+            for name, n in c.items():
+                census[name] += n
             for finding in f:
                 finding.path = f"{sha[:8]} {finding.path}"
             findings += f
@@ -1700,7 +1936,7 @@ def _run(args):
         window = f"{args.from_ref}..{args.to_ref} (per-commit)"
         commits = len(shas)
     elif args.from_ref:
-        findings, rust_hunks, test_hunks, skipped = scan_diff(
+        findings, rust_hunks, test_hunks, skipped, census = scan_diff(
             git_diff(args.from_ref, args.to_ref), vocab
         )
         window = f"{args.from_ref}..{args.to_ref}"
@@ -1718,6 +1954,7 @@ def _run(args):
             window,
             args.max_findings,
             skipped,
+            census,
         )
     )
     blind = render_blind_commits(blind_commits)
@@ -1911,13 +2148,13 @@ def run_self_tests():
     check("parser found two hunks", len(hunks) == 2, len(hunks))
     check("parser got the rs path", hunks[0].path == "src/git.rs", hunks[0].path)
     check("parser got the md path", hunks[1].path == "CLAUDE.md", hunks[1].path)
-    findings, rust_hunks, test_hunks, _sk = scan_diff(diff)
+    findings, rust_hunks, test_hunks, _sk, _census = scan_diff(diff)
     check("scan filtered the md out", rust_hunks == 1, rust_hunks)
     check("scan examined one test hunk", test_hunks == 1, test_hunks)
     check("scan flagged the eq->contains", findings[0].verdict == WEAKENED, findings[0].verdict)
 
     # -- an empty diff is clean, not an error ---------------------------------------------
-    findings, rust_hunks, test_hunks, _sk = scan_diff("")
+    findings, rust_hunks, test_hunks, _sk, _census = scan_diff("")
     check("empty diff clean", (findings, rust_hunks, test_hunks) == ([], 0, 0))
     report = render_report([], 0, 0, 0, "empty")
     check("clean report says none", "WEAKENED candidates: none" in report, report)
@@ -2058,7 +2295,7 @@ def run_self_tests():
             '+    assert!(msg.contains("exa"));',
         ]
     )
-    nm_findings, nm_rust, nm_test, _nm_sk = scan_diff(no_move_diff)
+    nm_findings, nm_rust, nm_test, _nm_sk, _census = scan_diff(no_move_diff)
     check(
         "near-miss: a no-move diff renders byte-identically",
         render_report(nm_findings, 1, nm_rust, nm_test, "FIXTURE")
@@ -2113,7 +2350,7 @@ def run_self_tests():
             "+    }",
         ]
     )
-    ex_findings, _, _, _ = scan_diff(extraction_diff)
+    ex_findings, _, _, _, _census = scan_diff(extraction_diff)
     ex_verdicts = sorted(f.verdict for f in ex_findings)
     check(
         "1b502eacb937 shape: the extraction accuses nobody",
@@ -2447,9 +2684,27 @@ def run_self_tests():
         (sorted(name for name, _v, _w in WRITTEN_CONVENTIONS), sorted(conv_fixtures)),
     )
 
+    # THE SAME DRIFT GUARD, EXTENDED TO THE CENSUS. A convention enumerated in LIMITS and
+    # measured by nothing is the "registered exception is silent in exactly the way a
+    # missing gate is" shape (d196): it would report a 0 that no reader can distinguish
+    # from "measured, genuinely absent". Asserted as a SET EQUALITY in both directions, so
+    # a sixth CONVENTION_* with no counter fails here, AND a counter with no enumeration
+    # row fails here rather than shipping a count into a report nothing accounts for.
+    check(
+        "census: every enumerated convention has a counter, and every counter a convention",
+        {name for name, _v, _w in WRITTEN_CONVENTIONS} == set(CONVENTION_COUNTERS),
+        (sorted(name for name, _v, _w in WRITTEN_CONVENTIONS), sorted(CONVENTION_COUNTERS)),
+    )
+    check(
+        "census: the rendered block names each convention from WRITTEN_CONVENTIONS",
+        all(name in render_convention_census({n: 1 for n in CONVENTION_COUNTERS})
+            for name, _v, _w in WRITTEN_CONVENTIONS),
+        None,
+    )
+
     for conv_name, declared_verdict, _why in WRITTEN_CONVENTIONS:
         subject_path, fixture = conv_fixtures[conv_name]
-        conv_findings, conv_rs, _conv_test, _conv_sk = scan_diff(fixture)
+        conv_findings, conv_rs, _conv_test, _conv_sk, conv_census = scan_diff(fixture)
 
         # ANTI-VACUOUS, FIRST: the scanner must have SEEN the fixture. A fixture matching
         # nothing satisfies every "expected verdict" assertion below by having nothing to
@@ -2486,6 +2741,32 @@ def run_self_tests():
                     f"actual={verdict_name(subject[0].verdict)} shapes={subject[0].shapes}",
                 )
 
+        # MEASURED CENSUS, per convention, ASSERTED INDIVIDUALLY. This is the check the
+        # old proxy census could not make: a census that always returns 0 for a convention
+        # passes every "no counts" assertion, so each convention's own fixture must move
+        # ITS counter and no other. Asserted on the SUBJECT's count alone rather than on
+        # the whole dict, so a shared counter that fires on two conventions is caught by
+        # the per-fixture zeroes below rather than hidden behind a correct-looking sum.
+        check(
+            f"census[{conv_name}]: its own fixture yields a count >= 1",
+            conv_census.get(conv_name, 0) >= 1,
+            dict(conv_census),
+        )
+        check(
+            f"census[{conv_name}]: ... and NO OTHER convention's counter moves",
+            all(
+                n == 0
+                for other, n in conv_census.items()
+                if other != conv_name
+            ),
+            dict(conv_census),
+        )
+        check(
+            f"census[{conv_name}]: POPULATION CONSERVED -- sum(census) <= hunks in scope",
+            sum(conv_census.values()) <= conv_rs,
+            (sum(conv_census.values()), conv_rs),
+        )
+
     # THE FALSIFIED ROW, pinned on its own rather than only inside the loop above.
     # I predicted before running the detector that all five of my written conventions
     # would score as convention-shaped noise. Four did. This one did NOT: paying a debt
@@ -2497,7 +2778,7 @@ def run_self_tests():
     # quietly reclassify it as convention noise and manufacture a clean bill over a real
     # coverage reduction.
     payoff_path, payoff_fixture = conv_fixtures[CONVENTION_REGISTER_PAYOFF]
-    payoff_findings, _rs, _th, _payoff_sk = scan_diff(payoff_fixture)
+    payoff_findings, _rs, _th, _payoff_sk, _census = scan_diff(payoff_fixture)
     payoff = [f for f in payoff_findings if f.path == payoff_path]
     check(
         "conventions: the register-paid-to-empty row is WEAKENED, not reconciled away",
@@ -2529,7 +2810,7 @@ def run_self_tests():
             '+    assert!(msg.contains("exa"));',
         ]
     )
-    ord_findings, ord_rs, ord_test, ord_sk = scan_diff(ordinary_diff)
+    ord_findings, ord_rs, ord_test, ord_sk, _census = scan_diff(ordinary_diff)
     check(
         "conventions NEAR-MISS: an ordinary diff still scores WEAKENED unchanged",
         [f.verdict for f in ord_findings] == [WEAKENED],
@@ -2544,6 +2825,62 @@ def run_self_tests():
         "conventions NEAR-MISS: ... and the hunk counts do not move",
         (ord_rs, ord_test) == (1, 1),
         (ord_rs, ord_test),
+    )
+    check(
+        "census NEAR-MISS: an ordinary diff moves NO convention counter",
+        all(n == 0 for n in _census.values()),
+        _census,
+    )
+
+    # -- THE CENSUS IS PURELY ADDITIVE OUTPUT ----------------------------------------------
+    # The whole regression surface: every reading this tool has published. THREE checks,
+    # because any one of them alone is satisfiable by a dead census.
+    #
+    # The GATE is the middle one and it is the reason the other two are not enough: an
+    # equality between "census passed" and "census omitted" is passed VACUOUSLY by a
+    # renderer that always prints the block, since both sides would then carry it. So the
+    # pre-change bytes are pinned by NAME -- a report from a caller that passes no census
+    # must never mention one -- and separately an all-zero census must render those same
+    # bytes exactly.
+    check(
+        "census ADDITIVE: an ordinary diff's report is BYTE-IDENTICAL with the census passed",
+        render_report(ord_findings, 1, ord_rs, ord_test, "FIXTURE", 40, ord_sk, _census)
+        == render_report(ord_findings, 1, ord_rs, ord_test, "FIXTURE", 40, ord_sk),
+        None,
+    )
+    empty_f, empty_rs, empty_th, empty_sk, empty_census = scan_diff("")
+    pre_change = render_report(empty_f, 0, empty_rs, empty_th, "FIXTURE")
+    check(
+        "census GATE: a pre-change caller's report never mentions the census",
+        "CONVENTION CENSUS" not in pre_change,
+        pre_change,
+    )
+    check(
+        "census GATE: ... and an all-zero census renders the SAME bytes as no census at all",
+        render_report(empty_f, 0, empty_rs, empty_th, "FIXTURE", 40, 0, empty_census)
+        == pre_change,
+        None,
+    )
+    check(
+        "census ANTI-VACUOUS: ... and that empty scan really did measure all five at zero",
+        set(empty_census) == set(CONVENTION_COUNTERS)
+        and all(v == 0 for v in empty_census.values()),
+        empty_census,
+    )
+    # ... and the block DOES speak when a convention fired, so the gate above cannot be
+    # satisfied by a renderer that ignores the census entirely.
+    ms_path, ms_fixture = conv_fixtures[CONVENTION_MODULE_SPLIT]
+    ms_f, ms_rs, ms_th, ms_sk, ms_census = scan_diff(ms_fixture)
+    ms_render = render_report(ms_f, 1, ms_rs, ms_th, "FIXTURE", 40, ms_sk, ms_census)
+    check(
+        "census ANTI-VACUOUS: a convention fixture's report NAMES its own count",
+        f"{CONVENTION_MODULE_SPLIT} .. 1" in ms_render,
+        ms_render,
+    )
+    check(
+        "census: ... and the mode disclosure travels with it in the SAME rendered block",
+        "BY MECHANISM" in ms_render and "--diff-filter=d" in ms_render,
+        ms_render,
     )
 
 
@@ -2566,7 +2903,7 @@ def run_self_tests():
             "     dir.create(\"x\", \"y\");",
         ]
     )
-    fi_findings, fi_rs, fi_test, fi_sk = scan_diff(foreign_idiom_diff)
+    fi_findings, fi_rs, fi_test, fi_sk, _census = scan_diff(foreign_idiom_diff)
     check(
         "vocabulary ANTI-VACUOUS: a real eqnice!/rgtest! hunk IS SEEN as skipped",
         fi_sk == 1,
@@ -2592,7 +2929,7 @@ def run_self_tests():
             "+    assert!(msg.contains(\"exa\"));",
         ]
     )
-    si_findings, _si_rs, si_test, si_sk = scan_diff(standard_idiom_diff)
+    si_findings, _si_rs, si_test, si_sk, _census = scan_diff(standard_idiom_diff)
     check(
         "vocabulary NEAR-MISS: a STANDARD-dialect test hunk is examined, never skipped",
         si_sk == 0 and si_test == 1 and [f.verdict for f in si_findings] == [WEAKENED],
@@ -2613,7 +2950,7 @@ def run_self_tests():
             "+    let x = 2;",
         ]
     )
-    _pd_f, pd_rs, pd_test, pd_sk = scan_diff(production_diff)
+    _pd_f, pd_rs, pd_test, pd_sk, _census = scan_diff(production_diff)
     check(
         "vocabulary NEAR-MISS: a src/ hunk is out of scope, NOT counted as skipped",
         (pd_rs, pd_test, pd_sk) == (1, 0, 0),
@@ -2691,7 +3028,7 @@ def run_self_tests():
         fi_sk == 1 and fi_findings == [] and fi_test == 0,
         (fi_sk, len(fi_findings), fi_test),
     )
-    wf_findings, wf_rs, wf_test, wf_sk = scan_diff(foreign_idiom_diff, eqnice_vocab)
+    wf_findings, wf_rs, wf_test, wf_sk, _census = scan_diff(foreign_idiom_diff, eqnice_vocab)
     check(
         "extensible: --assert-macro eqnice turns that same hunk into a WEAKENED verdict",
         [f.verdict for f in wf_findings] == [WEAKENED],
@@ -2725,13 +3062,13 @@ def run_self_tests():
             " // unrelated trailing context",
         ]
     )
-    rg_blind_f, _rg_blind_rs, rg_blind_test, rg_blind_sk = scan_diff(rgtest_removed_diff)
+    rg_blind_f, _rg_blind_rs, rg_blind_test, rg_blind_sk, _census = scan_diff(rgtest_removed_diff)
     check(
         "extensible ANTI-VACUOUS: the rgtest! fixture really IS blind by default",
         rg_blind_f == [] and rg_blind_test == 0 and rg_blind_sk == 1,
         (len(rg_blind_f), rg_blind_test, rg_blind_sk),
     )
-    rg_findings, _rg_rs, rg_test, rg_sk = scan_diff(
+    rg_findings, _rg_rs, rg_test, rg_sk, _census = scan_diff(
         rgtest_removed_diff, Vocabulary((), ("rgtest",))
     )
     check(
@@ -2762,7 +3099,7 @@ def run_self_tests():
             "+    eqnice!(expected, cmd.stdout());",
         ]
     )
-    add_findings, _a_rs, add_test, add_sk = scan_diff(eqnice_added_diff, eqnice_vocab)
+    add_findings, _a_rs, add_test, add_sk, _census = scan_diff(eqnice_added_diff, eqnice_vocab)
     check(
         "extensible NEAR-MISS: an ADDED eqnice! is STRENGTHENED, never WEAKENED",
         [f.verdict for f in add_findings] == [STRENGTHENED],
@@ -2784,7 +3121,7 @@ def run_self_tests():
     # is compared, not a substring, so a shape list or a hunk count that moved would fail
     # here rather than hiding behind a matching verdict word.
     def _tuple(res):
-        f, rs, te, sk = res
+        f, rs, te, sk, _c = res
         return ([(x.path, x.verdict, tuple(x.shapes)) for x in f], rs, te, sk)
 
     std_default = _tuple(scan_diff(standard_idiom_diff))
@@ -2841,7 +3178,7 @@ def run_self_tests():
             " // trailing",
         ]
     )
-    leak_findings, _lk_rs, lk_test, _lk_sk = scan_diff(leak_diff, eqnice_vocab)
+    leak_findings, _lk_rs, lk_test, _lk_sk, _census = scan_diff(leak_diff, eqnice_vocab)
     check(
         "extensible: a supplied name is WHOLE-TOKEN -- bare `eqnice` and `not_eqnice!` "
         "are not assertions",
@@ -2850,12 +3187,12 @@ def run_self_tests():
     )
     # ... and the escaping half: a name is DATA, so a regex metacharacter is literal. An
     # operator typing `.*` must not get a wildcard that reads every line as an assertion.
-    meta_findings, _m_rs, _m_test, _m_sk = scan_diff(
+    meta_findings, _m_rs, _m_test, _m_sk, _census = scan_diff(
         standard_idiom_diff, Vocabulary((".*",))
     )
     check(
         "extensible: a supplied `.*` is ESCAPED to a literal, never compiled as a wildcard",
-        _tuple((meta_findings, _m_rs, _m_test, _m_sk)) == std_default,
+        _tuple((meta_findings, _m_rs, _m_test, _m_sk, _census)) == std_default,
         [(f.verdict, f.shapes) for f in meta_findings],
     )
 
