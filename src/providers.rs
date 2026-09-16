@@ -89,7 +89,11 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "mixtral-8x7b-32768",
         ],
         "xai" => &["grok-4", "grok-4-mini", "grok-3", "grok-3-mini", "grok-2"],
-        "deepseek" => &["deepseek-v4-pro", "deepseek-v4-flash"],
+        // `deepseek-flash` is the id the evolve loop actually runs on (2026-09-15);
+        // `deepseek-v4-pro` remains the legacy id for the same routed backend.
+        // Listed first because it is the current one — this slice is only used for
+        // membership tests and "did you mean" suggestions, so order is cosmetic.
+        "deepseek" => &["deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"],
         "mistral" => &[
             "mistral-large-latest",
             "mistral-small-latest",
@@ -140,6 +144,14 @@ pub fn default_model_for_provider(provider: &str) -> String {
         "ollama" => "llama3.2".into(),
         "xai" => "grok-4".into(),
         "groq" => "llama-3.3-70b-versatile".into(),
+        // The default stays `deepseek-v4-pro` on purpose. `deepseek-flash`
+        // (V4.1-Flash) is where requests are routed from 2026-09-14, so promoting
+        // it is defensible — but a default is product-visible: anyone who relies
+        // on `provider = "deepseek"` with no explicit `model` would silently move
+        // to a different model. This task makes the configured model *visible and
+        // priced*; changing what an existing user gets is a separate, deliberate
+        // decision and is not bundled into a lookup-table fix (the module-size
+        // task's own lesson about widening a verified narrow change).
         "deepseek" => "deepseek-v4-pro".into(),
         "mistral" => "mistral-large-latest".into(),
         "cerebras" => "llama-3.3-70b".into(),
@@ -202,6 +214,42 @@ mod tests {
         // Deliberate pin: MiniMax-M3 is in the suggested list (issue #611) but
         // the default stays M2.7 — changing the default is a separate decision.
         assert_eq!(default_model_for_provider("minimax"), "MiniMax-M2.7");
+    }
+
+    #[test]
+    fn test_deepseek_flash_is_a_known_model_and_the_default_is_unchanged() {
+        // ANTI-VACUOUS, ASSERTED FIRST: the fixture id really is the string the
+        // table is keyed on, and the pre-existing control id really does resolve
+        // before we touch anything — otherwise every assertion below could pass
+        // by both sides agreeing on nothing.
+        let models = known_models_for_provider("deepseek");
+        assert!(
+            models.contains(&"deepseek-v4-pro"),
+            "control id must resolve before the fix is measured"
+        );
+
+        // The #923 fix: the loop's configured model is no longer "unknown", so
+        // the `Unknown model ... Proceeding anyway` warning stops firing on it.
+        assert!(
+            models.contains(&"deepseek-flash"),
+            "deepseek-flash must be a known model or the warning keeps firing"
+        );
+
+        // NEAR-MISS GUARD: the pre-existing ids stay listed, whole-value equality.
+        assert_eq!(
+            models
+                .iter()
+                .copied()
+                .filter(|m| m.starts_with("deepseek-v4"))
+                .collect::<Vec<_>>(),
+            vec!["deepseek-v4-pro", "deepseek-v4-flash"],
+            "the pre-existing deepseek ids must be untouched"
+        );
+
+        // The default is deliberately NOT changed — pinned so a later reader has
+        // to make the choice out loud rather than drifting it. See the comment on
+        // `default_model_for_provider`.
+        assert_eq!(default_model_for_provider("deepseek"), "deepseek-v4-pro");
     }
 
     #[test]
