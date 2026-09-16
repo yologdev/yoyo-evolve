@@ -1,0 +1,679 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the relevant parts of the script.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '530,680p' scripts/check_… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting — it appears the fix may already be partially present: `assert_condition` exists and `_relaxed_comparison` calls it. Wait — the task says the docstring around line 555 states the requirement. But it looks like this already has the fix? Let me check git log for when `assert_condition` landed.
+
+Hmm, the header commit is the Dream milestone task (Task 1). Maybe a previous session already landed Gap 2? Let me check git log for the file and whether self-tests exist for the new shape.
+
+Let me search for tests referencing #921 Gap 2.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Gap 2\|assert_condition…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 -- scripts… ✓ (4ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the fix landed on Day 199 (commit 0c8c126a). The task is offered again on Day 200 — likely the task file was drafted before, or the harness replays. The task says: "If current code already satisfies the task, add the smallest real verification (a regression test) instead of claiming done."
+
+Let me check what already exists — the self-test block at line 3209. Let me read it.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3190,3310p' scripts/chec… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The fix is already in place from Day 199 (commit 0c8c126a). Required guards 1 and 2 appear present. Guard 3 — anti-vacuous per COMMIT, not per window: "Add the per-commit assertion that the new fixture is actually reached by the per-commit path, not just by the window path." Let me check whether that exists.
+
+Let me first run baseline self-tests.
+
+Then check requirements:
+1. Fires: `gap2 P4 verdict` — WEAKENED on classify_assertion_change with p4_removed/p4_added. Present. But: "whose removed line is the digit-bearing-message shape above and whose added line is a genuine relaxation of the same comparison". p4_added = `count >= 1` — that's a relaxation. Yes.
+2. Near miss: two literals in the condition → None. Present (`2 + 3`).
+3. Anti-vacuous per COMMIT: need per-commit assertion that the fixture is reached by the per-commit path. Need to check — probably missing.
+4. Positive control — done in Day 199 presumably.
+
+Also "Re-measure, do not assume" — this task wants both poles reproduced by hand with `--stdin` on two two-line diffs, pasted into record (commit message or journal).
+
+Also: does the docstring requirement hold? "Update the docstring around line 555 so it states the boundary as it now is." The requirement was about the docstring of `_relaxed_comparison` stating the one-integer requirement. Let me look at the current docstring of `_relaxed_comparison` — it says "the same inequality operator with a single integer literal moving in the permissive direction". Hmm, it doesn't explicitly state "applied to the condition, and a digit inside the message is explicitly not counted". Actually the comment right above says "#921 Gap 2: judge the CONDITION, never the message." That's a comment, not the docstring. The task says update the docstring around line 555. Line 555 is in `assert_condition`'s docstring, which has the long WHY. Hmm, that docstring exists now (written Day 199). The specific requirement: "state the boundary as it now is: the one-integer requirement is applied to the condition, and a digit inside the message is explicitly not counted. Keep it short; do not turn it into an essay."
+
+Let me check `_relaxed_comparison`'s docstring and add a short sentence. That's small.
+
+So what remains for me:
+- Verify baseline `--test` passes.
+- Check guard (3): per-commit assertion. Let me look at how per-commit path is tested and whether a per-commit test exists using this fixture.
+- Add the per-commit anti-vacuous guard if missing.
+- Add short docstring sentence to `_relaxed_comparison` if missing.
+- Run positive control serially.
+- Run the two --stdin poles by hand.
+- Run cargo checks.
+- Commit.
+
+Let me look at the per-commit path functions.
+────────────────────────────────────────────────────────────────────────────────
+
+The fix landed on Day 199 (commit 0c8c126a). Let me verify the baseline and check which required guards already exist.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_file_hunks_examine… ✓ (4ms)
+ ✓ (78ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Baseline clean. Now, requirement 3: "Anti-vacuous, per COMMIT and not per window. The Day-198 control's whole lesson was that the window count was non-zero while the per-commit count for the blind plant was 0 (`test_file_hunks_examined = 0` on both blind plants). Add the per-commit assertion that the new fixture is actually reached by the per-commit path, not just by the window path."
+
+Let me look at line 2988 area and the self-test section around the blind plant per-commit assertion, to see the existing pattern.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2960,3015p' scripts/chec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_file_hunks_examine… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check the per-commit path: `git_diff_one_commit`, and how `--per-commit` mode drives the scan. Requirement 3 says: add the per-commit assertion that the new fixture is actually reached by the per-commit path, not just the window path.
+
+What is the per-commit path? In `--per-commit` mode, `git_diff_one_commit` produces a single commit diff, then scan_diff is called on it. Let me check `git_diff_one_commit` to see whether it strips the commit header etc. And the Day-198 lesson was about `test_file_hunks_examined = 0` for blind plants.
+
+So the per-commit anti-vacuous assertion should be: build a fixture commit diff (as produced by `git_diff_one_commit`) containing the P4 change, run scan_diff on it, and assert `test_file_hunks_examined >= 1` (i.e., the hunk was actually reached), plus WEAKENED verdict.
+
+Let me look at git_diff_one_commit.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def git_diff_one_commit…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def classify_assertion_… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now, the per-commit path. In `--per-commit` mode, how does it drive scan_diff? Let me look at main's per-commit branch.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1900,1990p' scripts/chec… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the per-commit path is: `scan_diff(git_diff_one_commit(sha), vocab)` per commit; blind commit if `th == 0 and sk > 0`.
+
+Requirement 3: "Add the per-commit assertion that the new fixture is actually reached by the per-commit path, not just by the window path."
+
+So I need a self-test that builds a single-commit-shaped diff text (a git diff with one file and one hunk containing the P4 removed/added lines) and runs `scan_diff` on it, asserting WEAKENED and `test_hunks >= 1` (reached by the per-commit path).
+
+Let me check if such a test already exists. Search self-tests for "per-commit" fixture usage with scan_diff.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "scan_diff(" scripts/che…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "one_commit\|single_comm… ✓ (5ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The existing gap2 self-tests include anti-vacuous checks that call `is_assertion_line` and `assert_condition` directly, and `classify_assertion_change` directly — but requirement 3 asks for a per-COMMIT path assertion: `scan_diff` on a commit-shaped diff, asserting `test_hunks >= 1`.
+
+Wait — the Day-198 lesson: "the *window* count was non-zero while the per-commit count for the blind plant was 0 (`test_file_hunks_examined = 0` on both blind plants)". So requirement 3: add the per-commit assertion that the new fixture is actually reached by the per-commit path, i.e., a diff fixture representing one commit's diff (which is what `git_diff_one_commit` returns, minus the header — actually git diff output includes "diff --git a/... b/..." lines), run through `scan_diff`, and assert `test_hunks >= 1` AND the WEAKENED finding appears.
+
+So: build a single-commit diff text containing the P4 removed line and the P4 added line, run scan_diff on it, assert (`test_hunks >= 1`) and finding verdict WEAKENED.
+
+Let me check what an existing fixture looks like to match format — look at a fixture near line 2140-2160 or 2900.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2120,2165p' scripts/chec… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The gap2 self-tests currently drive `classify_assertion_change` directly, not through `scan_diff`. Requirement 3 asks for the per-commit assertion: the fixture reached by the per-commit path. The per-commit path = `scan_diff(git_diff_one_commit(sha), vocab)` per commit, whose `th` count is the per-commit `test_file_hunks_examined`. So I'll add a commit-shaped diff fixture (same shape `git diff <sha>^ <sha> -- '*.rs'` produces: `diff --git`, `index`, `---`, `+++`, `@@`) containing the P4 pair, run `scan_diff` on it, and assert `test_hunks >= 1` (the hunk IS examined in the per-commit reading) plus the finding is WEAKENED with S_COMPARISON_RELAXED.
+
+Also I should assert the removed line scored UNKNOWN pre-fix... but guard (4) is the positive control, which I must run. Guard 1 says "the positive control in (4) runs the SAME fixture through the pre-fix behaviour and must watch it come back UNKNOWN". So I need a fixture that's shared between the self-test and the positive control. Hmm — but the positive control is a manual action (mutate the script so that `_relaxed_comparison` doesn't scope, run `--test`, watch it fail by name). Since the mutation restores the pre-fix behaviour, running `--test` with mutation should make the new test(s) fail by name.
+
+Wait: does the current test suite already fail when the fix is reverted? Let's test: mutate `removed = assert_condition(removed)` lines away and run `--test` to see which tests go red. That's the positive control. Let me plan it as one atomic command.
+
+But the task wants a named test that fails. Currently the gap2 P4 verdict test should fail... let's check: with pre-fix behaviour, `_relaxed_comparison(p4_removed, p4_added)`? Hold on — p4 lines: removed `count >= 3` with message containing `2`; added `count >= 1` with message `2`. Pre-fix: splitting on `>=` gives RHS ` 3, "flag '{long}' is less than 2 characters");` → 2 integer literals → guard breaks → returns None. But wait: the `relaxed_comparison` call is only reached if `r_eq`/`a_eq`... p4 has no `==`, so falls to the loop. `r_rel`/`a_rel` not relevant. So pre-fix → None. Then other shapes? `gone`/`fresh` — the removed and added lines normalized differ, so gone and fresh both nonempty → no S_ASSERTION_DELETED. count equal → no count change. Any other shapes? Line 760 onward — let's check the rest of classify (needle shrinking etc.). Then verdict would be UNKNOWN presumably. So `gap2 P4 verdict` fails → good named failure.
+
+OK. Now the plan of work:
+
+1. Add per-commit anti-vacuous guard (requirement 3): commit-shaped diff fixture → scan_diff → assert test_hunks >= 1 and WEAKENED. Insert in the gap2 block.
+2. Update `_relaxed_comparison` docstring (short line stating boundary: one-integer requirement applies to the condition; digit in message not counted).
+3. Run positive control serially (atomic mutate→run→restore), watch the gap2 tests fail by name.
+4. Hand-run the two `--stdin` poles.
+5. cargo fmt/clippy/build/test.
+6. Commit with the measured record in the commit message.
+
+Let me also double check requirement 2's near-miss: existing test uses `a >= 2 + 3` → two literals → None. The task suggests `count >= 2 && count <= 10` as an example. Existing test covers the spirit. But the task's "Also required: Re-measure, do not assume" wants the two-literal-in-condition case verified by hand with --stdin. I'll do that with `count >= 2 && count <= 10`.
+
+Hmm, careful: for `count >= 2 && count <= 10` → `_relaxed_comparison` splits on ">=" first → RHS = " 2 && count <= 10" → literals [2, 10] → len 2 → break → None. Then other shapes... could `S_NEEDLE_SHRANK` or something fire making it WEAKENED? Let's check the rest of classify_assertion_change to know what the hand-run pole yields. Let's read lines 758-900.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '758,860p' scripts/check_… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now let me write the additions.
+
+First, add the per-commit guard in the gap2 self-test block. I'll place it after the existing anti-vacuous checks. Also, to satisfy guard (1)'s "SAME fixture" requirement, I should define the fixture once and use it in the self-test — and the positive control mutates the source, not the fixture, so "same fixture through pre-fix behaviour" is achieved by mutating `_relaxed_comparison`.
+
+Let me now check the gap2 block fully with exact lines to edit. Lines ~3207-3300. I'll insert the per-commit test after the P4 verdict/shape checks.
+
+Let me get exact text.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3205,3240p' scripts/chec… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The file seems to have lines that report as "... (2 more similar lines)" — that's a rendering of the read tool? No, this is bash sed output... Odd. Actually the output shows literal "... (2 more similar lines)" in the middle of the output. That's the terminal tool truncating repeated lines. Hmm, it says "(2 more similar lines)" which likely means the tool elides repeated identical lines. Interesting. So consecutive blank/comment lines are collapsed in display. I need exact text for edit_file. Better: use python to print with line numbers.
+
+Actually let me just use read_file for exactness.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:3205..3250 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I'll insert the per-commit guard after line 3232 (gap2 P4 shape check). The per-commit path fixture: build a commit-shaped diff with the P4 pair and run `scan_diff`.
+
+Let me check `scan_diff` to confirm hunk classification counts test_file_hunks when the hunks contain assertion lines. Read scan_diff lines 1136-1210.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py:1136..1211 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now implement the per-commit guard. I'll add after line 3232:
+
+```python
+    # ANTI-VACUOUS, PER COMMIT AND NOT PER WINDOW (Day 198's whole lesson: the WINDOW
+    # count was non-zero while the blind plant's own commit read
+    # `test_file_hunks_examined = 0`). The fixture below is the SHAPE `git_diff_one_commit`
+    # hands `scan_diff` -- one commit's diff, header and all -- and it is driven through the
+    # real `scan_diff`, so `test_file_hunks_examined` is read on the same path
+    # `--per-commit` sums. `>= 1`, not `== 1`: the count is the claim ("this commit was
+    # actually reached"), and the verdict below is asserted separately.
+    p4_commit_diff = "\n".join(
+        [
+            "diff --git a/tests/flags.rs b/tests/flags.rs",
+            "index 1111111..2222222 100644",
+            "--- a/tests/flags.rs",
+            "+++ b/tests/flags.rs",
+            "@@ -10,3 +10,3 @@ fn t() {",
+            "-" + p4_removed,
+            "+" + p4_added,
+        ]
+    )
+    p4_findings, p4_rs, p4_test, _p4_sk, _census = scan_diff(p4_commit_diff)
+    check(
+        "gap2 PER-COMMIT ANTI-VACUOUS: the commit's hunk is EXAMINED, not blind",
+        p4_rs == 1 and p4_test >= 1,
+        (p4_rs, p4_test),
+    )
+    check(
+        "gap2 PER-COMMIT: the fixture classifies WEAKENED through scan_diff",
+        [f.verdict for f in p4_findings] == [WEAKENED]
+        and S_COMPARISON_RELAXED in p4_findings[0].shapes,
+        [(f.verdict, f.shapes) for f in p4_findings],
+    )
+```
+
+Wait — the diff line must be exactly `-` + removed line. The p4_removed begins with 4 spaces. Fine.
+
+Note: `parse_unified_diff` strips the first char of "-" lines: `removed.append(line[1:])`. Good.
+
+Careful: path `tests/flags.rs` is a dedicated test file → `is_dedicated_test_file` true. That's fine since assertions are standard dialect.
+
+Now the docstring update for `_relaxed_comparison`. Current docstring says:
+
+```
+    Two cases only, both deliberately narrow:
+      * `==` traded for an inequality (relaxed) or the reverse (tightened).
+      * the same inequality operator with a single integer literal moving in the
+        permissive direction (`> 3` -> `> 1`) or the strict one (`> 3` -> `> 5`).
+```
+
+Task: "Update the docstring around line 555 so it states the boundary as it now is: the one-integer requirement is applied to the condition, and a digit inside the message is explicitly not counted." Line 555 is assert_condition's docstring, which does mention it (the WHY paragraph). Hmm, "around line 555" in the issue refers to the docstring that "states that requirement and names the reason it exists" — that's `_relaxed_comparison`'s docstring in the original (pre-fix) file at line ~555. Day 199 added the long `assert_condition` docstring which covers it. To be safe and satisfy the letter of the requirement, I'll add one short sentence in `_relaxed_comparison`'s docstring where the single-literal rule is stated:
+
+```
+      * the same inequality operator with a single integer literal moving in the
+        permissive direction (`> 3` -> `> 1`) or the strict one (`> 3` -> `> 5`).
+        BOTH sides are the CONDITION (`assert_condition`), so a digit inside the
+        assertion's message is not counted -- see #921 Gap 2 in `assert_condition`.
+```
+
+Keep short.
+
+Now let me make the edits.
+────────────────────────────────────────────────────────────────────────────────
+
+Fix is already in place from Day 199. I'll add the missing per-commit anti-vacuous guard (requirement 3) and the docstring boundary statement, then run the required controls.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (3 → 33 lines)
+        v = classify_assertion_change([p4_removed], [p4_added])
+        check("gap2 P4 verdict", v.verdict == WEAKENED, v)
+        check("gap2 P4 shape", S_COMPARISON_RELAXED in v.shapes, v.shapes)
+  + 
+  +     # ANTI-VACUOUS, PER COMMIT AND NOT PER WINDOW. Day 198's whole lesson was that the
+  +     # WINDOW count was non-zero while the blind plant's own commit read
+  +     # `test_file_hunks_examined = 0`, so agreement reached one layer below (via
+  +     # `classify_assertion_change` directly, above) does not show the P4 shape is reached
+  +     # by the path `--per-commit` actually sums. The fixture below is the SHAPE
+  +     # `git_diff_one_commit` hands `scan_diff` -- one commit's diff, header and all.
+  +     p4_commit_diff = "\n".join(
+  +         [
+  +             "diff --git a/tests/flags.rs b/tests/flags.rs",
+  +             "index 1111111..2222222 100644",
+  +             "--- a/tests/flags.rs",
+  +             "+++ b/tests/flags.rs",
+  +             "@@ -10,3 +10,3 @@ fn t() {",
+  +             "-" + p4_removed,
+  +             "+" + p4_added,
+  +         ]
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (2 → 5 lines)
+          * the same inequality operator with a single integer literal moving in the
+            permissive direction (`> 3` -> `> 1`) or the strict one (`> 3` -> `> 5`).
+  +         The one-integer requirement is applied to the CONDITION, never the message: a
+  +         digit in the message is explicitly not counted (#921 Gap 2 -- see
+  +         `assert_condition`).
+ ✓ (1m 50s)
+        v = classify_assertion_change([p4_removed], [p4_added])
+        check("gap2 P4 verdict", v.verdict == WEAKENED, v)
+        check("gap2 P4 shape", S_COMPARISON_RELAXED in v.shapes, v.shapes)
+  + 
+  +     # ANTI-VACUOUS, PER COMMIT AND NOT PER WINDOW. Day 198's whole lesson was that the
+  +     # WINDOW count was non-zero while the blind plant's own commit read
+  +     # `test_file_hunks_examined = 0`, so agreement reached one layer below (via
+  +     # `classify_assertion_change` directly, above) does not show the P4 shape is reached
+  ... (13 more lines)
+ ✓ (3m 41s)
+          * the same inequality operator with a single integer literal moving in the
+            permissive direction (`> 3` -> `> 1`) or the strict one (`> 3` -> `> 5`).
+  +         The one-integer requirement is applied to the CONDITION, never the message: a
+  +         digit in the message is explicitly not counted (#921 Gap 2 -- see
+  +         `assert_condition`).
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 43s (2 ✓)
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (78ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the positive control: mutate `_relaxed_comparison` to the pre-fix behaviour (remove the two `assert_condition` scoping lines) → run `--test` → expect failures by name → restore. Do it atomically in one command.
+
+I'll use python to do the mutate/run/restore in one bash invocation, with trap to guarantee restore.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive control — mutate to pre-fix behaviour, run, restore, all in one atomic command:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (21 lines) ✓ (186ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm — the mutated run printed the report and "self-tests passed"?? Wait, the output was cut: I asked for tail -12 of the mutated run. The tail shows the report output... Actually the run_self_tests prints the report first (many check lines print the fixture reports)? And the last line of tail -12 was "WEAKENED candidates: none in this window." — then presumably "SELF-TESTS FAILED..." would come after? No — in run_self_tests, failures print at end. The order: checks run, each check prints? Let me get the full output of the mutated run. The tail -12 showed report bytes, meaning more output after? No, tail shows the LAST 12 lines. So the last line of the mutated run was "WEAKENED candidates: none in this window." — meaning the mutated run did NOT print "self-tests passed" nor "SELF-TESTS FAILED"? That seems odd. Possibly the mutated script errored (exception) somewhere, printing to stderr a traceback which... hmm 2>&1 was applied. Maybe the traceback came before the report? Let's redo, capturing the exit code and grep for gap2 failures.
+
+Actually wait: the mutated source removed the scoping but ALSO removed the mutation marker cleanly. The run might have crashed with a traceback. The `trap ... EXIT` restored. But exit code 0 overall (because last command). Let me rerun more carefully and show the failure names.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (17 lines) ✓ (182ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting! The positive control fires by name: `gap2 P4 verdict` comes back UNKNOWN — exactly the measured Day-198 defect (UNKNOWN, not WEAKENED). 4 failures, all gap2. Note the new PER-COMMIT tests did NOT fail — why? Because with pre-fix behaviour `_relaxed_comparison` returns None for the P4 pair... then `classify_assertion_change` returns UNKNOWN → `test_hunks >= 1` still true and finding verdict is UNKNOWN, so `gap2 PER-COMMIT: the same fixture reads WEAKENED` should FAIL. But it isn't in the list!
+
+Hmm. Wait — why did the near-miss tests fail? The near-miss tightened pair with pre-fix behavior: `count >= 1, "fewer than 2 characters"` → RHS has 2 literals → None → so STRENGTHENED not returned → UNKNOWN. That's a pre-existing false negative too.
+
+But the PER-COMMIT test should have failed. Unless... the mutated run crashes before reaching it? No, 103 lines output and 4 failures listed; if my checks never ran, they'd not add failures — but they're inserted right after `gap2 P4 shape`, so they must have run. Why no failure?
+
+Let me check: maybe `reconcile_moved_tests` converts the finding? Or the diff hunk... Let me test directly by temporarily checking. Actually, maybe my inserted block landed in a place that isn't executed? No, it's a straight-line sequence.
+
+Wait — maybe the assertion in `p4_findings[0].shapes` fails... `S_COMPARISON_RELAXED in p4_findings[0].shapes` — but the first check `[f.verdict for f in p4_findings] == [WEAKENED]` would be UNKNOWN → False → failure recorded with name "gap2 PER-COMMIT: the same fixture reads WEAKENED through scan_diff". Not in list.
+
+Hmm, unless the mutation happened but scan_diff path still works because... Oh! `scan_diff` calls `classify_assertion_change(hunk.removed, hunk.added, ...)`. The removed line passed is the P4 line. Pre-fix `_relaxed_comparison` uses the raw lines... which carry the digit → None. So UNKNOWN.
+
+Unless the fixture's removed/added lines got truncated by parse? No.
+
+Hold on — maybe the 4 failures listed are only the first few lines shown (line 95-99 of output, and 103 total lines). The failures print all. 4 failures listed, bullet lines 96-99. So mine didn't fail.
+
+Let me actually debug: run the mutated version and print what the per-commit check yields. Let me re-mutate and directly interrogate.
+
+Actually — could it be that my inserted checks are inside the block guarded by something? Let me verify the insertion location in the file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gap2 PER-COMMIT" -B 32 … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Exit code 1, no output? That means the pattern "gap2 PER-COMMIT" isn't found in the file! Did the restore from /tmp/caw.bak revert my edits? `/tmp/caw.bak` was copied BEFORE... let me check: in the first control command I ran `cp scripts/check_assertion_weakening.py /tmp/caw.bak` — at that point my edits were already applied (I made edits before). Yes, edits were applied, then baseline test ran. Then the control command copied the edited file. Hmm, so /tmp/caw.bak contains my edits.
+
+Wait, but the first control command's trap restored from /tmp/caw.bak which was copied after edits. OK.
+
+But grep now finds nothing for "gap2 PER-COMMIT"? Let me check the file state and git diff.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && grep -n "PER-… ✓ (37ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The per-commit block I added is gone but the docstring edit remains. So an earlier restore clobbered it? No — both edits were in the same file. The diff shows 3 insertions = the docstring edit only (5 lines replacing 2 → +3). So the per-commit block is missing.
+
+Why? Ah — I bet the first control command's `cp /tmp/caw.bak` ... no wait. Hmm, the first edit_file said "Replaced 3 lines with 33 lines". The second edit succeeded. Then I ran `--test` (passed). Then the first control command: `cp scripts/check_assertion_weakening.py /tmp/caw.bak` — but wait, that first control invocation may have gone through the tool and the *trap*... Both commands in that invocation. Hmm.
+
+Oh! I see — the FIRST control command and the SECOND control command were run in separate bash calls. In the second, I copied the (still edited) file to /tmp/caw.bak again. Unless... the first control command's python mutation script wrote the file with the mutation, then restore from /tmp/caw.bak. Fine.
+
+Hmm, but where did my 30-line block go? Let me check: maybe my second edit_file call for the docstring was applied and then... Actually maybe the first control's mutation `s.replace(old,new,1)`... no.
+
+Wait — maybe the file was restored from /tmp/caw.bak which was stale? In the first control command, was there a leftover /tmp/caw.bak from... no, first time.
+
+Let me look for the block: search "p4_commit_diff".
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "p4_commit_diff\|gap2 P4… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`p4_commit_diff` is gone. So the atomic control DID clobber it. Why? Because... in the first control command, I did `cp scripts/... /tmp/caw.bak` — at that moment the file had both edits (since the tool reported the edits). Unless the edits were somehow reverted by the harness... Hmm, actually! The first control command output showed `git diff --stat` = "3 insertions" after restore — which already indicated the block was gone. So the block was gone before/during the first control.
+
+Possibility: my second edit_file call (docstring) was executed against the file... but maybe the file at that point didn't include the first edit due to some tooling race? No — the docstring edit's old_text didn't overlap.
+
+Other possibility: the harness has a watcher/formatter that reverted? Unlikely.
+
+Hmm, wait. Look at the first control command output again:
+
+```
+MUTATED: assert_condition scoping removed
+
+  commits scanned .............. 1
+...
+WEAKENED candidates: none in this window.
+
+--- restoring ---
+ scripts/check_assertion_weakening.py | 3 +++
+self-tests passed
+```
+
+The mutated run output ended with "WEAKENED candidates: none in this window." and no failures line — that's because tail -12 cut it. Fine.
+
+Hmm, `git diff --stat` showing 3 insertions right after restore means the restored file lacked the 30-line block. /tmp/caw.bak was copied from a file lacking the block. So the block was lost BEFORE that cp, i.e., before the first control command ran — but after my `--test` run which passed... 
+
+OH WAIT. I see it. Look: the baseline `--test` run I did AFTER the edits was the third bash command in that parallel block? No...
+
+Actually, hmm: could the `edit_file` tool have applied the 33-line replacement and reported success, but the docstring edit was applied to a cached pre-edit copy and written back, clobbering the first edit? The two edit_file calls were issued in PARALLEL in the same block! Yes — I put two edit_file calls in one message block. They ran concurrently on the same file; the second wrote its version of the file (read before the first's write), losing the first edit. That's exactly the "two file-mutating operations raced" lesson, and it bit me.
+
+Both reported success. Only one survived. Good lesson — and notably the tool didn't warn.
+
+So: re-apply the per-commit block now, serially, and re-verify. Also this means my earlier baseline `--test` run (after both edits) ran on the file with only the docstring change — that's why it passed with no way to tell.
+
+Let me re-add the per-commit block serially now.
+────────────────────────────────────────────────────────────────────────────────
+
+The two parallel edit_file calls raced and the first edit was lost (only the docstring change survived). Re-applying serially now:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (3 → 33 lines)
+        v = classify_assertion_change([p4_removed], [p4_added])
+        check("gap2 P4 verdict", v.verdict == WEAKENED, v)
+        check("gap2 P4 shape", S_COMPARISON_RELAXED in v.shapes, v.shapes)
+  + 
+  +     # ANTI-VACUOUS, PER COMMIT AND NOT PER WINDOW. Day 198's whole lesson was that the
+  +     # WINDOW count was non-zero while the blind plant's own commit read
+  +     # `test_file_hunks_examined = 0`, so agreement reached one layer below (via
+  +     # `classify_assertion_change` directly, above) does not show the P4 shape is reached
+  +     # by the path `--per-commit` actually sums. The fixture below is the SHAPE
+  +     # `git_diff_one_commit` hands `scan_diff` -- one commit's diff, header and all.
+  +     p4_commit_diff = "\n".join(
+  +         [
+  +             "diff --git a/tests/flags.rs b/tests/flags.rs",
+  +             "index 1111111..2222222 100644",
+  +             "--- a/tests/flags.rs",
+  +             "+++ b/tests/flags.rs",
+  +             "@@ -10,3 +10,3 @@ fn t() {",
+  +             "-" + p4_removed,
+  +             "+" + p4_added,
+  +         ]
+  ... (13 more lines)
+ ✓ (1m 52s)
+        v = classify_assertion_change([p4_removed], [p4_added])
+        check("gap2 P4 verdict", v.verdict == WEAKENED, v)
+        check("gap2 P4 shape", S_COMPARISON_RELAXED in v.shapes, v.shapes)
+  + 
+  +     # ANTI-VACUOUS, PER COMMIT AND NOT PER WINDOW. Day 198's whole lesson was that the
+  +     # WINDOW count was non-zero while the blind plant's own commit read
+  +     # `test_file_hunks_examined = 0`, so agreement reached one layer below (via
+  +     # `classify_assertion_change` directly, above) does not show the P4 shape is reached
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check the state of the file now — whether both edits are present, run the self-tests, then the positive control, then cargo checks and commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && grep -n "p4_c… ✓ (86ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both edits present, self-tests pass. Now verify the new per-commit check is non-vacuous (it asserts p4_test >= 1) and run the positive control as one atomic command, this time also checking the new per-commit rows red.
+
+Note the mutation should make gap2 PER-COMMIT: the same fixture reads WEAKENED through scan_diff — which uses scan_diff, and with old behavior it would be UNKNOWN. Wait: p4_test >= 1 — with scan_diff classifying with pre-fix behavior, the hunk returns a HunkVerdict (UNKNOWN), so test_hunks would be 1, and the finding would be UNKNOWN. So the first check stays green, second reddens. Good.
+
+Also, the window (per-month) count in requirement 3 says window count non-zero while per-commit zero — my check uses scan_diff directly which is the per-hunk path used by per-commit mode; good enough with an explicit comment.
+
+Let's run the atomic positive control.
+────────────────────────────────────────────────────────────────────────────────
+
+Both edits are in and the suite passes. Now the positive control, serially as one atomic command:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (20 lines) ✓ (188ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The output got truncated by "... (3 more similar lines)". I need to confirm which 5 failed by name — specifically whether the PER-COMMIT row failed by name. The harness (or yoyo output truncation) collapsed lines. Let me re-run the mutation and print the failure list explicitly with a grep for "gap2 PER-COMMIT".
+
+Actually let me just run again and cat the whole failing block (it's short). The previous run showed trailing output of the normal scan because the --test might... hmm, actually the extra output after SELF-TESTS FAILED was from the trap? No — the trap was removed after. Actually the extra scan output appears because... "assertion-weakening scan over HEAD~1..HEAD" — with `--test` it wouldn't do that. Possibly the tool falls back to a default scan when self-tests fail? Let me check main(). Anyway, let me re-run the control printing the full failure list.
+────────────────────────────────────────────────────────────────────────────────
+
+The failure list was collapsed by output truncation. Re-running to see every failing name explicitly:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (19 lines) ✓ (200ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The output line "… (3 more similar lines)" is inserted by the tool's output rendering (yoyo's bash tool truncating repeated lines). I need a way to see all 5 names. Let me count/print them via python one-by-one on its own lines, e.g. print with an index prefix so they don't look "similar".
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (12 lines) ✓ (178ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The renderer collapses identical-prefix lines. Let me instead write failures to a file with a distinguishing suffix, or use python to print repr per line with varying prefixes. Simpler: in the mutated run, redirect to file, then use python to print lines with an increasing number of dots so they don't collapse.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (16 lines) ✓ (199ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The new per-commit guard fails by name under the pre-fix behaviour (`gap2 PER-COMMIT`) and passes with the fix restored. Note the first PER-COMMIT ANTI-VACUOUS check (examined, not blind) stays green under mutation, which is correct — it asserts reachability, not the verdict.
+
+Now:
+1. Re-measure both poles by hand with `--stdin` on two two-line diffs.
+2. cargo build && cargo test && clippy && fmt.
+3. git diff --stat = exactly 1 file.
+4. Commit.
+
+Let me do the --stdin poles.
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control confirmed: the new gap2 PER-COMMIT row fails by name pre-fix and passes post-fix. Now the hand-run --stdin poles:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && printf 'diff --git a/src/a.rs b/… ✓ (57ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && printf 'diff --git a/src/a.rs b/… ✓ (57ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both poles reproduce as required:
+- digit-in-message relaxation → WEAKENED (comparison-relaxed)
+- two literals in the condition → not WEAKENED (UNKNOWN)
+
+Now run the cargo gates, then commit. Let me run fmt check, clippy, build, test. Note: the change is only to a Python script, but the repo's gates require cargo checks.
+
+Let me run them (may take a while).
+────────────────────────────────────────────────────────────────────────────────
+
+Both poles reproduce as specified. Now the Rust gates:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | tail… ✓ (18.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (1m 33s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 19s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green: 5640 tests pass, clippy clean, fmt clean, self-tests pass, diff touches exactly 1 file (+33 lines: the per-commit guard block + the docstring boundary line... wait, 33 insertions total and my first edit was 33 lines, second (docstring) was +3. Let me check the diff includes the docstring change.
+
+git diff --stat says 33 insertions, 1 file. Hmm, but I made two edits: docstring (+3 lines with 0 deletions → wait, "Replaced 2 lines with 5 lines" = +3) and the per-commit block (+30 net... "Replaced 3 lines with 33" = +30). Total should be 33. 3+30 = 33. ✓ Both present.
+
+Let me verify the diff content quickly then commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff | head -50 ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The diff is exactly 1 file, both changes present. Committing:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (43 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The commit message got mangled by bash backticks in `assert_condition(...)`. Let me check what the commit message actually looks like — the backticks caused command substitution errors. Let me view the commit body.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format=%B | head -3… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The commit body is mostly fine, but one phrase got mangled: "deleting the two  lines" (backticked text was swallowed by command substitution). Let me amend the commit message via a file to avoid shell interpretation, restoring that phrase.
+────────────────────────────────────────────────────────────────────────────────
+
+One phrase was eaten by backtick substitution. Amending the message via a file to avoid shell interpretation:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 -… (8 lines) ✓ (36ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (84ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The middle 3 rows (including "gap2 PER-COMMIT") are collapsed in the commit message by the tool's line-collapsing renderer — the stored message literally contains "... (3 more similar lines)"? Let me check: the `sed -n` output shows "... (3 more similar lines)" which appears to be the renderer collapsing my output, OR the actual file content. The first commit message was built by bash with the actual lines; but the renderer collapsed it in display. Let me check the raw file to be sure the message contains all 5 rows by name — important since the task requires the control to name the failing test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gap2 PER-COMMIT" /tmp/m… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 5 rows are in the commit message including "gap2 PER-COMMIT" (the earlier display was the tool's line collapser).
+
+Everything is done:
+- Fix was already present (Day 199) — verified: code has assert_condition scoping + call sites.
+- Requirement 3 (per-commit anti-vacuous guard) added — the missing piece.
+- Requirement "update docstring around line 555" done (line 634 now).
+- Positive control run serially, atomic, new self-test fails by name, restored, no markers.
+- Both --stdin poles re-measured by hand.
+- cargo build/clippy/fmt/test all pass; self-tests pass.
+- Exactly 1 file changed. Committed.
+
+Requirements 1, 2, 4 (fire, near-miss, positive control) were already present from Day 199; I verified each and strengthened 3. Let me confirm requirement 2's near-miss ("two literals in the CONDITION still refuse") is asserted — yes, at the "gap2 two literals IN THE CONDITION still refuse" check, and I verified it hand-run too.
+
+Should I update docs? The change is to a script; CLAUDE.md/ARCHITECTURE.md may want a history note. CLAUDE.md says new history goes in ARCHITECTURE.md, never CLAUDE.md. The task says update docs if behavior changed/architecture modified. This is a test-only addition to a script plus a docstring; ARCHITECTURE.md carries per-file history. Let me check whether ARCHITECTURE.md has an entry for scripts/check_assertion_weakening.py, and whether prior commits in this family added notes. Given the repo convention ("New history goes in ARCHITECTURE.md, never here"), it would be appropriate to append a short entry. But the task explicitly says `git diff --stat` touches exactly 1 file. Hmm — that constraint is listed under Verification. Adding an ARCHITECTURE.md note would touch 2 files, violating the task's stated verification. 
+
+The task's explicit one-file constraint wins over the general doc guidance for this task (the task file is the authority; ARCHITECTURE.md is not a user-facing doc for behavior). Let me check how the Day 199 Gap 2 commit handled it — did it touch ARCHITECTURE.md?
+
+git show --stat 0c8c126a.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat --oneline 0c8c12… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The Day-199 commit for the same class also touched exactly one file, with no ARCHITECTURE.md update. Consistency with the task's explicit "exactly 1 file" constraint is right. Done.
+
+Let me give the final verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+Done. Final state verified.
+
+## What I found
+
+The core fix the task describes was already in the tree — assert_condition() (line 541) and its two call sites in _relaxed_comparison (line 641-642) landed Day 199 (0c8c126a), which is why the digit-in-message plant already classified WEAKENED. I verified that by reading the code, not by assuming.
+
+What was missing was required guard 3: the per-commit anti-vacuous assertion. The pre-existing gap2 self-tests call classify_assertion_change directly, one layer below the path --per-commit sums — so they proved the shape matched, never that a commit's diff reaches it. That is exactly the Day-198 lesson (window count non-zero, per-commit count 0).
+
+## What I changed (`scripts/check_assertion_weakening.py`, 1 file, +33)
+
+1. **Per-commit anti-vacuous fixture — a diff in the shape `git_diff_one_commit` hands `scan_diff` (header + `@@` + the P4 pair), asserting via `scan_diff` that the hunk is examined* (`rust_hunks == 1`, `test_hunks >= 1`) and* reads WEAKENED with comparison-relaxed.
+2. **Docstring boundary** stated in _relaxed_comparison: the one-integer requirement applies to the CONDITION; a digit in the message is explicitly not counted.
+
+## Evidence
+
+• **Positive control, serial and atomic** (`mutate → --test → restore` in one command). Deleting the two `assert_condition(...)` lines reddened the suite by name: `gap2 P4 verdict`, `gap2 P4 shape, **gap2 PER-COMMIT**, gap2 NEAR-MISS tightened verdict, gap2 NEAR-MISS tightened shape. The reachability row correctly stayed green (it asserts reachability, not the verdict). Restored → green. grep for NEUTERED|SABOTAGE|DO NOT COMMIT` in the tree: 0.
+• **Near-miss still refuses** — gap2 two literals IN THE CONDITION still refuse intact and hand-confirmed.
+• **Both poles re-measured by hand via --stdin**: digit-bearing-message relaxation → WEAKENED 1, ! src/a.rs [comparison-relaxed]; two-literals-in-condition → WEAKENED 0, UNKNOWN 1.
+• **Gates**: `--test` passed *before* the control (so it could discriminate) and after; `cargo test` 5640 passed / 0 failed; `clippy --all-targets -- -D warnings` clean; fmt --check clean; git diff --stat touched exactly 1 file.
+• Committed as 505e3fe1, tree clean.
+
+One process note worth recording: my first two edit_file calls in one block raced on the same file and the larger edit was silently lost — I caught it because the backup checksum matched the "edited" file and git diff --stat showed 3 lines instead of 33. I re-applied serially. The safety rule about serial file-mutating work applies to my own edit tool calls, not just positive controls.
+
+Out of scope and not done, per the task file: re-running the ripgrep reading, and Gap 1.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

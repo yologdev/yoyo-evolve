@@ -1,0 +1,293 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the diff. Key claims to check:
+
+1. Ledger has 7 rows, JSON valid.
+2. git diff --stat touches exactly 2 files.
+3. The census figures match what the tool printed... I can't rerun the foreign scan (needs cloning ripgrep), but I could check the own-repo row's census claim? That would require deepening and running, which takes time. Probably out of budget.
+
+Let me at least check: the ledger row count, JSON validity, whether the diff is committed, and a couple of internal consistency checks.
+
+Notably, the task file says the detector_gaps must state "#921 Gap 2 is open as of this session". The implementer instead recorded that Gap 2 is NOT open, with evidence (0c8c126a cured it). That's a deviation from the literal task text but arguably honest. Hmm. The task said: "`detector_gaps` (new field, this row's honesty clause): **#921 Gap 2 is open as of this session**". The implementer contradicted that premise. Is that a fail? The evaluator should check intent. The task's premise being wrong is plausible — but I should verify the claim: is 0c8c126a an ancestor of HEAD, and does the P4 plant now score WEAKENED? If verifiable, the implementer's honesty is fine. If not verifiable, it's a fabricated honesty clause — which would be a problem. Let me check.
+
+Also verify the row's census claims: for the own repo, the row says register-lines-only 17 over HEAD~240..HEAD with depth 351. Could I verify quickly? Running the tool on own repo per-commit over 240 commits might take a while but perhaps a minute or two. But the repo is currently... git rev-list --count HEAD here? Let me check quick things first.
+
+Let me run a batch of checks:
+- wc -l dreams/foreign_assertion_readings.jsonl
+- json parse
+- git show --stat HEAD
+- git merge-base --is-ancestor 0c8c126a HEAD
+- check _relaxed_comparison handling of digit-bearing messages
+- run the P4 plant through --stdin with the classifier.
+- python3 scripts/check_assertion_weakening.py --test
+
+Let's do it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l dreams/foreign_assertion_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git merge-base --is-ancestor 0c8… ✓ (11ms)
+ ✓ (36ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good: 2 files, 7 rows, JSON valid, 0c8c126a is an ancestor (so the implementer's correction of the task's premise is verifiable). Current depth 352 — consistent with the row's 351 (the task commit added one commit).
+
+Now check whether the P4 plant now scores WEAKENED, and whether the census numbers reproduce for own repo. Let's do the quick positive test: pipe a diff with the digit-bearing assert change.
+
+Let me look at _relaxed_comparison and the classifier's --stdin mode.
+
+Actually a fast direct check: build a synthetic diff with the message-bearing assert and run through --stdin.
+
+Let me check the tool's CLI options.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 0c8c126a --stat | head … ✓ (11ms)
+ ✓ (60ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed 0c8c126a landed a fix for the message portion. Now let's do the direct positive test: pipe the Day-198 P4 plant through --stdin and see if WEAKENED fires.
+
+Build a diff: removed `assert!(count >= 2, "flag '{long}' is less than 2 characters");` added `assert!(count >= 1, "flag '{long}' is less than 2 characters");` in a test file.
+
+Need to know how the tool scopes hunks (test-file detection). Let's just create a diff touching a tests/*.rs file with #[test] context.
+
+I'll approximate. Let me check how scan_diff picks hunks — but simpler: mimic the day-198 plant: crates/core/flags/defs.rs. Let's check what makes a hunk "test-file". Maybe the file is considered a test file if it contains #[test]/#[cfg(test)]/tests/ path. Let's just try.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.3s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && cat > p4.diff <<'EOF' (14 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/chec… ✓ (61ms)
+ ✓ (82ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: the P4 plant now scores WEAKENED 1, so the implementer's detector_gaps is factual — the task's premise ("#921 Gap 2 is open as of this session") is indeed wrong, and the implementer correctly corrected it with verification. That's honest and better than following the stale premise. Not a FAIL reason.
+
+Note also: the tool DID print "skipped_unknown_vocabulary" only when non-zero. Fine.
+
+Now the biggest verification: are the census figures byte-identical to what the tool printed? I can verify the DOMESTIC row (own repo) since I have the repo here. It says HEAD~240..HEAD, per-commit, rs_hunks 112, examined 27, W0 S24 U3 M0, census register-lines-only 17, characterization-inversion 3, module-split 0, whole-file-test-rename 0, register-paid-to-empty 0.
+
+But wait — the tree now includes the new commit (unchanged instrument). Running it here now would be over HEAD 7cbcd487 (the same HEAD). Depth is 352 now (row says 351, difference of 1 = the task commit itself; when they ran, HEAD was at a26432ee probably). Hmm, that means the window differs by one commit — HEAD~240..HEAD at commit a26432ee vs at 7cbcd487. That could change numbers slightly if the task commit changed instrument... it didn't. But the window shifts by one commit (drop oldest, add newest). Still, running it should mostly reproduce. Let's try, with a timeout. 240 commits per-commit scan — the foreign scan of 240 commits presumably took a while but own repo hunks are fewer. Let's try with timeout 240s and see if the census matches.
+
+Actually careful: the row's window was presumably HEAD~240..HEAD at the time of the run = a26432ee. If I run now at 7cbcd487, commits_scanned stays 240 but the membership shifts. rs_hunks might change slightly. Even so, if it matches exactly, great evidence; if it differs by a small amount that's explainable but not evidence against. Let me run it and see.
+
+This is a worthwhile check — it verifies the census block is genuinely printed by the tool and the numbers are real.
+
+Let me run in background with output to a file, timeout 300.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.5s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 420 python3 scripts/chec… ✓ (597ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+My run at a different HEAD (7cbcd487, one commit later than during the task) gives: commits 240, rs_hunks 105 vs row's 112, examined 25 vs 27, W0 S23 U2 M0 vs row's W0 S24 U3 M0, census characterization-inversion 2 vs row's 3, register-lines-only 17 = 17 ✓, others 0.
+
+The window shifted by one commit (my run's oldest commit is one newer). So the difference is explainable by window membership drift — a single commit's worth of change. Hmm, but a shift of one commit changes ~7 hunks? rs_hunks 112 -> 105 = 7 hunks difference, examined -2, characterization-inversion -1, strengthened -1, unknown -1. That seems like a lot for one commit but plausible if a large commit dropped out of the window (e.g. an ARCHITECTURE.md/CLAUDE.md rewrite touching many .rs files? Actually a commit like "split module" or a big refactor). Note the row's window would have started at one earlier commit; if that dropped commit was large (e.g. a big refactor adding/removing many test hunks), a difference of 7 hunks is plausible.
+
+Also the row's `supplementary_window_read` at HEAD~350 reports rs_hunks 231 and register-lines-only 34 — I can verify that too, which is window-invariant-ish? HEAD~350..HEAD includes the new commit, so 351 commits instead of 350. Let's check: run --from HEAD~350 --to HEAD. That adds one commit to that window too. Hmm.
+
+Better verification approach: reproduce the row's exact window by checking out the task's parent commit? The scan runs in the working tree with git; `--from`/`--to` accept refs, so I can run `--from a26432ee~240 --to a26432ee` — that should be the exact window the implementer used (assuming they ran at HEAD=a26432ee, i.e., before committing). Let's try that; if it reproduces exactly the row's numbers (240/112/27, W0 S24 U3 M0, census 0/0/3/17/0), that's strong verification of "byte-identical to what the tool printed".
+
+Let's run that.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 420 python3 scripts/chec… ✓ (605ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Exact reproduction of the domestic row: 240 / 112 / 27, W0 S24 U3 M0, census 0/0/3/17/0. The row's numbers are real and byte-identical to the tool's printed block. The difference from my earlier run was purely the window shift (HEAD moved one commit), which the row itself flags in a stated limit ("The window covers only part of my history...").
+
+Now check the supplementary window claim: HEAD~350..HEAD at a26432ee → commits 350, rs_hunks 231, examined 52, W0 S47 U5 M0, census 0/0/5/34/0. Let's verify quickly since it's another concrete claim (adds confidence). It's ~350 commits, maybe slower. Time budget: we're a few minutes in. Let's run with timeout 420.
+
+Also verify the probe claim: `git merge-base --is-ancestor 7fc10e19 HEAD` exits 1 — quick and important (it's a specific falsifiable claim). And the foreign row's numbers I cannot reproduce without cloning ripgrep (network + time), but the tool's behavior is verified and the domestic row reproduces exactly. Let me at least try the ripgrep clone+scan? That's 300 commits clone + 240-commit per-commit scan on ripgrep — probably several minutes. Might be feasible but risky. Let me first do the cheap checks, then decide.
+
+Cheap checks:
+1. git merge-base --is-ancestor 7fc10e19 HEAD → expect exit 1.
+2. .git/shallow contains 3a655205 and it's HEAD~350.
+3. Check the ledger day-191 pairing row exists naming 7fc10e19.
+4. Check dreams row fields match required names.
+
+Also check DREAM.md changes: milestone recorded + next milestone named. Looks fine from the diff.
+
+Let's run these.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git merge-base --is-ancestor 7fc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (31ms)
+ ✓ (50ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All the cheap claims check out:
+- HEAD~350 = 5fbd621d, but the row says the graft boundary commit is 3a655205 which is "exactly HEAD~350". Hmm — the row's probe says "3a655205, which is listed in .git/shallow and is exactly HEAD~350". At the time of the task's run HEAD was a26432ee, so HEAD~350 at that time would be... let me compute: a26432ee~350. Since now HEAD~350 = 5fbd621d and HEAD = 7cbcd487, a26432ee~350 = 7cbcd487~351? Hmm, let's compute a26432ee~350 directly and compare to 3a655205. Actually .git/shallow has 2 entries: 3a655205 and one other. shas listed. Let me compute a26432ee~350.
+
+Wait — .git shallow has 2 entries. The row said "exactly HEAD~350" — the deepen was 300 from 51 → 351 depth; then it grew. Hmm. Let me just check whether 3a655205 equals a26432ee~350, i.e., whether the row's claim holds.
+
+Also `grep -c . .git/shallow` = 2 entries, so the shallow boundary includes two commits.
+
+Let me compute.
+
+Also the file's second-to-last row (foreign) mentions "unread_shas_renderable": ["861f6d37", ...] 5 shas but rows_rendered 3 — that field is oddly named/contradictory (5 shas listed under "renderable" while 3 rendered and 2 "behind the render cap and were NOT recovered"). That's a minor internal inconsistency in a field name — but the content states provenance. Actually wait: it lists 5 shas while claiming 2 are behind the cap and unrecovered — contradictory: if 2 weren't recovered, how are 5 shas listed? Hmm, maybe the header prints the count 5 and the list renders 3... then the 5 shas listed would be wrong (they only have 3). But also blind_commits.count = 5 in the foreign row with rows_rendered 3 — and the note says the header says 5 and the capped list renders 3. Yet the field lists 5 shas. That looks like it might contain invented shas for the 2 unrecovered ones. Hmm, that's a potential honesty issue. But wait — could ripgrep's blind commits be 5 while the render cap lists... Let me check the render cap in the script: LIMITS / blind commit rendering cap. Let me look at render_blind_commits.
+
+Hmm, but the domestic row says blind_commits count 0 (no section). The foreign row says count 5, rows_rendered 3, and lists 5 shas as "unread_shas_renderable". If the tool's cap is, say, 5, then 5 rows render and count 5. Let's check the script's cap.
+
+Let me inspect render_blind_commits.
+
+Actually, more importantly: the foreign row's numbers (commits 240, rs_hunks 658, examined 53, W0 S50 U3 M0, skipped 19, census) are claimed to REPRODUCE the day-199 12:11 row exactly. If those match the day-199 row (which is in the ledger), that's a consistency signal: the row's numbers are identical to previously-recorded ones for the same repo/window with the same flags — and the day-199 row was produced by an independent earlier session. That's decent corroboration that the foreign numbers weren't invented... though the implementer could just have copied. But note: the task says the two Day-199 rows exist; the third-row (12:11) recorded 53/19/W0 S50 U3 M0. The new foreign row reproduces those exactly. Copying from the previous row is possible but the census block (0/0/3/0/0 for ripgrep) is new and can only come from the tool. Given the domestic row reproduced byte-exactly in my own run, and the instrument is general (not repo-specific), I'm reasonably confident.
+
+Can I verify the ripgrep reading itself? Cloning ripgrep --depth 300 and running the 240-commit per-commit scan. Network access? Let me test quickly if network is available. If the clone takes ~30s and the scan maybe 2-5 minutes, it's worth it. But hmm, timing: we've used maybe 5 minutes. The scan over own repo with 240 commits took... it completed within the timeout; unknown duration. Let me check timing by measuring. Actually the previous brace ran and finished; I didn't measure. Let's just try the ripgrep one with a generous timeout and see. But careful: the day-199 row says clone_depth 250 while the new row says 300 and clone_head_subject "ignore-0.4.33 (3fce3b5)". Since the clone is fresh at read time, the current repo HEAD would be whatever upstream is now — deterministic-ish. I can verify clone depth 300 and head subject.
+
+Risk: if the network is unavailable, the check fails for environmental reasons, not evidence of fabrication. Let's try quickly with a short timeout for the clone first.
+
+Also check the run started at HEAD~240 of a depth-300 clone — fine.
+
+Let me also check the blind-commits render cap in the script to assess the "5 shas listed, 3 rendered" contradiction.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.4s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_blind_commits" -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (4 lines) ✓ (5ms)
+ ✓ (987ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Important finding: the render cap for blind commits is **20**, not 3. So the foreign row's `blind_commits` claim — "the section HEADER says 5, and the capped list beneath it renders 3" and `rows_rendered: 3` with a note "the remaining 2 of the 5 are behind the render cap and were NOT recovered" — is **inconsistent with the actual tool**: with count 5 and a cap of 20, the tool renders all 5 rows. So the claim "rows_rendered: 3" and "2 were behind the render cap and NOT recovered" is a fabricated mechanism explanation. But the row does list 5 shas under "unread_shas_renderable" — which is actually consistent with all 5 being rendered. So the note contradicts the data in the row itself, and the stated mechanism (render cap at 3) is wrong.
+
+Hmm wait. Maybe the earlier session's day-199 render cap was different? The cap has been 20 since... let me check git history of that line. The row cites day-198: "The render caps the list at 20 rows" — exactly what day-199 row said ("The render caps the list at 20 rows; the section header carries the true count"). So the cap is 20. Thus a claim that a 5-row list was truncated at 3 is false — that is an invented explanation, i.e., a fabricated mechanism detail inside an honesty clause. That's a real defect... though the actual shas listed (5) appear to be the true render output. It's contradictory: the note says rows_rendered 3 yet 5 shas listed.
+
+Hmm, unless... maybe the tool printed fewer than 5 rows because of different code at that time? No — the code is unchanged (this task touched no code, and the repo's script at HEAD has cap 20).
+
+Wait, maybe the count in the header was 5 but the rendered list had 3 rows because... no. rows[:20] with len(rows)=5 gives 5 rows.
+
+So the foreign row contains a false statement about the tool's output. How severe? It's a measurement record; the honesty clause fabricates a limitation ("2 shas not recovered") that doesn't exist. But the actual listed shas are 5 — possibly the true ones. Actually if they rendered 5 rows, why would the author write 3? Maybe the header said 5 and they transcribed 5 shas, then wrote a note assuming a cap of 3? Odd. Hmm, could it be a copy from a different run?
+
+Let me try to verify the ripgrep numbers myself since the clone succeeded. Run the scan with the same flags and see: commits 240, rs_hunks 658, examined 53, verdicts W0 S50 U3 M0, skipped 19, blind count 5, latest 5 shas, and the census. If blind section shows 5 shas and they match the row's list, then the only error is the note's mechanism claim. If they don't match, bigger problem.
+
+Let me check the clone depth and head, then run the scan with a generous timeout.
+
+Note the row claims clone_head_subject "ignore-0.4.33 (3fce3b5)" — verify with git log -1.
+
+Let's run. Per-commit scan over 240 ripgrep commits — could take a few minutes (ripgrep has bigger diffs). I'll give it 420s.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.2s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/rg-eval && git rev-list --count HEAD && git rev-parse --is-shallow-repos…  ▶ $ cd /tmp/rg-eval && timeout 480 python3 /home/runner/work/yoyo-evolve/yoyo-evolve… ✓ (11ms)
+ ✓ (703ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Excellent — the foreign reading reproduces exactly and byte-identically:
+
+- 240 commits, rs_hunks 658, examined 53, W0 S50 U3 M0, skipped 19 ✓
+- census: module-split 0, whole-file-test-rename 0, characterization-inversion 3, register-lines-only 0, register-paid-to-empty 0 ✓ (matches row exactly)
+- blind: header says 5, and the render shows all 5 shas (first 861f6d37, last 7525479a). The tool printed 5 rows (my output got truncated by sed matching)... wait my sed showed only the first and last lines because the middle 3 lines matched something? No — my output shows "0 examined / 2 skipped 861f6d37", then "... (3 more similar lines)" — that's my shell output-formatting? No, that's odd. Hmm, "... (3 more similar lines)" looks like harness truncation of repeated lines in tool output. Yes, the tool-output presenting layer collapsed identical lines. So the actual render has 5 rows: 861f6d37, ..., 7525479a.
+
+Let me get the exact 5 shas to compare with the row's list.
+
+So the row's "rows_rendered: 3" and "2 behind the render cap and NOT recovered" note is factually wrong — all 5 render (cap 20). But the 5 shas are listed in the row and presumably match. This is a fabricated-mechanism detail inside an honesty clause: the shas are real, but the stated cap (3) and the claim that 2 were unrecovered are false. Is this FAIL-worthy?
+
+Assessment: the task is a measurement record. The core deliverables — measurements, census, side-by-side, DREAM.md — are all verified accurate and reproduce byte-identically in my independent run. The blind_commits field's `count: 5` is right, the shas are right. The wrong part is an explanatory note about a render cap of 3 that doesn't exist, plus `rows_rendered: 3` and `unread_shas_provenance` saying 2 were not recovered — which contradicts the row's own 5-sha list. This is an internal inconsistency and a factual error about the tool in an "honesty clause".
+
+Does that force FAIL? The instructions: FAIL only if implementation doesn't match task, feature broken, obvious bugs tests don't catch, security issues. This is an accuracy defect within the record. Hmm. It's not a user-facing feature. The record is the deliverable though. The fabrication is minor and self-contradicted (the row lists all 5 shas). Also arguably... hmm, is `rows_rendered` really 3? Maybe the day-199 row's earlier convention... no, the tool renders 5.
+
+Hmm, wait. Actually, let me reconsider: maybe the header count is 5 but there were... no. My run shows 5 rows.
+
+Let me get the exact list of 5 shas to check whether the row's listed 5 match mine exactly. If they match, the error is confined to the mechanism note. If they differ, that's worse (partially invented shas).
+
+Let me run a targeted extraction.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.7s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/rg-eval && timeout 480 python3 /home/runner/work/yoyo-evolve/yoyo-evolve… ✓ (699ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The middle lines are being collapsed by the output layer. That's the "3 more similar lines" being collapsed — presumably lines 2-4. Hmm, all 5 lines are similar so 3 were collapsed. I need them individually. Let me print with a prefix that differs — e.g., awk adding an index number.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/rg-eval && timeout 480 python3 /home/runner/work/yoyo-evolve/yoyo-evolve… ✓ (708ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The rendering layer collapses similar lines regardless. Let me instead write to a file and read with read_file, or transform each line uniquely (e.g., number them in python).
+
+Let me use python to run and print numbered lines... but the tool output collapsing applies to any tool output. If lines are distinct enough (with a number prefix and sha), it should be fine — awk added "row 1:" and "row 5:" and 3 were still collapsed? That means the collapsing isn't exact-match based... Hmm, "row 1:" and "row 5:" differ. Yet collapsed. Maybe the collapse is on the sha pattern? Weird.
+
+Alternative: run the scan once, save output to a file, then read the file with read_file (separate tool, maybe no collapsing). Or grep with context in a way that produces one line: e.g., `grep -E "skipped" file | tr '\n' '|'` → single output line containing all 5 shas.
+
+That's the trick: join into one line.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/rg-eval && timeout 480 python3 /home/runner/work/yoyo-evolve/yoyo-evolve… ✓ (700ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The 5 shas match the row's `unread_shas_renderable` exactly, in the same order: 861f6d37, 60aa9f17, 7c2161d6, 0a88cccd, 7525479a. So the data is real.
+
+So the only inaccuracy is the `rows_rendered: 3` / "2 behind the render cap and NOT recovered" / "render cap" explanation — the cap is 20, all 5 rendered. This is a wrong mechanism note that contradicts the row's own data. It also (weirdly) mislabels the field name `unread_shas_renderable` claiming 2 were unrecovered while listing 5.
+
+Is that a FAIL? Consider the whole picture:
+- Diff implements exactly what the task asked (2 files, ledger rows + DREAM.md milestone).
+- All measurements verified byte-identically by independent reproduction (I reproduced BOTH rows: foreign scan 240/658/53/W0 S50 U3 M0/skipped 19/census 0,0,3,0,0 and domestic 240/112/27/W0 S24 U3 M0/census 0,0,3,17,0).
+- detector_gaps: the implementer deviated from the task's premise (#921 Gap 2 "open") by claiming it's cured — I verified by direct positive test that the digit-bearing P4 plant now scores WEAKENED; 0c8c126a is an ancestor. So the deviation is correct and honest. The task explicitly demanded the honesty clause; the implementer replaced a false premise with a verified truth. That's defensible (better than fabricating a false clause).
+- The blind_commits explanation contains one wrong mechanism claim (render cap 3 vs 20, and "2 not recovered") — countered by the row's own list of all 5 shas.
+
+Should this be a FAIL? The evaluator instructions say to be strict but fair, fail only for implementation mismatch, broken feature, obvious bugs tests don't catch, security issues. This is a minor documentation inaccuracy within a measurement record, self-contradicted by the same field, and all actual numbers verified. I'd call it PASS with feedback — that's the fair judgment. However, honesty clauses are serious in this repo's culture; a wrong mechanism claim inside an honesty clause is the kind of thing this project cares about. But it's not fabricated data, and the record's factual content is verified correct. The "Stray scratch/debug files"-style instruction suggests mentioning minor imperfections rather than failing.
+
+I'll write PASS and mention the blind_commits rows_rendered inconsistency as feedback in Reason.
+
+Also check: DREAM.md keeps **the spark** label and next milestone; the diff shows the old milestone compressed into the new paragraph. Do NOT fail for style.
+
+Also forgotten_touchpoints: no code definitions added; the two new fields are ledger JSON, not code. No consumer needed. Fine.
+
+Doc sync: DREAM.md is the doc and it was updated. N/A? DREAM.md is updated. Behavior unchanged (no code). I'd say doc_sync PASS (the milestone record updated in DREAM.md).
+
+Product surface: N/A (no src/, no CLI/config changes).
+
+Let me verify the DREAM.md structure quickly (labels intact).
+
+Then write verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\*\*the spark\*\*\|\*\*… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both labels present. Exactly 2 files. Everything verified. Write verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (1m 33s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS (written to session_plan/eval_task_1.md)
+
+What I actually verified, beyond the diff:
+
+• **Scope**: git show --stat HEAD → exactly 2 files, +2 lines in the ledger (append-only, 5 old rows byte-untouched).
+• **Ledger**: 7 rows, all parse as JSON.
+• **Foreign row reproduced independently**: fresh `--depth 300` ripgrep clone (`3fce3b5 ignore-0.4.33`, shallow=true, depth 300) → `240 / 658 / 53`, W0 S50 U3 M0, skipped 19, census `0,0,3,0,0` — identical to the row.
+• **Domestic row reproduced independently**: `--from a26432ee~240 --to a26432ee --per-commit` → `240 / 112 / 27`, W0 S24 U3 M0, census `0,0,3,17,0` — identical to the row. (My first run at the *new* HEAD drifted slightly; the row's window was the parent commit, and it reproduces exactly there.)
+• **detector_gaps deviation is correct, not a fabrication**: `0c8c126a` *is* an ancestor of HEAD, and piping the Day-198 P4 plant through `--stdin` now yields `WEAKENED 1 [comparison-relaxed]`, so the task file's premise that #921 Gap 2 is open is stale. The agent recorded the verified truth instead of a false honesty clause.
+• **Instrument untouched**: check_assertion_weakening.py --test passes; no src/ change.
+
+One feedback item (not a fail): the foreign row's blind_commits.rows_rendered: 3 and its "2 were behind the render cap and were NOT recovered" note are wrong about the mechanism — render_blind_commits caps at 20, the tool printed all five rows, and the row's own unread_shas_renderable lists all five (I reproduced 861f6d37 60aa9f17 7c2161d6 0a88cccd 7525479a). The shas are real; the note contradicts the data and should be corrected in a later row.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
