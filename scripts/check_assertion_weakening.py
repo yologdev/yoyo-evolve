@@ -631,6 +631,9 @@ def _relaxed_comparison(removed: str, added: str) -> str | None:
       * `==` traded for an inequality (relaxed) or the reverse (tightened).
       * the same inequality operator with a single integer literal moving in the
         permissive direction (`> 3` -> `> 1`) or the strict one (`> 3` -> `> 5`).
+        The one-integer requirement is applied to the CONDITION, never the message: a
+        digit in the message is explicitly not counted (#921 Gap 2 -- see
+        `assert_condition`).
 
     An `assert_eq!(x, 3)` -> `assert_eq!(x, 4)` is deliberately *neither*: a changed exact
     expectation is a different claim, not a looser one, and calling it weakening would be
@@ -3230,6 +3233,36 @@ def run_self_tests():
     v = classify_assertion_change([p4_removed], [p4_added])
     check("gap2 P4 verdict", v.verdict == WEAKENED, v)
     check("gap2 P4 shape", S_COMPARISON_RELAXED in v.shapes, v.shapes)
+
+    # ANTI-VACUOUS, PER COMMIT AND NOT PER WINDOW. Day 198's whole lesson was that the
+    # WINDOW count was non-zero while the blind plant's own commit read
+    # `test_file_hunks_examined = 0`, so agreement reached one layer below (via
+    # `classify_assertion_change` directly, above) does not show the P4 shape is reached
+    # by the path `--per-commit` actually sums. The fixture below is the SHAPE
+    # `git_diff_one_commit` hands `scan_diff` -- one commit's diff, header and all.
+    p4_commit_diff = "\n".join(
+        [
+            "diff --git a/tests/flags.rs b/tests/flags.rs",
+            "index 1111111..2222222 100644",
+            "--- a/tests/flags.rs",
+            "+++ b/tests/flags.rs",
+            "@@ -10,3 +10,3 @@ fn t() {",
+            "-" + p4_removed,
+            "+" + p4_added,
+        ]
+    )
+    p4_findings, p4_rs, p4_test, _p4_sk, _p4_census = scan_diff(p4_commit_diff)
+    check(
+        "gap2 PER-COMMIT ANTI-VACUOUS: the commit's hunk is EXAMINED, not blind",
+        p4_rs == 1 and p4_test >= 1,
+        (p4_rs, p4_test),
+    )
+    check(
+        "gap2 PER-COMMIT: the same fixture reads WEAKENED through scan_diff",
+        [f.verdict for f in p4_findings] == [WEAKENED]
+        and S_COMPARISON_RELAXED in p4_findings[0].shapes,
+        [(f.verdict, f.shapes) for f in p4_findings],
+    )
 
     # NEAR-MISS, and it runs in the OPPOSITE direction: a genuinely TIGHTENED comparison
     # carrying the same message digit must still be STRENGTHENED and must never flip to
