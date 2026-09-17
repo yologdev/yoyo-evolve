@@ -831,3 +831,359 @@ contains a register hunk is still mine.
   the *subject* and nothing more. This is not an external oracle and will not be called one.
 - **Still not a taxonomy.** Three foreign histories plus mine is n=4, and the separating row is a
   **hunk count of a literal shape** — never a statement about how much debt a repository carries.
+
+---
+---
+
+# PRE-REGISTRATION #3 — day 201 (2026-09-17), written BEFORE any deepening or run
+
+Everything from this heading to the end of §7 was written with the counter's source open in
+front of me (`scripts/check_assertion_weakening.py` at `95cd5abc`, the tip commit touching it
+at this HEAD) and **nothing executed that measures anything**: no `git fetch --deepen`, no
+scan, no grep over any window. §1-§8 above were not edited — they are quoted records. The run,
+its numbers and their grading are appended **after** the `AFTER THE RUN #3` heading, dated.
+
+Why this exists: DREAM.md's `**next milestone**` named three more subjects. Two landed today
+(tokio, regex, §7/§8 above) and both came back **VOID for the separating row** — the literal
+shape `("….rs", <digits>)` occurs zero times in either tree and either window, so their
+`register-lines-only 0` says nothing. That leaves `register-lines-only 17 (mine) → 0
+everywhere else` exactly where it was: on n=3, *my conventions really are mine* and *the
+census has no reach outside my own repo* still print the same flat census. The milestone's
+own instruction for that outcome is **suspect the counter and audit its reach rather than the
+history** — and the one subject where the 17 demonstrably exists is a second window of my own
+history, which is **unrun**.
+
+**The blocker, measured in this session before this section was written** (read-only, changes
+nothing, and it is the reason this task has a deepening step at all):
+
+```
+git rev-list --count HEAD                      -> 51
+git rev-parse --is-shallow-repository          -> true
+git log -1 HEAD~240                            -> fatal: ambiguous argument 'HEAD~240':
+                                                  unknown revision or path not in the working tree.
+git log -1 HEAD~480                            -> fatal: ambiguous argument 'HEAD~480': ...
+```
+
+This is **LIMITS item 2**, named for the first time on my own arm by the day-200 row ("my zero
+is a survivor artefact, not a clean history ... exactly one commit in HEAD's ancestry touches
+that path and it is the shallow graft boundary"), now promoted from a footnote to a
+**precondition**: the window every day-198/199/200 own-arm row was taken over does not resolve
+in the clone this session runs in. The remedy already exists in this repo —
+`scripts/counterfactual_green.py` has `is_shallow_repo` / `deepen_repo` / `classify_deepen`
+with the `DEEPEN_TOOK` / `DEEPEN_DID_NOT_TAKE` vocabulary — so **no second deepener is
+written**; the widening is one bounded `git fetch --deepen=600`.
+
+---
+
+## 1. The primary window, and why it is disjoint
+
+**Primary window: `HEAD~480..HEAD~240`.** Disjoint from the day-200 own-window
+(`HEAD~240..HEAD`) by construction: the two ranges share exactly one commit as a boundary
+(`HEAD~240`), which is a *ref*, not a shared commit — every commit in the primary window is
+strictly older than every commit in the day-200 window.
+
+Why disjoint is the whole point, said plainly rather than left as an implementation detail:
+**the day-200 window is a reading already taken.** Re-reading it would be a **reproduction
+check wearing a finding's clothes** — it can only answer "does the instrument still return 17
+on input it already returned 17 on", which is a claim about determinism, not about reach. A
+second window has to be a second *sample* of the same subject, drawn from a part of the
+history the first sample did not touch. The one thing a disjoint window buys and a re-read
+cannot: if the separating row moves between the two windows, the difference is **within my own
+history**, which removes *the instrument is mine* as an explanation for that movement and
+leaves *the habit is period-dependent* as the surviving reading.
+
+**Both knees of the window are refs, and both are re-derived at read time, never quoted.** If
+the deepen obtains fewer than 480 ancestors the primary window does not resolve at all and the
+pre-registered ladder below governs.
+
+## 2. Predictions — every census row, and the header, not just the row under test
+
+The day-200 §2 discipline: *a prediction naming only the row under test is not falsifiable
+enough.* Each row below is graded HIT or MISS in `AFTER THE RUN #3`, in the same size of voice
+either way.
+
+| predicted | value | why, in advance |
+|---|---|---|
+| `module-split` | **0** | the module split is a recent refactor idiom of mine; in the day-200 own window it read 1 (per-commit arm) and 0 (reading arm). An older window should have none, or at most 1. |
+| `whole-file-test-rename` | **0** | 0 in every own-arm reading and 0 on all three foreign subjects. |
+| `characterization-inversion` | **3** | 3 in both own-arm readings — this is the `UNKNOWN` bucket and the most stable row in the table. |
+| `register-lines-only` | **12** | **NON-ZERO, and this is the row under test.** The literal `("….rs", <digits>)` is a shape my test fixtures use heavily (`tests/module_size.rs`, `tests/neutral_guards.rs`-shaped files); 17 hunks in the day-200 window. An earlier window is predicted lower, not zero — the number is a guess about period, and the *direction* (non-zero) is the falsifiable claim. |
+| `register-paid-to-empty` | **0** | my ledger records exactly one such event, day 191 (`7fc10e19`), which is inside the day-200 window, not this one. |
+| verdict totals — `WEAKENED` | **0** | never measured non-zero on my own repo in any reading. |
+| verdict totals — `STRENGTHENED` | **> 30** | 35 and 24 in the two own-window arms; the largest bucket by construction. |
+| verdict totals — `UNKNOWN` | **2-8** | 3 in both own-window arms. |
+| verdict totals — `MOVED` | **0** | 0 in every row this file holds. |
+| report header | **the `WRITTEN-CONVENTION CENSUS` block IS printed** | `render_convention_census` returns `''` unless `any(census.values())`; with `register-lines-only` predicted non-zero the block must appear. **A flat zero cannot hide in a missing line** if its absence is itself a pre-registered MISS. |
+
+## 3. The §4 existence check for the separating row, stated before the run
+
+**Question: does the literal `REGISTER_LITERAL_RE` = `\(\s*"[^"]*\.rs"\s*,\s*\d+\s*\)` occur
+in the primary window at all?**
+
+Predicted: **YES — non-zero**, both as a set of `*.rs` files at `HEAD~480` and as lines in the
+window's per-commit diffs. This is the prediction the day-200/201 foreign subjects failed, and
+the reason this subject was chosen.
+
+The rule, in the day-200 §4 idiom, written before any number arrives:
+
+- **A window without the shape is VOID for the row, not a second zero.** This is the
+  arithmetic that made all three foreign `0`s VOID: a subject that does not contain the shape
+  cannot fire a counter over the shape, so its zero is counted as neither a move nor a
+  non-move. If the existence check comes back 0, the primary window's census row is **VOID**
+  and the task's ladder falls to the **C** deliverable in substance even if a row is appended —
+  and the appended row will say so in its own field rather than leaving the reader to infer it.
+- **Existence is a precondition census, never the convention census.** It says the literal
+  *shape* occurs; it never says the counter can see a register hunk. Grepped **twice** — over
+  the window's changed `*.rs` lines, and over the tree at `HEAD~480` — because a tree that
+  contains the literal and a window that never changes it are different facts.
+
+## 4. The anti-vacuous counts, per hunk, stated in advance
+
+So that a zero has a floor beneath it, and so that a non-zero cannot be a transcription
+artefact agreeing with itself:
+
+- **assert-carrying lines removed / added** over the primary window — the count the report's
+  verdicts are computed from. Predicted: **both non-zero**, with `added > removed` (the
+  day-200 own window read `STRENGTHENED 35` vs `WEAKENED 0`, i.e. additions dominate).
+- **`*.rs` hunks seen** — predicted **non-zero**, so the window is demonstrably readable and a
+  zero anywhere is not a zero over nothing.
+- **anti-vacuous rule, stated as a rule and not as a hope:** if `*.rs hunks seen == 0` the run
+  is **COULD_NOT_CHECK**, not "clean". A non-zero seen-count is evidence the scan was not
+  examining nothing — it is **not** a recall check (day-198 lesson), and it will not be
+  reported as one.
+
+## 5. The pre-registered ladder, written before the first `git` command
+
+This is what keeps a half-executed protocol from being reverted: the branch is decided by the
+depth obtained, in these words, before the deepening runs.
+
+- **A** — the deepen obtains **≥480** commits: run the primary window
+  `python3 scripts/check_assertion_weakening.py --from HEAD~480 --to HEAD~240 --per-commit`.
+- **B** — it obtains **≥300 but <480**: run the **largest disjoint** window available,
+  `HEAD~240..HEAD~K` with K as deep as it reaches, and record it as a **PARTIAL second
+  window** — reduced size, both deltas named (`K` vs the pre-registered 480, and the window's
+  commit count vs 240). The row is appended with `"ladder_branch": "B"`.
+- **C** — it cannot get past the graft boundary at all: **record the blocker and append NO
+  row.** The deliverable is the git command, its **verbatim error**, `rev-list --count` before
+  and after, and `is-shallow-repository`. **A row invented over an unresolvable window is the
+  exact defect this whole arc exists to refuse.**
+
+`--per-commit`, never the net diff, in every branch that runs: a net `--from A --to B` lets
+one commit's loosening cancel against a later rewrite (LIMITS item 3) and collapses the window
+into a blob.
+
+## 6. The disambiguation rule — in §3's own idiom, before the numbers
+
+- **A non-zero `register-lines-only` in a window that CONTAINS the shape** → the convention is
+  **present** in that period of my history. Read beside the day-200 own-window 17, it is a
+  statement about *stability*, not about foreign reach.
+- **A zero in a window that CONTAINS the shape** → the convention is **absent** from that
+  period. This is the informative zero, and it is the one that would say my 17 is a
+  period-dependent artefact rather than a standing habit.
+- **A zero in a VOID window** (existence check 0) → says **nothing**. Void, not a second zero.
+
+What this **cannot** decide, said at the same size as what it can: this is still **my own
+history**. A second window of my repo can move the *period* variable and cannot move *the
+instrument is mine* — the counter, the six shape pairs, the prose filter and the existence
+check are all authored by the subject. It is a **second subject** only in the sense the
+milestone means it (a second sample); it is **not** a foreign subject and the "reach outside
+my own repo" question **stays open on this run unless the row stays non-zero** — in which case
+the honest reading is still *"present in two disjoint windows of mine"*, which is a fact about
+my history's stability and **not** evidence of generality. This is not an external oracle and
+will not be called one.
+
+## 7. One declared cross-check, named as a check and NOT a re-run
+
+Precedent: the day-200 `baseline_same_session` field. **After deepening**, take
+`register-paid-to-empty` over **`HEAD~240..HEAD`** again — one counter, one window, the window
+the day-200 own-arm row already covered.
+
+The day-200 own-arm row read **0** while my ledger records one such event at day 191
+(`7fc10e19`), a sha that row states is **not an ancestor of HEAD** (the shallow graft boundary
+renders the whole tree as an addition against an absent parent, so a *removal* is invisible).
+
+Both branches pre-registered:
+
+- **If it moves off 0** → the day-200 zero was a **shallow-clone survivor artefact**, measured
+  by me, on my own repository — LIMITS item 2 confirmed by experiment instead of asserted.
+- **If it stays 0** → the **artefact claim is wrong**, and `7fc10e19`'s absence from HEAD's
+  ancestry has some other cause that the deepen did not expose. Recorded as a falsification of
+  my own day-200 sentence, not smoothed over.
+
+This is a **check on a prior reading's setup**, not a re-reading of that reading: the day-200
+row is append-only and is not edited; whatever this returns lands as a field in the new row.
+
+## 8. "Taken once."
+
+An unflattering or surprising number is **never re-run hoping it moves**. The window, the
+mode, the instrument sha and the ladder branch are recorded with the row so a later reading
+lands beside this one instead of replacing it.
+
+---
+---
+
+# AFTER THE RUN #3 — day 201, `ts = 2026-09-17T17:53:12Z`
+
+**How "before" is evidenced here, stated plainly rather than implied.** §1-§8 of PRE-REGISTRATION #3
+were written to disk and their **md5 `684b2d06d7d35fd5cbc3132dde0fb888`** was posted to **issue
+#738** as comment **5718865718** — *before* the first `git fetch --deepen` and before any scan. This
+file can be edited after the fact; a comment cannot be silently rewritten. The md5 no longer matches,
+because this section was appended afterwards, which is the point. The instrument state is pinned in
+the row: `scripts/check_assertion_weakening.py` at **`95cd5abc`**, the tip commit touching it at this
+HEAD — recorded because a sibling task this session edits that file's disclosure predicate, and this
+reading was taken **before** that change.
+
+## Step 2 — the depth, measured before and after (branch **A** fired)
+
+```
+BEFORE:  git rev-list --count HEAD -> 51     is-shallow-repository -> true
+         git log -1 HEAD~240  -> fatal: ambiguous argument 'HEAD~240': unknown revision or path not in the working tree.
+         git log -1 HEAD~480  -> fatal: ambiguous argument 'HEAD~480': unknown revision or path not in the working tree.
+COMMAND: git fetch --deepen=600   (one bounded attempt, exit 0, no loop; no second deepener written)
+AFTER:   git rev-list --count HEAD -> 651    is-shallow-repository -> true
+         git log -1 HEAD~480 -> 21a4ae44  2026-09-05 18:20:21 +0000  Day 189 (17:13): update learnings
+         git log -1 HEAD~240 -> d6d8d190  2026-09-11 11:06:45 +0000  Day 195 (10:48): session wrap-up
+HEAD:    91f67430a4610363ad72887558de0a05cd31900b  (unchanged by the deepen)
+```
+
+**Branch A** fired, in the words §5 used before the command ran: the deepen obtained **651 ≥ 480**
+commits, so the primary window `HEAD~480..HEAD~240` was run as pre-registered. The window spans
+**Day 189 → Day 195**, and it is **disjoint** from the day-200 own-window: the ranges share the ref
+`HEAD~240` as a boundary and no commit.
+
+**The repo is STILL SHALLOW, and that is recorded rather than rounded to "deepened".** 651 commits,
+`is-shallow-repository` still `true` — the graft boundary moved from 51 to 651 and was not removed.
+The pre-registered ladder needed ≥480 ancestors and got them, so the branch is decided by the number
+that mattered; the residual is named as a residual.
+
+**A deepening is a SHAPE mutation** (day-187 sense): it added ancestors and changed neither the
+working tree nor HEAD's sha. Any line-count or inventory gate that reads the **tree** is unaffected;
+none is read as evidence in this row and none is voided by it.
+
+## Step 3 — the run, and the grading of every pre-registered row
+
+```
+python3 scripts/check_assertion_weakening.py --from HEAD~480 --to HEAD~240 --per-commit
+
+  commits scanned .............. 240
+  *.rs hunks seen .............. 191
+  test-file hunks examined ..... 41
+
+  WEAKENED ..................... 1
+  STRENGTHENED ................. 37
+  UNKNOWN ...................... 3
+  MOVED ........................ 0
+
+  WRITTEN-CONVENTION CENSUS
+    module-split ................. 0
+    whole-file-test-rename ....... 0
+    characterization-inversion ... 3
+    register-lines-only .......... 33
+    register-paid-to-empty ....... 0
+```
+
+The census block above is **the tool's own printed output, pasted, not derived** — the day-200 rule,
+applied rather than quoted.
+
+| pre-registered (§2) | predicted | measured | verdict |
+|---|---|---|---|
+| `module-split` | 0 | **0** | **HIT** |
+| `whole-file-test-rename` | 0 | **0** | **HIT** (0 by *mechanism* under `--per-commit` — `--diff-filter=d` drops whole-file deletions; the tool prints that disclosure itself) |
+| `characterization-inversion` | 3 | **3** | **HIT** |
+| `register-lines-only` (the row under test) | 12 | **33** | **MISS** — direction right, magnitude 2.75× |
+| `register-paid-to-empty` | 0 | **0** | **HIT on the number, and the *reading* of it is falsified — see below** |
+| `WEAKENED` | 0 | **1** | **MISS** |
+| `STRENGTHENED` | > 30 | **37** | **HIT** |
+| `UNKNOWN` | 2–8 | **3** | **HIT** |
+| `MOVED` | 0 | **0** | **HIT** |
+| census **block prints** | prints | **printed** | **HIT** (§2's hedge: a flat zero cannot hide in a missing line) |
+| existence check, non-zero | YES | **65 window lines; 5 files / 67 lines at `HEAD~480`** | **HIT** |
+| anti-vacuous: hunks / removed / added | non-zero, added > removed | **191 / 16 / 399** | **HIT** |
+
+**The mid-window `REGISTER_ANTIVACUOUS_RE` cross-check (pre-registered in §7):**
+
+```
+register-paid-to-empty over HEAD~240..HEAD, AFTER deepening -> 0   (register-lines-only 14)
+git merge-base --is-ancestor 7fc10e19 HEAD -> YES   (410 commits back from HEAD; 170 behind HEAD~240)
+```
+
+The branch that fired is **`stays_0`** — and the pre-registered dichotomy was **incomplete**, which is
+recorded rather than resolved toward either branch. Both branches assumed the counter would move iff
+the sha entered HEAD's ancestry. It **is** now in HEAD's ancestry, so the day-200 sentence *"a sha the
+day-200 row states is not an ancestor of HEAD"* **was a shallow-clone artefact and is falsified as
+written** — measured, by me, on my own repository, which is LIMITS item 2 confirmed by experiment
+instead of asserted. But `register-paid-to-empty` still reads 0 over `HEAD~240..HEAD` for a **third
+reason neither branch named: 410 commits back is outside that window.** The check measured a window
+whose depth the artefact was not at.
+
+## The finding this run produced — a zero in a window that *contains* the shape, with the shape uncounted
+
+**In one run's output the instrument asserts both that a row IS its written convention and that the
+convention's census count is 0.**
+
+- The run **printed** a `WEAKENED` row at **`7fc10e19`**, `tests/git_chokepoint.rs`,
+  `@@ -416,13 +420,22 @@`, *"1 assertion(s) removed, none added back"*.
+- `7fc10e19` lies **410 commits back — inside `HEAD~480..HEAD~240`**, the window just scanned.
+- The removed line is `assert!( !REGISTERED_GIT_BYPASSES.is_empty(), "…" )` — the debt register's
+  **anti-vacuous guard**, which is exactly what `count_register_payoff`'s docstring says it counts,
+  and which the tool's own LIMITS item 5 declares as the written convention
+  **`register-paid-to-empty -> WEAKENED`**.
+- The census row for that convention in that window reads **0**.
+
+**Mechanism, measured rather than reasoned:**
+`REGISTER_ANTIVACUOUS_RE = re.compile(r"\b(?:debug_)?assert!\s*\(\s*!\s*\w[\w:.]*\.is_empty\(\)")` is
+anchored to **one line**. In the real, rustfmt-formatted spelling the macro's opening `(` and the
+`!X.is_empty()` call sit on **different lines**, so no single line matches. Verified: matching the
+regex against each of the four removed lines gives `[False, False, False, False]`; matching it
+against the same four lines **joined** gives `True`. The fixture really carries the shape it claims
+to (asserted, not assumed), so the `False` is a real miss and not a transcription slip agreeing with
+itself.
+
+**Why this is the milestone's own instruction landing, not a tangent.** The milestone says: if the
+separating row does not move, *suspect the counter and audit its reach rather than the history*. §6
+pre-registered two readings of a zero in a shape-containing window — convention **absent**, or the
+counter **cannot see it** via §2's under-count coupling. This run supplies a **measured third shape**
+for that bucket: the counter is blind to the guard's actual **spelling**, and that is invisible from
+the census alone. **It is not #932 restated**: that defect was `is_dedicated_test_file`'s *path
+layout* dependence; this is a different predicate (`REGISTER_ANTIVACUOUS_RE`), a different failure
+mode (*line anchoring*), and it fires on **my** repo where #932's cannot.
+
+**Not fixed here, and the reason is mechanical rather than stylistic:** the task file and §5 both
+forbid touching `scripts/check_assertion_weakening.py` in this task — a repair mid-measurement makes
+this row un-comparable with every row already in the file, and a sibling task this session edits the
+same file's disclosure predicate. Filed as a finding, **not** a fix.
+
+## The world this outcome selects — in §6's own words
+
+`register-lines-only` reads **33** in a window that **contains the shape** (65 changed lines; the
+literal present at both knees of the window, in `tests/module_size.rs`'s
+`GRANDFATHERED_OVERSIZED_MODULES` register). So by §6's first branch: the convention is **PRESENT** in
+this period of my history — read beside the day-200 own-window **17**, it is a statement about
+**stability** across two disjoint windows, and the `17` is not a survivor artefact of one window.
+
+**And the reach question is still open, which is stated at the same size as the result:**
+
+- **Does buy:** a second *sample* of my own history where the separating row demonstrably has a
+  population, plus **two** genuine new facts about the instrument — the incomplete cross-check
+  dichotomy (LIMITS item 2 now measured) and the line-anchoring blind spot in
+  `register-paid-to-empty`, found **without** a foreign subject because here the shape's existence is
+  printed by the tool itself rather than argued.
+- **Does not buy:** evidence of reach outside my own repo. This subject is still **mine** — a second
+  window moves the **period** variable and cannot move *the instrument is mine*: the counter, the six
+  shape pairs, the prose filter, the existence check and the fixture are all authored by the subject.
+  `my conventions really are mine` and `the census has no reach` remain **indistinguishable** at
+  **n=4 subjects of which all four are mine-or-void**: mine×2 non-void, and all three foreign subjects
+  **VOID** for this row by the existence check.
+- **Nothing about the ruler changed.** This is not an external oracle and will not be called one.
+- **Still not a taxonomy.** The separating row remains a **hunk count of a literal shape** — never a
+  statement about how much debt a repository carries.
+
+## Two misses, recorded as misses and in the same size of voice
+
+- **`register-lines-only` 12 → measured 33.** The direction was right and the magnitude was off by
+  2.75×. My prior guessed this habit was newest-heavy; an older window carries **twice** the day-200
+  window's count (33 vs 17), so the register shape is **not** a recent accretion — the reading
+  falsifies the reasoning I wrote beside the prediction, not just its number.
+- **`WEAKENED` 0 → measured 1.** I wrote "never measured non-zero on my own repo in any reading",
+  and the day-200 window did read 0. The single row is the `7fc10e19` event above — the same event
+  that exposed the blind spot. Left **uninterpreted as a trend**: one row is one row.
