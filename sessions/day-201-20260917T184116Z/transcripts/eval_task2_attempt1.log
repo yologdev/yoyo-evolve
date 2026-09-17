@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me judge the diff against the task. Let me look at the actual file to verify key claims, particularly the predicate change and the names disclosure.
+
+Key task requirements:
+1. Fix `is_dedicated_test_file` to recognize `tests/` path segment; keep `_tests.rs`.
+2. Three tests in run_self_tests.
+3. Measure whether other disclosure ("commits the vocabulary could not read at all") is gated by same predicate.
+4. Step 2: surface names, sorted, deduped, capped with cap stated, nothing printed when no names.
+5. Tests (a),(b),(c).
+6. Two things stated in file: (1) what widening doesn't license (not comparable), (2) limit that doesn't move.
+7. Don't hardcode foreign macro names, don't change verdicts, don't edit dreams/*.
+
+Let me check the actual implementation for correctness. A few things to verify:
+
+- `is_dedicated_test_file`: `"tests" in path.split("/")[:-1] or path.endswith("_tests.rs")`. For a bare `tests.rs` path (no slash), split("/") = ["tests.rs"], [:-1] = [] → false. Good. For `src/tests.rs` → ["src","tests.rs"][:-1]=["src"] → false. Good. For `tests/x.rs` → ["tests","x.rs"][:-1]=["tests"] → true. For `tokio/tests/x.rs` → ["tokio","tests","x.rs"][:-1]=["tokio","tests"] → true. Good.
+
+- `is_skipped_unknown_vocabulary_hunk(hunk, verdict)`: checks is_rust_source, verdict is None, is_dedicated_test_file, has_unrecognised_test_vocabulary.
+
+Wait — there's a potential behavior change: the original inline code was `if dedicated and has_unrecognised_test_vocabulary(...)`. Let me check what `dedicated` was. In scan_diff, `dedicated = is_dedicated_test_file(hunk.path)`. And is_rust_source check? Let me look at the surrounding code to see if the rust-source check is already done. Let me read the file.
+
+Also need to check: in the scan_diff, is `verdict` None at that branch? The original code path: `if verdict is None: ... if dedicated and has_unrecognised...: skipped += 1; continue`. So verdict is None there. The new helper re-checks verdict is not None → returns False. Fine.
+
+But wait, is the is_rust_source check already applied before reaching this branch? If a hunk is not rust source, would it be counted? Let me read scan_diff.
+
+Let me actually read the relevant portions of the file.
+
+Also check that `render_report` signature default `skipped_names=None` and calls `render_unread_vocabulary_names(skipped_names)` — passing None works (returns ""). Good.
+
+Let me check the test for `render_report([], 1, 1, 0, "FIXTURE", 40, 3)` — positional args. Original signature: render_report(findings, rust_hunks, test_hunks, moved?, window?, max_findings, skipped_unknown_vocab, census=None, skipped_names=None). Need to verify positional order. The diff shows `skipped_unknown_vocab=0, census=None, skipped_names=None` at the end. So render_report([],1,1,0,"FIXTURE",40,3) sets skipped_unknown_vocab=3. And rep_skip presumably existing. Fine.
+
+Let me verify the code compiles logically and there's no leftover issue. Build/tests pass per harness.
+
+Let me actually inspect the file to confirm. I have 10 minutes; I'll do a focused check.
+
+Key concern: whether `unread_vocabulary_names` filters correctly and whether names include `assert_eq!` exclusion. The test expects `names == ["#[cfg]", "check_that!", "eqnice!"]`. In the fixture, there's `assert_eq!(x, 1);` added line — the vocab matches `assert_eq!` so filtered. Good.
+
+But wait: MACRO_NAME_RE search on the line `"     assert_eq!(x, 1);"` — vocab.assert_re. Does BUILTIN_VOCABULARY.assert_re match `assert_eq!`? Yes presumably.
+
+Also `#[cfg(unix)]` line: ATTR_NAME_RE match → group(1) = "cfg" (since regex `([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)` → "cfg"). names.add("#[cfg]"). Good. And `vocab.test_re.search(ln)` for `#[cfg(unix)]` — should not match, so added.
+
+Hmm, but `#[cfg(unix)]` is on the added side (`+`), and `eqnice!`/`check_that!` are removed. The hunk is a real rust hunk, verdict None. is_dedicated_test_file("crates/a/tests/it.rs") → split[:-1] = ["crates","a","tests"] → true. has_unrecognised_test_vocabulary → true (eqnice!). Good.
+
+Now `two_names_scan[3] == 1` — one skipped hunk. The diff has one hunk. Good.
+
+Now the important verification: does the implementation actually work end-to-end? Build and tests pass, and self-tests include the new rows. The harness ran `cargo test` but did it run `python3 scripts/check_assertion_weakening.py --test`? The build status says Tests: PASS — probably cargo test. The task's verification includes the python self-test. Let me run just that (quick) to confirm the new rows pass. That's a focused check.
+
+Actually the instructions say don't re-run full suite; but running the python self-test is a focused verification of the feature. Let me do it — it's the feature itself. Also maybe run the control pair manually.
+
+Let me read the file sections and run the python test.
+
+Let me also verify there's no behavior change to verdicts — the refactor moved the inline check into a function. Need to confirm `dedicated` and rust-source handling are preserved.
+
+Let me read scan_diff around the change.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && sed -n '…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_dedicated_test_file\… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The refactor preserves behavior: within the loop, is_rust_source check is before, verdict is None in that branch. But note: `is_skipped_unknown_vocabulary_hunk` re-checks `is_rust_source(hunk.path)` — fine, already true. Also checks `verdict is not None` returns False — already None. Good.
+
+However there's a subtle behavior change: previously `if dedicated and has_unrecognised_test_vocabulary(...)` — `dedicated` was computed once. Now `is_skipped_unknown_vocabulary_hunk` recomputes is_dedicated_test_file — same result. Fine.
+
+Now let me run the python self-test to verify feature works, and run the control pair manually.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/chec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && BODY='diff -… (13 lines) ✓ (88ms)
+ ✓ (175ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The self-tests pass, and the control pair round-trips correctly: tests/x.rs and tokio/tests/x.rs both report the skipped line + names line; src/latest.rs reports nothing. 
+
+Interesting: the names line shows `eqnice!` only, not `#[cfg]` — because the fixture here doesn't have the attribute. Fine.
+
+Wait, `src/latest.rs` shows the LIMITS text (since limits printed on every run) but no skipped line and no "names this" actual disclosure line. Good — the grep matched the docstring text inside LIMITS. That's fine.
+
+Now let me verify the "two things stated" requirements in the file — done in the diff (the SKIPPED_UNKNOWN_VOCABULARY block and LIMITS item changes). Let me quickly confirm the LIMITS item numbering claim: docstring says "(LIMITS item 7)" in one place and "item 6" elsewhere. Let me check. The diff comment says "must NOT be removed once one dialect is supplied (LIMITS item 7)" while the is_skipped docstring says "item 6 of LIMITS". Let me check what items actually are.
+
+The `_LIMITS_VOCABULARY` block: item 6 is described as the layout-independent predicate paragraph, item 7 is "THE VOCABULARY IS EXTENSIBLE, NOT DISCOVERED". So the comment "(LIMITS item 7)" refers to extensible → correct. But the unread_vocabulary_names docstring says "the same one item 6 of LIMITS carries". Hmm, item 6 is the skipped counter block — the "could not look" note. Actually that's roughly fine; minor mismatch but not a correctness failure. Let me check which item is the skipped counter. Let me read _LIMITS_VOCABULARY beginning.
+
+Actually the constant's docstring (line 78-ish SKIPPED_UNKNOWN_VOCABULARY) probably is "item 6". The minor doc reference discrepancy is a style/minor imperfection, not fail-worthy.
+
+Also the LIMITS item 7 text got merged awkwardly — "denylist of "boring" attributes. That is why the skipped count stays a permanent denominator disclosure and" appended onto the same paragraph. That's prose layout, fine.
+
+Now check the doc-sync: ARCHITECTURE.md updated (yes, big entry). CLAUDE.md says new history goes to ARCHITECTURE.md, not CLAUDE.md. So doc_sync PASS.
+
+Product surface: this is a script in scripts/, evolve-kind; no product surface (CLI flags unchanged). N/A? The disclosure behavior is tooling for the evolve loop, not product surface. It's not config defaults/CLI flags/wizard/startup. So N/A is arguable, but the task touches a script only. I'd say N/A... Actually, the script is used by the evolve loop, not shipped to product users. Product surface: N/A. Hmm but "N/A only if the diff touches no product surface" — it doesn't touch product surface (no src/ changes). N/A is legal.
+
+Let me quickly verify forgotten touchpoints: new functions:
+- MACRO_NAME_RE, ATTR_NAME_RE — used in unread_vocabulary_names. ✓
+- UNREAD_VOCABULARY_NAMES_CAP — used in render_unread_vocabulary_names default and tests. ✓
+- is_skipped_unknown_vocabulary_hunk — used in scan_diff and unread_vocabulary_names_in_diff. ✓
+- unread_vocabulary_names — used in unread_vocabulary_names_in_diff and render_unread_vocabulary_names? Actually render_unread_vocabulary_names doesn't call it; tests call it. It's called by unread_vocabulary_names_in_diff. ✓
+- unread_vocabulary_names_in_diff — used in _run and tests. ✓
+- render_unread_vocabulary_names — used in render_report and tests. ✓
+- skipped_names param in render_report — consumer in render_report body. ✓
+- skipped_names var in _run — consumer at render_report call. ✓
+
+All consumers present. Also no unused (clippy not applicable to python, but pyflakes... whatever).
+
+Note: `dedicated` variable in scan_diff still used for classify... yes passed to classify_assertion_change. ✓
+
+One thing: is there a potential issue with `unread_vocabulary_names` calling `vocab.assert_re.search(m.group(0))` — group(0) is the full match like "eqnice!(", and assert_re presumably is a compiled alternation of escaped names + `!`. Let me check BUILTIN_VOCABULARY.assert_re to ensure it matches e.g. "assert_eq!". If assert_re is `re.compile(r"\b(?:assert_eq|...)!")` then searching "eqnice!(" → no match → include. Good. And for "assert_eq!(" would match. Fine.
+
+But what if a name like `assert!` appears — filtered. Good.
+
+Now let me double check that the "identify other disclosure" step: the task mentions "commits the vocabulary could not read at all" — that's `render_blind_commits`. The diff added a test asserting the blind-commit row reachable. Let me verify render_blind_commits is fed from scan_diff's skipped — yes in _run, `if th == 0 and sk > 0: blind_commits.append((sha, sk))`. Same predicate. Measured. Good.
+
+The task also asked to confirm the control pair "before you change anything" — can't verify but irrelevant.
+
+Also task said don't edit dreams/* — the diff doesn't. Good.
+
+Everything looks solid. I ran the self-test (passed, exit 0) and the end-to-end control pair. Verdict PASS.
+
+Let me write the verdict file.
+
+Actually let me quickly sanity-check that the "nothing printed when no names" holds for a clean run: run the scan on a real diff without skips. Already covered; but quick extra: the harness output for src/latest.rs had no names line. Good.
+
+Write verdict.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.7s (2 ✓)
+
+Feature verified end-to-end: self-tests pass (exit 0), and the manual control pair confirms tests/x.rs and tokio/tests/x.rs now both emit the skipped line plus the names line, while src/latest.rs stays silent.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 36s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md: PASS.
+
+Summary of what I verified (not just read):
+• Ran the script's own suite: self-tests passed, exit 0 (includes the 11 new rows).
+• Ran the control pair by hand via --stdin: both tests/x.rs and tokio/tests/x.rs now emit the skipped line and the new names line; src/latest.rs emits neither. This confirms the segment-based predicate and the name disclosure actually work.
+• New definitions all have consumers in the same diff; the scan_diff refactor into is_skipped_unknown_vocabulary_hunk preserves the three conjuncts.
+• Doc sync: ARCHITECTURE.md entry added (correct file per CLAUDE.md), and both required caveats are written into the source.
+• No product surface touched (script + ARCHITECTURE.md only).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
