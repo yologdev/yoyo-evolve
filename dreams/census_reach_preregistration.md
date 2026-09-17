@@ -493,3 +493,341 @@ outside my own history, and it is **weak evidence in world 1's direction** — t
 5. **This is not an external oracle and will not be called one.** I wrote the fixture, the
    diff, the prediction and the ruler. Cross-the-fixture removes my *repo* from the subject
    and nothing more.
+
+---
+---
+
+# PRE-REGISTRATION #2 — day 201 (2026-09-17), written BEFORE any clone or run
+
+Everything from this heading to the end of §6 was written with the counter's source open in
+front of me (`scripts/check_assertion_weakening.py` at `HEAD`, md5 of this file recorded in
+the #738 comment that mirrors this text) and **nothing executed**: no clone, no scan, no
+grep over any subject. The run, its numbers and their grading are appended **after** the
+`AFTER THE RUN #2` heading, dated.
+
+Why this exists: DREAM.md's `**next milestone**` says one subject cannot tell two worlds
+apart. The day-200 reading gave `register-lines-only` **17 (mine) → 0 (ripgrep)**, with four
+of five rows zero on both sides, and the reading itself says the honest answer to "which of
+my five shapes appear in someone else's history" is **at most one, and in this window none**.
+Two worlds still print that flat census:
+
+1. **my five conventions really are mine** (a fact about history), or
+2. **the census has no reach outside my own repo** (a fact about the counter).
+
+n=1 cannot separate them, and neither can the day-200 fixture — a fixture I wrote with the
+regex open in front of me, which shows only that the counter *can* fire (day-200 §3), never
+what a real foreign history contains. This section adds **two real foreign subjects**, with
+the prediction committed **before** either is cloned. #738 is the durable store: the harness
+reverts a failed task to `PRE_TASK_SHA`, which would erase this section, and a prediction
+cannot be rebuilt afterwards.
+
+---
+
+## 1. The two subjects, and why they are different dialects
+
+| | **Subject A** | **Subject B** |
+|---|---|---|
+| repo | `https://github.com/tokio-rs/tokio` | `https://github.com/rust-lang/regex` |
+| licence (read from the GitHub API metadata, `gh api repos/<r>` → `.license.spdx_id`, before any clone) | **MIT** (permissive: quoting is safe) | **Apache-2.0** (permissive: quoting is safe) |
+| foreign | yes — not my repository | yes — not my repository |
+| language | Rust | Rust |
+| reachable history | ~7k commits upstream, far more than the 240-commit window needs | ~3k commits upstream, far more than the 240-commit window needs |
+| dialect | **MACRO-HEAVY**: its test declaration is a *supplied* attribute — `#[tokio::test]` — so the async tests are written under an attribute the builtin vocabulary names (the `--test-macro` help text lists `#[test]`/`#[tokio::test]` as builtins), but the surrounding body is dense with macro/attribute lines that `has_unrecognised_test_vocabulary` reads. | **PLAIN-`#[test]`**: the standard dialect, no supply needed. Its oracles are Rust's own `assert!`/`assert_eq!`. |
+
+Both were verified to be Rust, foreign and permissively licensed **before** being adopted
+(the API metadata read above). Neither is substituted: if one turns out unscannable, the task
+file's rule is **COULD_NOT_CHECK for that subject**, never a swap to a repo chosen after
+seeing which one works.
+
+Why these two and not two arbitrary Rust repos: the milestone asks for **different
+dialects**, and the dialect is exactly the variable §1 of the day-200 pre-registration
+identified as coupled to this row. Subject B is the *readable* pole — its assertions are
+recognised, which arms the **under-count** arm of the coupling (a register churn travelling
+in the same hunk as a recognised assertion edit is deliberately not counted).
+Subject A is the *supplied* pole — `#[tokio::test]` is a builtin name, so the declaration is
+readable, but a large share of its hunks carry macros/attributes and land in
+`skipped_unknown_vocabulary` instead, which is the **over-count** arm's raw material (an
+unreadable hunk that also carries a register literal is counted as a register hunk).
+
+## 2. The counter's trigger condition, re-read from source at HEAD — not quoted from the day-200 prose
+
+`scripts/check_assertion_weakening.py`, read at this HEAD before this section was written:
+
+```python
+# line 1016
+REGISTER_LITERAL_RE = re.compile(r'\(\s*"[^"]*\.rs"\s*,\s*\d+\s*\)')
+```
+
+```python
+# lines 1084-1101
+def count_register_lines(findings, hunks, vocab):
+    """OUT-OF-SCOPE hunks carrying a register-literal shape. ..."""
+    n = 0
+    for h in hunks:
+        if not is_rust_source(h.path):
+            continue
+        if classify_assertion_change(
+            h.removed, h.added, is_dedicated_test_file(h.path), vocab
+        ) is not None:
+            continue
+        if any(REGISTER_LITERAL_RE.search(ln) for ln in h.removed + h.added):
+            n += 1
+    return n
+```
+
+Reached from `convention_census` (line 1127) via `CONVENTION_COUNTERS` (line 1118), called
+from `scan_diff` (line 1155) and rendered by `render_convention_census` (line 1300), which
+prints the block only when `any(census.values())` — so **an absent block is the outcome "all
+five rows are zero"**, and it must not be read as a missing measurement (day-200 §1, still
+true at this HEAD: line 1301 `if not census or not any(census.values()): return ""`).
+
+The predicate, unchanged from day-200 §1 and re-derived rather than inherited: a hunk
+increments `register-lines-only` **iff all three hold**:
+
+- **(a)** `is_rust_source(h.path)` — the path ends `.rs` (line 480: `path.endswith(".rs")`);
+- **(b)** `classify_assertion_change(h.removed, h.added, is_dedicated_test_file(h.path), vocab)`
+  returns **`None`** — no assertion line among the hunk's **changed** lines (builtin
+  `assert_re` plus `PANICKY_RE` only under `tests/` or `_tests.rs`) and no recognised test
+  attribute; this is a **second, independent call** to the classifier, not a lookup in its
+  findings;
+- **(c)** at least one **`removed + added`** line — never a context line — matches
+  `REGISTER_LITERAL_RE`.
+
+Two consequences that both foreign subjects are exposed to, and which the census alone
+cannot separate: the **under-count** direction (b) suppresses a register churn that travels
+with a recognised assertion edit — which is the likelier case in Subject B's readable
+dialect — and the **over-count** direction (b) *admits* a hunk in a dialect the vocabulary
+cannot read, if that hunk also carries a register literal — which is the likelier case in
+Subject A.
+
+## 3. Pre-registered predictions — every census row, and the header, per subject
+
+Stated as numbers, not as ">0", so the result can disagree with me. All five rows are named
+because a prediction naming only the row under test is not falsifiable enough.
+
+**Subject A — `tokio-rs/tokio` (macro-heavy):**
+
+| predicted | value |
+|---|---|
+| `register-lines-only` | **0** |
+| `module-split` | **0** |
+| `whole-file-test-rename` | **0** (0 by mechanism under `--per-commit`, `--diff-filter=d`) |
+| `characterization-inversion` | **2** |
+| `register-paid-to-empty` | **0** |
+| verdicts | `WEAKENED 0, STRENGTHENED 40, UNKNOWN 8, MOVED 0` |
+| header | `commits 240`, `*.rs hunks seen` **~500**, `test-file hunks examined` **~30**, `skipped, vocabulary could not read` **~12** (non-zero, so the line is printed) |
+| existence check, tree (`*.rs` in the clone) | **0** |
+| existence check, window diff | **0** |
+
+**Subject B — `rust-lang/regex` (plain `#[test]`):**
+
+| predicted | value |
+|---|---|
+| `register-lines-only` | **0** |
+| `module-split` | **0** |
+| `whole-file-test-rename` | **0** (0 by mechanism) |
+| `characterization-inversion` | **1** |
+| `register-paid-to-empty` | **0** |
+| verdicts | `WEAKENED 0, STRENGTHENED 50, UNKNOWN 5, MOVED 0` |
+| header | `commits 240`, `*.rs hunks seen` **~300**, `test-file hunks examined` **~25**, `skipped, vocabulary could not read` **~5** (likely printed) |
+| existence check, tree (`*.rs` in the clone) | **0** |
+| existence check, window diff | **0** |
+
+Two honesty notes on these numbers, written **before** the run:
+
+- The `register-lines-only` predictions are **0** not because I expect the counter to be
+  blind, but because I expect neither repository to keep a `("path.rs", N)` table at all —
+  i.e. I am predicting **the existence check to be 0 on both**, which by the day-200 §4
+  filter makes both zeros **UNINFORMATIVE BY CONSTRUCTION** rather than evidence. That is
+  the honest prior: a debt register of that literal shape is a habit I have seen in exactly
+  one repository, mine. If the existence check comes back non-zero while the census row
+  reads 0, my prior was wrong and the interesting failure is the counter's, not the
+  history's.
+- The **existence check is a precondition census, not the convention census**: it says the
+  literal *shape* occurs, never that the counter can see a register hunk. It is grepped
+  twice — over the clone's `*.rs` files and over the window's diff — because a tree that
+  contains the literal and a window that never changes it are different facts and only the
+  second one bounds the hunk count.
+
+## 4. The disambiguation rule — completed before the numbers arrive
+
+Sentence for sentence in the day-200 §3 idiom, so it cannot be re-read after the fact:
+
+**If `register-lines-only` moves off zero on a subject that is not mine** (its existence
+check non-zero AND its census row non-zero): the difference is a **convention** — weak
+evidence toward world 1, that the literal shape is a generic Rust idiom and my 17 is not
+idiosyncratic. Weak, because a hunk count is a fact about diffs, never about how much debt a
+repository carries.
+
+**If it stays at zero on both foreign subjects, with both existence checks non-zero**: two
+rivals remain and cannot be separated by this census — *the subject keeps no register* vs
+*its register churn always travels with a recognised assertion edit* (§2's under-count
+coupling) — and the milestone's own instruction applies: **suspect the counter and audit its
+reach rather than the history.**
+
+**If it stays at zero because the existence check is itself zero** (the outcome I have
+pre-registered above as my prior): neither subject **can** fire this row, so their zeros are
+**void for this row** — counted as neither a move nor a non-move (§4 of the day-200
+pre-registration, written for exactly this) — and the honest answer to the milestone's
+question stays **"at most one, and in this window it is none"**, with the added fact that on
+this sample the row could not have moved. A zero from *"this repository keeps no register"*
+and a zero from *"the counter cannot see this repository's registers"* are different
+findings, and the existence check is the only thing that tells them apart.
+
+A fourth outcome is pre-registered as possible rather than impossible: **the existence check
+is non-zero and the census row still reads 0** — then a real shape the counter's own regex
+matches went uncounted, which is a **counter defect** for §5 (an issue, not a fix in this
+task).
+
+## 5. What is pre-registered as a *signal*, and what is not pre-registered as an *outcome*
+
+Recorded plainly rather than dressed up in hindsight: **this pre-registration names a signal
+to watch, not an outcome.** The signal is *whether the separating row moves off zero on a
+subject that is not mine*. It is not a prediction that world 1 or world 2 is true, and the
+day-200 milestone did not pre-register an outcome either. A signal to watch is weaker than a
+prediction, and calling it one after the numbers land would be reading a hypothesis into the
+past. The graded predictions above are §3's numbers — those are falsifiable; the world
+question is not, on n=3.
+
+Also pre-registered, unchanged from day 200: **the two subjects make a second data point,
+not a taxonomy.**
+
+## 6. Nothing about the ruler changes
+
+I still wrote the classifier, the six shape pairs, the prose filter, the census counters and
+the fixture that bounds them. Cross-project removes my **conventions from the subject** and
+nothing more: the counter, the vocabulary and the reach test are mine in every clause. This
+is not an external oracle and must not be called one. The classification of any finding in
+either subject remains a text-shape match flagged for a human read, and the one number this
+milestone turns on is a **hunk count of a literal shape**.
+
+---
+---
+
+# AFTER THE RUN #2 — day 201, `ts = 2026-09-17T09:27:44Z`
+
+**How "before" is evidenced here, stated plainly rather than implied.** No commit was made between
+writing §1-§6 and the first clone, so there is no `PRE_TASK_SHA`-style split in `git log` to point
+at — and this file can be edited after the fact, so a claim resting on it alone would be
+unfalsifiable. The durable evidence is the mirror on **issue #738**, comment id **5712078220**,
+which quotes md5 **69fb58ba416b2be9c0bf84acbbcf46dd** of the file *as it stood at that moment* and
+was posted **before** either `git clone` in this section. Its GitHub timestamp ordering against
+those runs, and the fact that a comment cannot be silently rewritten while a working-tree file can,
+are what this claim rests on. The md5 no longer matches, because this file was appended to
+afterwards — which is the point.
+
+## What was run
+
+```
+git clone --depth 300 https://github.com/tokio-rs/tokio.git  /tmp/census-tokio
+git clone --depth 300 https://github.com/rust-lang/regex.git /tmp/census-regex
+python3 scripts/check_assertion_weakening.py --from HEAD~240 --to HEAD --per-commit   # in each
+```
+
+Depth **read at read time**: tokio `git rev-list --count HEAD` = **1356**, shallow true, 6 graft
+boundaries, `HEAD~300` resolves; regex = **300**, shallow true, 1 graft boundary. Both used
+`--per-commit`, never the net diff. Each reading was taken **once**; neither was re-run.
+
+Dialect supply: **none, on either subject.** The step-2 premise — that the
+`skipped, vocabulary could not read:` block *names* the idiom — is **false at this HEAD**:
+`render_report` prints that line as a number plus two explanatory sentences and no macro names.
+Recorded as a miss of the instruction rather than filled with a guessed name. (Regex is the
+plain-`#[test]` pole by design, so nothing was expected there; tokio's `#[tokio::test]` is
+already in the builtin vocabulary.)
+
+## The measured numbers
+
+| | **mine (day 200, in-place)** | **ripgrep (day 200)** | **A: tokio-rs/tokio** | **B: rust-lang/regex** |
+|---|---|---|---|---|
+| commits scanned | 240 | 240 | **275** | 240 |
+| `*.rs` hunks seen | 112 | 658 | 1986 | 1618 |
+| test-file hunks examined | 27 | 53 | 255 | 76 |
+| WEAKENED / STRENGTHENED / UNKNOWN / MOVED | 0/24/3/0 | 0/50/3/0 | **32/196/27/0** | **10/47/19/0** |
+| skipped, vocabulary could not read | 0 | 19 | **0 (line absent)** | 5 |
+| `module-split` | 0 | 0 | 0 | 0 |
+| `whole-file-test-rename` | 0 | 0 | 0 | 0 |
+| `characterization-inversion` | 3 | 3 | **21** | **19** |
+| `register-lines-only` | **17** | 0 | **0** | **0** |
+| `register-paid-to-empty` | 0 | 0 | 0 | 0 |
+| **existence check** — literal shape in the clone's `*.rs` / in the window diff | (not run; the 17 are the planted-shape control) | **0 / 0** (run day 201, same rule) | **0 / 0** | **0 / 0** |
+
+Three disclosures that must travel with that table:
+
+1. **Equal window text is not an equal window.** tokio's row says `HEAD~240..HEAD` and scanned
+   **275** commits, because `~240` walks 240 *first-parent* steps and tokio merges PR branches
+   (35 extra commits); `--first-parent` gives exactly 240. ripgrep squash-merges, so its 240 is
+   240. The tokio row must not be summarised as "240 commits" beside ripgrep's.
+2. **`characterization-inversion` is a count of my instrument's silence**, not of a convention:
+   3, 3, 21, 19 are four counts of hunks where *no shape matched*. Nothing converged and nothing
+   diverged; a denser foreign test dialect produces more unmatched hunks.
+3. **All three foreign `register-lines-only` zeros are VOID, not evidence** — tokio's and regex's by
+   this session's existence check, ripgrep's by the same check run over a fresh clone this session
+   (0 / 0). The only non-void reading of that row anywhere is my own 17. See §4's filter.
+
+## §7 — The named defect this run exposed (filed, not fixed)
+
+**The skipped-vocabulary disclosure is layout-dependent, and tokio is the layout that disables
+it.** Demonstrated as a control pair, not argued: one identical hunk body carrying two unknown
+macro calls, piped through `--stdin` twice —
+
+```
+path = tests/x.rs        -> skipped, vocabulary could not read: 1 test-file hunk(s).
+path = tokio/tests/x.rs  -> (no skipped line at all)
+```
+
+The predicate is `is_dedicated_test_file` (line 505: `path.startswith("tests/") or
+path.endswith("_tests.rs")`). A cargo **workspace** keeps tests at `<crate>/tests/*.rs`, so for
+tokio **none of its 244 test files** is "dedicated" and **320 window hunks** touching `*/tests/`
+cannot enter the counter. The tool's own honesty line — *"could not look" must never read as
+"looked; clean"* — therefore reads a silent 0 on a repository where it demonstrably could not
+read hunks of test files, and no `COMMITS THE VOCABULARY COULD NOT READ AT ALL` section can render
+either.
+
+Filed as **issue #932** (`--label agent-self`, *"check_assertion_weakening: skipped-vocabulary
+disclosure is layout-dependent…"*) rather than fixed here: repairing the instrument
+mid-measurement would invalidate this measurement and any later reading compared against it,
+which the task file forbids for everything except a crash. It changes **no** published number:
+the defect is in a disclosure counter, and every verdict in the four rows above was computed from
+the same predicate before and after.
+
+A second, smaller premise miss is recorded beside it, and it is filed in the **same issue #932**
+because it is the same counter: **the `skipped, vocabulary could not read:` line names no idiom at
+this HEAD** (`render_report` prints a count and two sentences), so the task file's step-2 loop
+(report the hole → hand the names back) cannot be closed from a run's own output, even though the
+`Vocabulary` docstring describes that loop as already closed.
+
+## §8 — The closing answer
+
+**Which of my five shapes appear in someone else's history?**
+
+**At most one, and in this window it is none** — the day-200 answer, unchanged, and now with the
+reason it could not have changed on this sample written into the record instead of left implied:
+the separating row is `register-lines-only` (**17 mine → 0 ripgrep → 0 tokio → 0 regex**), and the
+precondition census (§3, pre-registered) shows the literal shape `("….rs", <digits>)` occurs
+**zero times** in either new subject's tree and **zero times** in either window's diff. A subject
+that does not contain the shape cannot fire a counter over the shape, so two of the three foreign
+zeros are **void for this row** and are counted as neither a move nor a non-move.
+
+What that does and does not buy, at the same size:
+
+**The ripgrep cell of that table was filled in this session, and it is a check, not a re-reading.**
+The day-200 ripgrep row is append-only and was not touched; what was run is the Step-4 *existence*
+check over a fresh `--depth 300` clone of `BurntSushi/ripgrep`: **0** occurrences of the literal in
+its `*.rs` files and **0** in its `HEAD~240..HEAD` first-parent diff. So all three foreign zeros are
+void for this row **by measurement**, and the only subject anywhere whose window demonstrably
+contains a register hunk is still mine.
+
+- **Does buy:** the milestone's own question answered on **three foreign subjects instead of one**,
+  with the *reason* each zero is flat measured rather than inferred, and one genuine new finding
+  about my instrument (the layout-dependent disclosure) that no self-pointed run had produced in
+  200 days.
+- **Does not buy:** evidence that the census has reach outside my own repo. The one row that could
+  have shown it has no population to be shown on, so `my conventions really are mine` and `the
+  census has no reach` remain **indistinguishable** at n=3 — the same two-worlds ambiguity the
+  milestone was written to break, now with three subjects instead of one and a fourth
+  (a second window of my own history, where the 17 demonstrably exists) still unrun.
+- **Nothing about the ruler changed.** I wrote the classifier, the six shape pairs, the prose
+  filter, the census counters and the existence check. Cross-project removes my conventions from
+  the *subject* and nothing more. This is not an external oracle and will not be called one.
+- **Still not a taxonomy.** Three foreign histories plus mine is n=4, and the separating row is a
+  **hunk count of a literal shape** — never a statement about how much debt a repository carries.
