@@ -93,6 +93,25 @@ MOVED = "MOVED"
 # .unparseable_excluded, ProviderScan.unread_streams, PAIRING_COULD_NOT_CHECK,
 # PRODUCTIVITY_COULD_NOT_CHECK, NeverForecastGroups.age_unobservable. This classifier was
 # the one instrument that never got it.
+#
+# TWO THINGS THE DAY-201 WIDENING OF `is_dedicated_test_file` DOES NOT LICENSE (#932).
+#
+# 1. THE ALREADY-PUBLISHED FOREIGN ROWS ARE NOT BACK-FILLABLE. The day-200 ripgrep row and
+#    the day-201 tokio/regex row were taken with the NARROWER predicate (a LEADING
+#    `tests/`), which could not see a cargo WORKSPACE's `<crate>/tests/*.rs` at all. They
+#    are records of what the instrument SAID, not of what was there, and they stay exactly
+#    as written in `dreams/foreign_assertion_readings.jsonl` and in ARCHITECTURE.md. A
+#    reading taken from now on is therefore NOT COMPARABLE to them in this counter, and
+#    quietly comparing the two would be attributing a jump in the number to the subject
+#    when it is the PREDICATE that moved.
+# 2. THE LIMIT THAT DOES NOT MOVE. Widening the predicate widens WHAT CAN ENTER this
+#    counter (more hunks are recognised as belonging to a test file); it does not widen
+#    what the MATCHERS can see. The vocabulary is EXTENSIBLE -- names arrive as data via
+#    `--assert-macro` / `--test-macro` -- and it is never DISCOVERED, so this remains a
+#    permanent denominator disclosure and must NOT be removed once one dialect is supplied
+#    (LIMITS item 7). The widening does not characterise the residue: the day-201 19-hunk
+#    residue is still unexplained, and "could not look" must keep reading as "could not
+#    look" rather than as "looked and found nothing".
 SKIPPED_UNKNOWN_VOCABULARY = "SKIPPED_UNKNOWN_VOCABULARY"
 
 
@@ -440,6 +459,25 @@ RELAXED_OPS = ("<=", ">=", "<", ">")
 MACRO_CALL_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*!\s*[(\[{]")
 ATTR_RE = re.compile(r"^\s*#!?\[")
 
+# The two NAME-EXTRACTING twins of MACRO_CALL_RE / ATTR_RE. Same shapes, one added capture
+# group each, so the counter and the disclosure can never drift about what an "unknown
+# macro or attribute" is: `has_unrecognised_test_vocabulary` asks WHETHER one is present,
+# these ask WHICH. `MACRO_CALL_RE` deliberately has no group so it stays byte-compared in
+# its own tests; these are separate patterns rather than an edit to it.
+MACRO_NAME_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)!\s*[(\[{]")
+ATTR_NAME_RE = re.compile(
+    r"^\s*#!?\[\s*([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)"
+)
+
+# The cap on names PRINTED by the disclosure. A cap on the NUMBER OF NAMES, never on
+# bytes: every name is a Rust identifier or an `a::b` attribute path matched by the two
+# regexes above, and the cut falls between whole names, so no raw byte index is ever taken
+# and `s[..n]` can never land inside a multi-byte character (#250). That is the same
+# guarantee the char-boundary discipline buys, bought by choosing the unit rather than by
+# scanning for a boundary. Truncation is STATED IN THE BAND (`(+N more elided)`), never
+# silent -- a silent cap would make an unread vocabulary look smaller than it is.
+UNREAD_VOCABULARY_NAMES_CAP = 12
+
 
 def has_unrecognised_test_vocabulary(lines: list[str]) -> bool:
     """Did this hunk carry a MACRO CALL or ATTRIBUTE this vocabulary does not know?
@@ -486,8 +524,144 @@ def is_dedicated_test_file(path: str) -> bool:
     In these files a bare `.unwrap()` / `.expect(` counts as an oracle. Everywhere else
     it does not, because production code is full of both and their removal is not a
     weakened test — that would flood the denominator with noise from `src/`.
+
+    A `tests/` **PATH SEGMENT**, not only a LEADING `tests/` (#932, day 201). The old
+    predicate was `path.startswith("tests/") or path.endswith("_tests.rs")`, and the bug
+    was measured with a control pair rather than argued: ONE identical hunk body, two
+    path shapes, `--stdin`. `tests/x.rs` printed `skipped, vocabulary could not read: 1
+    test-file hunk(s).` and `tokio/tests/x.rs` printed NOTHING — because a cargo
+    **workspace** keeps integration tests at `<crate>/tests/*.rs`, so the leading-prefix
+    test was false for every one of them. On tokio-rs/tokio, 244 test files sit at
+    `*/tests/*.rs` and 320 window hunks touch a path containing `/tests/`, so that whole
+    subject was reported as carrying no test files at all.
+
+    **The direction is the bad one**, which is why it is fixed rather than filed: this
+    counter's own constant says *"'could not look' must not read as 'looked; clean'"*, and
+    the narrower predicate rendered "could not look" as "looked; clean" for a layout, not
+    for a dialect. A repository one directory deeper was told it had been read.
+
+    The test is `"tests" in path.split("/")[:-1]`, so the LAST component can never
+    satisfy it — a file literally named `tests.rs` inside `src/` is not, by name alone, a
+    dedicated test file. `tests/x.rs` and `tokio/tests/x.rs` both match;
+    `src/contests/x.rs`, `src/latest.rs` and `src/tests.rs` do not. The `_tests.rs` clause
+    is kept unchanged: it is the other house convention for a tests module
+    (`src/main_tests.rs`), and it is a SUFFIX test so it is layout-independent already.
+
+    **WHAT THIS DOES NOT LICENSE.** The day-200 ripgrep and day-201 tokio/regex
+    `SKIPPED_UNKNOWN_VOCABULARY` rows were taken with the NARROWER predicate and are
+    **append-only records of what the instrument SAID** — not of what was there. They must
+    NOT be back-filled or edited to match this reading; a future foreign reading is simply
+    **not comparable** to them, and saying so where the counter is documented is the only
+    thing that keeps the comparison honest. Widening this predicate widens WHAT CAN ENTER
+    the skipped counter; it does not widen what the MATCHERS can see (see the
+    `SKIPPED_UNKNOWN_VOCABULARY` note above).
     """
-    return path.startswith("tests/") or path.endswith("_tests.rs")
+    return "tests" in path.split("/")[:-1] or path.endswith("_tests.rs")
+
+
+def is_skipped_unknown_vocabulary_hunk(hunk, verdict) -> bool:
+    """THE ONE statement of the SKIPPED_UNKNOWN_VOCABULARY rule.
+
+    A hunk is counted as skipped when it is a REAL RUST HUNK in a dedicated test file, the
+    classifier returned `None` for it, AND it carries a macro call or attribute the
+    vocabulary does not know. All three conjuncts are here, in one place, so the count and
+    the names printed beside it can never disagree about which hunks they describe — the
+    two-statements-of-one-rule defect this file keeps refusing (#835, `/config show`, the
+    two MCP collision loops).
+
+    `verdict` is passed IN rather than recomputed: `scan_diff` already has it for every
+    hunk and re-deriving it would double the classifier's work on the common
+    `None`-returning production hunk. Callers that do not have it (`unread_vocabulary_names
+    _in_diff`) call `classify_assertion_change` first and pass the result, which is the
+    same function, not a copy of it.
+    """
+    if not is_rust_source(hunk.path):
+        return False
+    if verdict is not None:
+        return False
+    return is_dedicated_test_file(hunk.path) and has_unrecognised_test_vocabulary(
+        hunk.removed + hunk.added
+    )
+
+
+def unread_vocabulary_names(lines, vocab=None) -> list[str]:
+    """The macro-call and attribute NAMES in these lines that this vocabulary cannot read.
+
+    SORTED and DE-DUPLICATED, so the disclosure is deterministic and two runs over the
+    same diff print the same bytes. Names the vocabulary DOES know are filtered out on
+    purpose: a name it already matches cannot be the reason a hunk was skipped, and
+    printing `assert_eq!` next to a skipped count would send an operator to hand back a
+    name the tool already had.
+
+    WHY THIS IS WHAT CLOSES THE LOOP RATHER THAN DECORATING IT. `SKIPPED_UNKNOWN_VOCABULARY`
+    has always been documented as the input to `--assert-macro` / `--test-macro` ("the tool
+    reports which names it could not read, you hand them back"), and at HEAD it printed a
+    COUNT and no names — so the loop's own docstring described a hand-back that nothing
+    surfaced, and an operator on a foreign repo had to re-implement this scan to learn that
+    the idiom was, say, `check_that!`. A name is reported here and nowhere else, so it is
+    printed WITH its `!` (macros) or as `#[name]` (attributes), which is the shape an
+    operator recognises in their own source; the bare form those flags want is that string
+    minus the `!`.
+
+    THE STATED LIMIT, and it is the same one item 6 of LIMITS carries: these are names
+    PRESENT in skipped hunks that the vocabulary did not match, so they are CANDIDATES for
+    the skip and not a diagnosis of it. A common structural attribute (say `#[cfg]`) can
+    appear in a hunk that was skipped for an unrelated reason, and it is listed anyway —
+    the alternative is a hand-maintained denylist of "boring" attributes, which is the
+    treadmill this tool already refused once (#921's rejected remedy). Nothing here is
+    inferred and no dialect is guessed at: supplying a name makes it match on the NEXT run,
+    which removes the hunk from the count and the name from this list.
+    """
+    vocab = vocab or BUILTIN_VOCABULARY
+    names = set()
+    for ln in lines:
+        m = MACRO_NAME_RE.search(ln)
+        if m and not vocab.assert_re.search(m.group(0)):
+            names.add(m.group(1) + "!")
+        a = ATTR_NAME_RE.match(ln)
+        if a and not vocab.test_re.search(ln):
+            names.add("#[" + a.group(1) + "]")
+    return sorted(names)
+
+
+def unread_vocabulary_names_in_diff(text: str, vocab=None) -> list[str]:
+    """The names behind SKIPPED_UNKNOWN_VOCABULARY in this whole diff, sorted.
+
+    A SEPARATE PASS over the diff, and the cost is accepted rather than paid on every run:
+    the caller only reaches this when `scan_diff` reported a non-zero skipped count, i.e.
+    exactly the runs where the disclosure prints. It re-derives the skip decision through
+    `is_skipped_unknown_vocabulary_hunk` — the SAME rule `scan_diff` counts with — so a hunk
+    can never be named that was not counted, and a named hunk is always one the count
+    includes. It does NOT re-parse through a second parser: `parse_unified_diff` is called,
+    not copied.
+    """
+    vocab = vocab or BUILTIN_VOCABULARY
+    names = set()
+    for hunk in parse_unified_diff(text):
+        verdict = classify_assertion_change(
+            hunk.removed, hunk.added, is_dedicated_test_file(hunk.path), vocab
+        )
+        if is_skipped_unknown_vocabulary_hunk(hunk, verdict):
+            names.update(unread_vocabulary_names(hunk.removed + hunk.added, vocab))
+    return sorted(names)
+
+
+def render_unread_vocabulary_names(names, cap=UNREAD_VOCABULARY_NAMES_CAP) -> str:
+    """The naming line of the skipped disclosure, or `""` when there is nothing to name.
+
+    `""` IS THE WHOLE REGRESSION SURFACE. Every repository whose dialect this reads, and
+    every run with nothing skipped, prints this function's empty output — so
+    `render_report`'s pre-change bytes are reproduced exactly, pinned by an `assert_eq!`
+    in the self-tests rather than by a `contains` (a `contains` passes on a report that
+    grew a line).
+    """
+    if not names:
+        return ""
+    shown = sorted(set(names))
+    head = ", ".join(shown[:cap])
+    if len(shown) > cap:
+        head += f"  (+{len(shown) - cap} more elided)"
+    return f"  names this vocabulary did not match: {head}  (hand them back with --assert-macro / --test-macro)"
 
 
 def is_assertion_line(line: str, dedicated_test_file: bool = False, vocab=None) -> bool:
@@ -1146,6 +1320,13 @@ def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int, dict
     than a second "is this a test file?" predicate being written: two copies of a rule
     agree the day they are written and diverge forever after (#835 is the receipt).
 
+    THE WHOLE RULE NOW LIVES IN `is_skipped_unknown_vocabulary_hunk`, called here rather
+    than inlined (#932, day 201). It was inlined, and the NAMES disclosure added the same
+    day needs to decide exactly the same three conjuncts -- so the second statement of the
+    rule is the one this file keeps refusing to write. Same reasoning as the line above,
+    applied to itself one day later, which is the point: the #835 argument was already
+    here and inlining still happened.
+
     The FIFTH element is the convention census and it is the ONE deliberate signature
     widening in this tool's history. It was NOT derivable from the findings the way the
     MOVED count is: `register-lines-only` counts hunks that produced NO finding at all,
@@ -1172,8 +1353,10 @@ def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int, dict
             # case and counting it would drown the number. A DEDICATED TEST FILE carrying
             # an UNRECOGNISED macro or attribute is the honest denominator hole; a pure
             # data edit (a debt-register literal, a fixture table) is out of scope too and
-            # is deliberately NOT counted. See has_unrecognised_test_vocabulary.
-            if dedicated and has_unrecognised_test_vocabulary(hunk.removed + hunk.added):
+            # is deliberately NOT counted. The three conjuncts live in ONE place,
+            # `is_skipped_unknown_vocabulary_hunk`, because the names disclosure added
+            # beside this counter (#932) must decide exactly the same question.
+            if is_skipped_unknown_vocabulary_hunk(hunk, verdict):
                 skipped_unknown_vocab += 1
             continue
         test_hunks += 1
@@ -1290,12 +1473,27 @@ _LIMITS_VOCABULARY = """\
      The report prints the DERIVED fraction too -- `skipped` over `examined + skipped`, in
      raw integers and as a percentage -- so the denominator is re-derivable from the
      tool's own output and no reading has to recompute it by hand and drift.
+     SINCE DAY 201 (#932) THE PREDICATE IS LAYOUT-INDEPENDENT: a `tests/` PATH SEGMENT
+     anywhere in the path counts as a dedicated test file, not only a LEADING `tests/`.
+     Before that, a cargo WORKSPACE -- integration tests at `<crate>/tests/*.rs` -- was
+     reported as carrying no test files at all, which rendered "could not look" as
+     "looked; clean" for an entire layout. The published day-200 ripgrep and day-201
+     tokio/regex rows were taken with the NARROWER predicate and are NOT comparable to
+     readings taken from now on: they record what the instrument SAID, and comparing them
+     across this change would read a predicate fix as a change in the subject.
   7. THE VOCABULARY IS EXTENSIBLE, NOT DISCOVERED. `--assert-macro NAME` and
      `--test-macro NAME` widen what counts as an assertion / a test declaration, and the
      builtins are the default, so with no flags this reads exactly as it always has. But
      NOTHING HERE INFERS A DIALECT: a repo whose macro names nobody supplies is still
      invisible, and the operator learns the names to supply from the skipped count in
-     item 6. That is why the skipped count stays a permanent denominator disclosure and
+     item 6 -- which, since day 201 (#932), PRINTS those names: the line under the count
+     reads `names this vocabulary did not match: eqnice!, check_that!  (hand them back
+     with --assert-macro / --test-macro)`, sorted and de-duplicated, capped at 12 NAMES
+     with the elision stated in the band. Before that it printed a count and no names, so
+     the hand-back this item describes required re-implementing the scan by hand. The
+     names are CANDIDATES for the skip and not a diagnosis of it -- a structural attribute
+     appearing in a skipped hunk is listed too, deliberately, rather than maintaining a
+     denylist of "boring" attributes. That is why the skipped count stays a permanent denominator disclosure and
      MUST NOT BE REMOVED once a dialect is supplied -- widening covers the names you
      hand it and says nothing about the ones you did not.
      Supplied names are DATA, NOT PATTERNS (every extra is re.escape'd) and are matched
@@ -1404,6 +1602,7 @@ def render_report(
     max_findings=40,
     skipped_unknown_vocab=0,
     census=None,
+    skipped_names=None,
 ):
     counts = Counter(f.verdict for f in findings)
     out = []
@@ -1425,6 +1624,14 @@ def render_report(
             f"  skipped, vocabulary could not read: {skipped_unknown_vocab} test-file "
             "hunk(s)."
         )
+        # THE NAMES, directly under the count they explain (#932, day 201), and rendered
+        # through `render_unread_vocabulary_names`, which returns "" for an empty list --
+        # so a run with a count but nothing to name (possible: a hunk skipped for a reason
+        # no regex names, e.g. an unknown attribute path this build's ATTR_NAME_RE does
+        # not reach) is byte-identical to before rather than printing a dangling header.
+        names_line = render_unread_vocabulary_names(skipped_names)
+        if names_line:
+            out.append(names_line)
         out.append(
             "  The verdict counts above are over a NARROWER POPULATION THAN THE DIFF. This "
             "is not"
@@ -1968,16 +2175,28 @@ def _run(args):
         return run_pairing(args)
     vocab = Vocabulary(args.assert_macros, args.test_macros)
     census = {name: 0 for name in CONVENTION_COUNTERS}
+    # The names behind SKIPPED_UNKNOWN_VOCABULARY, accumulated across modes. A set, then
+    # sorted once at the render call, so the printed order is deterministic.
+    skipped_names = set()
     if args.stdin:
         text = sys.stdin.read()
         findings, rust_hunks, test_hunks, skipped, census = scan_diff(text, vocab)
+        # THE NAMES ARE COLLECTED ONLY WHEN SOMETHING WAS SKIPPED, and that is a cost
+        # decision stated rather than hidden: `unread_vocabulary_names_in_diff` is a second
+        # pass over the diff, so it runs on exactly the runs where the disclosure prints
+        # and never on the clean ones -- which is every reading already published. The
+        # names come from `is_skipped_unknown_vocabulary_hunk`, the SAME rule `scan_diff`
+        # counted with, so a named hunk is always a counted one.
+        if skipped:
+            skipped_names.update(unread_vocabulary_names_in_diff(text, vocab))
         window = "(diff on stdin)"
         commits = -1
     elif args.from_ref and args.per_commit:
         shas = git_commit_shas(args.from_ref, args.to_ref)
         findings, rust_hunks, test_hunks, skipped = [], 0, 0, 0
         for sha in shas:
-            f, rh, th, sk, c = scan_diff(git_diff_one_commit(sha), vocab)
+            text = git_diff_one_commit(sha)
+            f, rh, th, sk, c = scan_diff(text, vocab)
             # The census is summed from EACH COMMIT'S OWN SCAN, taken inside scan_diff
             # before the path below is prefixed with the sha. Re-deriving it here from the
             # mutated findings would look up a `(path, header)` pair that no longer exists
@@ -1990,14 +2209,17 @@ def _run(args):
             rust_hunks += rh
             test_hunks += th
             skipped += sk
+            if sk:
+                skipped_names.update(unread_vocabulary_names_in_diff(text, vocab))
             if th == 0 and sk > 0:
                 blind_commits.append((sha, sk))
         window = f"{args.from_ref}..{args.to_ref} (per-commit)"
         commits = len(shas)
     elif args.from_ref:
-        findings, rust_hunks, test_hunks, skipped, census = scan_diff(
-            git_diff(args.from_ref, args.to_ref), vocab
-        )
+        text = git_diff(args.from_ref, args.to_ref)
+        findings, rust_hunks, test_hunks, skipped, census = scan_diff(text, vocab)
+        if skipped:
+            skipped_names.update(unread_vocabulary_names_in_diff(text, vocab))
         window = f"{args.from_ref}..{args.to_ref}"
         commits = git_commit_count(args.from_ref, args.to_ref)
     else:
@@ -2014,6 +2236,7 @@ def _run(args):
             args.max_findings,
             skipped,
             census,
+            sorted(skipped_names),
         )
     )
     blind = render_blind_commits(blind_commits)
@@ -3042,6 +3265,222 @@ def run_self_tests():
         and "UNKNOWN ...................... 0" in rep_skip,
         rep_skip,
     )
+
+    # ----------------------------------------------------------------------------------
+    # #932 (day 201) -- STEP 1: the dedicated-test-file predicate is LAYOUT-INDEPENDENT.
+    # Measured, not argued: one identical hunk body, two path shapes. `--stdin`,
+    # path = tests/x.rs printed the skipped line and path = tokio/tests/x.rs printed
+    # NOTHING, because a cargo WORKSPACE keeps integration tests at <crate>/tests/*.rs.
+    # Both halves are asserted here -- a test that only pinned the second would be half a
+    # guard, and the first is the regression surface for my own repo.
+    # ----------------------------------------------------------------------------------
+    def _skipped_line(p):
+        # Same BODY, one variable: the path. Nothing else moves, which is what makes the
+        # difference a measurement of the predicate rather than of the fixture.
+        return "\n".join(
+            [
+                f"diff --git a/{p} b/{p}",
+                "index 1111111..2222222 100644",
+                f"--- a/{p}",
+                f"+++ b/{p}",
+                "@@ -10,4 +10,3 @@ rgtest!(feature_bar, |dir: Dir, mut cmd: TestCommand| {",
+                "     cmd.arg(\"--foo\");",
+                "-    eqnice!(expected, cmd.stdout());",
+                "     dir.create(\"x\", \"y\");",
+            ]
+        )
+
+    # ANTI-VACUOUS PRECONDITION, first and at the same size the day-201 control used: the
+    # fixture really does carry an unknown macro call. Without this, every row below could
+    # pass by being empty -- the "agreeing with itself" shape.
+    check(
+        "layout ANTI-VACUOUS: the control-pair fixture really carries an unknown macro",
+        has_unrecognised_test_vocabulary(["    eqnice!(expected, cmd.stdout());"]),
+        None,
+    )
+
+    # THE CONTROL PAIR, BOTH HALVES. Both must report the SAME count of skipped hunks.
+    pair_root = scan_diff(_skipped_line("tests/x.rs"))
+    pair_workspace = scan_diff(_skipped_line("tokio/tests/x.rs"))
+    check(
+        "layout: a LEADING tests/ path still reports its skipped hunk (the old behaviour)",
+        pair_root[3] == 1,
+        pair_root[3],
+    )
+    check(
+        "layout: a NESTED */tests/ path now reports its skipped hunk too (#932)",
+        pair_workspace[3] == 1,
+        pair_workspace[3],
+    )
+    check(
+        "layout: ... and the two path shapes are INDISTINGUISHABLE to the counter",
+        pair_root[3] == pair_workspace[3] == 1
+        and pair_root[1] == pair_workspace[1] == 1
+        and pair_root[2] == pair_workspace[2] == 0,
+        (pair_root[:4], pair_workspace[:4]),
+    )
+
+    # NEAR-MISS, NON-VACUOUS. A path containing the SUBSTRING `tests` but not as a SEGMENT
+    # is not a dedicated test file -- and each fixture is asserted to carry the unknown
+    # macro, so a row cannot pass by feeding the scanner nothing.
+    for not_test_path in ("src/contests/x.rs", "src/latest.rs", "src/tests.rs", "a/b/tests.rs"):
+        nm_text = _skipped_line(not_test_path)
+        nm_res = scan_diff(nm_text)
+        check(
+            f"layout NEAR-MISS: {not_test_path} carries the macro and is still NOT a test file",
+            nm_res[3] == 0
+            and not is_dedicated_test_file(not_test_path)
+            and unread_vocabulary_names_in_diff(nm_text) == [],
+            (nm_res[3], is_dedicated_test_file(not_test_path)),
+        )
+        check(
+            f"layout NEAR-MISS anti-vacuous: {not_test_path}'s fixture really does carry it",
+            has_unrecognised_test_vocabulary(["    eqnice!(expected, cmd.stdout());"]),
+            None,
+        )
+
+    check(
+        "layout: the _tests.rs suffix clause is UNCHANGED and still matches",
+        is_dedicated_test_file("src/main_tests.rs")
+        and not is_dedicated_test_file("src/main.rs"),
+        None,
+    )
+
+    # ----------------------------------------------------------------------------------
+    # #932 -- STEP 2: the disclosure NAMES the idiom it could not read, so the loop its
+    # own docstring describes (report the names -> hand them back via --assert-macro /
+    # --test-macro) is closable without re-implementing the scan by hand.
+    # ----------------------------------------------------------------------------------
+    # TWO unknown names in one skipped hunk, plus a KNOWN one that must NOT be listed: a
+    # name the vocabulary already matches cannot be the reason a hunk was skipped, and
+    # printing back a name the tool already had is the confident-wrong-diagnosis move.
+    two_names_diff = "\n".join(
+        [
+            "diff --git a/crates/a/tests/it.rs b/crates/a/tests/it.rs",
+            "index 1111111..2222222 100644",
+            "--- a/crates/a/tests/it.rs",
+            "+++ b/crates/a/tests/it.rs",
+            "@@ -1,4 +1,4 @@",
+            "+#[cfg(unix)]",
+            "-    eqnice!(a, b);",
+            "-    check_that!(c, d);",
+            "     let x = 1;",
+            "     assert_eq!(x, 1);",
+        ]
+    )
+    names = unread_vocabulary_names_in_diff(two_names_diff)
+    check(
+        "names ANTI-VACUOUS: the fixture really does carry both unknown names",
+        "eqnice!(a, b);" in two_names_diff and "check_that!(c, d);" in two_names_diff,
+        names,
+    )
+    check(
+        "names: BOTH unknown macro names are surfaced, SORTED, and de-duplicated",
+        names == ["#[cfg]", "check_that!", "eqnice!"],
+        names,
+    )
+    check(
+        "names: a name the vocabulary ALREADY matches is never listed back at the operator",
+        "assert_eq!" not in names,
+        names,
+    )
+    # The ATTRIBUTE is surfaced in the `#[name]` shape, and it is listed even though
+    # `#[cfg(unix)]` is arguably not an oracle at all — that is the DOCUMENTED limit of
+    # this list (a name is a CANDIDATE for the skip, not a diagnosis of it). The
+    # alternative is a hand-maintained denylist of "boring" attributes, which is the
+    # treadmill #921's own suggested remedy was refused for.
+    check(
+        "names: the structural ATTRIBUTE is surfaced too, in the #[..] shape",
+        "#[cfg]" in names and "#[cfg(unix)]" not in names,
+        names,
+    )
+
+    # The SAME fixture, twice: determinism is a property of the output, not of a comment.
+    check(
+        "names: two passes over one diff print the same names in the same order",
+        unread_vocabulary_names_in_diff(two_names_diff) == names,
+        names,
+    )
+
+    # The NAME LIST and the COUNT must describe the SAME hunks -- the two-statements-of-
+    # one-rule defect. The count is 1 (one skipped hunk); the names come from that hunk.
+    two_names_scan = scan_diff(two_names_diff)
+    check(
+        "names: the names come from hunks the skipped COUNTER also counts (one rule)",
+        two_names_scan[3] == 1 and names,
+        (two_names_scan[3], names),
+    )
+
+    # NOTHING NAMED -> NOTHING PRINTED, so a run with nothing to name is byte-identical.
+    check(
+        "names NEAR-MISS: an empty name list renders NOTHING AT ALL",
+        render_unread_vocabulary_names([]) == ""
+        and render_unread_vocabulary_names(None) == "",
+        render_unread_vocabulary_names([]),
+    )
+
+    # (b) THE WHOLE REGRESSION SURFACE, by assert_eq! rather than a contains: every
+    # repository that reads fine, and every run with nothing skipped, is byte-identical.
+    rep_named = render_report([], 1, 1, 0, "FIXTURE", 40, 1, None, ["eqnice!"])
+    rep_unnamed = render_report([], 1, 1, 0, "FIXTURE", 40, 1, None, [])
+    # assert_eq!, NOT a contains: the whole regression surface is the RUN, not just the
+    # disclosure line. `rep_skip` is the same call with the argument OMITTED entirely, so
+    # this pins the new keyword default against the new explicit-empty value against the
+    # pre-existing fixture -- three ways, all byte-for-byte.
+    check(
+        "names: an empty name list is BYTE-IDENTICAL to omitting the argument entirely",
+        render_report([], 1, 1, 0, "FIXTURE", 40, 3)
+        == render_report([], 1, 1, 0, "FIXTURE", 40, 3, None, [])
+        == rep_skip,
+        render_report([], 1, 1, 0, "FIXTURE", 40, 3, None, []),
+    )
+    check(
+        "names: ... and it still gets the omitted-keyword default of NO names",
+        "names this vocabulary" not in render_report([], 1, 1, 0, "FIXTURE", 40, 3),
+        None,
+    )
+    check(
+        "names: the naming line sits directly under the count it explains, and agrees with it",
+        "skipped, vocabulary could not read: 1 test-file hunk(s).\n"
+        "  names this vocabulary did not match: eqnice!" in rep_named
+        and "names this vocabulary" not in rep_unnamed,
+        (rep_named, rep_unnamed),
+    )
+
+    # The CAP is STATED IN THE BAND, never silent (#250's neighbour rule). The unit is a
+    # NAME, so the cut always falls between whole names -- no raw byte index, no
+    # possibility of slicing inside a multi-byte character.
+    many_names = [f"m{i:02d}!" for i in range(UNREAD_VOCABULARY_NAMES_CAP + 5)]
+    capped = render_unread_vocabulary_names(many_names)
+    check(
+        "names CAP: truncation is STATED in the band rather than silent",
+        "(+5 more elided)" in capped
+        and f"m{UNREAD_VOCABULARY_NAMES_CAP - 1:02d}!" in capped
+        and f"m{UNREAD_VOCABULARY_NAMES_CAP:02d}!" not in capped,
+        capped,
+    )
+    at_cap = render_unread_vocabulary_names(many_names[:UNREAD_VOCABULARY_NAMES_CAP])
+    check(
+        "names CAP NEAR-MISS: a list AT the cap is NOT truncated and says nothing about it",
+        "elided" not in at_cap
+        and f"m{UNREAD_VOCABULARY_NAMES_CAP - 1:02d}!" in at_cap,
+        at_cap,
+    )
+
+    # ----------------------------------------------------------------------------------
+    # MEASURED, NOT ASSUMED: the OTHER disclosure that depends on "could not read" -- the
+    # per-commit blind-commit rows -- is gated by the SAME predicate, not a second one.
+    # `render_blind_commits` is fed `(sha, skipped)` where `skipped` comes straight out of
+    # the same `scan_diff` count this file just widened, so the widened predicate makes it
+    # reachable on a workspace layout with no second edit. Asserted by exercising the
+    # count on a nested path whose scan examined nothing.
+    # ----------------------------------------------------------------------------------
+    check(
+        "layout: the PER-COMMIT blind-commit row is reachable on a workspace layout too",
+        pair_workspace[2] == 0 and pair_workspace[3] == 1,
+        pair_workspace[:4],
+    )
+
 
     # ----------------------------------------------------------------------------------
     # THE DERIVED FRACTION (day 201). The day-199 reading published "35 of 72 test-file
