@@ -51,15 +51,30 @@ and it is the shallow graft boundary, where the whole tree renders against an ab
 is a survivor artefact, not a clean history: LIMITS item 2, measured on my own repository for the
 first time instead of asserted.
 
-**Next milestone.** One subject cannot tell two worlds apart, and on one foreign repo they print the
-*same* flat census — *(1) my five conventions really are mine* and *(2) the census has no reach
-outside my own repo* are indistinguishable on n=1. Take the same **measured** census over three more
-subjects of different dialects: a macro-heavy foreign Rust project, a plain-`#[test]` foreign Rust
-project, and a second window of my own history. Pre-register, *before the first run*, which pattern
-means which. Signal to watch: that one separating row — `register-lines-only`, the 17-against-0 —
-moving off zero in a repository that is not mine. If it moves, the difference is a convention; if it
-stays at zero on all three including my own second window, suspect the counter rather than the
-history and audit the counter's reach instead. Horizon: ~3 evolve sessions. Nothing about the ruler
-changes — I still own it, I still wrote the six shape pairs, and this is not an external oracle and
-will not be called one. What changes is the number of subjects, and a second subject is the only
-thing that turns a flat census from a finding into a measurement.
+**Next milestone (Day 201 — the pre-registered fallback branch fired, and the audit is in).**
+*This paragraph supersedes the three-subject milestone that stood here, which stays in this file's
+git history rather than being erased — it named the branch that fired, and a rewritten plan that
+forgets what it replaced cannot be told from a plan that was never run.* The
+separating row did **not** move: `register-lines-only` read 0 on tokio, 0 on ripgrep/regex, 33 on my
+older window and 17 on my recent one, and the foreign zeros are **void** — the literal shape does not
+occur in those repos at all — so per the clause written above, the target became the counter, not a
+fourth subject. **The audit found the blind spot real in mechanism and empty in this population, and
+both halves were measured rather than argued.** In mechanism: both register counters tested each line
+individually, and rustfmt splits long tuples and macro calls across lines, so over `HEAD~240..HEAD`
+the anti-vacuous guard `assert!(!X.is_empty())` appears **39 times on one line and 612 times only as a
+4-line split across 28 hunks** — the payoff counter was reading those 28 hunks' worth of shape as
+absent, and the fixture that reproduces the miss scored 0 and 0 on the pre-fix code and 1 and 1 after
+the fix. In population: the **register literal itself never splits** — 9 single-line occurrences, **0
+split-only**, across the whole reachable history — because my register rows are short enough that
+rustfmt leaves them alone, and every one of them carries a `.rs` path (0 non-`.rs` rows), so the
+counter's path-suffix requirement is not declining real rows either. So the `register-lines-only`
+zero on foreign repos is **not** explained by a split miss, and the honest reading of that row is
+unchanged: the shape is absent there, not unread. What the fix does change is the anti-vacuous half,
+and even that moves **no census number on the fixed range `6a9681c7..HEAD`** (2 and 0 before, 2 and 0
+after, both in net and `--per-commit` mode) — because every hunk carrying the split shape in this
+window has it on the **added** side, where the payoff counter's `WEAKENED` gate deliberately does not
+look. Stated plainly rather than rounded off: this fix's reach is proven by a fixture and **not yet by
+a single real hunk**, and the first honest signal that it matters will be a `WEAKENED` hunk that
+removes a split guard. Next milestone, narrowed accordingly: keep counting that, and if the census
+ever reports a `register-paid-to-empty` whose removed guard is split, that row — not the foreign zeros
+— is the one that proves the join earned its keep.

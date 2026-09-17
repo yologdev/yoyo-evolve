@@ -1179,6 +1179,16 @@ def reconcile_moved_tests(findings, hunks):
 #     `assert!(!REG.is_empty())` guard the register paid to empty deletes.
 # Every count is a count of HUNKS, and the five classes are disjoint (one hunk produces at
 # most one finding, and out-of-scope hunks produce none), so `sum(counts) <= rust_hunks`.
+#
+# BOTH REGISTER COUNTERS JOIN A BOUNDED WINDOW (Day 201). They used to test each line
+# individually, and rustfmt splits a long tuple or macro call across lines -- so a shape
+# that IS present was invisible, and a zero that lied was indistinguishable from a zero
+# that was measured. `hunk_carries_shape` now also matches the SAME shape over 2..4
+# ADJACENT lines of ONE side of ONE hunk. Three bounds, each stated because each is a
+# silent failure if it drifts: the window NEVER crosses a hunk boundary or the
+# removed/added line, and it is capped at `SHAPE_JOIN_WINDOW` lines. The single-line forms
+# are untouched by construction -- the join is only ever consulted for a window of two or
+# more lines -- and the near-miss fixtures pin that rather than argue it.
 # --------------------------------------------------------------------------------------
 
 # A debt-register literal: a tuple of a `*.rs` path string and a line number, e.g.
@@ -1188,6 +1198,51 @@ def reconcile_moved_tests(findings, hunks):
 # counted shape. A single path-shaped string would match every `("x.rs", y)` pair in the
 # repo and this counter would cry wolf on code that is not a register at all.
 REGISTER_LITERAL_RE = re.compile(r'\(\s*"[^"]*\.rs"\s*,\s*\d+\s*\)')
+
+# THE SAME SHAPE, ALLOWING THE LINE-BREAK ARTIFACT (Day 201). rustfmt's multi-line tuple
+# form is `(\n    "src/a.rs",\n    4174,\n)` -- the trailing comma before the closing paren
+# is written BY THE FORMATTER and does not exist in the one-line form, so the dense pattern
+# above cannot match the joined text as-is. This pattern is used ONLY on a window of two or
+# more adjacent lines, so the one-line case is untouched BY CONSTRUCTION rather than by
+# agreeing today; the near-miss self-test pins that.
+REGISTER_LITERAL_JOINED_RE = re.compile(r'\(\s*"[^"]*\.rs"\s*,\s*\d+\s*,?\s*\)')
+
+# The bounded window both counters join over. Four adjacent lines is the widest a rustfmt
+# split reaches for these shapes (open paren / path / number / close) and it is stated in
+# the rendered report rather than left as a magic number here.
+SHAPE_JOIN_WINDOW = 4
+
+
+def _adjacent_windows(lines, max_window=SHAPE_JOIN_WINDOW):
+    """Yield every window of 2..`max_window` ADJACENT lines from ONE side of ONE hunk.
+
+    The caller passes `h.removed` or `h.added`, so a window can never span the removed/
+    added boundary or a hunk boundary -- the bound the Day-201 audit required. Single-line
+    windows are deliberately NOT yielded: they are matched by the dense regex the counter
+    already used, so every pre-existing one-line reading is byte-identical by construction.
+    """
+    n = len(lines)
+    for size in range(2, max_window + 1):
+        for i in range(n - size + 1):
+            yield lines[i:i + size]
+
+
+def hunk_carries_shape(lines, dense_re, joined_re):
+    """True if `dense_re` matches any single line, or `joined_re` matches a bounded window.
+
+    The `not any(dense_re.search(ln) ...)` half of the window test is load-bearing: without
+    it a window CONTAINING an already-counted single line would match again on the join, so
+    the split reader would inflate a count the dense reader already produced.
+    """
+    if any(dense_re.search(ln) for ln in lines):
+        return True
+    for window in _adjacent_windows(lines):
+        if any(joined_re.search(ln) for ln in window):
+            continue
+        if joined_re.search(" ".join(ln.strip() for ln in window)):
+            return True
+    return False
+
 
 # The anti-vacuous guard a register carries while it is NON-empty. `!` directly followed by
 # the `.is_empty()` call is the shape; a message argument is allowed after it.
@@ -1271,7 +1326,11 @@ def count_register_lines(findings, hunks, vocab):
             h.removed, h.added, is_dedicated_test_file(h.path), vocab
         ) is not None:
             continue
-        if any(REGISTER_LITERAL_RE.search(ln) for ln in h.removed + h.added):
+        if hunk_carries_shape(
+            h.removed, REGISTER_LITERAL_RE, REGISTER_LITERAL_JOINED_RE
+        ) or hunk_carries_shape(
+            h.added, REGISTER_LITERAL_RE, REGISTER_LITERAL_JOINED_RE
+        ):
             n += 1
     return n
 
@@ -1282,7 +1341,9 @@ def count_register_payoff(findings, hunks, vocab):
         1
         for f, h in _hunk_by_finding(findings, hunks)
         if f.verdict == WEAKENED
-        and any(REGISTER_ANTIVACUOUS_RE.search(ln) for ln in h.removed)
+        and hunk_carries_shape(
+            h.removed, REGISTER_ANTIVACUOUS_RE, REGISTER_ANTIVACUOUS_RE
+        )
     )
 
 
@@ -3076,6 +3137,153 @@ def run_self_tests():
         "conventions: ... and MOVED never launders it -- no test fn walked next door",
         MOVED not in [f.verdict for f in payoff_findings],
         [(f.path, f.verdict) for f in payoff_findings],
+    )
+
+    # -- THE SPLIT SHAPE: the counter's measured blind spot, pinned BEFORE it was fixed ---
+    # Day 201. The pre-registered fallback branch of DREAM.md's milestone fired: the
+    # separating row (`register-lines-only`, 17-vs-0) did not move on three foreign
+    # subjects, so the next step was to audit the COUNTER rather than take a fourth
+    # subject. The counter's reach is tested per LINE, and rustfmt splits long macro calls
+    # and tuples across lines -- so a shape that IS present is invisible.
+    #
+    # MEASURED, not asserted: with the join absent, BOTH fixtures below scored 0 and 0 --
+    # that run is the pinning evidence and it is recorded rather than re-performed on
+    # every `--test` (a test cannot assert both pre- and post-fix behaviour and stay
+    # green). Fixed, they score 1 and 1, which is what the checks below assert.
+    #
+    # THE CORPUS FREQUENCY, over `HEAD~240..HEAD` on this repo, measured by joining windows
+    # the same way the counters now do:
+    #   * register literal  -- 9 single-line, 0 split-only. The register rows are SHORT
+    #     enough that rustfmt never splits them, so this counter's blind spot is real in
+    #     MECHANISM but EMPTY in population; the join below is exercised by the fixture
+    #     and proven not to false-positive, not by a single real hunk.
+    #   * anti-vacuous guard -- 39 single-line, 612 split-only windows across 28 HUNKS. A
+    #     split `assert!(\n !x.is_empty(),\n)` IS how this repo writes it whenever the
+    #     expression is long, so the payoff counter was silently under-counting 28 hunks
+    #     in the very window the census runs over. That number is the finding.
+    split_register_lines = [
+        "    (",
+        '        "src/commands_search.rs",',
+        "        4174,",
+        "    ),",
+    ]
+    split_payoff_lines = [
+        "    assert!(",
+        "        !REGISTERED_GIT_BYPASSES.is_empty(),",
+        '        "must not be empty"',
+        "    );",
+    ]
+    # ANTI-VACUOUS, and it is the load-bearing check for this whole block: the fixtures
+    # must REALLY carry the split. A fixture that made the test pass by agreeing with
+    # itself is the failure mode this script exists to refuse, so the negative half is
+    # asserted too -- no individual line carries the shape.
+    check(
+        "split shape: the register fixture IS split -- joined text matches, no line does",
+        REGISTER_LITERAL_JOINED_RE.search(
+            " ".join(ln.strip() for ln in split_register_lines)
+        )
+        is not None
+        and not any(
+            REGISTER_LITERAL_RE.search(ln) or REGISTER_LITERAL_JOINED_RE.search(ln)
+            for ln in split_register_lines
+        ),
+        split_register_lines,
+    )
+    check(
+        "split shape: the payoff fixture IS split -- joined text matches, no line does",
+        REGISTER_ANTIVACUOUS_RE.search(
+            " ".join(ln.strip() for ln in split_payoff_lines)
+        )
+        is not None
+        and not any(REGISTER_ANTIVACUOUS_RE.search(ln) for ln in split_payoff_lines),
+        split_payoff_lines,
+    )
+    # NEAR-MISS, and it is the half that keeps the join from being a false-positive
+    # machine: the register's own DESCRIPTIVE row, split the same way, carries a `*.rs`
+    # path string but no integer, so it is NOT a register literal and must not match.
+    # This is the shape the dense regex's comment already says it deliberately refuses.
+    split_descriptive_row = [
+        "    (",
+        '        "src/a.rs",',
+        '        "run_grep",',
+        '        "argv built incrementally",',
+        "    ),",
+    ]
+    check(
+        "split shape NEAR-MISS: a split DESCRIPTIVE row (no integer) does not match",
+        REGISTER_LITERAL_RE.search(
+            " ".join(ln.strip() for ln in split_descriptive_row)
+        )
+        is None
+        and REGISTER_LITERAL_JOINED_RE.search(
+            " ".join(ln.strip() for ln in split_descriptive_row)
+        )
+        is None,
+        split_descriptive_row,
+    )
+    # NEAR-MISS, and it is the regression surface proper: the ONE-LINE forms are
+    # untouched, byte-identically, by construction -- the join only ever runs on a window
+    # of two or more lines. Asserted rather than argued, because "unreachable by
+    # construction" is exactly the kind of claim that stops being true quietly.
+    check(
+        "split shape NEAR-MISS: the ordinary ONE-LINE forms still match, unchanged",
+        REGISTER_LITERAL_RE.search('    ("src/commands_search.rs", 4307)') is not None
+        and REGISTER_ANTIVACUOUS_RE.search(
+            "    assert!(!REGISTERED_GIT_BYPASSES.is_empty());"
+        )
+        is not None,
+        None,
+    )
+    split_register_diff = "\n".join(
+        [
+            "diff --git a/tests/module_size.rs b/tests/module_size.rs",
+            "--- a/tests/module_size.rs",
+            "+++ b/tests/module_size.rs",
+            "@@ -40,8 +40,8 @@",
+            "-    (",
+            '-        "src/commands_search.rs",',
+            "-        4174,",
+            "-    ),",
+            "+    (",
+            '+        "src/commands_search.rs",',
+            "+        4307,",
+            "+    ),",
+        ]
+    )
+    split_payoff_diff = "\n".join(
+        [
+            "diff --git a/tests/git_chokepoint.rs b/tests/git_chokepoint.rs",
+            "--- a/tests/git_chokepoint.rs",
+            "+++ b/tests/git_chokepoint.rs",
+            "@@ -120,5 +120,1 @@",
+            "-    assert!(",
+            "-        !REGISTERED_GIT_BYPASSES.is_empty(),",
+            '-        "must not be empty"',
+            "-    );",
+            "+    // register is EMPTY: every bypass converted (#864)",
+        ]
+    )
+    _sr_findings, _sr_rs, _sr_th, _sr_sk, sr_census = scan_diff(split_register_diff)
+    check(
+        "split shape: ANTI-VACUOUS -- the scanner saw the split register fixture",
+        _sr_rs > 0,
+        f"rs_hunks={_sr_rs}",
+    )
+    check(
+        "split shape: the split register tuple is COUNTED, not missed",
+        sr_census.get(CONVENTION_REGISTER_LINES, 0) == 1,
+        dict(sr_census),
+    )
+    _sp_findings, _sp_rs, _sp_th, _sp_sk, sp_census = scan_diff(split_payoff_diff)
+    check(
+        "split shape: ANTI-VACUOUS -- the scanner saw the split payoff fixture",
+        _sp_rs > 0 and [f.verdict for f in _sp_findings] == [WEAKENED],
+        (f"rs_hunks={_sp_rs}", [(f.path, f.verdict) for f in _sp_findings]),
+    )
+    check(
+        "split shape: the split anti-vacuous guard PAYS OFF, not missed",
+        sp_census.get(CONVENTION_REGISTER_PAYOFF, 0) == 1,
+        dict(sp_census),
     )
 
     # NEAR-MISS GUARD: an ordinary diff carrying NONE of the five convention shapes is
