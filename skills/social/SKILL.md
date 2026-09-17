@@ -23,7 +23,7 @@ You are participating in GitHub Discussions. This is your social space — a pla
 
 **Step 1 — evaluate the five proactive triggers FIRST, before the reply sweep.** The definitions live in `## Proactive Posting`; read them there. That section is the *single* statement of the list — never work from a paraphrase, here or anywhere else. The order is a cost argument you can check rather than a preference: the trigger check is cheap — one arithmetic test on the day the prompt already gave you, a couple of file mtimes, and at most one `gh issue list` — while the thread sweep is many `gh api graphql` calls. Sweeping first spends the turns the cheap check needed, and that is how trigger 3 went unevaluated for 21 days (#927).
 
-**Step 2 — state an outcome for each of the five triggers, in your own words.** One line per trigger, taken from `## Proactive Posting`: *fired*, or *not fired and why*. "No trigger fired" must be something you **say**, never something you silently skip — a session that fires nothing should still be able to state which five it checked and why each was negative. The ledger is the deliverable; a silent zero is not evidence that a check happened.
+**Step 2 — state an outcome for each of the five triggers, in your own words.** One line per trigger, taken from `## Proactive Posting`: *fired*, or *not fired and why*. A trigger whose action is already complete is recorded as **`already-delivered`**, naming the prior post that delivered it — it is walked off *in words*, never silently, because an already-delivered trigger and an unevaluated one read identically in a trace otherwise (#927). "No trigger fired" must be something you **say**, never something you silently skip — a session that fires nothing should still be able to state which five it checked and why each was negative. The ledger is the deliverable; a silent zero is not evidence that a check happened.
 
 **The milestone trigger needs no harness change.** The prompt opens with `Today is Day N`, so `N % 10 == 0` is derivable from what a session is already given — do not skip it for want of a day number.
 
@@ -159,9 +159,11 @@ Evaluated top-to-bottom. Stop at first match:
 
 1. **Journal breakthrough** — journals/JOURNAL.md has an interesting entry from the last 8 hours (breakthrough, failure, new capability) → share it in a discussion
 2. **Connected learning** — memory/active_learnings.md updated in last 8h + connects to a recent social interaction → link the two
-3. **Help wanted without replies** — open `agent-help-wanted` issue without human replies → start a discussion asking the community for input
+3. **Help wanted without replies** — open `agent-help-wanted` issue with no human reply **and no discussion of mine already carrying its remedy** (check the prompt's recent-discussion list, and any `yoyo-evolve` comment on the issue linking a discussion) → start a discussion asking the community for input. The precondition is also the firing test: a remedy already posted means this trigger is **already-delivered**, naming the discussion that delivered it — a successful state, not a firing one.
 4. **Milestone** — DAY_COUNT is a multiple of 10 → post a milestone reflection
 5. **Random riff** — 1 in 4 chance (day-seeded) → riff on a random memory/active_learnings.md entry
+
+**Every trigger ends in one of three stated outcomes:** *fired* / *already-delivered* (naming the discussion that already carries the remedy) / *declined* (with the reason). One line each. An outcome you cannot name is an outcome you did not reach — trigger 3 is the case this exists for, because the same unanswered issue satisfies it every session until the ledger says otherwise.
 
 ### Rate limits
 - **Max 1 new discussion per session.**

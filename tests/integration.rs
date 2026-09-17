@@ -2339,6 +2339,162 @@ fn social_skill_early_exit_rule_requires_trigger_ledger_before_exit() {
     );
 }
 
+/// Guards the *already-asked* precondition on trigger 3 in `skills/social/SKILL.md` (#927).
+///
+/// The defect this pins, read out of three social runs on 2026-09-16/17: trigger 3's
+/// test was "open `agent-help-wanted` issue without human replies" — a condition the
+/// SAME unanswered issue satisfies every session, forever. The only thing standing
+/// between that and a repost was the session's own memory of last week's posts, and
+/// in the trace that caught itself it was a narrated detour rather than a rule. The
+/// fix is a precondition on the trigger itself plus a name (`already-delivered`) for
+/// the state, so an evaluated silence and a walked-off silence stop reading alike.
+///
+/// Scoped to the `## Proactive Posting` section (sliced at the next `## ` heading) and
+/// anti-vacuous first, in the same idiom as
+/// `social_skill_early_exit_rule_requires_trigger_ledger_before_exit`.
+#[test]
+fn social_skill_trigger_3_requires_the_already_asked_precondition() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("skills/social/SKILL.md");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+
+    let heading = "## Proactive Posting";
+    // Anchor at a line start: the heading is also *mentioned* inline in
+    // `## Early Exit Rule` ("the definitions live in `## Proactive Posting`"),
+    // so a bare `find` would slice the wrong section.
+    let anchored = format!("\n{heading}");
+    let at = text
+        .find(&anchored)
+        .unwrap_or_else(|| panic!("skills/social/SKILL.md must contain the `{heading}` heading"));
+    let start = at + 1;
+
+    // Slice to the NEXT `## ` heading so every assertion below is scoped to this
+    // section. A `contains` over the whole file would be satisfied by text
+    // elsewhere and is a vacuous guard.
+    let after = &text[start + heading.len()..];
+    let end = after
+        .find("\n## ")
+        .unwrap_or_else(|| panic!("`{heading}` must be followed by another `## ` heading"));
+    let section = &after[..end];
+
+    // Anti-vacuous first: an empty (or absurdly large) slice must redden as a
+    // MISSING/RENAMED SECTION rather than pass by asserting nothing.
+    assert!(
+        section.len() >= 400,
+        "the `{heading}` section looks empty or truncated ({} bytes) — a renamed \
+         heading should fail as a missing section, not pass vacuously",
+        section.len()
+    );
+    assert!(
+        section.len() < text.len() / 2,
+        "the `{heading}` slice is {} of {} bytes — the section delimiter moved, so \
+         this guard is no longer scoped to one section",
+        section.len(),
+        text.len()
+    );
+
+    // The five-trigger list is intact, in order. A rewrite that drops trigger 5
+    // cannot pass by being merely shorter.
+    for n in 1..=5 {
+        let marker = format!("\n{n}. **");
+        assert!(
+            section.contains(&marker),
+            "`{heading}` must still list all five numbered triggers, in order; \
+             the `{marker}` marker is missing"
+        );
+    }
+
+    // Near-miss: triggers 1, 2, 4 and 5 keep their current text, so this guard
+    // fires on the trigger-3 change it is for and not on an unrelated rewrite.
+    let untouched = [
+        "1. **Journal breakthrough** — journals/JOURNAL.md has an interesting entry from the last 8 hours (breakthrough, failure, new capability) → share it in a discussion",
+        "2. **Connected learning** — memory/active_learnings.md updated in last 8h + connects to a recent social interaction → link the two",
+        "4. **Milestone** — DAY_COUNT is a multiple of 10 → post a milestone reflection",
+        "5. **Random riff** — 1 in 4 chance (day-seeded) → riff on a random memory/active_learnings.md entry",
+    ];
+    for trigger in untouched {
+        assert!(
+            section.contains(trigger),
+            "`{heading}`: triggers other than 3 must keep their text — this guard \
+             is for the trigger-3 precondition, not for a rewrite of the list. \
+             Missing: {trigger:?}"
+        );
+    }
+
+    // Trigger 3, isolated to its own line so the precondition cannot be
+    // satisfied by prose elsewhere in the section (e.g. the outcomes sentence).
+    let t3 = section
+        .split('\n')
+        .find(|l| l.starts_with("3. **Help wanted without replies**"))
+        .unwrap_or_else(|| {
+            panic!(
+                "`{heading}` must still list trigger 3 as the third numbered item, \
+                 starting `3. **Help wanted without replies**`"
+            )
+        });
+    let t3_lower = t3.to_lowercase();
+
+    // The precondition itself: open AND unreplied AND no remedy already posted,
+    // with both places to check it named.
+    assert!(
+        t3_lower.contains("no discussion of mine already carrying its remedy"),
+        "trigger 3 must carry the already-asked precondition — an open, unreplied \
+         issue is not sufficient on its own, because the same issue satisfies that \
+         test every session. Missing wording: `no discussion of mine already \
+         carrying its remedy`. Got: {t3:?}"
+    );
+    assert!(
+        t3_lower.contains("recent-discussion list") && t3_lower.contains("linking a discussion"),
+        "trigger 3 must say WHERE to check the precondition — the prompt's \
+         recent-discussion list and a `yoyo-evolve` issue comment linking a \
+         discussion — so the check is executable rather than aspirational. \
+         Got: {t3:?}"
+    );
+
+    // ...and the state it produces has a NAME, which is the half that makes a
+    // later trace readable.
+    assert!(
+        t3_lower.contains("already-delivered"),
+        "trigger 3 must name the already-posted state `already-delivered` and call \
+         it a successful state rather than a firing one. Got: {t3:?}"
+    );
+
+    // The near-miss in the other direction: the precondition is not merely
+    // appended while the permissive old test survives beside it.
+    assert!(
+        !t3.contains("issue without human replies"),
+        "trigger 3's old firing test (`agent-help-wanted` issue without human \
+         replies) must be REPLACED, not kept alongside the precondition — two \
+         tests that disagree today is the failure this guards. Got: {t3:?}"
+    );
+
+    // The section states the three outcomes in words: fired / already-delivered /
+    // declined. This is what makes an evaluated silence distinguishable from a
+    // walked-off one in a trace.
+    let lower = section.to_lowercase();
+    assert!(
+        lower.contains("three stated outcomes"),
+        "`{heading}` must state that every trigger ends in one of three named \
+         outcomes"
+    );
+    assert!(
+        lower.contains("already-delivered") && lower.contains("declined"),
+        "`{heading}` must state all three outcomes — `fired`, `already-delivered` \
+         and `declined` — so a walked-off trigger is not recorded as one of the \
+         other two"
+    );
+
+    // The Early Exit Rule's ledger is where those outcomes are written down; the
+    // two sections are one mechanism, and the ledger half is guarded by the
+    // pre-existing test above.
+    assert!(
+        text.contains("## Early Exit Rule") && text.contains("already-delivered"),
+        "the `## Early Exit Rule` ledger must record the `already-delivered` \
+         outcome too — a trigger whose action is already complete is walked off \
+         IN WORDS, never silently"
+    );
+}
+
 /// Validates the SharedState round-trip pattern used by `build_sub_agent_tool`.
 ///
 /// Since yoyo is a binary crate, integration tests can't call `build_sub_agent_tool`
