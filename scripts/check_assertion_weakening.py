@@ -1264,11 +1264,20 @@ def render_conventions_limit(conventions=WRITTEN_CONVENTIONS) -> str:
 _LIMITS_VOCABULARY = """\
   6. IT READS ONE DIALECT: `assert*!` macros and `#[test]` attributes. A repo that writes
      its tests through its OWN macros is largely invisible to it. Measured on ripgrep,
-     whose integration suite is `rgtest!(name, |dir, cmd| { eqnice!(a, b) })`: 334
-     `eqnice!` call sites against 71 assert-macro lines, and 0 literal `#[test]`
-     attributes in tests/misc.rs. Such a repo reports a SMALL examined count and a LARGE
-     skipped one, and a `WEAKENED 0` over it is NOT A CLEAN BILL -- it is a reading over
-     the sliver the vocabulary could reach.
+     whose integration suite is `rgtest!(name, |dir, cmd| { eqnice!(a, b) })`.
+     The CALL-SITE RATIO that once stood here as a blindness estimate -- 334 `eqnice!`
+     call sites against 71 assert-macro lines -- was a FALSIFIED PREDICTION, graded in the
+     day-199 row of `dreams/foreign_assertion_readings.jsonl`, which is left exactly as
+     written. A call site is the WRONG UNIT and is not a safe proxy for hunk-level
+     blindness: one hunk can carry many `eqnice!` calls, so counting call sites
+     over-weights the integration suite, and ripgrep's `crates/*/tests` DO use the
+     standard `#[test]` + `assert_eq!` dialect, so a large share of its test-file hunks
+     were readable all along. The measured replacement, dated 2026-09-15 (day 199) over
+     ripgrep's `HEAD~240..HEAD`: 37 of 72 test-file hunks unreadable, 51.4% blind -- a
+     HUNK-level number, and the only unit this disclosure uses.
+     Such a repo reports a SMALL examined count and a LARGE skipped one, and a `WEAKENED 0`
+     over it is NOT A CLEAN BILL -- it is a reading over the sliver the vocabulary could
+     reach.
      The skipped count is printed whenever it is non-zero, and in --per-commit mode a
      commit that examined NOTHING while skipping something gets its own row, because a
      window total averages that blindness away. It counts HUNKS the vocabulary missed,
@@ -1278,6 +1287,9 @@ _LIMITS_VOCABULARY = """\
      unrecognised MACRO or ATTRIBUTE is present, so a foreign oracle written as a plain
      function call is missed, and a pure data edit (a debt register) is correctly out of
      scope rather than counted as unreadable.
+     The report prints the DERIVED fraction too -- `skipped` over `examined + skipped`, in
+     raw integers and as a percentage -- so the denominator is re-derivable from the
+     tool's own output and no reading has to recompute it by hand and drift.
   7. THE VOCABULARY IS EXTENSIBLE, NOT DISCOVERED. `--assert-macro NAME` and
      `--test-macro NAME` widen what counts as an assertion / a test declaration, and the
      builtins are the default, so with no flags this reads exactly as it always has. But
@@ -1342,6 +1354,47 @@ def render_convention_census(census) -> str:
     return "\n".join(lines)
 
 
+def blindness_fraction_line(examined: int, skipped: int) -> str:
+    """The one line that turns two counters into the blindness FRACTION, so no row has to.
+
+    The day-199 ripgrep reading published "35 of 72 test-file hunks = 48.6%" and that
+    fraction was computed BY HAND, in the row, from the two integers this report prints
+    separately. Nothing in the tool stated the relationship, so every later reading
+    re-derives it, and a re-derivation is a place a number can drift with nothing to
+    contradict it -- the class my own archive names as "a fact about me with no external
+    referent". So the derived number is printed here, beside the counters it is derived
+    from, and its unit is named: HUNKS, never call sites. That unit is the whole point --
+    a call-site ratio stood in this tool's own LIMITS as a blindness estimate until the
+    day-199 row graded it an OVERESTIMATE, because one hunk can carry many call sites.
+
+    The denominator is the population the examined count was measured AGAINST --
+    `examined + skipped` -- not the examined count itself, so the line states both raw
+    integers and the percentage at once. The division is guarded rather than assumed: a
+    zero denominator prints NOT COMPUTABLE and never `0%`, because `0%` would be the
+    confident-wrong-diagnosis value -- "could not check" reading as "checked; clean",
+    exactly what this disclosure exists to refuse.
+
+    REACHABILITY, stated rather than implied: this is called from inside render_report's
+    `if skipped_unknown_vocab:` block, where `skipped >= 1`, so the renderer itself can
+    never hand it a zero denominator. The zero branch is a guard at the point of the
+    division, and it is tested by a direct call. The population it describes is real and
+    measured -- 22 of 240 ripgrep commits touched zero test-file hunks (day-199 row) --
+    but those commits have nothing skipped either, so they never enter this block at all;
+    they are disclosed per commit by `render_blind_commits` instead.
+    """
+    denominator = examined + skipped
+    if denominator == 0:
+        return (
+            "  blindness (HUNKS, never call sites): NOT COMPUTABLE -- 0 of 0 test-file\n"
+            "  hunks touched (0 examined + 0 skipped), so there is no denominator to divide."
+        )
+    pct = 100.0 * skipped / denominator
+    return (
+        f"  blindness (HUNKS, never call sites): {skipped} of {denominator} test-file\n"
+        f"  hunks unreadable ({examined} examined + {skipped} skipped) = {pct:.1f}%."
+    )
+
+
 def render_report(
     findings,
     commits,
@@ -1379,6 +1432,9 @@ def render_report(
         out.append(
             "  a verdict and is summed into none of them; it counts HUNKS, never assertions."
         )
+        # The DERIVED number, printed beside the counters it comes from so no reading has
+        # to re-derive it by hand -- see blindness_fraction_line for why the unit matters.
+        out.append(blindness_fraction_line(test_hunks, skipped_unknown_vocab))
         out.append("")
 
     census_lines = render_convention_census(census)
@@ -2987,6 +3043,99 @@ def run_self_tests():
         rep_skip,
     )
 
+    # ----------------------------------------------------------------------------------
+    # THE DERIVED FRACTION (day 201). The day-199 reading published "35 of 72 test-file
+    # hunks = 48.6%" and computed it BY HAND from two counters the tool printed
+    # separately. This block pins the line that states the relationship, so no later
+    # reading re-derives it and drifts. It is a HUNK count, never a call-site count.
+    # ----------------------------------------------------------------------------------
+    # A MIXED fixture -- one readable standard-dialect hunk AND one unreadable
+    # foreign-dialect hunk in the same test file -- so the fraction is neither 0% nor
+    # 100% and a sign or denominator error cannot pass as correct.
+    mixed_diff = "\n".join(
+        [
+            "diff --git a/tests/misc.rs b/tests/misc.rs",
+            "index 1111111..2222222 100644",
+            "--- a/tests/misc.rs",
+            "+++ b/tests/misc.rs",
+            "@@ -10,3 +10,3 @@",
+            "-    assert_eq!(msg, \"exact\");",
+            "+    assert!(msg.contains(\"exa\"));",
+            "@@ -30,4 +30,3 @@ rgtest!(feature_baz, |dir: Dir, mut cmd: TestCommand| {",
+            "     cmd.arg(\"--foo\");",
+            "-    eqnice!(expected, cmd.stdout());",
+            "     dir.create(\"x\", \"y\");",
+        ]
+    )
+    mx_f, mx_rs, mx_th, mx_sk, mx_census = scan_diff(mixed_diff)
+    mx_render = render_report(mx_f, 1, mx_rs, mx_th, "FIXTURE", 40, mx_sk, mx_census)
+    # Every needle is BUILT AT RUNTIME from the fixture's own counts -- never transcribed
+    # from another fixture, so this cannot pass by agreeing with a stale literal.
+    mx_examined = mx_th
+    mx_denominator = mx_th + mx_sk
+    mx_pct = f"{100.0 * mx_sk / mx_denominator:.1f}%"
+    mx_needles = (
+        f"{mx_sk} of {mx_denominator}",
+        f"({mx_examined} examined + {mx_sk} skipped)",
+        "hun" + "ks",
+    )
+    check(
+        "vocabulary PRESENCE: the report states the blindness fraction with the fixture's "
+        "own examined/denominator integers",
+        mx_sk > 0
+        and mx_th > 0
+        and all(n in mx_render for n in mx_needles)
+        and mx_pct in mx_render,
+        (mx_th, mx_sk, mx_render),
+    )
+    check(
+        "vocabulary ANTI-VACUOUS: the fraction fixture really does carry an unrecognised "
+        "macro AND a readable assertion, and both counts reach the RENDERED line non-zero",
+        "eqnice!" in mixed_diff
+        and ("rg" + "test!") in mixed_diff
+        and "assert_eq!" in mixed_diff
+        and mx_sk == 1
+        and mx_th == 1
+        and f"{mx_sk} of {mx_denominator}" in mx_render
+        and "0 of" not in mx_render,
+        (mx_th, mx_sk, mx_render),
+    )
+    # NEAR-MISS -- the whole regression surface. Every reading ever taken of my own repo
+    # lands here: nothing is skipped, so the block (and the fraction inside it) must not
+    # appear at all and the rendering must be byte-identical to before the change.
+    rep_zero_noskip = render_report([], 1, 1, 1, "FIXTURE", 40, 0)
+    check(
+        "vocabulary NEAR-MISS: the fraction line is ABSENT when nothing was skipped",
+        ("blind" + "ness (") not in rep_zero_noskip
+        and rep_zero_noskip == render_report([], 1, 1, 1, "FIXTURE"),
+        rep_zero_noskip,
+    )
+    # THE ZERO-DENOMINATOR CASE, both poles of the same guard pinned in ONE row so the
+    # division's two branches are read side by side: `0` of `0` prints NOT COMPUTABLE and
+    # NO percent sign at all, never `0%` -- the confident-wrong-diagnosis value -- while
+    # the nearest RENDERER-REACHABLE case (zero examined, hunks skipped) is a computable
+    # 100.0% blind rather than a missing number.
+    # REACHABILITY, stated here because it is the honest part: the renderer cannot drive
+    # the zero-denominator branch, since it only emits the line inside
+    # `if skipped_unknown_vocab:` where `skipped >= 1`, so `examined + skipped >= 1` by
+    # construction. The zero-population case it describes is real and measured (22 of 240
+    # ripgrep commits touched zero test-file hunks, day-199 row) but those commits skip
+    # nothing either, so they never enter the block -- they are disclosed per commit by
+    # `render_blind_commits`. Hence the first half is a DIRECT call and the second half is
+    # what the renderer actually does. (rep_skip's fixture is test_hunks=0, skipped=3.)
+    zero_line = blindness_fraction_line(0, 0)
+    check(
+        "vocabulary THE ZERO-DENOMINATOR CASE: 0 of 0 is NOT COMPUTABLE and carries no "
+        "percent sign, while 0 examined + 3 skipped IS computable 100.0% blind",
+        "NOT COMPUTABLE" in zero_line
+        and "%" not in zero_line
+        and f"{0} of {0}" in zero_line
+        and "100.0%" in rep_skip
+        and "NOT COMPUTABLE" not in rep_skip
+        and f"{3} of {3}" in rep_skip,
+        (zero_line, rep_skip),
+    )
+
     # PER-COMMIT anti-vacuous row. Day 198's WINDOW count was non-zero while the blind
     # plants were zero, so only the per-commit row can expose it.
     check(
@@ -3005,6 +3154,32 @@ def run_self_tests():
     check(
         "vocabulary: LIMITS names the one dialect and refuses 'WEAKENED 0' as a clean bill",
         "IT READS ONE DIALECT" in LIMITS and "NOT A CLEAN BILL" in LIMITS,
+        None,
+    )
+    # THE LIMITS TEXT (day 201). Asserted on LIMITS -- the string main() writes to stderr
+    # on EVERY run -- never by reading this file, which is the self-agreeing shape. The
+    # claim has two halves: the falsified call-site arithmetic is retired AS AN ESTIMATE,
+    # and the measured HUNK-level number that replaced it carries a named origin.
+    check(
+        "vocabulary LIMITS: the call-site ratio is RETIRED as a blindness estimate",
+        ("CALL-SITE" + " RATIO") in LIMITS
+        and ("FALSIFIED" + " PREDICTION") in LIMITS
+        and ("WRONG" + " UNIT") in LIMITS
+        and ("not a safe proxy for " + "hunk-level") in LIMITS,
+        None,
+    )
+    check(
+        "vocabulary LIMITS NEAR-MISS: the falsified DERIVED percentage is gone from the "
+        "disclosure",
+        f"{82}%" not in LIMITS,
+        None,
+    )
+    check(
+        "vocabulary LIMITS: the measured replacement is stated in HUNKS with its origin",
+        f"{37} of {72}" in LIMITS
+        and f"{51.4}%" in LIMITS
+        and "dreams/foreign_assertion_readings.jsonl" in LIMITS
+        and ("hunk" + "s unreadable") in LIMITS,
         None,
     )
 
