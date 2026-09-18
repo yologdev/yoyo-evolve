@@ -2495,6 +2495,149 @@ fn social_skill_trigger_3_requires_the_already_asked_precondition() {
     );
 }
 
+/// Guards the shape→category rule in `skills/social/SKILL.md` (#928).
+///
+/// Why this exists: the category list was a four-line block at the very END of
+/// `## How to create a new discussion` — after the session had already decided
+/// to post — and the `Day N:` convention that separates the two channels lived
+/// only in the titles of 80 archived posts, never in prose (`grep -rn "Day N:"
+/// skills/ scripts/` → 0 hits before this change). A trace made the cost
+/// concrete: the 2026-09-16 21:21 social run drafted a Journal Club reflection,
+/// then inferred from the title shapes that "Journal Club ones are `Day N:`
+/// titled", moved a correctly-drafted post to General, and posted nothing. So
+/// the fix is a discriminator (the SHAPE decides, never the title) at the
+/// decision point, in ONE statement, with the wrong inference named out loud —
+/// a rule that only states the correct inference is the one that was already
+/// there and unused.
+///
+/// What this test does NOT do, stated plainly so it is never described as
+/// proving the behaviour: it pins the *decision* against drift. It cannot see
+/// whether a session obeys it — the evidence for that is the next social run
+/// that drafts a reflection, which is a report, not a test. Breakage here means
+/// the wording reverted or got duplicated, not that the category is right.
+#[test]
+fn social_skill_category_is_chosen_by_post_shape_not_title_shape() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("skills/social/SKILL.md");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+
+    let heading = "## Proactive Posting";
+    // Anchor at a line start: the heading is also *mentioned* inline in
+    // `## Early Exit Rule`, so a bare `find` would slice the wrong section.
+    let anchored = format!("\n{heading}");
+    let at = text
+        .find(&anchored)
+        .unwrap_or_else(|| panic!("skills/social/SKILL.md must contain the `{heading}` heading"));
+    let start = at + 1;
+    let after = &text[start + heading.len()..];
+    let end = after
+        .find("\n## ")
+        .unwrap_or_else(|| panic!("`{heading}` must be followed by another `## ` heading"));
+    let section = &after[..end];
+
+    // Anti-vacuous first: an empty (or absurdly large) slice must redden as a
+    // MISSING/RENAMED SECTION rather than pass by asserting nothing.
+    assert!(
+        section.len() >= 400,
+        "the `{heading}` section looks empty or truncated ({} bytes) — a renamed \
+         heading should fail as a missing section, not pass vacuously",
+        section.len()
+    );
+    assert!(
+        section.len() < text.len() / 2,
+        "the `{heading}` slice is {} of {} bytes — the section delimiter moved, so \
+         this guard is no longer scoped to one section",
+        section.len(),
+        text.len()
+    );
+
+    // 1. The discriminator, in one sentence, INSIDE the section where the
+    //    decision is made. Prose elsewhere in the file cannot satisfy this.
+    assert!(
+        section.contains("chosen by the post's SHAPE, never by the title's shape"),
+        "`{heading}` must state the discriminator — the category is chosen by the \
+         post's SHAPE, never by the title's shape. This is the rule whose absence \
+         let a drafted Journal Club reflection drift to General (#928)."
+    );
+
+    // 2. `Day N:` is written down as the marker, and said to be the marker
+    //    rather than a global convention — the honest half, and the property
+    //    that actually makes the two channels separable from titles alone.
+    assert!(
+        section.contains("`Day N:` is the Journal Club marker, not a global convention"),
+        "`{heading}` must state that `Day N:` is the Journal Club marker specifically \
+         and not a global convention — otherwise the prefix reads as cosmetic and \
+         dropping it to post anyway looks harmless."
+    );
+    assert!(
+        section.contains("`Day N: <the claim the post makes>`"),
+        "`{heading}` must give the title form `Day N: <the claim the post makes>` — \
+         the convention existed only in 80 archived titles before this, so a \
+         session had to INFER it from title shapes."
+    );
+
+    // 3. The wrong inference is named out loud, verbatim. Stating only the
+    //    correct rule is the version that was already there and unused; the
+    //    move that failed is what has to be visible at the decision point.
+    for wrong in [
+        "Journal Club ones are `Day N:` titled",
+        "therefore anything without that prefix belongs in General",
+    ] {
+        assert!(
+            section.contains(wrong),
+            "`{heading}` must name the wrong inference out loud so it can be \
+             refused — a rule that only states the correct inference is the one \
+             that was already there and unused. Missing: {wrong:?}"
+        );
+    }
+    assert!(
+        section.contains("A post is not in General because its title lacks the prefix"),
+        "`{heading}` must foreclose the default-to-General reading explicitly"
+    );
+
+    // 4. The condition that makes the prefix meaningful rather than cosmetic.
+    assert!(
+        section.contains("not a reason to drop the prefix and post anyway"),
+        "`{heading}` must say that a session which cannot name the day's claim in \
+         the title has a reason NOT to post — not a reason to drop the prefix"
+    );
+
+    // 5. ONE statement of the list, never two copies that agree today. The old
+    //    block is gone, and the surviving list appears exactly once in the file.
+    assert!(
+        !text.contains("**Journal Club** — sharing journal entries or reflections"),
+        "the old four-line category block must be REPLACED by the pointer above, \
+         not kept beside the new rule — two copies of a rule agree the day they \
+         are written and diverge forever after."
+    );
+    let category_rows = text.matches("- **Journal Club** —").count();
+    assert_eq!(
+        category_rows, 1,
+        "the category list must be stated exactly once in the file (found \
+         {category_rows} `- **Journal Club** —` rows); a second copy is the \
+         duplication this change exists to remove."
+    );
+
+    // 6. The old decision site now POINTS at the one statement rather than
+    //    paraphrasing it — the same discipline the Early Exit Rule uses for the
+    //    five triggers.
+    assert!(
+        text.contains("see `### Which category` above"),
+        "`## How to create a new discussion` must point at `### Which category` \
+         instead of restating the list"
+    );
+
+    // Near-miss in the other direction: the five triggers and their three
+    // outcomes are untouched — this guard is for the category half only, and a
+    // rewrite that drops the trigger ledger must redden its own test, not
+    // silently ride along here.
+    assert!(
+        section.contains("Every trigger ends in one of three stated outcomes"),
+        "`{heading}` must keep the three-outcomes ledger — #928 is the category \
+         and title half, not a rewrite of the trigger list"
+    );
+}
+
 /// Validates the SharedState round-trip pattern used by `build_sub_agent_tool`.
 ///
 /// Since yoyo is a binary crate, integration tests can't call `build_sub_agent_tool`

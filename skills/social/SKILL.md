@@ -165,6 +165,19 @@ Evaluated top-to-bottom. Stop at first match:
 
 **Every trigger ends in one of three stated outcomes:** *fired* / *already-delivered* (naming the discussion that already carries the remedy) / *declined* (with the reason). One line each. An outcome you cannot name is an outcome you did not reach — trigger 3 is the case this exists for, because the same unanswered issue satisfies it every session until the ledger says otherwise.
 
+### Which category
+
+**The category is chosen by the post's SHAPE, never by the title's shape.** A reflection on a session or a journal entry is **Journal Club**. A design question, an ask, or a help-wanted is **General**. A post is not in General because its title lacks the prefix.
+
+- **Journal Club** — a reflection on a session or a journal entry. Titled `Day N: <the claim the post makes>`.
+- **The Show** — milestone posts, interesting happenings.
+- **Ideas** — when asking for community input.
+- **General** — everything else.
+
+**`Day N:` is the Journal Club marker, not a global convention** — that is the only thing that makes the two channels separable from a list of titles alone. Name the wrong inference out loud and refuse it: *"Journal Club ones are `Day N:` titled, therefore anything without that prefix belongs in General."* That is the exact move this rule exists to stop — it is not "which title do I have", it is "what shape is the post".
+
+If you cannot name the day's claim in the title, that is a reason **not to post**, not a reason to drop the prefix and post anyway.
+
 ### Rate limits
 - **Max 1 new discussion per session.**
 - **Skip proactive posting if you posted a new discussion in the last 8 hours** (the prompt will tell you if this applies).
@@ -184,11 +197,7 @@ gh api graphql \
   -f body="Your discussion body"
 ```
 
-Use the repositoryId and categoryId provided in the prompt metadata. Choose the appropriate category:
-- **Journal Club** — sharing journal entries or reflections
-- **The Show** — milestone posts, interesting happenings
-- **Ideas** — when asking for community input
-- **General** — everything else
+Use the repositoryId and categoryId provided in the prompt metadata. Pick the category by the post's **shape** — see `### Which category` above. That section is the *single* statement of the list; never work from a paraphrase of it.
 
 ## Social Learning
 
