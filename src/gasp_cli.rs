@@ -474,6 +474,27 @@ pub(crate) async fn run_gasp_command(cmd: GaspCommand) -> Result<Option<String>,
         .goal
         .clone()
         .unwrap_or_else(|| gasp::DEFAULT_GOAL.to_string());
+    // This door narrows `gasp::RecorderPlan`'s three-state decision to `Open`
+    // **by construction**, and the narrowing is stated here because the other
+    // two branches are neither absent nor dead code — they are simply
+    // unreachable from this call site, which is precisely the shape a later
+    // reader audits (and cannot resolve) by staring at the branch:
+    //
+    //   * `Disabled` needs `root == None`, but `common.state_dir` came from
+    //     `required(flags, "state-dir")`, which returns `Err` on an absent **or
+    //     empty** value — so it is non-empty before this line runs.
+    //   * `Misconfigured` needs a non-empty root with an empty goal, but
+    //     `goal_id` above is `unwrap_or_else(DEFAULT_GOAL)` and `DEFAULT_GOAL`
+    //     is a non-empty literal, so the second argument is never empty either.
+    //
+    // The refusals an operator can actually hit therefore live one layer up, in
+    // `required()` (an `Err` naming the missing flag, exit 2) and in the
+    // `DEFAULT_GOAL` fallback — **not** here. `Disabled` staying unconstructible
+    // at this door is deliberate rather than a gap: an `Err` naming the absent
+    // `--state-dir` is a sharper refusal than a silently disabled recorder, so
+    // do not "fix" this dead branch by widening the door. The narrowing is
+    // pinned by `gasp_cli_door_narrows_the_plan_to_open`, so a future widening of
+    // `required()` cannot silently reopen it.
     let plan = gasp::plan_from_env_values(Some(&common.state_dir), Some(&goal_id));
     // Directly, not via `open_recorder`: the recorder would close this
     // session's own open run as "interrupted" (#831).
@@ -1274,5 +1295,146 @@ mod tests {
                 "`{name}` resume expectation"
             );
         }
+    }
+
+    /// #913: this door narrows `gasp::RecorderPlan`'s three-state decision to
+    /// `Open` **by construction** (`common.state_dir` is post-`required()`, and
+    /// `goal_id` carries the non-empty `DEFAULT_GOAL` fallback). Pinning the
+    /// narrowing means a future widening of `required()` — accepting an empty
+    /// `--state-dir`, say — cannot silently reopen the other two branches
+    /// without a test going red first.
+    ///
+    /// This is a property of the SHARED function **as seen from this door**, and
+    /// deliberately not a restatement of `src/gasp.rs`'s own coverage: those
+    /// rows hand `plan_from_env_values` a `None`/blank input directly, which
+    /// this door cannot do.
+    ///
+    /// Gated because `mod gasp` itself is (`src/main.rs:97`), so a plain
+    /// `cargo test` cannot resolve `crate::gasp` at all. What runs it is CI's
+    /// `Test (--features gasp)` step (.github/workflows/ci.yml:45-46) and
+    /// `cargo test --features gasp gasp_cli` locally — and note that the
+    /// feature-gated *clippy* step is a different line (52), so pointing this
+    /// comment at 52 would name a checker that never runs a test.
+    ///
+    /// (`tests/feature_gated_tests.rs`'s register is scoped to `tests/*.rs`
+    /// files carrying a *file-level* gate, so a `#[cfg]` on one test fn inside
+    /// `src/` is not a member of that population and is not registered there.)
+    #[test]
+    #[cfg(feature = "gasp")]
+    fn gasp_cli_door_narrows_the_plan_to_open() {
+        use crate::gasp::{plan_from_env_values, RecorderPlan, DEFAULT_GOAL};
+
+        let states = ["yoyo-gasp", ".yoyo/gasp-store", "/tmp/state"];
+        let goals = ["goal_self_improvement", "goal_abc123"];
+
+        // Anti-vacuous first. If any fixture value were blank, the `Open` table
+        // below would be asserting against the very branch it claims this door
+        // cannot build, and a transcription slip would make the test pass by
+        // agreeing with itself.
+        for value in states.iter().chain(goals.iter()) {
+            assert!(
+                !value.trim().is_empty(),
+                "fixture value {value:?} is blank — the table below would be vacuous"
+            );
+        }
+
+        // The load-bearing clause. `goal_id` is structurally non-empty only
+        // because the fallback is; an empty `DEFAULT_GOAL` would quietly make
+        // this door's `Misconfigured` path live and the comment above the call
+        // say the opposite.
+        assert!(
+            !DEFAULT_GOAL.trim().is_empty(),
+            "DEFAULT_GOAL is blank, so this door's goal argument can be empty after all"
+        );
+
+        // PRESENCE, every realistic pair this door can build.
+        for state in states {
+            for goal in goals.iter().chain(std::iter::once(&DEFAULT_GOAL)) {
+                assert_eq!(
+                    plan_from_env_values(Some(state), Some(*goal)),
+                    RecorderPlan::Open {
+                        root: std::path::PathBuf::from(state),
+                        goal_id: goal.to_string(),
+                    },
+                    "state-dir {state:?} + goal {goal:?} must open"
+                );
+            }
+        }
+
+        // The non-vacuity near-miss — and the whole claim: the `Misconfigured`
+        // branch EXISTS and is only *unreachable through this door*.
+        //
+        // **The fixture here is not the one #913's text named, and the issue's
+        // version is wrong.** It proposed `(Some(""), Some("goal"))`, which is
+        // `Disabled` — `plan_from_env_values` trims and filters the root before
+        // matching, so a blank root collapses to `None` and takes the
+        // `(None, _)` arm (`src/gasp.rs:1267` already pins exactly that). The
+        // near-miss that actually reaches `Misconfigured` is a non-blank root
+        // with a blank or absent goal, so that is what is asserted below, and
+        // the blank-root rows are kept beside it as the *sibling* proof: no
+        // blank root can produce `Misconfigured` either.
+        for blank in ["", "   "] {
+            match plan_from_env_values(Some("/tmp/store"), Some(blank)) {
+                RecorderPlan::Misconfigured(reason) => assert!(
+                    !reason.trim().is_empty(),
+                    "a refusal that states no reason is not a refusal"
+                ),
+                other => panic!(
+                    "a non-blank root with a blank goal must still be Misconfigured — that \
+                     branch exists, this door just cannot build it (got {other:?})"
+                ),
+            }
+        }
+        // `Disabled`'s sibling rows, for the same reason: the branch is real, and
+        // no root value this door can produce reaches it — a blank root refuses
+        // as `Disabled` rather than `Misconfigured`, and an absent one as
+        // `Disabled` rather than reaching `required()`.
+        assert_eq!(
+            plan_from_env_values(Some(""), Some(DEFAULT_GOAL)),
+            RecorderPlan::Disabled,
+            "a blank state-dir is Disabled, not Misconfigured — this door refuses it earlier, in \
+             `required()`, which is the point"
+        );
+        assert_eq!(
+            plan_from_env_values(None, Some(DEFAULT_GOAL)),
+            RecorderPlan::Disabled,
+            "an absent state-dir must still be Disabled — this door refuses it earlier, in \
+             `required()`, which is the point"
+        );
+    }
+
+    /// #913's source-level guard, deliberately **weak**, and the weakness is
+    /// stated rather than implied: it asserts the SHAPE of the door is still
+    /// present in `run_gasp_command`'s body — a state-dir and a
+    /// `DEFAULT_GOAL`-backed goal are still what get handed to
+    /// `plan_from_env_values` — and it proves **never** that the branch fires.
+    /// `run_gasp_command` is `async`, calls `required()` first, and is behind a
+    /// feature, so nothing cheaper can be run from here; this is the same
+    /// disclosure `tests/module_size.rs`'s and `connect_external_servers`' own
+    /// source-level guards carry about themselves.
+    ///
+    /// Both needles are assembled at runtime so this test cannot match its own
+    /// source text and pass by agreeing with itself.
+    #[test]
+    fn gasp_cli_door_still_hands_both_values_to_the_plan() {
+        let src = include_str!("gasp_cli.rs");
+
+        let call = format!(
+            "gasp::plan_from_env_values(Some(&{}), Some(&{}));",
+            "common.state_dir", "goal_id"
+        );
+        assert!(
+            src.contains(&call),
+            "the door no longer passes a state-dir plus a goal id to the plan decision — re-read \
+             the narrowing comment above that call: the `Open`-only claim just changed shape"
+        );
+
+        let fallback = format!("unwrap_or_else(|| gasp::DEFAULT_GOAL.{}())", "to_string");
+        assert!(
+            src.contains(&fallback),
+            "the DEFAULT_GOAL fallback is gone, which reopens the Misconfigured branch at this \
+             door — that is a behaviour change, not a refactor, and #913's comment says the \
+             opposite"
+        );
     }
 }
