@@ -912,10 +912,7 @@ pub fn handle_hooks(hooks: &[crate::hooks::ShellHook]) {
     println!("{DIM}  Active hooks ({}):", hooks.len());
     println!();
     for hook in hooks {
-        let phase = match hook.phase {
-            crate::hooks::HookPhase::Pre => "pre",
-            crate::hooks::HookPhase::Post => "post",
-        };
+        let phase = hook.phase.as_str();
         println!(
             "    {BOLD}{}{RESET}{DIM}  ({}, pattern: {})",
             hook.name, phase, hook.tool_pattern

@@ -182,7 +182,51 @@ fn hook_stdin_payload(
     output: Option<&str>,
     max_bytes: usize,
 ) -> String {
-    fn assemble(tool_name: &str, params: &serde_json::Value, output: Option<&str>) -> String {
+    hook_stdin_payload_with_field(tool_name, params, output, max_bytes, "tool_output")
+}
+
+/// [`hook_stdin_payload`], but the string field is named `tool_error` rather
+/// than `tool_output`.
+///
+/// A failed tool call produced an **error**, not an output, and the two are
+/// distinguishable facts — a hook that greps `tool_output` for "error" would
+/// otherwise be unable to tell a tool that failed from a tool that succeeded
+/// and printed the word. Only the key name differs; the escaping, the capping,
+/// the char-boundary walk and the degrade-to-`payload_elided` fallback are the
+/// **same code**, reached by delegation rather than by a second copy that agrees
+/// today.
+fn hook_stdin_payload_with_error(
+    tool_name: &str,
+    params: &serde_json::Value,
+    error: Option<&str>,
+    max_bytes: usize,
+) -> String {
+    hook_stdin_payload_with_field(tool_name, params, error, max_bytes, "tool_error")
+}
+
+/// The one implementation behind both public shapes above: identical escaping,
+/// capping, char-boundary walk and `payload_elided` fallback, with only the
+/// **field name** chosen by the caller.
+///
+/// Shared rather than copied on purpose — a second escaper that agrees today is
+/// the "two doors, one policy" shape this repo keeps shipping, and the NUL
+/// escape in particular is a bug fix (`hook_tool_output`) that a copy would
+/// silently not inherit.
+fn hook_stdin_payload_with_field(
+    tool_name: &str,
+    params: &serde_json::Value,
+    // Named `output` for the *machinery's* sake, not the caller's: every line
+    // below treats it identically whether it is a real output or an error.
+    output: Option<&str>,
+    max_bytes: usize,
+    field: &str,
+) -> String {
+    fn assemble(
+        tool_name: &str,
+        params: &serde_json::Value,
+        output: Option<&str>,
+        field: &str,
+    ) -> String {
         let mut obj = serde_json::Map::new();
         obj.insert(
             "tool_name".to_string(),
@@ -191,14 +235,14 @@ fn hook_stdin_payload(
         obj.insert("tool_params".to_string(), params.clone());
         if let Some(out) = output {
             obj.insert(
-                "tool_output".to_string(),
+                field.to_string(),
                 serde_json::Value::String(out.to_string()),
             );
         }
         serde_json::Value::Object(obj).to_string()
     }
 
-    let full = assemble(tool_name, params, output);
+    let full = assemble(tool_name, params, output, field);
     if full.len() <= max_bytes {
         return full;
     }
@@ -219,7 +263,7 @@ fn hook_stdin_payload(
             let marked = format!(
                 "{kept}\n… [yoyo: {dropped} chars elided — hook stdin payload is capped at {max_bytes} bytes]"
             );
-            let candidate = assemble(tool_name, params, Some(&marked));
+            let candidate = assemble(tool_name, params, Some(&marked), field);
             if candidate.len() <= max_bytes {
                 best = Some(candidate);
                 lo = mid + 1;
@@ -316,6 +360,26 @@ pub trait Hook: Send + Sync {
         Ok(None)
     }
 
+    /// Post-failure: called when the tool call **failed** (the inner tool
+    /// returned `Err`), with the error text where output would normally go.
+    ///
+    /// Fires **instead of** `post_execute`, never as well: a call has exactly
+    /// one outcome, and a hook that ran on both paths would see a failure
+    /// twice. `post_execute` is byte-identical to before — it still fires only
+    /// on a successful call — so adding this point adds firings and removes
+    /// none.
+    ///
+    /// The default implementation does nothing, so every existing `Hook`
+    /// (including `AuditHook` and the test doubles) is unchanged.
+    fn post_failure_execute(
+        &self,
+        _tool_name: &str,
+        _params: &serde_json::Value,
+        _error: &str,
+    ) -> Result<PostHookResult, String> {
+        Ok(PostHookResult::passthrough(""))
+    }
+
     /// Post-execute: can inspect/modify the result and optionally return feedback.
     ///
     /// The `output` field in [`PostHookResult`] threads through the hook chain (each
@@ -408,6 +472,38 @@ impl HookRegistry {
         })
     }
 
+    /// Run all post-**failure** hooks in order, collecting feedback.
+    ///
+    /// Unlike [`Self::run_post_hooks`] there is no output to thread: the wrapper
+    /// is about to return the tool's `Err`, so the only thing a failure hook can
+    /// contribute is feedback. `Ok(None)` means no hook had anything to say —
+    /// which is every user with no `post_failure` hook configured, and the whole
+    /// regression surface. Errors are swallowed the same way
+    /// [`ShellHook::post_execute`] swallows them: a broken observer must not
+    /// replace the real failure with its own.
+    pub fn run_post_failure_hooks(
+        &self,
+        tool_name: &str,
+        params: &serde_json::Value,
+        error: &str,
+    ) -> Option<String> {
+        let mut all: Vec<String> = Vec::new();
+        for hook in &self.hooks {
+            if let Ok(result) = hook.post_failure_execute(tool_name, params, error) {
+                if let Some(fb) = result.feedback {
+                    if !fb.is_empty() {
+                        all.push(fb);
+                    }
+                }
+            }
+        }
+        if all.is_empty() {
+            None
+        } else {
+            Some(all.join("\n"))
+        }
+    }
+
     /// Number of registered hooks.
     pub fn len(&self) -> usize {
         self.hooks.len()
@@ -453,10 +549,56 @@ impl Hook for AuditHook {
 }
 
 /// Phase at which a shell hook fires.
+///
+/// The config-key spelling lives in **one** place — [`HookPhase::ALL`] and
+/// [`HookPhase::as_str`] — because the set is read from four directions: the
+/// `.yoyo.toml` parser, the unknown-phase warning, the `/hooks` listing and the
+/// project-trust refusal message. A phase added to the enum but not to a
+/// `strip_prefix` chain beside it is a hook that silently never fires, which is
+/// the defect this file's Day-202 addition exists to close.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HookPhase {
+    /// Before the tool call. Exit non-zero to block it.
     Pre,
+    /// After a tool call that ran — success **or** failure of the tool itself.
+    /// A `Pre`-blocked call never reaches here, because the tool never ran.
     Post,
+    /// After a tool call that **failed**, i.e. whose inner tool returned `Err`.
+    ///
+    /// This is the one event `Post` structurally cannot see: the wrapper
+    /// returned early on the error, so before Day 202 a failed tool call ran
+    /// **no** hook at all, on any phase. Claude Code spells this lifecycle
+    /// event `PostToolUseFailure`; yoyo's config vocabulary already has an
+    /// opinion (`hooks.pre.<tool>` / `hooks.post.<tool>` — short, lowercase,
+    /// no camel case), so the key here is `hooks.post_failure.<tool>`. The
+    /// origin is recorded rather than borrowed: a second spelling of one phase
+    /// is the "two doors, one policy" shape this repo keeps shipping.
+    PostFailure,
+}
+
+impl HookPhase {
+    /// Every phase, in the order they fire for one tool call. **This is the
+    /// accepted set** — consumers read it, none of them re-lists it.
+    pub const ALL: [HookPhase; 3] = [HookPhase::Pre, HookPhase::Post, HookPhase::PostFailure];
+
+    /// The `.yoyo.toml` key segment for this phase. One spelling everywhere:
+    /// enum, config value, warning text, help text, tests.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HookPhase::Pre => "pre",
+            HookPhase::Post => "post",
+            HookPhase::PostFailure => "post_failure",
+        }
+    }
+
+    /// Parse a `hooks.<phase>.<tool>` key segment. `None` for anything not in
+    /// [`HookPhase::ALL`].
+    pub fn parse(segment: &str) -> Option<HookPhase> {
+        HookPhase::ALL
+            .iter()
+            .copied()
+            .find(|p| p.as_str() == segment)
+    }
 }
 
 /// A user-configurable shell command hook loaded from `.yoyo.toml`.
@@ -647,6 +789,50 @@ impl Hook for ShellHook {
             Err(_) => Ok(PostHookResult::passthrough(output)),
         }
     }
+    fn post_failure_execute(
+        &self,
+        tool_name: &str,
+        params: &serde_json::Value,
+        error: &str,
+    ) -> Result<PostHookResult, String> {
+        if self.phase != HookPhase::PostFailure || !self.matches_tool(tool_name) {
+            return Ok(PostHookResult::passthrough(""));
+        }
+
+        let params_str = params.to_string();
+        // The error text rides the **same** channels a successful output would,
+        // prepared by the **same** two helpers: `TOOL_ERROR`/`TOOL_OUTPUT` in the
+        // env, and `tool_error` in the stdin payload. Reusing `hook_tool_output`
+        // is deliberate — an error carrying a NUL would otherwise fail the spawn
+        // at `execve` and silently skip the user's hook, which is the exact bug
+        // that helper exists to close, and a second escaper that agrees today is
+        // the "two doors, one policy" shape this repo keeps shipping.
+        let truncated_error = hook_tool_output(error, HOOK_TOOL_OUTPUT_MAX_CHARS);
+        let env_vars = vec![
+            ("TOOL_NAME", tool_name),
+            ("TOOL_PARAMS", params_str.as_str()),
+            ("TOOL_OUTPUT", truncated_error.as_str()),
+            ("TOOL_ERROR", truncated_error.as_str()),
+        ];
+
+        // The stdin payload carries the **raw** error, not the env-truncated one,
+        // for the same reason `post_execute` passes raw output: the 1000-char cap
+        // is a property of the env channel, and the stdin channel holds 32× more.
+        let stdin_payload =
+            hook_stdin_payload_with_error(tool_name, params, Some(error), HOOK_STDIN_MAX_BYTES);
+        match self.run_command(&env_vars, &stdin_payload) {
+            Ok((_, stderr)) => {
+                if stderr.trim().is_empty() {
+                    Ok(PostHookResult::passthrough(""))
+                } else {
+                    Ok(PostHookResult::with_feedback("", stderr.trim().to_string()))
+                }
+            }
+            // On failure, still report nothing — a broken observer must not
+            // replace the tool's real error with its own.
+            Err(_) => Ok(PostHookResult::passthrough("")),
+        }
+    }
 }
 
 /// Edit-distance budget for suggesting a builtin whose name a hook key may have
@@ -754,9 +940,10 @@ fn unknown_hook_tool_warning(tool_pattern: &str, known: &[&str], plain: bool) ->
 ///
 /// Glyph-free under `plain` (marker **and** em dash).
 fn malformed_hook_key_warning(rest: &str, plain: bool) -> Option<String> {
-    if rest != "pre" && rest != "post" {
-        return None;
-    }
+    // Read through `HookPhase::parse` rather than re-listing the accepted set:
+    // a phase added to the enum must be covered by this arm without an edit
+    // here, or `hooks.post_failure = "..."` would be silent again.
+    HookPhase::parse(rest)?;
 
     let marker = if plain { "warning:" } else { "⚠" };
     let joiner = if plain { ";" } else { " —" };
@@ -764,6 +951,37 @@ fn malformed_hook_key_warning(rest: &str, plain: bool) -> Option<String> {
         "{marker} hook key `hooks.{rest}` has no tool segment, so it names no \
          tool and can never fire{joiner} write `hooks.{rest}.<tool> = \"...\"` \
          instead, e.g. `hooks.{rest}.bash`."
+    ))
+}
+
+/// Pure: warn when a `hooks.<phase>.<tool>` key names a phase that does not
+/// exist, so the hook can never fire and the user gets **no** signal at all.
+///
+/// The boundary matters and is narrower than "any unknown `hooks.*` key": only
+/// keys carrying the full hook shape (a phase segment *and* a tool segment) are
+/// refused, because those are the ones where silence reads as "configured but
+/// never fires". A key with no tool segment (`hooks.timeout = "5"`) may be a
+/// future non-hook scalar, and the sibling arm above deliberately leaves it
+/// alone.
+///
+/// Named after the *accepted set*, spelled from [`HookPhase::ALL`], so the
+/// message cannot go stale when a phase is added. Glyph-free under `plain`
+/// (marker **and** em dash), matching `malformed_hook_key_warning`.
+fn unknown_hook_phase_warning(phase: &str, plain: bool) -> Option<String> {
+    if HookPhase::parse(phase).is_some() {
+        return None;
+    }
+
+    let marker = if plain { "warning:" } else { "⚠" };
+    let joiner = if plain { ";" } else { " —" };
+    let accepted = HookPhase::ALL
+        .iter()
+        .map(|p| format!("`{}`", p.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "{marker} hook key `hooks.{phase}.<tool>` names no known phase{joiner} \
+         accepted phases are {accepted}. This hook can never fire."
     ))
 }
 
@@ -786,27 +1004,49 @@ pub fn parse_hooks_from_config(config: &HashMap<String, String>) -> Vec<ShellHoo
 
     for key in keys {
         let value = &config[key];
-        // Strip "hooks." prefix and split into phase + tool_pattern
+        // Strip "hooks." prefix and split into phase + tool_pattern. The phase
+        // segment is matched through `HookPhase::parse`, i.e. against
+        // `HookPhase::ALL` — the accepted set is read here, never re-listed, so
+        // a phase cannot be added to the enum and forgotten at this door. The
+        // split is on `.` *before* the phase is looked up, which is what keeps
+        // `post_failure.` from being read as the `post` prefix plus junk.
         let rest = &key["hooks.".len()..];
-        let (phase, tool_pattern) = if let Some(tool) = rest.strip_prefix("pre.") {
-            (HookPhase::Pre, tool)
-        } else if let Some(tool) = rest.strip_prefix("post.") {
-            (HookPhase::Post, tool)
-        } else {
-            // #892's third arm: a key with no tool segment (`hooks.pre = "..."`)
-            // matches neither prefix and used to fall to this bare `continue` in
-            // complete silence. Say so. WARN, never refuse — see the function's
-            // doc comment for why, and for why an unrecognised phase stays
-            // quiet. Same shape as the unreachable-tool-name warning below: a
-            // pure decision, with the two global reads at this call site.
-            if let Some(warning) =
-                malformed_hook_key_warning(rest, crate::format::is_plain_output())
-            {
-                if !crate::format::is_quiet() {
-                    eprintln!("{warning}");
+        let (phase, tool_pattern) = match rest.split_once('.') {
+            Some((segment, tool)) => match HookPhase::parse(segment) {
+                Some(phase) => (phase, tool),
+                None => {
+                    // `hooks.<unknown>.<tool>` has the *full* shape of a hook
+                    // key, so a silently-ignored typo'd phase reads as a hook
+                    // that is configured and simply never fires. Refused loudly
+                    // (Day 202) — deliberately narrower than "any unknown
+                    // `hooks.*` key", which stays silent, because a key with no
+                    // tool segment is indistinguishable from a future non-hook
+                    // `hooks.*` scalar, and warning there would cry wolf.
+                    if let Some(warning) =
+                        unknown_hook_phase_warning(segment, crate::format::is_plain_output())
+                    {
+                        if !crate::format::is_quiet() {
+                            eprintln!("{warning}");
+                        }
+                    }
+                    continue; // Unknown phase, skip
                 }
+            },
+            None => {
+                // #892's third arm: a key with no tool segment (`hooks.pre = "..."`)
+                // names a phase but no tool, so it can never fire. WARN, never
+                // refuse — see the function's doc comment for why. Same shape as
+                // the unreachable-tool-name warning below: a pure decision, with
+                // the two global reads at this call site.
+                if let Some(warning) =
+                    malformed_hook_key_warning(rest, crate::format::is_plain_output())
+                {
+                    if !crate::format::is_quiet() {
+                        eprintln!("{warning}");
+                    }
+                }
+                continue; // Invalid format, skip
             }
-            continue; // Invalid format, skip
         };
 
         if tool_pattern.is_empty() || value.is_empty() {
@@ -828,10 +1068,7 @@ pub fn parse_hooks_from_config(config: &HashMap<String, String>) -> Vec<ShellHoo
             }
         }
 
-        let phase_str = match phase {
-            HookPhase::Pre => "pre",
-            HookPhase::Post => "post",
-        };
+        let phase_str = phase.as_str();
 
         hooks.push(ShellHook {
             name: format!("{phase_str}:{tool_pattern}"),
@@ -842,6 +1079,52 @@ pub fn parse_hooks_from_config(config: &HashMap<String, String>) -> Vec<ShellHoo
     }
 
     hooks
+}
+
+/// Append a failure hook's feedback to a tool error, preserving the variant.
+///
+/// Pure, so the mapping is testable without spawning anything. Three of the
+/// four `ToolError` variants carry a message and all three are handled; the
+/// fourth is `Cancelled`, which carries **no** payload, so there is nowhere to
+/// put feedback and it is dropped. That drop is stated rather than silent —
+/// a cancelled call is not a failed one, and fabricating a `Failed` for it
+/// would change the error the agent sees *and* the `is_error` bucket the audit
+/// log records.
+fn attach_hook_feedback(err: ToolError, feedback: &str) -> ToolError {
+    fn appended(msg: String, feedback: &str) -> String {
+        format!("{msg}\n\n[Hook feedback]\n{feedback}")
+    }
+    match err {
+        ToolError::Failed(msg) => ToolError::Failed(appended(msg, feedback)),
+        ToolError::NotFound(msg) => ToolError::NotFound(appended(msg, feedback)),
+        ToolError::InvalidArgs(msg) => ToolError::InvalidArgs(appended(msg, feedback)),
+        ToolError::Cancelled => ToolError::Cancelled,
+    }
+}
+
+/// Does a raw `.yoyo.toml` line name a shell hook — a dotted key under a
+/// **known** phase (`hooks.pre.bash = "..."`, `hooks.post_failure.* = "..."`)
+/// or a `[hooks…]` section header?
+///
+/// The project-trust prompt (`config_paths.rs`) has only the raw config text, so
+/// it cannot call [`parse_hooks_from_config`]. This is the single place that
+/// knows which key shapes count as a hook, so the fifth door cannot fall out of
+/// step with a sixth phase — the drift guard is that both readers go through
+/// [`HookPhase::ALL`].
+///
+/// A dotted key under an **unknown** phase is deliberately not a hook here: the
+/// parser warns about it and ignores it, so nothing would run and there is
+/// nothing to ask the user to trust.
+pub fn config_text_names_a_hook(config_text: &str) -> bool {
+    config_text.lines().any(|line| {
+        let t = line.trim_start();
+        if t.starts_with("[hooks") {
+            return true;
+        }
+        HookPhase::ALL
+            .iter()
+            .any(|p| t.starts_with(&format!("hooks.{}.", p.as_str())))
+    })
 }
 
 /// A wrapper tool that runs hooks before/after delegating to the inner tool.
@@ -877,6 +1160,16 @@ impl AgentTool for HookedTool {
         ctx: yoagent::types::ToolContext,
     ) -> Result<ToolResult, ToolError> {
         // Run pre-hooks
+        //
+        // Neither early return below fires `post_failure`, and that is a
+        // deliberate boundary rather than an omission: in both cases the tool
+        // **never ran**, so there is no failed tool call to report. A rejected
+        // call is a pre-execution decision (upstream calls that lifecycle event
+        // `PermissionDenied`, one of the ~28 events this task does not add),
+        // while `post_failure` answers "the call ran and failed". Firing here
+        // would tell a hook the tool failed when it was never attempted, and
+        // would make this wrapper's own refusal indistinguishable from a real
+        // error — the confident-wrong-diagnosis shape this repo keeps closing.
         match self.hooks.run_pre_hooks(self.inner.name(), &params) {
             Err(reason) => {
                 return Err(ToolError::Failed(format!("Blocked by hook: {reason}")));
@@ -893,8 +1186,41 @@ impl AgentTool for HookedTool {
             }
         }
 
-        // Execute the inner tool
-        let result = self.inner.execute(params.clone(), ctx).await?;
+        // Execute the inner tool.
+        //
+        // `?` cannot be used: it would return the `ToolError` past the
+        // `post_failure` fire point, which is precisely the structural gap this
+        // phase exists to close (a failed call ran **no** hook at all before
+        // Day 202, because `post_execute` was reached only on the `Ok` path).
+        // This is the single place the wrapper observes the outcome, so it is
+        // the single place the fire point can live — one seam, not a second
+        // wrapper beside it.
+        let result = match self.inner.execute(params.clone(), ctx).await {
+            Ok(result) => result,
+            Err(err) => {
+                // Fire **once**, here, with the error's own text — the same
+                // string yoagent will put in the conversation. There is no retry
+                // loop inside this wrapper and no batch: one `execute` call is
+                // one tool call is one firing.
+                let error_text = err.to_string();
+                return match self.hooks.run_post_failure_hooks(
+                    self.inner.name(),
+                    &params,
+                    &error_text,
+                ) {
+                    // A failure hook's stderr can only *add* feedback: the
+                    // variant is preserved and the message is appended, because
+                    // swallowing the real error to report a hook's opinion of it
+                    // would lose the only account of what went wrong.
+                    Some(feedback) => Err(attach_hook_feedback(err, &feedback)),
+                    // No hook configured for this phase, or none had anything to
+                    // say: the `Err` is returned **byte-identically**. This is
+                    // every user who does not use `post_failure`, and the whole
+                    // regression surface.
+                    None => Err(err),
+                };
+            }
+        };
 
         // Extract text content for post-hooks
         let output_text: String = result
@@ -1282,6 +1608,626 @@ mod tests {
         config.insert("hooks.post.bash".to_string(), "".to_string());
         let hooks = parse_hooks_from_config(&config);
         assert!(hooks.is_empty(), "Invalid entries should be skipped");
+    }
+
+    // --- Day 202: the `post_failure` phase ---------------------------------
+    //
+    // The whole feature is "a failed tool call fires a hook", so the tests
+    // below are the four shapes the task file names: a parsing table, an
+    // anti-vacuous firing test, near-miss guards in both directions, and the
+    // single-source drift guard.
+
+    /// TABLE: every accepted phase value round-trips, and the set is read from
+    /// `HookPhase::ALL` rather than re-listed, so a fourth phase is covered
+    /// here without editing this test.
+    #[test]
+    fn hook_phase_table_parses_every_accepted_value() {
+        assert!(!HookPhase::ALL.is_empty(), "empty set makes this vacuous");
+        for phase in HookPhase::ALL {
+            assert_eq!(
+                HookPhase::parse(phase.as_str()),
+                Some(phase),
+                "`{}` must parse back to itself",
+                phase.as_str()
+            );
+            let mut config = HashMap::new();
+            config.insert(format!("hooks.{}.bash", phase.as_str()), "true".to_string());
+            let hooks = parse_hooks_from_config(&config);
+            assert_eq!(
+                hooks.len(),
+                1,
+                "`hooks.{}.bash` must be accepted by the parser",
+                phase.as_str()
+            );
+            assert_eq!(hooks[0].phase, phase);
+            assert_eq!(hooks[0].tool_pattern, "bash");
+            // The name carries the same spelling, so `/hooks` and the refusal
+            // message cannot show a phase the parser never accepted.
+            assert_eq!(hooks[0].name, format!("{}:bash", phase.as_str()));
+        }
+    }
+
+    /// The values that must NOT parse — `PostToolUseFailure` (Claude's
+    /// camel-case spelling) is the realistic near miss, since that is the name
+    /// a user porting a hook config would type.
+    #[test]
+    fn hook_phase_table_refuses_unknown_values() {
+        for bad in [
+            "PostToolUseFailure",
+            "postfailure",
+            "post-failure",
+            "preflight",
+            "",
+            "Pre",
+            "Post",
+        ] {
+            assert_eq!(
+                HookPhase::parse(bad),
+                None,
+                "`{bad}` is not an accepted phase and must not parse"
+            );
+        }
+    }
+
+    /// The refusal NAMES the accepted set, spelled from `HookPhase::ALL`, so the
+    /// message cannot go stale when a phase is added. Pinned at the emission
+    /// point — the exact string a caller receives, in both plain forms.
+    #[test]
+    fn unknown_hook_phase_warning_names_the_accepted_set() {
+        for plain in [false, true] {
+            let msg = unknown_hook_phase_warning("PostToolUseFailure", plain).expect("must warn");
+            assert!(
+                msg.contains("`hooks.PostToolUseFailure.<tool>`"),
+                "must name the offending key: {msg}"
+            );
+            assert!(
+                msg.contains("names no known phase"),
+                "must say what is wrong: {msg}"
+            );
+            assert!(
+                msg.contains("can never fire"),
+                "must name the consequence: {msg}"
+            );
+            for phase in HookPhase::ALL {
+                assert!(
+                    msg.contains(&format!("`{}`", phase.as_str())),
+                    "must list accepted phase `{}`: {msg}",
+                    phase.as_str()
+                );
+            }
+        }
+    }
+
+    /// Anti-vacuous THEN near-miss, in that order: the accepted set must warn
+    /// about nothing, or every silence below is vacuous.
+    #[test]
+    fn unknown_hook_phase_warning_is_silent_for_every_accepted_phase() {
+        for phase in HookPhase::ALL {
+            for plain in [false, true] {
+                assert_eq!(
+                    unknown_hook_phase_warning(phase.as_str(), plain),
+                    None,
+                    "accepted phase `{}` must not warn",
+                    phase.as_str()
+                );
+            }
+        }
+    }
+
+    /// Glyph-free under plain output: marker AND em dash, since asserting only
+    /// one would let the other through — and the non-plain form is asserted to
+    /// carry both so the assertions above cannot pass by accident.
+    #[test]
+    fn unknown_hook_phase_warning_is_glyph_free_when_plain() {
+        let plain = unknown_hook_phase_warning("bogus", true).expect("must warn");
+        assert!(!plain.contains('⚠'), "no marker glyph in plain: {plain}");
+        assert!(!plain.contains('—'), "no em dash in plain: {plain}");
+
+        let fancy = unknown_hook_phase_warning("bogus", false).expect("must warn");
+        assert!(
+            fancy.contains('⚠') && fancy.contains('—'),
+            "the non-plain form must carry both, or the assertions above are vacuous: {fancy}"
+        );
+    }
+
+    /// A typo'd phase in a full hook key is **skipped**, not silently accepted,
+    /// and the accepted phases are byte-identical to before. The unknown-phase
+    /// key is deliberately *not* treated as a `hooks.pre`-style malformed key
+    /// (it has a tool segment, so it is a different question).
+    #[test]
+    fn parse_hooks_from_config_skips_a_typo_d_phase_with_a_tool_segment() {
+        let mut config = HashMap::new();
+        config.insert(
+            "hooks.PostToolUseFailure.bash".to_string(),
+            "echo never runs".to_string(),
+        );
+        // `hooks.post_failure` with NO tool segment is #892's malformed-key arm,
+        // not this one — it has no tool segment to fire on.
+        config.insert("hooks.post_failure".to_string(), "x".to_string());
+        // The two pre-existing phases are unaffected, byte-identically.
+        config.insert("hooks.pre.bash".to_string(), "echo pre".to_string());
+        config.insert("hooks.post.*".to_string(), "echo post".to_string());
+
+        let hooks = parse_hooks_from_config(&config);
+        assert_eq!(
+            hooks.iter().map(|h| h.name.as_str()).collect::<Vec<_>>(),
+            vec!["post:*", "pre:bash"],
+            "only the two pre-existing phases are configured"
+        );
+        assert_eq!(hooks[0].name, "post:*");
+        assert_eq!(hooks[0].phase, HookPhase::Post);
+        assert_eq!(hooks[1].name, "pre:bash");
+        assert_eq!(hooks[1].phase, HookPhase::Pre);
+    }
+
+    /// `post_failure` must not be shadowed by the `post` prefix: a naive
+    /// `strip_prefix("post.")` chain cannot do it (`post_failure.` does not
+    /// start with `post.`), but the *segment split* is what makes that
+    /// structural rather than accidental, so it is pinned.
+    #[test]
+    fn post_failure_key_is_not_shadowed_by_the_post_prefix() {
+        let mut config = HashMap::new();
+        config.insert(
+            "hooks.post_failure.write_file".to_string(),
+            "true".to_string(),
+        );
+        let hooks = parse_hooks_from_config(&config);
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0].phase, HookPhase::PostFailure);
+        assert_eq!(hooks[0].tool_pattern, "write_file");
+        assert_eq!(hooks[0].name, "post_failure:write_file");
+    }
+
+    /// DRIFT GUARD: the fifth door (`config_paths.rs`'s project-trust prompt)
+    /// reads raw text and must agree with the parser about which key shapes are
+    /// hooks — including for a phase added later, which it gets for free by
+    /// reading `HookPhase::ALL`.
+    #[test]
+    fn config_text_names_a_hook_agrees_with_the_parser_for_every_phase() {
+        for phase in HookPhase::ALL {
+            let text = format!("hooks.{}.bash = \"echo hi\"\n", phase.as_str());
+            assert!(
+                config_text_names_a_hook(&text),
+                "`{text}` is a hook and the trust prompt must ask about it"
+            );
+            let mut config = HashMap::new();
+            config.insert(
+                format!("hooks.{}.bash", phase.as_str()),
+                "echo hi".to_string(),
+            );
+            assert_eq!(
+                parse_hooks_from_config(&config).len(),
+                1,
+                "the parser must agree that `{text}` is a hook"
+            );
+        }
+        // Section shape, and the shapes that are NOT hooks.
+        assert!(config_text_names_a_hook("[hooks.post]\nbash = \"x\"\n"));
+        assert!(!config_text_names_a_hook(
+            "hooks.PostToolUseFailure.bash = \"x\"\n"
+        ));
+        assert!(!config_text_names_a_hook("hooks.timeout = \"5\"\n"));
+        assert!(!config_text_names_a_hook("hooks = 3\n"));
+        assert!(!config_text_names_a_hook(
+            "[permissions]\nallow = [\"curl *\"]\n"
+        ));
+        assert!(!config_text_names_a_hook(""));
+    }
+
+    /// A mock tool whose outcome the test chooses.
+    struct MockTool {
+        name: &'static str,
+        outcome: Result<&'static str, ToolError>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentTool for MockTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn label(&self) -> &str {
+            "mock"
+        }
+        fn description(&self) -> &str {
+            "mock"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        async fn execute(
+            &self,
+            _params: serde_json::Value,
+            _ctx: yoagent::types::ToolContext,
+        ) -> Result<ToolResult, ToolError> {
+            match &self.outcome {
+                Ok(text) => Ok(ToolResult {
+                    content: vec![Content::Text {
+                        text: (*text).to_string(),
+                    }],
+                    details: serde_json::Value::Null,
+                }),
+                Err(ToolError::Failed(msg)) => Err(ToolError::Failed(msg.clone())),
+                Err(_) => Err(ToolError::Cancelled),
+            }
+        }
+    }
+
+    fn ctx() -> yoagent::types::ToolContext {
+        yoagent::types::ToolContext::new("call-1", "mock")
+    }
+
+    /// How many times a hook fired, appended to one file so the count is
+    /// observed rather than assumed. `$1` lets the test tell the phases apart.
+    fn counting_command(path: &std::path::Path, tag: &str) -> String {
+        format!("echo {} >> {}", tag, path.display())
+    }
+
+    fn count_lines(path: &std::path::Path) -> usize {
+        std::fs::read_to_string(path)
+            .map(|s| s.lines().count())
+            .unwrap_or(0)
+    }
+
+    /// ANTI-VACUOUS, and the whole point of the phase: a **genuinely failing**
+    /// tool call must actually run the hook. A test that only proved the config
+    /// parses would be the vacuous-green shape this task file names.
+    #[tokio::test]
+    async fn post_failure_hook_fires_on_a_genuinely_failed_tool_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("fired.txt");
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(ShellHook {
+            name: "post_failure:*".to_string(),
+            phase: HookPhase::PostFailure,
+            tool_pattern: "*".to_string(),
+            command: counting_command(&log, "fired"),
+        }));
+        let registry = Arc::new(registry);
+
+        let tool = maybe_hook(
+            Box::new(MockTool {
+                name: "write_file",
+                outcome: Err(ToolError::Failed("disk full".to_string())),
+            }),
+            &registry,
+        );
+        let err = tool
+            .execute(serde_json::json!({}), ctx())
+            .await
+            .expect_err("the mock fails");
+
+        assert_eq!(count_lines(&log), 1, "the hook must have run exactly once");
+        // The real error survives; a hook can only add.
+        assert!(
+            err.to_string().contains("disk full"),
+            "the tool's own error must survive: {err}"
+        );
+    }
+
+    /// The fire point is the wrapper's single observation of the outcome, and
+    /// the error text reaches the hook through both channels under their own
+    /// keys: `TOOL_ERROR` in the env, `tool_error` on stdin. Without this, a
+    /// hook could see *that* something failed but not *what* — which is the
+    /// half that makes graceful degradation possible.
+    #[tokio::test]
+    async fn post_failure_hook_sees_the_error_text_on_both_channels() {
+        let dir = tempfile::tempdir().unwrap();
+        let env_log = dir.path().join("env.txt");
+        let stdin_log = dir.path().join("stdin.txt");
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(ShellHook {
+            name: "post_failure:bash".to_string(),
+            phase: HookPhase::PostFailure,
+            tool_pattern: "bash".to_string(),
+            command: format!(
+                "printf '%s' \"$TOOL_ERROR\" > {}; cat > {}",
+                env_log.display(),
+                stdin_log.display()
+            ),
+        }));
+        let registry = Arc::new(registry);
+
+        let tool = maybe_hook(
+            Box::new(MockTool {
+                name: "bash",
+                outcome: Err(ToolError::Failed("command not found: rg".to_string())),
+            }),
+            &registry,
+        );
+        let _ = tool.execute(serde_json::json!({}), ctx()).await;
+
+        assert!(
+            std::fs::read_to_string(&env_log)
+                .unwrap()
+                .contains("command not found: rg"),
+            "TOOL_ERROR must carry the error text"
+        );
+        let payload: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&stdin_log).unwrap()).unwrap();
+        assert_eq!(payload["tool_error"], "command not found: rg");
+        assert_eq!(payload["tool_name"], "bash");
+        assert!(
+            payload.get("tool_output").is_none(),
+            "a failed call produced an error, not an output: {payload}"
+        );
+    }
+
+    /// A failure hook's stderr becomes feedback appended to the error, and the
+    /// variant is preserved.
+    #[tokio::test]
+    async fn post_failure_hook_feedback_is_appended_to_the_error() {
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(ShellHook {
+            name: "post_failure:*".to_string(),
+            phase: HookPhase::PostFailure,
+            tool_pattern: "*".to_string(),
+            command: "echo 'try search instead' >&2".to_string(),
+        }));
+        let registry = Arc::new(registry);
+
+        let tool = maybe_hook(
+            Box::new(MockTool {
+                name: "read_file",
+                outcome: Err(ToolError::Failed("no such file".to_string())),
+            }),
+            &registry,
+        );
+        let err = tool
+            .execute(serde_json::json!({}), ctx())
+            .await
+            .unwrap_err();
+        match err {
+            ToolError::Failed(msg) => {
+                assert!(msg.contains("no such file"), "{msg}");
+                assert!(msg.contains("try search instead"), "{msg}");
+            }
+            other => panic!("variant must be preserved, got {other:?}"),
+        }
+    }
+
+    /// NEAR-MISS, direction 1: a **successful** call fires `Post` and must NOT
+    /// fire the new phase. Both halves asserted, or the guard only proves the
+    /// hook can run at all.
+    #[tokio::test]
+    async fn successful_call_fires_post_and_not_post_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let post_log = dir.path().join("post.txt");
+        let failure_log = dir.path().join("failure.txt");
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(ShellHook {
+            name: "post:*".to_string(),
+            phase: HookPhase::Post,
+            tool_pattern: "*".to_string(),
+            command: counting_command(&post_log, "post"),
+        }));
+        registry.register(Box::new(ShellHook {
+            name: "post_failure:*".to_string(),
+            phase: HookPhase::PostFailure,
+            tool_pattern: "*".to_string(),
+            command: counting_command(&failure_log, "failure"),
+        }));
+        let registry = Arc::new(registry);
+
+        let tool = maybe_hook(
+            Box::new(MockTool {
+                name: "bash",
+                outcome: Ok("done"),
+            }),
+            &registry,
+        );
+        let result = tool.execute(serde_json::json!({}), ctx()).await.unwrap();
+        assert_eq!(count_lines(&post_log), 1, "a success fires Post");
+        assert_eq!(
+            count_lines(&failure_log),
+            0,
+            "a success must NOT fire post_failure"
+        );
+        // Anti-vacuous for the assertion above: the result is a real one.
+        assert!(matches!(&result.content[0], Content::Text { text } if text == "done"));
+    }
+
+    /// NEAR-MISS, direction 2 (the mirror): a **failed** call must not fire
+    /// `Post`. Without this row, "fires on failure" would be satisfied by a
+    /// hook that fires on everything.
+    #[tokio::test]
+    async fn failed_call_fires_post_failure_and_not_post() {
+        let dir = tempfile::tempdir().unwrap();
+        let post_log = dir.path().join("post.txt");
+        let failure_log = dir.path().join("failure.txt");
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(ShellHook {
+            name: "post:*".to_string(),
+            phase: HookPhase::Post,
+            tool_pattern: "*".to_string(),
+            command: counting_command(&post_log, "post"),
+        }));
+        registry.register(Box::new(ShellHook {
+            name: "post_failure:*".to_string(),
+            phase: HookPhase::PostFailure,
+            tool_pattern: "*".to_string(),
+            command: counting_command(&failure_log, "failure"),
+        }));
+        let registry = Arc::new(registry);
+
+        let tool = maybe_hook(
+            Box::new(MockTool {
+                name: "bash",
+                outcome: Err(ToolError::Failed("boom".to_string())),
+            }),
+            &registry,
+        );
+        let _ = tool.execute(serde_json::json!({}), ctx()).await;
+        assert_eq!(
+            count_lines(&failure_log),
+            1,
+            "a failure fires the new phase"
+        );
+        assert_eq!(count_lines(&post_log), 0, "a failure must NOT fire Post");
+    }
+
+    /// `tool_pattern` matching is the SAME implementation for both post phases:
+    /// a hook scoped to `bash` must ignore a failure from `read_file`.
+    #[tokio::test]
+    async fn post_failure_hook_honours_tool_pattern_matching() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("fired.txt");
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(ShellHook {
+            name: "post_failure:bash".to_string(),
+            phase: HookPhase::PostFailure,
+            tool_pattern: "bash".to_string(),
+            command: counting_command(&log, "fired"),
+        }));
+        let registry = Arc::new(registry);
+
+        let other = maybe_hook(
+            Box::new(MockTool {
+                name: "read_file",
+                outcome: Err(ToolError::Failed("nope".to_string())),
+            }),
+            &registry,
+        );
+        let _ = other.execute(serde_json::json!({}), ctx()).await;
+        assert_eq!(count_lines(&log), 0, "read_file must not fire bash's hook");
+
+        let matched = maybe_hook(
+            Box::new(MockTool {
+                name: "bash",
+                outcome: Err(ToolError::Failed("nope".to_string())),
+            }),
+            &registry,
+        );
+        let _ = matched.execute(serde_json::json!({}), ctx()).await;
+        assert_eq!(count_lines(&log), 1, "bash's own failure must fire it");
+    }
+
+    /// The whole regression surface, as a full-value `assert_eq!`: with **no**
+    /// `post_failure` hook configured, a failed call's `Err` is byte-identical
+    /// to what a bare tool returns.
+    #[tokio::test]
+    async fn failed_call_without_a_post_failure_hook_is_byte_identical() {
+        let bare = MockTool {
+            name: "write_file",
+            outcome: Err(ToolError::Failed("disk full".to_string())),
+        };
+        let bare_err = bare
+            .execute(serde_json::json!({}), ctx())
+            .await
+            .unwrap_err();
+
+        // A registry that has hooks — but none for the new phase.
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(ShellHook {
+            name: "pre:bash".to_string(),
+            phase: HookPhase::Pre,
+            tool_pattern: "bash".to_string(),
+            command: "true".to_string(),
+        }));
+        registry.register(Box::new(ShellHook {
+            name: "post:bash".to_string(),
+            phase: HookPhase::Post,
+            tool_pattern: "bash".to_string(),
+            command: "true".to_string(),
+        }));
+        let wrapped = maybe_hook(
+            Box::new(MockTool {
+                name: "write_file",
+                outcome: Err(ToolError::Failed("disk full".to_string())),
+            }),
+            &Arc::new(registry),
+        );
+        let wrapped_err = wrapped
+            .execute(serde_json::json!({}), ctx())
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            wrapped_err.to_string(),
+            bare_err.to_string(),
+            "with no post_failure hook the error must be untouched"
+        );
+        assert_eq!(
+            format!("{wrapped_err:?}"),
+            format!("{bare_err:?}"),
+            "the variant must be untouched too"
+        );
+    }
+
+    /// A `Cancelled` error carries no message, so there is nowhere to put
+    /// feedback: the variant is returned unchanged rather than being fabricated
+    /// into a `Failed`, which would change the error the agent sees.
+    #[tokio::test]
+    async fn cancelled_call_is_not_misreported_as_failed() {
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(ShellHook {
+            name: "post_failure:*".to_string(),
+            phase: HookPhase::PostFailure,
+            tool_pattern: "*".to_string(),
+            command: "echo 'should not appear' >&2".to_string(),
+        }));
+        let tool = maybe_hook(
+            Box::new(MockTool {
+                name: "bash",
+                outcome: Err(ToolError::Cancelled),
+            }),
+            &Arc::new(registry),
+        );
+        let err = tool
+            .execute(serde_json::json!({}), ctx())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ToolError::Cancelled),
+            "a cancelled call is not a failed one: {err:?}"
+        );
+    }
+
+    /// The pure mapping behind the feedback append, table-tested: every variant
+    /// that carries a message keeps it and gains the feedback; `Cancelled` is
+    /// untouched.
+    #[test]
+    fn attach_hook_feedback_preserves_the_variant_and_the_message() {
+        // Each row pairs the variant with the shape it must still be after the
+        // append: `to_string()` renders `Failed` and `NotFound`/`InvalidArgs`
+        // differently, so a variant swap would be caught by the *text* as well
+        // as by the discriminant — the two assertions together are the guard.
+        let cases = [
+            (ToolError::Failed("boom".to_string()), "boom"),
+            (ToolError::NotFound("ghost".to_string()), "ghost"),
+            (ToolError::InvalidArgs("bad".to_string()), "bad"),
+        ];
+        for (err, message) in cases {
+            let want = err.to_string();
+            let got = attach_hook_feedback(err, "hook says hi");
+            let text = got.to_string();
+            assert!(
+                text.contains(message),
+                "the real message must survive: {text}"
+            );
+            assert!(text.contains("hook says hi"), "{text}");
+            assert_ne!(text, want, "the append must actually have happened");
+            assert!(
+                text.starts_with(&want),
+                "the original rendering must be a prefix, so nothing was \
+                 substituted for it: {text} vs {want}"
+            );
+        }
+
+        assert!(matches!(
+            attach_hook_feedback(ToolError::Cancelled, "hi"),
+            ToolError::Cancelled
+        ));
+    }
+
+    /// A registry with **no** failure hooks reports nothing, and `None` is the
+    /// value that makes the wrapper's pass-through branch reachable.
+    #[test]
+    fn run_post_failure_hooks_is_none_when_nothing_is_registered() {
+        let registry = HookRegistry::new();
+        assert_eq!(
+            registry.run_post_failure_hooks("bash", &serde_json::json!({}), "boom"),
+            None
+        );
     }
 
     #[test]

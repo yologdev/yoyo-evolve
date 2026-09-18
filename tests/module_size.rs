@@ -163,7 +163,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // REGISTER_DRIFT_GRACE_LINES and so only warned on the stderr of a *passing*
     // test. That is Day-174's eight-day silence verbatim: the loop's only consumer
     // of `cargo test` reads the exit code. Number pasted from what the gate printed.
-    ("src/cli.rs", 7276), // Day 199: #924 — parse_args grew a config-injecting seam (parse_args_with_config) plus its source-level delegation guard. Pasted from what the gate printed.
+    // Day 202: 7276 -> 7272, a 4-line shrink this task caused — the three
+    // inline `match hook.phase` blocks (`project_hook_refusal_message`, the
+    // test `hook()` helper) now read `HookPhase::as_str`, the single source.
+    ("src/cli.rs", 7272), // Day 199: #924 — parse_args grew a config-injecting seam (parse_args_with_config) plus its source-level delegation guard. Pasted from what the gate printed.
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
@@ -339,7 +342,15 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // pure move is a build failure and a reverted session, and a register edit
     // cannot half-land. The file was already at 1976/2000, i.e. 24 lines of
     // headroom, so ANY real feature here crosses. The split is owed, not done.
-    ("src/hooks.rs", 2441),
+    // Day 202: +946 — the `post_failure` fire point (`HookPhase::PostFailure`,
+    // `Hook::post_failure_execute`, `HookRegistry::run_post_failure_hooks`,
+    // `attach_hook_feedback`, `unknown_hook_phase_warning`,
+    // `config_text_names_a_hook`) plus its four required guard classes: the
+    // parse table, an anti-vacuous firing test, near-miss guards in BOTH
+    // directions, and the cross-door drift guard. This is a whole new phase
+    // with its coverage, not incidental growth — the split is owed and still
+    // not done. Number pasted from what the gate printed, not computed.
+    ("src/hooks.rs", 3387),
     // Day 161 (#662 half 1): +9 lines — run_prompt_auto_retry now breaks out of
     // the retry loop (with one dim stderr line) on deterministic tool refusals
     // instead of burning MAX_AUTO_RETRIES on an identical answer.

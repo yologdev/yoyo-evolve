@@ -429,10 +429,7 @@ pub(crate) fn project_trust_grants(
     // produces, not raw text, and rebuilding that map here would be a second loader.
     // A key-prefix scan is enough for a predicate whose only job is "is there
     // something worth asking about" — and both error directions are safe (above).
-    if config_text.lines().any(|line| {
-        let t = line.trim_start();
-        t.starts_with("hooks.pre.") || t.starts_with("hooks.post.") || t.starts_with("[hooks")
-    }) {
+    if crate::hooks::config_text_names_a_hook(config_text) {
         grants.push("shell hooks (commands run on tool calls)");
     }
 

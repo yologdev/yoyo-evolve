@@ -1422,10 +1422,9 @@ pub(crate) fn project_hook_refusal_message(
         refused.len(),
     );
     for hook in refused {
-        let phase = match hook.phase {
-            crate::hooks::HookPhase::Pre => "pre",
-            crate::hooks::HookPhase::Post => "post",
-        };
+        // The phase name comes from `HookPhase::as_str`, the single source, so
+        // a new phase cannot print as a bare `post_failure`-less mystery here.
+        let phase = hook.phase.as_str();
         msg.push_str(&format!(
             "\n    {phase}.{} = {}",
             hook.tool_pattern,
@@ -6311,10 +6310,7 @@ command = "server-two"
     // --- #820: project-local shell-hook trust boundary (the fourth door) ----
 
     fn hook(phase: crate::hooks::HookPhase, tool: &str, cmd: &str) -> crate::hooks::ShellHook {
-        let phase_str = match phase {
-            crate::hooks::HookPhase::Pre => "pre",
-            crate::hooks::HookPhase::Post => "post",
-        };
+        let phase_str = phase.as_str();
         crate::hooks::ShellHook {
             name: format!("{phase_str}:{tool}"),
             phase,

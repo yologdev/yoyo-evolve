@@ -527,21 +527,26 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /history detail — Per-turn breakdown with tools used and token counts",
         ),
         "hooks" => Some(
-            "/hooks — Show active hooks (pre/post tool execution)\n\n\
+            "/hooks — Show active hooks (pre/post/post_failure tool execution)\n\n\
              Lists all shell hooks configured in .yoyo.toml.\n\
-             Shows each hook's phase (pre/post), tool pattern, and command.\n\n\
+             Shows each hook's phase (pre/post/post_failure), tool pattern, and command.\n\n\
              Configuration (.yoyo.toml):\n\n\
              \x20 # Pre-hook: runs before bash tool calls\n\
              \x20 hooks.pre.bash = \"echo 'About to run bash'\"\n\n\
              \x20 # Post-hook: runs after every tool call (wildcard)\n\
              \x20 hooks.post.* = \"echo 'Tool finished'\"\n\n\
+             \x20 # Post-failure: runs only when the tool call FAILS\n\
+             \x20 hooks.post_failure.* = \"echo \\\"$TOOL_ERROR\\\" >&2\"\n\n\
              Pre-hooks that exit non-zero block the tool from executing.\n\
              Post-hooks always pass through the original tool output.\n\
+             Post-failure hooks run instead of post-hooks when the tool returns\n\
+             an error, and can only add feedback to that error.\n\
              All hooks have a 5-second timeout to prevent hanging.\n\n\
              Environment variables available to hooks:\n\
              \x20 TOOL_NAME   — the tool being executed\n\
              \x20 TOOL_PARAMS — JSON string of tool parameters\n\
-             \x20 TOOL_OUTPUT — (post-hooks only) tool output, truncated to 1000 chars",
+             \x20 TOOL_OUTPUT — (post-hooks only) tool output, truncated to 1000 chars\n\
+             \x20 TOOL_ERROR  — (post_failure-hooks only) the tool's error, truncated to 1000 chars",
         ),
         "permissions" => Some(
             "/permissions — Show active security and permission configuration\n\n\
@@ -1421,7 +1426,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "health" => Some("Run project health checks"),
         "help" => Some("Show help for commands"),
         "history" => Some("Show conversation message summary"),
-        "hooks" => Some("Show active hooks (pre/post tool execution)"),
+        "hooks" => Some("Show active hooks (pre/post/post_failure tool execution)"),
         "index" => Some("Show project file index"),
         "init" => Some("Generate a YOYO.md context file"),
         "jump" => Some("Restore conversation to a bookmark"),
