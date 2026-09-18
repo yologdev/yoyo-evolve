@@ -1,0 +1,1265 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me start by understanding the current state. I need to plan two tasks for Day 202. Let me look at the assessment and backlog.
+
+Key facts from assessment:
+- Build green, tree clean
+- 32 open issues, 10 agent-self
+- Oldest agent-self: #738 (36d) — blind-round prediction mirror
+- Yopedia read API down (#930)
+- Hook surface gap — biggest measured capability gap
+- Backlog drain rule: 10 open agent-self is not more than 12, so backlog drain doesn't force. Hmm, "If that is more than 12" — 10 is not more than 12, so no forced drain. But still the other slot should go to highest-priority remaining item.
+
+Two slots:
+1. Self-driven: advance DREAM.md next milestone. The dream's next milestone: keep counting `register-paid-to-empty` with split guard... Actually the dream says "Next milestone, narrowed accordingly: keep counting that, and if the census ever reports a `register-paid-to-empty` whose removed guard is split, that row — not the foreign zeros — is the one that proves the join earned its keep."
+
+Hmm. But also the assessment identifies the hook surface gap as highest-value capability gap. And dream milestone is about instrument honesty.
+
+Let me think about what's tractable and valuable.
+
+Priority list:
+0. Fix CI failures — none current.
+1. Capability gaps — biggest: hook surface (2 of 30 fire points). But that's a large design issue. A tractable slice: add a `SessionStart`/`SessionEnd` hook phase? Or `PostToolUseFailure`? Actually the assessment says my hooks are `ShellHook { name, phase: Pre|Post, tool_pattern, command }`. Adding a third phase e.g. `SessionEnd` or a `phase: ToolFailure` would be a concrete product-facing improvement. But careful: product vs evolve.
+
+Hmm, but a big risk: changing hooks.rs is a security-sensitive gate (#820 project hooks gated by trust). Adding phases needs care.
+
+2. Self-discovered bugs — #886 (model list billed turn) is a class I've touched 5 times, small fix. That's a good, small, high-value task. Actually the assessment says "Two are directly actionable and small: #886 ... #902".
+
+3. Release not due.
+
+4. UX friction.
+
+7. Community issues — need to read ISSUES_TODAY.md, which isn't included! The prompt says "Read ISSUES_TODAY.md". Let me check the file.
+
+Let me actually do some reconnaissance: read ISSUES_TODAY.md, DREAM.md relevant part, and check the state.
+
+Note: I'm told not to read source code files during planning. But "The evidence above already contains..." — I should plan from assessment. However I can read ISSUES_TODAY.md and DREAM.md (not source). Let me do that.
+
+Actually, plan: 
+- Task 1 (self-driven, dream/capability): Hmm. Let's think about what the dream next milestone is. "keep counting that" — that's a passive measurement, not a task. Hmm.
+
+Actually the dream's next milestone might be the hook surface. But the dream is about self-instrumentation. The instruction says "for this slot, prefer advancing the next milestone in DREAM.md (your own dream) unless a higher-priority issue blocks." The DREAM.md next milestone as stated is "keep counting register-paid-to-empty split guards". That's basically no work — it's monitoring. So arguably a dream task would be to build the thing that detects it... but that already exists (payoff counter with join window landed Day 201).
+
+Alternatively, I could pick the hook surface gap as the self-driven capability task, since tier 1 (capability gap) is above and the dream allows "unless a higher-priority issue blocks/differs".
+
+Let me consider concrete candidate tasks:
+
+A. #886 — widen near-miss guard so `yoyo model list` (3+ tokens with known REPL-only verb first token) refuses honestly instead of billing. Small, files: dispatch_near_miss.rs (+ tests). Kind: product (CLI UX). Good, tractable, tested.
+
+B. Hook surface: add a post-tool-failure fire point OR session-start/session-end phase. Files: hooks.rs, cli.rs? Might touch 2-3 files. Risk: security gating. Hmm, this is the "biggest capability gap" but a full lifecycle system is huge. A tractable slice: add `phase = "PostToolUseFailure"`? Do I have tool failure events? Not obviously. Alternatively add `PrePrompt`/`SessionStart` hook phase that fires once at session start. Hmm.
+
+Actually simpler and clearly valuable: the assessment notes `PostToolUseFailure` is the fire point for partial-tool-failure. But do I even have a failure event in my loop? Unknown without reading source. Risky.
+
+C. #915 — task_result third verdict for UNVERIFIED. In src/gasp.rs behind `gasp` feature; tests in tests/gasp_cli_run_ordering.rs. That's evolve-kind, honest-record fix, small and well-specified with a clear test plan. Good candidate for backlog drain (though #738 is older).
+
+D. #902 — the seventh trust door (project instruction files ungated). The assessment says this is the one with user-facing trust stake and no gate. But the issue itself names a catastrophic blocker: naive gate breaks my own loop. Design question. Risky as a single task; but the issue suggests an in-band annotation + disclosure approach. Hmm, Day 193 shipped disclosure only. A tractable slice: maybe can't be done safely in 30 min.
+
+E. #879/#881 composite safe mode / read-only sub-agent preset. #881's step 0 is checking yoagent's SubAgentTool API. The issue explicitly says answering question 1 is step 0, a grep. Could be a task: investigate + implement read-only sub-agent preset. But risk: unknown upstream API → could stall. The issue itself warns that the last two of this shape were reverts.
+
+F. #930 blockers — needs human.
+
+Backlog drain oldest: #738 (blind-round prediction mirror). That is a process thing: mirror prediction lines to GitHub issue comments before first read. It's about the dream's blind-round loop. Hmm, implementing it would mean modifying scripts/evolve.sh (protected!) or the dream/skill loop. #738 says "Durable home for blind-round prediction lines... GitHub is the only store a reverted task cannot rewrite. One comment per round, posted before the first read of the target." Implementing = adding a step to... scripts/evolve.sh is protected. Maybe skills/... The blind round is in DREAM.md / dream workflow. Hmm, could be implemented in `scripts/dream.sh`? Is that protected? Protected list: IDENTITY.md, PERSONALITY.md, ECONOMICS.md, scripts/evolve.sh, scripts/format_issues.py, scripts/build_site.py, .github/workflows/. So scripts/dream.sh is editable. But it's a shell script; a task could add the mirroring step. But that's evolve infra, hard to test with cargo.
+
+Given 2 slots and the priority ladder, I think:
+
+Slot 1 (self-driven, tier 1 capability gap or tier 2 bug): #886 near-miss widening — small, product, verifiable. Actually is #886 "self-driven"? It's an agent-self issue (tier 6) but also a self-discovered bug (tier 2). Fine.
+
+Slot 2: Hmm, but I want one slot to advance the dream. Let me reconsider.
+
+Actually the instruction: "at least 1 slot MUST be self-driven (capability gaps, self-discovered bugs, competitive improvements — tiers 1-3 and 7)". #886 counts (self-discovered bug/UX). And the other slot: highest-priority remaining — community issues or second self-driven.
+
+Community issues: I need to read ISSUES_TODAY.md.
+
+Let me go check things. Let me read ISSUES_TODAY.md, DREAM.md, and session_plan dir, plus maybe gh issue list.
+
+Let me be efficient with parallel calls.
+
+Actually, given "do not read source code files", I'll limit myself to non-source files. But I might want to verify a thing or two about hooks. Hmm, the instruction is explicit: "Do NOT read source code files." I'll respect it, planning from the assessment.
+
+Let me gather the docs.
+
+Plan the two tasks:
+
+Task 1: #886 — widen the CLI near-miss refusal to multi-token REPL-only verbs. Files: src/dispatch_near_miss.rs (and its tests, maybe src/dispatch.rs or cli.rs). Kind: product. Must keep `yoyo do the thing` byte-identical.
+
+Task 2: #915 — gasp task_result third verdict "unverified". Files: src/gasp.rs, src/gasp_cli.rs?, tests/gasp_cli_run_ordering.rs. That's 3 files max. Kind: evolve. Well-specified with test plan.
+
+Alternatively Task 2 could be the hook capability gap. Let me weigh: The assessment calls the hook surface "the best-aligned candidate on the board" and "the largest measured gap". Tier 1 says close the biggest gap. The backlog drain rule says 10 issues ≤ 12 so no forced drain.
+
+Hmm. I think there's a tension. Let me think about what actually moves the needle for a real user. A user-facing capability: more hook fire points. But do yoyo users use hooks? ShellHook config. Adding a `SessionEnd` phase is small and observable. Hmm but it's plumbing.
+
+Actually, let me reconsider: is there a tractable slice of the hook gap that is genuinely useful and safe? E.g., adding hooks that fire on `SessionStart`/`SessionEnd`. Where would those fire? In cli.rs/main.rs. That's 2-3 files. Risk: hooks trust gating (project hooks are gated by #820). Adding a new phase to ShellHook enum requires updating all matches (E0004). Feasible but needs care.
+
+Alternatively `PostToolUseFailure`: need the failure signal. My tool wrappers produce results; detecting failure generically might be possible via `AutoCheckTool`/result `is_error`. Unknown.
+
+Given uncertainty, I lean toward the well-specified, small, verifiable tasks. But I want at least one task that's product-facing and one that advances my dream/backlog.
+
+Hmm, let me reconsider the dream. The dream's stated next milestone: "keep counting ... if the census ever reports a register-paid-to-empty whose removed guard is split, that row is the one that proves the join earned its keep." Also earlier: the second self-window, cross-project generality.
+
+A dream-advancing task that's tractable: extend the census to a *third* subject? The milestone says foreign zeros are void because the shape doesn't occur there. Hmm.
+
+Actually maybe a good dream task: the Day 201 fix (join window) is "proven by a fixture, not yet by a single real hunk". A dream task could be: measure whether the split-guard shape now needs a positive control on a *foreign* repo... eh, vague.
+
+Alternative dream task: pre-register and measure something. Risky/vague.
+
+Let me instead consider: what's the most valuable thing for a real user AND aligns with the gap doc? The assessment lists:
+- No composite safe mode (#879)
+- No read-only sub-agent preset (#881)
+- #902 seventh trust door
+- Hook surface
+
+Of these, #881's step 0 is a grep in yoagent. A task: "Answer #881's step 0 (does yoagent's SubAgentTool admit a per-call tool set?) and if yes, wire a read-only sub-agent preset; if no, decide...". But tasks must be completable; if upstream lacks it, the task becomes a two-branch deliverable — risky.
+
+Hmm, maybe do a pure measurement task? "Measure first, then guard either way" was the shape of a reverted task (#920). Careful.
+
+OK. Decision: I'll pick two tasks that are well-specified and verifiable, prioritizing:
+
+Task 1 (product, self-driven bug/UX, small): #886 — multi-token near-miss refusal for REPL-only verbs. This is tier 2/7 (user-facing: `yoyo model list` costs money). Small: 1-2 files.
+
+Task 2 (evolve, honest-record bug, well-specified): #915 — third verdict for UNVERIFIED in gasp task_result. Files: src/gasp.rs, tests/gasp_cli_run_ordering.rs. Small-ish.
+
+Hmm, but does either advance my dream or the biggest capability gap? #915 is about honest records — very much my dream's theme (instrument honesty, "could not check reading as checked; clean" in the durable record). Actually that's beautifully aligned with the dream: the durable record lying. And it's the newest agent-self issue but well-specified.
+
+Actually wait — backlog drain says take the OLDEST still-valid item if >12; there are 10, so no. Fine.
+
+But hmm, should I instead do #902 (the trust door), which the assessment calls "the one with a user-facing trust stake and no gate at all"? It's risky because of the blocker. The issue explicitly says a naive gate would break the evolve loop and ship green. A safe slice: add an in-band annotation to the model + ensure `--safe-mode` covers spawned sub-agents (`commands_spawn.rs:810/961` call load_project_context directly outside the safe-mode branch). That second half is concrete, small, and verifiable! "Whether a --safe-mode parent's spawned worker still loads project instructions was not verified and should be part of the design pass." That's a measurable, small task: verify + fix (make spawn honor safe mode). Files: commands_spawn.rs (+ maybe context.rs/cli.rs). Hmm, that's a real product-facing safety hole with a clear small fix.
+
+That's attractive: Tier 4/1, product, small, verifiable, and directly from the assessment. But it involves reading source (implementation agent will).
+
+Hmm, but is it truly small? `commands_spawn.rs:810` and `:961` call `load_project_context()` directly. To honor safe mode, we'd need to know if safe-mode is active inside those functions — probably need to thread a flag or check a global. There might be an existing global for safe mode? Unknown. Could be 2-3 files: cli.rs (set a flag), context.rs or a global in safety.rs, commands_spawn.rs. Risk moderate.
+
+Let me weigh again. Two tasks:
+1. #886 near-miss widening (product, small, well-understood).
+2. #915 gasp unverified verdict (evolve, small, well-specified with explicit test plan).
+
+Both are "honest refusal / honest record" shaped, which fits my personality and dream. But do they close the biggest capability gap? Not the hook surface. But the hook surface is large and design-heavy; a 30-min slice risks being a stub.
+
+Hmm, actually — I could make Task 1 the capability gap (hooks) and Task 2 the bug. Let me think about which hook slice is most defensible.
+
+Claude Code's ~30 events vs my 2. A minimal, high-value addition: `SessionStart` and `SessionEnd` hooks. But "SessionEnd" in a REPL process = on exit; where do I get that reliably? Eh.
+
+Another: `PreCompact`/`PostCompact`? I have compaction via yoagent ContextConfig; hooking it may not be reachable.
+
+Another: `UserPromptSubmit` — a hook that can inspect/modify the submitted prompt before the turn. Actually I already have `Pre`/`Post` tool phases... `UserPromptSubmit` is a natural new phase: fires once per user turn with the prompt text. That's genuinely useful (e.g., block prompts matching a pattern). Where implemented? prompt.rs / cli.rs REPL loop. Hmm.
+
+Risk: I don't know the code well enough and I'm told not to read source. The implementation agent would have to figure out where turns are submitted. That's exploratory. Could stall.
+
+Given the revert risk and "no progress — likely blocked" class, I'll avoid the hooks task this session, and instead choose well-specified tasks. Then in the plan's issue_responses I can note the hook gap as the next milestone candidate.
+
+Hmm, but "priority 1: Capability gaps — close the biggest gap". Two self-discovered bugs at tier 2 arguably outrank... the ladder says tier 1 > tier 2. But tier 1 items are big/design-heavy. The assessment itself says #886 and #902 are "directly actionable and small".
+
+Let me reconsider #902's second half as Task 1: "no gate sees project instruction files; measure whether --safe-mode covers spawned workers, then fix". Actually the "measure first" framing is the reverted-class shape (#920 was "MEASURE first, then guard either way" — reverted!). Hmm, #920's revert title: "Task reverted: Does `.yoyo/skills/` discovery follow a symlink out of the gated directory? MEASURE first, then guard either way". That was reverted for being too ambitious (plain "Task reverted:"). So measure-then-guard-two-ways is a known trap. Avoid.
+
+OK let me settle:
+
+Task 1 (product): #886 — widen the near-miss refusal. This is a self-discovered bug affecting real users (billed turn). Small and testable.
+Task 2 (evolve): #915 — third verdict for UNVERIFIED in gasp task_result. Honest-record fix, well-specified, with the exact test file named.
+
+Hmm, wait. Let me reconsider whether #915 is feasible in 30 min. It touches src/gasp.rs (feature-gated), src/gasp_cli.rs maybe, and tests/gasp_cli_run_ordering.rs (real processes, scratch repo). The issue says harness will pass "unverified" once it exists (creator lane) — so my change is just on the yoyo side. The change: task_result accepts `--verdict unverified`, maps to eval status not Passed, patch still Promoted, decision Approved with reason. Plus "nothing landed" → Abandoned with no patch node. That second half might be bigger. I could scope the task to part 1 only (the unverified verdict), leaving part 2 to the issue. Good — smaller and complete.
+
+Actually careful: grasp feature is default-off; tests use `--features gasp`. The task must run the right test command. Files: src/gasp.rs, tests/gasp_cli_run_ordering.rs. The `--reason` flag is parsed in gasp_cli.rs but ignored on promoted path — need to thread it. So 3 files: gasp.rs, gasp_cli.rs, tests/gasp_cli_run_ordering.rs. OK, 3 files max — fits.
+
+Alternatively for task 2, the oldest backlog item #738. Hmm. #738 is about mirroring predictions to GitHub to survive reverts. Implementing it means adding a step to the dream/blind-round process — which lives in DREAM.md / scripts/dream.sh / skills. Testing with cargo? Not really. It's a process change. Could be a "document + script" task. Meh, weaker.
+
+I think #915 is better: concrete, testable, honest-record improvement, directly in my dream's theme.
+
+Hmm, but wait — is there an even higher-value tier-1 thing I'm dismissing? Let me reconsider "no composite safe mode (#879)" — it's product, user-facing safety, and the issue gives a pasteable starting point: `--restricted` flag in KNOWN_FLAGS, pure `restricted_mode_config(base)` function, table-tested for monotonicity, documented in help text. That's actually quite tractable! It's a single flag with a pure config transform. Files: src/cli.rs (flag parsing), src/config.rs (the pure function), maybe src/help.rs / cli help text. 3 files.
+
+But there's a design question: "Does --restricted imply /read mode? Does it set dir_restrictions to cwd? Does it ignore ~/.yoyo.toml?" The issue says these need deciding. A task could decide conservatively: `--restricted` = no-tools-for-writing? Hmm, the reviewer (evaluator) might reject if behavior is wrong. But monotonic narrowing is the safe direction.
+
+Hmm, that's a genuinely user-facing safety capability (tier 1-ish, and the biggest gap type: composition). Compared to #886 (bug fix), #879 is more "capability gap". But it has real design risk and touches security semantics. The issue explicitly says "Getting this wrong is a security regression, not a missing convenience". A wrong implementation by a fast agent could be bad. But monotonicity tests help.
+
+Which two to pick? I have 2 slots. Options: (#886 + #915), (#879 + #886), (#879 + #915).
+
+The instructions say at least one self-driven slot, and the other highest-priority remaining. Both #886 and #879 are self-driven (agent-self). #915 also agent-self. So technically all self-driven; no community issues unless ISSUES_TODAY.md has something.
+
+Let me check ISSUES_TODAY.md first — community issues may take a slot (§7 community). Let me go look.
+
+Let me run the recon commands.
+
+I'll read ISSUES_TODAY.md, DREAM.md tail, list session_plan, and gh issue list.
+
+Let me do it.
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start with reconnaissance on the non-source inputs (community issues, dream, plan dir).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ 2>/dev/null…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat… ✓ (9ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/ISSUES_TODAY.md ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Only one community issue: #928, and I already replied today (Day 202) — "⏸️ You replied last — re-engage only if you promised follow-up". And per the trajectory, "#928 — write down the Day N: convention and move the category..." was already done day-202. So #928 is largely handled; I replied last. So no new community work needed → the other slot goes to a second self-driven item.
+
+Let me read the full issue #928 to see if there's a promised follow-up. Actually the trajectory shows task "#928 — write down the `Day N:` convention and move the categ…" landed day-202 (this morning). And I replied Day 202. So we're done there. Good.
+
+Now let me check the dream file and the plan.
+
+Let me read DREAM.md's milestone section (it's in my prompt already, but let me confirm current file state).
+
+Also let me look at the ARCHITECTURE.md entries for the files I plan to touch? The CLAUDE.md says "Read ARCHITECTURE.md's entry for any file you are about to change." But planning phase says don't read source. ARCHITECTURE.md is not source; reading its entries for the target files is prudent and cheap-ish (but it's huge). Let me grep for the relevant sections.
+
+Let me first check the dream and then decide. Also check gh issue #886 / #915 bodies? The prompt gave #915 full body and #886 full body. Good.
+
+Let me look at ARCHITECTURE.md entry for dispatch_near_miss.rs and gasp.rs to size the tasks.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^## \|^# " ARCHITECTURE…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' DREAM.md ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me see the rest of the DREAM.md milestone (lines 60-120) to know the exact next milestone wording.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,90p' DREAM.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dispatch_near_miss\|gas… ✓ (4ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Very useful. Key facts:
+- tests/gasp_cli_run_ordering.rs is feature-gated; CI runs `--features gasp`. A task touching gasp.rs must run CI-like test with --features gasp.
+- gasp.rs is behind feature, and `cargo test` alone won't compile/run tests there.
+
+Now, #915 touches src/gasp.rs, src/gasp_cli.rs, tests/gasp_cli_run_ordering.rs. Task must run `cargo test --features gasp`. And clippy `--all-targets -- -D warnings` doesn't enable the feature, so clippy might not check gasp.rs... Actually `cargo clippy --all-targets` without --features gasp won't lint gasp.rs. So the task should also run `cargo clippy --all-targets --features gasp -- -D warnings`. Reasonable.
+
+Now let me decide. Let me look at ARCHITECTURE for dispatch_near_miss.rs entry to size #886.
+
+Actually, let me get context on near_miss work. Let me grep ARCHITECTURE.md for "near_miss" and "near-miss".
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "near-miss" ARCHITECTURE… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line 348-358 is about `dispatch_sub.rs` and near-miss. Let me read the ARCHITECTURE.md section for dispatch_near_miss.rs specifically. Let me grep the exact file name with context.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`dispatch_near_miss… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+That gasp bullet is enormous. Let me get the key line about `task_result` and the `--reason` flag and verdict handling (line ~1150). But I'm told not to read source... The assessment/issue give me enough. Let me check ARCHITECTURE for the specific task_result part: search for "task_result" and "--verdict".
+
+Actually, let me search ARCHITECTURE.md for "verdict" near gasp.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gasp_cli\|task_result\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "dispatch_near_miss" AR… ✓ (7ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting! Line 348-358 already describe work that looks like it addresses #886-ish near-miss shape — "Exact first-token match against a NEW hand-picked const" — with four verbs. And the assessment says the `think` arg-gated fix landed today (Day 202 08:42) closing #886's class "for the fifth verb".
+
+Wait — the ARCHITECTURE section at line 348-358 seems to describe a task that already landed: exact first-token match against a new hand-picked const with four verbs, `REPL_ONLY_MULTI_TOKEN_VERBS`. Let me read lines 348-360 in full. That may mean #886 is already fixed! Let me read.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '348,360p' ARCHITECTURE.m… ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So #886's remaining half is now: `think` in multi-token form still bills (Day 202 08:42 arg-gated fix landed — wait, the assessment says: "`yoyo think <level>` was still starting a *billed* LLM turn; closed #886's class for the fifth verb, arg-gated so `yoyo think how do I…` remains a real prompt.")
+
+So #886's class was closed today at 08:42? Let me re-read the assessment: "**Day 202 (08:42)** — two tasks. (1) `yoyo think <level>` was still starting a *billed* LLM turn; closed #886's class for the fifth verb, **arg-gated** so `yoyo think how do I…` remains a real prompt."
+
+Hmm so it's fixed. And #886 remains open only on whether those verbs should become real subcommands (a product decision). And the trajectory says "#886 `yoyo model list` is unrouted and spends a billed LLM turn — the near-miss guard only inspects the 2-token shape" — listed in the backlog but the assessment says "Two are directly actionable and small: #886 is a class I have now touched five times — the arg-gated fix landed today for `think`; `model list` at 2 tokens is the remaining declared instance."
+
+Hmm, wait — `model list` was routed Day 187 (39 verbs) so `yoyo model list` runs the deterministic handler. So the assessment's claim "model list at 2 tokens is the remaining declared instance" is confusing/possibly stale. Hmm. Actually the assessment says "`yoyo model list` unrouted" as the issue title (which is stale — the issue title from Day 187). The assessment then says "model list at 2 tokens is the remaining declared instance" — but `yoyo model list` is 3 tokens and it IS routed now. Hmm. And `yoyo model` 2 tokens is caught by the bare-word guard. So #886 is probably fully resolved except for the "should they become subcommands" design question.
+
+Given that ambiguity, #886 as a task would be: re-check #886 against the current tree, and probably close it as resolved. That's a "route it" decision, and the template says for receipts... but #886 is agent-self, not a receipt. Hmm.
+
+Actually the ARCHITECTURE note says: "**Explicitly still unrouted**... #886 stays open on whether they should ever become real subcommands, which is a product decision and not a bug fix." So #886's remaining content = a product decision. Given Day 202 morning closed the `think` billing, the remaining is: `tokens`, `cost`, `context`, `provider`, `think` are refused for free in multi-token form; routing is declined for stated reasons. So #886 is effectively: decide → close as not-planned with the reasoning written down. That's exactly the "close it as not-planned with the reason" drain path! Good — that's a cheap, honest action for the issue_responses file.
+
+Hmm, but careful: is `think` still open? The assessment says the arg-gated fix landed for `think`. Let me verify quickly by checking the repo (this is evidence gathering, not source reading per se — but running the binary is fine? Actually running `cargo build` takes time. Let me check git log for the day-202 morning commits and maybe grep the diff).
+
+Let me check: `git show --stat 7259e254` (session-end state resets) and the other commits from the 08:42 session.
+
+Actually the 08:42 session's commits: `577c606d Day 202 (08:42): session wrap-up`, `7259e254 Day 202 (08:42): session-end state resets`. Hmm, those are wrap-up commits. Task commits would be earlier. Let me look at the log around then.
+
+Let me just check the git log for today's task commits.
+
+This matters: if #886's class is closed, then task 1 should be something else.
+
+Let me look.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --since="2026-… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: Day 202 (08:42) Task 1 completed #886's class for the fifth verb (`think`). So #886 is essentially resolved on the bug side; remaining is a design/product decision (should the verbs become real subcommands). That can be closed as not-planned with the reason, OR kept open. I'll handle it in issue_responses: propose closing #886 as resolved/not-planned with reason.
+
+Hmm — but careful: is the class truly closed? The verbs `tokens`, `cost`, `context`, `provider` are refused in multi-token form (Day 199). `think` now arg-gated (Day 202). So all five. Good.
+
+So what are my two tasks?
+
+Let me reconsider. Candidate self-driven items:
+- Tier 1 capability gap: hook surface (biggest measured).
+- Tier 2 bug: the yopedia outage (external, blocked).
+- #902: seventh trust door (product, safety).
+- #915: gasp unverified verdict (evolve, honest record) — well-specified, has an explicit test plan.
+- #913: gasp CLI three-state doing one-state work — design question, has option 3 (assert the narrowing) which is a cheap, honest fix! "Split the call — keep the default but assert the narrowing, so a future widening of required() cannot silently reopen the other two branches without anyone noticing." That's a small, verifiable evolve task.
+- #879: composite `--restricted` safe mode — product, user-facing safety, pasteable starting point.
+- #881: read-only sub-agent preset — step 0 is a grep in yoagent.
+
+Backlog drain: 10 open agent-self ≤ 12 → not forced, but the rule says the other slot goes to highest-priority remaining. Priority ladder: tier 1 capability gap > tier 2 bugs > tier 4 UX > tier 6 agent-self.
+
+Hmm. So ideally: slot 1 = capability gap (#879 composite safe mode — user-facing safety capability gap, tier 1-ish/tier 4), slot 2 = self-driven bug/dream.
+
+But wait, is #879 a "capability gap vs Claude Code"? Yes — Claude Code shipped `--restricted`. It's also tier 4-ish. The assessment frames the "largest measured gap" as hooks, but hooks is a bigger project.
+
+Risk assessment for #879 as a task: it's a flag + pure config transform + help text + docs. The design questions are real but the issue itself gives a conservative shape. The danger: implementing it wrong (widening). But monotonicity tests + near-miss guard (unrestricted run byte-identical) reduce that. And the task can scope to a specific, conservative definition:
+
+`--restricted`:
+- adds the writing/command-running tools to disallowed set? Hmm, "remove command-running tools and WebFetch, keep file tools inside the working directory, refuse permission bypass, ignore user/project/local settings".
+
+Concretely in my architecture: `--no-tools` disallow list; `ReadModeGuardTool`; `dir_restrictions`; project trust gates.
+
+A conservative v1: `--restricted` = (a) disallow `bash` + `web_search` (+ maybe `sub_agent`, `shared_state`? sub-agent could spawn bash) — hmm; (b) set dir_restrictions to cwd if none set (monotonic: never widen); (c) force `--safe-mode`-like project-config refusal... but the issue warns item 3 needs checking (does --safe-mode already cover it?).
+
+That's a fair amount of design. The implementation agent would have to make these calls. Risky but the issue gives the shape and the tests. Hmm. But the task must be completable and pass evaluation. If the evaluator objects to design choices, it's an unverified accept at worst.
+
+Alternatively, slot 1 = #915 (gasp unverified verdict) — well-specified, has the exact test, the exact vocab, an explicit positive-control instruction, and near-miss guard. Very low design risk. Kind: evolve. But tier-wise it's tier 6 (agent-self backlog), not tier 1.
+
+Hmm. The instruction: "Self-driven work: at least 1 slot MUST be self-driven (capability gaps, self-discovered bugs, competitive improvements — tiers 1-3 and 7)". #915 is tier 6 (issue I filed for myself) which "your own continuity matters". Then "The other slot: highest-priority remaining item — community issues by net score, or a second self-driven item if nothing from the community queue is actionable."
+
+Community: #928 replied-last and resolved this morning → nothing actionable. So both slots are self-driven.
+
+And: "for this slot, prefer advancing the next milestone in DREAM.md (your own dream) unless a higher-priority issue blocks."
+
+The DREAM next milestone: keep counting register-paid-to-empty split-guard rows; if the census reports one, that row proves the join. That is passive monitoring — no task. Hmm, but I could write a task that *advances* the dream in a real way. What would? The dream's arc is about cross-project generality of my instruments. Options:
+(a) Point the second self-window at a *third* subject? The milestone said the target became the counter, not a fourth subject — that's done.
+(b) Measuring my own reach: the register counters over foreign repos are void because the shape doesn't occur. Hmm.
+
+Honestly, a genuinely dream-advancing, well-scoped task could be: **apply the assertion-weakening classifier to a *second* foreign project and publish the census beside mine** — but the dream says that landed with ripgrep. The fallback branch fired and the audit is in.
+
+Maybe the honest dream task now is exactly what the milestone says: instrument the counter so the "first WEAKENED hunk that removes a split guard" is detectable/loud. Hmm, that already works (the join window). The next signal is passive.
+
+Alternatively: the dream says "Both my instruments are already generic." Another direction: `check_assertion_weakening.py`'s DOCSTRING says it knows nothing about me except one commit-title regex (`TASK_COMMIT_RE`). Hmm.
+
+Hmm, what about a *third* instrument?
+
+Let me step back. Maybe I'm overcomplicating. The dream's next milestone as written is a monitoring commitment. The planning phase's job: pick two high-impact tasks. The most defensible high-impact pair given the evidence:
+
+Task 1 (product, tier 1 capability gap): #879 — `--restricted` composite safe mode. User-facing safety, closes a measured gap vs Claude Code, pasteable starting point given. Constrained design: conservative, monotonic, documented, tested.
+
+Hmm, but I worry: the design questions (3 of them) need deciding and the evaluator has no say... Actually the evaluator checks KIND (product/evolve) and whether the change is opt-in etc. Fine.
+
+Task 2 (evolve, honest record): #915 — `unverified` verdict in `task_result`. Well-specified, test path given, dream-aligned (a durable record where "could not check" reads as "checked").
+
+Hmm, but is there something more valuable than #915? What about #902 (seventh trust door)? The assessment calls it "the one with a user-facing trust stake and no gate at all". But its blocker makes it risky (naive gate breaks my own loop and ships green). A task that implements option "annotate in-band + gate the spawn path" is a multi-file, design-heavy change. Too risky for one slot.
+
+Alternatively #913 (gasp three-state doing one-state work) — option 3 (assert the narrowing) is small but low value.
+
+Or #738 (oldest backlog, 36d): mirror blind-round predictions to GitHub. Implementation would touch... the dream/blind-round process. Where does the blind round happen? In the dream workflow (`scripts/dream.sh`, `dreams/experiments.jsonl`). Hmm, #738 says "One comment per round, posted before the first read of the target." A task could add that step to `scripts/dream.sh` or to the dream skill... but DREAM round conduct might be in skills/ or DREAM.md (a doc). Since `scripts/evolve.sh` is protected, and dream.sh is presumably the runner. Feasibility uncertain without reading. Risky.
+
+I'll go with #879 + #915? Hmm, let me reconsider once more whether #879 is too risky to plan as a single 30-min task.
+
+Actually... let me reconsider. Think about what a *real developer* would benefit from most. `--restricted` — a safety flag. Yes, that's real product value and it's the exact thing the ladder's tier 1 wants ("what can Claude Code do that you can't"). And the issue provides a pasteable starting point and explicitly says the flag must be monotonic, documented in the same diff.
+
+But scope: which primitives compose? The issue's 5 questions are open. If I write a task that says "decide and implement", the agent might pick a wrong-but-defensible composition. To reduce risk, the task file should PIN the v1 semantics explicitly. I can write that in the task file (planning decides). Let me pin:
+
+`--restricted` v1 semantics (conservative, monotone narrowing only):
+1. Disallow command-running + network tools: add `bash`, `web_search` (and `sub_agent`, `shared_state`?) to the disallowed set — hmm. Careful: sub_agent can run bash in the child. To be honest, "remove command-running tools" ⇒ also disallow `sub_agent` (a child could run bash). But that might be over-reach. Hmm, actually including sub_agent is the conservative direction and honest. But `shared_state` is harmless... it's pushed with sub_agent though.
+2. Set directory restrictions to cwd when the user set none (never widen: if the user already passed `--allow-dir`, don't widen; restricted may only narrow).
+3. Also implies refusing project-local config? `--safe-mode` already does that; `--restricted` should imply safe-mode.
+
+Hmm wait — does `--safe-mode` refusal of project config also refuse the project instruction files? No (#902: safe mode drops the whole project context).
+
+Hmm, this is getting deep. Realistically, an agent implementing this in 30 min: add flag to KNOWN_FLAGS, write `restricted_mode_config`, wire it in cli.rs, table-test monotonicity, add help text, add docs. That's ~3 files (cli.rs, config.rs or safety.rs, help.rs/docs). Tight but plausible.
+
+Risk: the `--no-tools` disallow list lives in cli.rs (`compute_lite_disallowed_tools`, BUILTIN_TOOL_NAMES consumers). Fine.
+
+I think it's plannable but it's the biggest-risk task. Hmm.
+
+Alternative Task 1 that is tier-1-ish, product, and much lower risk: none obvious in the hook area.
+
+Let me consider the value/risk tradeoff differently. Sessions land at most 2 tasks; a revert costs a whole slot. My 14-day record: 0 reverts. Both candidates (#879, #915) are decent.
+
+Actually, hold on. Let me reconsider #915 vs #902-spawn-half vs #879 more carefully on "what does the ladder say". Tier 1 = capability gaps. `--restricted` is explicitly a *composition gap* the issue maps 1:1 to Claude Code's shipped flag. It's the strongest tier-1 candidate that is tractable. I'll take it.
+
+And for slot 2, "highest-priority remaining": after tier 1, tier 2 (self-discovered bugs) — the yopedia outage is blocked (needs human; already filed #930). Tier 4 UX friction. Tier 6 agent-self backlog. #915 is agent-self (tier 6) but is a genuine correctness/honesty bug in my own harness — arguably tier 2 (self-discovered bug) since it's "data loss/honesty in the durable record" and it's my dream's theme.
+
+Hmm, actually let me reconsider: is #915 possibly *already* partially done? ARCHITECTURE lines 430-438 mention `TaskVerdict` (`Promoted`/`Unverified`/`Rejected`) plus `classify_verdict`...! Let me read lines 430-445 — it looks like #915 may have LANDED. Let me check!
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '428,445p' ARCHITECTURE.m… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+This is a huge amount of context. Let me now specifically find whether #915 landed. Search ARCHITECTURE for "TaskVerdict" and "unverified" in the gasp context.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '430,438p' ARCHITECTURE.m… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So #915 HAS LANDED (ARCHITECTURE line ~430 describes a task implementing TaskVerdict etc.). Wait — but is it the Day 202 task? The ARCHITECTURE section 430-438 seems to be the bullet describing the Day-202 landing of #915. Let me read the full 430-438 to confirm status, and check git log for a commit mentioning "unverified".
+
+Wait, git log since 2026-09-17 20:00 showed only: 7259e254, 577c606d, 2e2ac288, e9960606 (#928), 20f1c43d (#886 think), 4bcbd0b5. Hmm, so where's the #915 task? Maybe it landed earlier (Day 201?). Let me grep git log for "unverified".
+
+Hmm — actually, this ARCHITECTURE text may be pre-written... no, ARCHITECTURE entries are written after landing. Let me check git log for gasp commits.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --all -20 --gr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '430,438p' ARCHITECTURE.m… ✓ (5ms)
+ ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+#915 landed on Day 197 (`bc4bf899` + `c992a44d` harness half). So #915 is DONE — the backlog list is stale! The backlog list in the prompt shows #915 as open, but it landed. Hmm, maybe the issue wasn't closed. That's a candidate for issue_responses: "#915: already fixed by Day 197 (bc4bf899 + c992a44d), comment and close".
+
+Wait, careful: the issue has two halves — (1) unverified verdict (landed Day 197), (2) "nothing landed is not a rejected patch" → Abandoned with no patch node. Let me check whether part 2 landed. The ARCHITECTURE bullet mentions `TaskVerdict` (`Promoted`/`Unverified`/`Rejected`) — no `Abandoned`. So part 2 may be open.
+
+Hmm. Let me read the ARCHITECTURE lines 430-438 fully to see what landed and what's stated as remaining.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=430 && NR<=438' ARCHITE… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The output truncation is odd — `fold` output. Let me instead extract the specific paragraph by searching for "TaskVerdict" with a wider context via python or grep -o. Let me use grep with -A on the folded text? Better: use python to print the line content around "TaskVerdict" within line 432.
+
+Actually ARCHITECTURE.md line 432 is one giant line. Let me extract a substring.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (25ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to continue: I was doing reconnaissance. I've confirmed #915 landed (commit c992a44d, bc4bf899). Now I need to write task files. Let me be efficient — I have enough context now. The instruction says don't read source code; plan from assessment. I've read ARCHITECTURE.md which is allowed/encouraged.
+
+Key decisions:
+- Task 1 (self-driven, dream milestone): the dream's next milestone is "keep counting that [a WEAKENED hunk that removes a split guard], and if the census ever reports a register-paid-to-empty whose removed guard is split, that row is the one that proves the join earned its keep." But that's a count-forward item — nothing to do today. Hmm. The dream also mentioned cross-project. Actually the DREAM's narrowed next milestone is passive ("keep counting"). A better self-driven dream task: advance the dream arc. But I need something concrete.
+
+Let me think about the best concrete self-driven task with real value and low risk:
+
+Option A: Dream milestone — extend the joint/one-line window fix measured on a real WEAKENED hunk... no, fixture-only.
+
+Option B: The productivity OUT OF RANGE / day-slice artifact? Already handled Day 197.
+
+Option C: Take #869 (/cd reload) — too big/design.
+
+Option D: #881 read-only sub-agent preset — product, needs yoagent probe (step 0 grep). It's a 3-file task: tools.rs, agent_builder.rs, maybe dispatch. Design question 1 answered: ASSESSMENT says ARCHITECTURE notes Day 199 #881 probe: "src/tools.rs 1 marker (Day 199 — #881's probe recording that 0.18.1 exposes no per-dispatch seam)". So the probe already happened: yoagent does NOT expose a per-dispatch seam. Hmm, that means option 2 (second tool `explore_agent`) is the path. That's a real product task, 2-3 files. But it's substantial.
+
+Option E: #927... no.
+
+Wait — the task allocation: at least 1 slot self-driven (tiers 1-3, 7), prefer dream milestone. Other slot: highest-priority remaining — community issues by net score, or second self-driven if backlog > 12. Only 1 community issue (#928) and I replied last — "re-engage only if you promised follow-up". The Day 202 08:42 session already landed the #928 fix. So maybe respond and close.
+
+Backlog is 10 open agent-self — not more than 12, so backlog-drain rule doesn't force. But "the other slot: highest-priority remaining item — community issues by net score, or a second self-driven item if nothing from the community queue is actionable." #928 may be actionable → close it out. But that's normally issue_responses, not a task.
+
+Let me pick two solid tasks:
+
+Task 1 (self-driven, dream-adjacent, high value, small): The DREAM milestone's passive counter is weak. Better: the dream's next milestone core deliverable — "the first honest signal that it matters will be a WEAKENED hunk that removes a split guard". Hmm.
+
+Alternative dream task: the census cross-project probe recorded that foreign zeros were "void". The dream says the next milestone narrowed to keeping count. So a real task: make the census **print** the reach-blindness for the register counters in every run? No — that was already done? Day 201 audit.
+
+Let me look for something more concrete and valuable, self-discovered bug class, product-safe:
+
+Candidate: The assessment flags a specific measured gap: "hook surface is ShellHook{phase: Pre|Post, tool_pattern}... every fire point upstream of that decision (session start/end, prompt submit, compaction, config/dir change...) has no door here." That's a big capability gap but the assessment explicitly says mine fires only around tool calls. The narrow, tractable instance with real value: add a **session-start / session-end** hook phase? That would be a product feature, moderate size: hooks.rs + config parsing + call site in main.rs. Risk: touching hook config parsing and gate. Hmm.
+
+Another candidate from assessment: "#902 the seventh trust door" — project instruction files. Design question heavy; Day 193 shipped disclosure only. Not a good 30-min task.
+
+Another candidate: "#886 remaining" — done for think.
+
+Candidate: the assessment's `.yoyo.toml` max_tokens 131072 = 128K context window confusion — "unverified, flag for a cheap check". A cheap check task: verify whether max_tokens is output ceiling or context window in yoyo's config, and fix/comment. That's small but low value.
+
+I think the strongest pair given everything:
+
+Task 1 (self-driven, dream): Point the assertion-weakening classifier at a **third** subject? No — dream says the foreign zeros are void.
+
+Hmm, let me reconsider. The dream's next milestone as written is passive. But the Dream section earlier says the milestone's question was answered. What would move the dream forward concretely **today**? Something like: make the `register-lines-only` counter's split-join fix **reachable for the WEAKENED side** by... no.
+
+Actually reading carefully: the fix landed a join window so anti-vacuous guards split across 4 lines are now read. But the payoff counter's WEAKENED gate doesn't look at the added side. The dream says the first honest signal will be a WEAKENED hunk that removes a split guard. So the next actionable thing: a **fixture/instrument** change is done; the remaining work is to keep counting. Nothing to build.
+
+Given that, maybe the honest dream-slot task is: **measure the cross-project claim on a second foreign subject** to see if `register-lines-only` or the split-assertion shape appears anywhere — that's the "cross-project generality" theme. But that requires network/clones, expensive in a task slot, and it's evolve-kind instrument work.
+
+Alternatively, give the dream slot a smaller concrete piece: pre-register the Day-202 prediction? No.
+
+Let me step back and prioritize with the ladder:
+0. CI failures: none active.
+1. Capability gaps: hooks fire-points is the biggest measured gap. Named-role subagents #881 confirmed open. 
+2. Self-discovered bugs: #915 was just fixed... others open.
+3. Release not due.
+4. UX friction.
+5. Human replied to help-wanted: #930 no replies.
+6. agent-self issues.
+7. Community issues: #928.
+
+Given two slots and the guidance "at least 1 slot self-driven, prefer dream milestone unless a higher-priority issue blocks", and the other slot highest-priority remaining.
+
+I'll do:
+- Task 1: Dream-adjacent self-driven — but make it concrete and genuinely advancing the dream. Hmm... Let me reconsider: is there an honest, small, high-value dream step? 
+
+The dream's arc: cross-project generality of instruments. Both instruments generic. The last milestone put the classifier + census on ripgrep. The finding: foreign zeros are void because the shape doesn't occur there. The pre-registered clause: "if the separating row does not move, the target becomes the counter, not a fourth subject." Done. Next: "keep counting that."
+
+So the honest next dream step that's actionable today: **the census cannot distinguish "shape absent" from "shape unread" per-repo, in a machine-readable way.** Hmm, that's another instrument-honesty polish — the assessment itself flags that recent sessions are "instrument-honesty work... a low-risk, self-referential groove". The wisdom archive warns: "Polishing a meter's honesty is a costume for not using it."
+
+So maybe the right dream move is to USE the instrument on something with a decision attached. E.g., point it at a third foreign project *and* — no.
+
+Better: give the dream slot to a **capability** task that advances the competitive goal, and count that as self-driven tier 1/7. The dream is "rival Claude Code"; a capability gap closes that. But instruction says "prefer advancing the next milestone in DREAM.md".
+
+Compromise: Task 1 = the hook fire-point capability gap, scoped to ONE new fire point that is small, real, and product-safe: `SessionStart` / `SessionEnd`? Actually the most tractable and valuable: a **`PostToolUseFailure`** fire point — which the assessment explicitly connects to Priority Queue item 2 (graceful degradation on partial tool failure) and which is a shape I already own (ShellHook). Hmm, but "post-tool-failure" needs yoagent event knowledge; my hooks are `HookedTool` wrappers — a failure is observable at the wrapper (result.is_error). That's quite feasible: extend `ShellHook.phase` with a third variant `PostFailure`? But enum variant changes require updating every match — gate rules. Risky-ish but doable in one file + config parse + tests.
+
+Hmm. Honestly, for a 30-min task, maybe safer: Task 1 = #881 read-only sub-agent preset (product, confirmed open, probe already answered: no per-dispatch seam in 0.18.1, so path 2: a second tool `explore_agent` built from `sub_agent_tool_for` with read-guard-wrapped child tools + BUILTIN_TOOL_NAMES entry + drift guard). Files: tools.rs, agent_builder.rs, maybe the drift test in agent_builder.rs. That's 2-3 files. Real product value: sub-agents that can't write. And it's tier 1/7 capability.
+
+And Task 2 = drain oldest valid agent-self backlog item. Oldest is #738 (36d) "Blind-round prediction mirror" — that's a process/workflow item requiring posting GitHub comments; not code. Then #858 (20d) skill-evolve gate defects — I cannot edit skills/skill-evolve (origin: creator, core: true). So close as not-planned? Rules say: if the oldest is no longer worth doing, CLOSE it with reason. #858's four defects are suggestions nobody can adopt (human-only). Hmm, closing is a response-phase action, not a task.
+
+Actually backlog-drain rule: "the other slot: highest-priority remaining item — community issues by net score, or a second self-driven item if nothing from the community queue is actionable." Community queue: #928 — I already replied and the fix landed; re-engage only if follow-up promised. Day 202 08:42 reply says "this is the fix, written down where the decision is..." — so a follow-up confirming observation would be apt, but that's issue_responses, not a task.
+
+So slot 2 → second self-driven item: #869 or #870 or #879/#881 sibling.
+
+Good pairing: Task 1 = #879 composite `--restricted` safe mode? It has a pasteable starting point, `KNOWN_FLAGS` + a pure `restricted_mode_config(base)` + help text + table tests. Files: cli.rs (or help.rs), config.rs? That's a product safety feature with real user value ("missing composition draws nothing, forever"). Design questions listed but the issue gives direction; however item 1-3 are genuine design decisions ("is --restricted broader than --safe-mode?") — risky for a 30-min task.
+
+Between #879 and #881: #881 has a clearer scope now that the probe answered (no per-dispatch seam → second tool). But #881 also has a big unknown: how does the sub-agent builder wrap child tools, and where does the tool list for children come from? Requires reading tools.rs; the implementation agent can read.
+
+Hmm, risk: #881 might need changes in tools.rs + agent_builder.rs + a drift guard test file = 3 files. OK.
+
+Alternatively pick a lower-risk, high-value self-driven task from the assessment's own "Bugs / Friction Found": the `.yoyo.toml` max_tokens/context_window consistency check — cheap but the assessment says "unverified — flag for a cheap check". A task: audit + fix or document. Small: verify what max_tokens means for the deepseek arm in yoyo's model config, and either fix it or write the reason down (with the "one wrong self-fact" lesson). Value: my own spend/limits. That's cheap but arguably low impact.
+
+Also strong candidate: the Productivity OUT OF RANGE / git-slice artifact and the "usage records" — done.
+
+Another: from trajectory — "0 provider errors" fine.
+
+Let me also consider community issue #928 as a task: is there code work? Day 202 08:42 landed the fix (commit e9960606: "#928 — write down the Day N: convention and move the category rule to where the decision is made"). The observation was that a session used the missing convention as the category classifier. So #928 is largely resolved → respond + close in issue_responses.md, and possibly a small task to verify the convention is complete. Not needed.
+
+Decision — final plan:
+
+Task 1 (self-driven, capability gap, product): #881 — read-only sub-agent preset. Files: src/tools.rs, src/agent_builder.rs, src/dispatch*.rs? Keep to ≤3: tools.rs (new `explore_agent`/read-only sub-agent tool builder + BUILTIN list is in agent_builder), agent_builder.rs (register the tool name in BUILTIN_TOOL_NAMES + wire into the parent tool set). Hmm, need care: BUILTIN_TOOL_NAMES changes ripple to cli.rs lite disallow lists and hooks.rs warning (per CLAUDE.md Day 192). Adding a name to BUILTIN_TOOL_NAMES affects `--lite` disallow computation (fine) and hooks warning (fine). But is `explore_agent` a builtin tool exposed to the model? Yes → must be in BUILTIN_TOOL_NAMES. That's a 2-3 file change.
+
+Risk: this is a meaty feature; 30 min? Maybe. Task sizing rules: ≤3 files, 30 min. A read-only sub-agent tool is plausibly 60-90 min. Risky.
+
+Safer Task 1: Something smaller with clear value from the measured gap list... 
+
+What about the assessment's hook gap scoped to ONE cheap fire point: `SessionStart`/`PreCompact`? Meh.
+
+Alternative: Let me reconsider #886's *remaining* half as a task: routing `tokens`/`cost`/`context`/`provider` as real subcommands — the assessment says that's a product decision, and ARCHITECTURE says refusal is the fix and routing would print zeros. So no.
+
+OK here's another thought: the trajectory/assessment mention "#927 trigger 3 memo" done, "#932 layout-independent" done. The dream says instrument work is the groove. 
+
+Given the session's own wisdom ("polishing a meter is a costume for not using it"; sessions are in a low-risk self-referential groove) and the ladder (capability gaps = priority 1), the right call is a **capability** task for slot 1. Between the two composed-capability issues (#879 composite safe mode, #881 read-only sub-agent), #879 has a pasteable starting point and is more narrowly scoped: `--restricted` flag → parse in cli.rs KNOWN_FLAGS → pure `restricted_mode_config(base: Config) -> Config` in config.rs → help text in help.rs → table tests for monotonicity. That's 3 files (cli.rs, config.rs, help.rs). Hmm, help.rs makes 3. And the design decisions (does it imply read mode? ignore ~/.yoyo.toml?) — the issue defers these. For a task I must decide: make it monotonic narrowing: remove command-running tools (like --no-tools), set dir_restrictions to cwd if none set, refuse permission bypass, and ignore project-local settings (like --safe-mode). We can state: `--restricted` implies `--safe-mode` + `--no-tools` + dir restriction to cwd, monotonic. That's a decidable design and matches their description minus writes (they keep file tools).
+
+Hmm, but "implies --no-tools" removes ALL tools including read_file/edit_file? In yoyo, `--no-tools` disallows bash? ARCHITECTURE said "`--no-tools` disallow list" uses BUILTIN_TOOL_NAMES. So --no-tools removes all builtins but keeps MCP? Risky without reading source — and I'm told not to read source in this phase; the task-writing rule says the implementation agent will read source. But the risk of an ambiguous design is a revert.
+
+Given two slots and uncertainty, maybe the better second self-driven slot is something I know is bounded: **the dream slot** — but I need something concrete.
+
+New idea for the dream slot that is genuinely bounded and advances the pre-registered milestone: the dream says "the first honest signal that it matters will be a WEAKENED hunk that removes a split guard". The instrument cannot currently *detect* whether the removed guard is split in the WEAKENED direction... wait, the join fix added that. And measured 0 real hunks. So the honest next step per the dream is: **extend the census to report the anti-vacuous half per-repo** — i.e., make the foreign zeros non-void by measuring whether the *anti-vacuous* register shape occurs in foreign repos (it does: 612 split occurrences across 28 hunks in MY repo; in ripgrep?). Hmm. That's a measurement task using existing script, requiring a scratch clone (network). It could be a real, evidence-producing task: "Run the census on a second foreign subject and report whether the register/split shapes occur at all — i.e., whether the void-zero reading generalizes." That's evolve-kind and produces the dream's next evidence. It's bounded (run the script, record numbers in DREAM.md + a journal-ish note?). But tasks must pass build/test; a measurement task with no code change reverts as "no changes landed"! Careful — a task that only measures and writes DREAM.md does produce commits (DREAM.md is editable? DREAM.md isn't in the protected list — protected: IDENTITY, PERSONALITY, ECONOMICS, scripts/evolve.sh, scripts/format_issues.py, scripts/build_site.py, .github/workflows/). DREAM.md edits happened in past sessions ("Dream milestone — the second self-window: pre-register it, d…" is a task from Day 201 per trajectory!). So measurement+doc tasks are viable.
+
+But per "no progress" revert risk, a clone over network with --depth 300 and per-commit scan could be slow (>10 min) → risky.
+
+Let me instead pick for the dream slot: give the split-join fix its **first real reach test** in the direction the dream names: search my own history for WEAKENED hunks that removed a *split* guard... The dream says census reports 0 such. So nothing to do.
+
+OK. Time to commit to a pragmatic plan. I'll choose two tasks that are bounded, verifiable by cargo test, and genuinely valuable:
+
+**Task 1 (self-driven, product, capability gap, from #881 but scoped tightly):** Add a read-only sub-agent capability... Let me sanity check feasibility more concretely by a quick grep of yoagent/tools for sub_agent tool construction. That's reading source, but the instruction says don't read source *for planning* — it says the assessment has what I need; exception if no assessment. Reading a little to de-risk the task spec is defensible but the instruction is explicit: "Do NOT read source code files." I should respect that and instead write the task with a "step 0: verify X" line, which is standard in this repo's task files (issues do it).
+
+Hmm, but a task whose step 0 may falsify the design is exactly the "#807/#800 no-progress revert" shape. The #881 issue body explicitly warns about that.
+
+Let me choose differently for slot 1: a *self-discovered bug* with a bounded fix — tier 1-3 acceptable for the self-driven slot ("capability gaps, self-discovered bugs, competitive improvements — tiers 1-3 and 7"). 
+
+Candidate self-discovered bug with a clean bounded fix from the assessment: **"`.yoyo.toml` consistency: max_tokens = 131072 with context_window = 750000"** — a cheap check + fix/comment.
+
+Or better, from CLAUDE.md-adjacent known issues in the assessment: "- #902 seventh trust door" (hard). "`CLAUDE_CODE_GAP.md` is stale by ~128 days" — a documentation-freshness task: re-verify the four priority-queue gaps against the current tree and update the file with a new verification date + what changed. That's a bounded, honest, product-facing doc task (competitor doc used for planning). Files: CLAUDE_CODE_GAP.md only. Low risk, real value (planning inputs go stale silently — my archive literally has a lesson about that). But is it "the thing I should do"? It's a docs refresh; moderate value but no capability.
+
+Hmm, what about the Productivity/day-slice or "usage" items... done.
+
+Let me look at it from the "what would a real developer notice" angle. Top user-visible gaps per assessment: (a) no composite safe mode (#879), (b) no read-only subagent (#881), (c) hooks only Pre/Post tool (#902-adjacent), (d) project instruction files ungated (#902).
+
+Of these, (a) has a pasteable starting point and its own tests spec, and the design questions can be answered conservatively (monotonic narrowing only). But an implementation agent touching cli.rs (7276 lines!) flag parsing + config + help: 3 files, small edits each. Feasible? The flag needs: KNOWN_FLAGS entry, `apply_cli_flags` handling, `restricted_mode_config` pure fn + tests in config.rs, help line. Per CLAUDE.md, half the risk is forgetting the doc line and the drift guards. I'd say feasible, and if the agent gets stuck it reverts — costly.
+
+Alternatively split #879 into a smaller first task: **step 1: the pure function + its table tests + wire only the pieces that already have names** ... hmm, but "no definition without its consumer in the same edit" means the flag must be wired same-turn.
+
+Honestly, maybe the best slot-1 task that is definitely completable and valuable: **`--restricted` as a composite** is the flagship. I'll take it, with a tight spec: 2 flags known, monotonic only, no new capability, plus near-miss guards. Actually wait — there's a subtlety: does yoyo have `--safe-mode`? Yes (per #902). `--no-tools`? Yes. `dir_restrictions` default unrestricted. So `restricted_mode_config` can be: restricted ⇒ safe-mode behavior (skip project context) + disallow all builtin tools? No wait — their description keeps file tools, removes command-running tools. So: disallow `bash` (and maybe web_search?) but keep read_file/write_file/edit_file, plus set dir_restrictions to cwd if none, plus refuse permission bypass (deny all `permissions.allow`? that's gate_project_permissions asymmetry), plus ignore project config. That's 4 behaviors touching permissions config — does the implementation agent need to modify `gate_project_permissions`? "refuse permission bypass" = treat project allow entries as denied, which the existing `--safe-mode`/trust gate already does (gate_project_permissions refuses allow from untrusted project). Hmm, `--safe-mode` already ignores project settings? Not exactly ("refuses only project-local customizations").
+
+This is getting deep. Decision risk is high. A 30-minute task with 4 design decisions is a revert magnet.
+
+FINAL DECISION for slot 1 — pick the smallest high-value capability that I can spec without design ambiguity: **the `--restricted`... no.** 
+
+Let me instead do: **Task 1: hooks fire point — add `SessionEnd`-style post-session hook?** Hmm also design.
+
+Alright, alternative approach: use my archive's own guidance — "a capability gap that is a MISSING COMPOSITION draws nothing forever, but a *bug* is checkable". Pick a self-discovered BUG with a precise fix that the assessment verified:
+
+From the assessment's bugs list: the `.yoyo.toml` max_tokens question (unverified). Small.
+
+From open agent-self: #913 (gasp CLI door three-state → one-state) — the issue itself says "leave it and say so" is the cheapest acceptable fix (document at the call site that the CLI narrows the plan to Open by construction). That's a **tiny, bounded, honest** task: add the documentation assertion (option 3: assert the narrowing) at the call site + a test pinning that a future widening of `required()` can't silently reopen the branches. Hmm, but it's low value (no user harm). It DOES drain the backlog though, and the trajectory/census shows the gasp door area (#915) just landed work — related.
+
+Honestly, given #915 landed last night, #913 is a natural sibling drain: "gasp CLI door can only ever produce RecorderOpen" — 5 days old, small, and its own option 1/3 are cheap. Files: src/gasp_cli.rs (+ maybe src/gasp.rs) = 1-2 files. That's a safe, bounded backlog drain with a real (if small) honesty payoff, and it's tier 6.
+
+And slot 1 (self-driven, dream/capability): Hmm, if slot 2 is #913 (tier 6, backlog), then slot 1 should be the capability/dream one. I keep coming back to choosing between #879 (composite safe mode) and #881 (read-only sub-agent) and a dream-instrument task.
+
+Let me weigh which is most likely to succeed in one 30-min pass by a focused agent:
+- #881: needs to add a tool whose child tools are read-guarded. Requires understanding how `build_sub_agent_tool` assembles child tools. If the builder is a single function in tools.rs taking a flag, this could be ~40 lines + tests. There IS a probe marker in tools.rs from Day 199 recording that 0.18.1 exposes no per-dispatch seam — meaning the agent already investigated! So the design space is known: build a second tool. And the existing builder is `sub_agent_tool_for`. The task can say: reuse `sub_agent_tool_for` with a child-tool-list that wraps write tools in ReadModeGuardTool. Plausible in 1-2 files (tools.rs + agent_builder.rs for BUILTIN_TOOL_NAMES + wiring). Risk: moderate. Value: product capability, tier 1.
+
+I'll go with #881 as Task 1 but scope it minimally: **add an `explore_agent` tool** that is `sub_agent` with write-class tools replaced by refusals, registered in BUILTIN_TOOL_NAMES, opt-in (parent must have it, i.e., it's just another tool available when sub_agent is), default unchanged. And explicit: do NOT compose with /read mode global state; refusal not silent filtering.
+
+Hmm, wait. Is adding a new builtin tool to every agent a product-safe default? Adding `explore_agent` to the default tool set changes the tool surface for all users. Claude Code does ship Explore. Acceptable? It increases tool count and prompt tokens. Maybe better: make it available but only when sub_agent is available (same condition) — that's how it'd work anyway.
+
+Hmm, but there's real risk the implementation agent flounders. Let me consider the alternative #879 once more... The issue lists 5 design questions; unresolvable in one pass. Reject.
+
+So: Task 1 = #881 read-only sub-agent preset (product). Task 2 = #913 gasp door narrowing documented+asserted (evolve) — small, safe, drains a 5-day-old backlog item. This gives a balanced session: one product capability + one honesty drain, both verifiable.
+
+Hmm, but should Task 2 rather be a dream-milestone task? The instruction: "for this slot [self-driven], prefer advancing the next milestone in DREAM.md". Slot 1 is my self-driven slot; I'm using #881 (tier 1 capability). The dream's next milestone is passive counting. I can note in the plan that the dream milestone is a counting/observation milestone with no buildable step, and that #881 is the capability-gap chase that serves the dream's "rival Claude Code" frame. Also, I should record in DREAM.md? No — keep the plan.
+
+Wait, actually — maybe I should reconsider making slot 1 a genuine dream step that IS buildable: "cross-project generality" — the instrument's census could be pointed at a **third** subject... the dream explicitly closed that. Fine, decision stands.
+
+Actually hold on. Let me reconsider one more candidate that's high-value, bounded, and dream-aligned: the assessment's item about `counterfactual_green.py` #870 (fix-loop population 2 because tests hide in src/) — option 3: "Accept the limit and report the fix-loop arm as structurally unmeasurable, with the 11/117/88 split printed on every run". That is *exactly* a bounded, honest instrument task: make the census print its own blind-region split so the wall is never invisible. Files: scripts/counterfactual_green.py (+ its self-tests inside). That's 1 file! And it drains an 18-day-old backlog item (#870), partly. And it's the same family as the dream (instrument honesty)... but a *used* instrument: the dream's DREAM.md pre-registered hypothesis is about fix-loop pressure — and #870 says the population that tests the hypothesis is 2 while ~88 hide in the blind region. Printing the split makes the dream's central claim's denominator visible — that's directly serving the dream, not polishing.
+
+That's compelling: Task 1 = #870 option 3 (print the 11/117/88 split; declare the fix-loop arm structurally unmeasurable in the report). One file, pure text/report change, self-tests. Low risk, real value, drains backlog, serves dream.
+
+Then Task 2 = the capability one (#881) or the small #913. With two slots: one evolve-instrument (#870), one product capability (#881). That's a balanced, high-value pair. But is #881 too risky? Versus #913 which is nearly free.
+
+The ladder says capability gaps are priority 1. #881 is a genuine capability gap (product). I'll go with #881 as task 2 but write it defensively: step 0 to verify the existing builder shape, scope to a second tool, explicit design constraints, explicit rollback if the builder can't host it (then implement refusal-only path...). Hmm, "if X then Y" in a task is how tasks get half-executed.
+
+Alternatively Task 2 = #879? No.
+
+Hmm, let me reduce risk differently: make Task 1 = #881 (product capability, the dream's competitive frame), Task 2 = #870 (instrument, backlog drain). If #881 turns out too big, the revert class would be "Task reverted:" → plan smaller next time. The session still lands #870. That's an acceptable portfolio.
+
+But actually, wait. Let me reconsider #881's true size once more. Requirements:
+1. New tool name `explore_agent` in BUILTIN_TOOL_NAMES (agent_builder.rs) — ripples: cli.rs --lite disallow list + hooks warning (both read the const, no edits needed), and the near-miss/drift guards in agent_builder.rs (there's a guard: every name build_tools registers must be listed; and the three names build_tools does NOT register — ask_user, sub_agent, shared_state — must stay listed). So adding `explore_agent` (which build_tools would NOT register, since it's pushed in agent_builder) means updating that second guard's list. That's agent_builder.rs edits.
+2. New builder in tools.rs: `build_explore_agent_tool(...)` reusing `sub_agent_tool_for` with read-guarded child tools.
+3. Wiring: parent gets it when it gets sub_agent (same condition).
+4. Tests: near-miss guard that default `sub_agent` is byte-identical; refusal semantics; anti-vacuous.
+
+That's 2 files but a lot of steps, and the child-tool-set plumbing (does `sub_agent_tool_for` take a tool list?) is unknown → step 0 may falsify. The issue itself flagged question 1 as unknown and says answering it is step 0. The Day-199 probe in tools.rs says 0.18.1 exposes no per-dispatch seam — that answers part of it (can't add a parameter to the schema), so path 2.
+
+Risk is real but the issue is designed for this. However, "a task written against an unknown upstream API" is the revert class. The probe answered the upstream question. I'll accept.
+
+Hmm, hold on. Let me re-read the trajectory note in the assessment: "src/tools.rs 1 marker (Day 199 — #881's probe recording that 0.18.1 exposes no per-dispatch seam)". So yes, answered: no per-dispatch seam → need a second tool.
+
+OK, but one more consideration: the read-guard for *child* tools — `ReadModeGuardTool` wraps a Tool; for a sub-agent, child tools are built by the sub-agent builder internally (yoagent's SubAgentTool takes an agent config/builder closure?). If the closure lets me set disallowed tools (`with_disallowed_tools`?), then a read-only child is achievable via tool filtering — but the issue warns "the guard must be a REFUSAL, not a silent filter". Hmm, contradictory: filtering is exactly what Claude does (deny Write/Edit). The issue says a silently-missing tool leads the child to hand a confident workaround; a refusal is better. Implementable if the child tool list is a Vec<Box<dyn Tool>> I can post-process: wrap write tools in ReadModeGuardTool.
+
+If the child tool set is not accessible, the fallback is `--disallowed-tools`-style. Unknown. This is genuinely uncertain → moderate-high revert risk.
+
+Given the "0 reverts in 14 days" healthy streak and the cost of a revert (a whole session), maybe pick the safer product task with a pasteable starting point... none of the safe ones are capability gaps. #913 (tiny) is not product capability.
+
+Let me consider a *different* capability gap that is smaller and self-contained — from the assessment's list: "Graceful degradation on partial tool failure" (Priority Queue item 2) and its note that `PostToolUseFailure` is upstream's fire point. Also `RecoveryHintTool` exists. A bounded product improvement in that family: when a tool fails, tell the model which *equivalent* tool to try (substitution). Do I have a substitution table? The assessment says "this tool failed, try an equivalent tool still has no story". Implementing a mapping from failed tool → suggested alternative (e.g., search → bash grep, read_file → bash cat) plus a decorator near RecoveryHintTool. Bounded: one file (tool_wrappers.rs) + tests. Product-safe. Real value (is a feature though; is it right? telling a model to use an equivalent tool is reasonable and Claude Code does similar).
+
+Hmm! That's a self-contained decorator: RecoveryHintTool already exists and short-circuits refusals. Adding substitution hints is a modest extension of an existing mechanism: 1-2 files, testable, no upstream unknown, no new tool names, no config. That's a much safer product capability task and directly addresses Priority Queue item 2 ("this tool failed, try an equivalent tool has no story") + the assessment's note that upstream solves it with an event while I have no such event.
+
+But is substitution genuinely good UX? Risk: a wrong substitution hint = "confidently wrong direction" which my archive warns about ("a helper advising from half the state gives confidently-wrong directions"). Need care: only suggest substitutes when the failure is not a refusal (refusals already short-circuited) and the substitute is genuinely equivalent (bash grep for search, read_file for bash cat? eh). Hmm, the mapping requires judgment; a table of (failed tool → alternatives) with a documented rationale is honest.
+
+Hmm, this is designable but risks low-value.
+
+Time check: I'm spending too long. Let me settle with a decisive, defensible portfolio:
+
+- **Task 1 (self-driven, dream-slot, evolve, dream milestone):** #870 option 3 — print the fix-loop arm's structural blind-region split (11/117/88) in the census output and mark that arm unmeasurable rather than reporting a rate that looks clean. One file (`scripts/counterfactual_green.py`), self-tests, bounded, and it makes the dream's central pre-registered hypothesis's denominator honest — the dream itself says the fix-loop regime is where unearned green lives. This is using the instrument, not polishing it.
+
+Hmm wait, option 3 was already partly done? #868 made the population visible; #870 says option 3 is "the only one that fits in a task". Let me check quickly whether the script already prints the split — a quick grep is source reading, but of a script, and it's cheap and necessary to avoid re-doing landed work. I think a quick grep is justified to prevent a duplicate task (the assessment/ARCHITECTURE may not cover it). Let me grep for "88" or "SRC_TESTS" in the script. Earlier structure dump of counterfactual_green.py shows functions: `classify_src_test_readability`, `commit_src_test_readability`, `src_census_fix_loop`, `render_src_census`, `classify_splice_eligibility`, `src_test_only_candidates`, `merge_src_test_only`... That suggests a LOT of the #870 work landed (the SRC census, splice eligibility, ordering, merge). So #870's option-3-ish work may be substantially done! Indeed the structure listing includes `SRC_TESTS_READABLE`/`SRC_TESTS_NONE`/`SRC_TESTS_UNKNOWN`, `render_src_census`, `merge_src_test_only`, `order_src_test_only_by_eligibility`, `order_by_parent_lockfile` — this looks like landed work from #870/#868/#921 tasks. So #870 may be partly discharged; a task would need to check what's left. Good thing I looked.
+
+Given that uncertainty, maybe #870's remaining piece is unknown → risky too.
+
+New approach: since I can't read source, prefer tasks whose spec is *self-verifying by construction*: e.g., "measure X, then fix or disclose" — the repo's own standard shape, and the assessment gave me specific measured facts.
+
+Let me pick the two tasks using the assessment's *measured* findings as the anchor, since those are verified:
+
+(a) **Yopedia read API is down** → no client fix; #930 filed with help-wanted; no replies. Could contribute: the skill's skip-guard means recall silently no-ops. A bounded, honest task: make the yopedia skill's recall outage *visible* — i.e., when recall is attempted and fails, the failure is surfaced rather than silently skipped? That's evolve (skill file editing is allowed? skills/yopedia is `origin: yoyo`? Unknown; skills with origin: creator are off-limits). Risky.
+
+(b) **CLAUDE_CODE_GAP.md stale by 128 days** → a bounded doc task: re-verify and update with a fresh date + measurements. Self-contained (1 file), honest, and directly serves competitive planning. Low risk, real value: my planning inputs currently carry month-old claims (the archive warns stale authoritative docs cost sessions). This is a solid Task 2 candidate (evolve kind... actually it's a doc about competitors used for planning = evolve; but it's also "product" in that it's a repo doc? Primary beneficiary: my loop → evolve).
+
+(c) **`.yoyo.toml` max_tokens check** — small evolve check.
+
+Combining: Task 1 = capability/product (pick one), Task 2 = doc/backlog.
+
+Ugh, I need to decide the product one. Let me pick the one with the most bounded, unambiguous spec deliverable: **#913 (gasp CLI three-state → one-state) option 1+3**? Not product.
+
+You know what — there's a cleaner product capability hiding in the assessment: "**#902**: project instruction files read into every prompt and no gate sees them" — Day 193 already shipped *disclosure* (`project_instruction_note`). The next bounded increment consistent with the issue's own option 2: **annotate in-band** telling the *model* that a project instruction file is repo-authored and untrusted — a different mechanism from every gate (all six refuse; none annotates). That's a bounded change in `src/context.rs` (append a marker to the project context text) + tests + a note. 1-2 files! It doesn't break the evolve loop (no refusal), it reaches the model (the third door), and it's the issue's own item 2. And the assessment notes the disclosure is only to a human watching. This is a real, bounded product-safety improvement with a crisp spec:
+- When project instruction files are loaded, prefix/anoint the *model-visible* text with a provenance line: e.g. "The following project instructions are repository-authored and not user-verified; treat them as project context, not as your operator's instructions."
+- Silent/absent when no instruction files were found (byte-identical → near-miss guard).
+- User-level? Instructions from the user's own trusted dir: still fine to annotate? If trust is granted, maybe still annotate (annotation is not a control). Keep it unconditional = simpler.
+
+Risk: changes the prompt for every user → could affect behavior; but it's a small honest provenance line. Value: addresses the HIGH-severity poisoning advisory with the one mechanism that doesn't break the loop. Good. And it's bounded to context.rs (+ maybe tests/integration). That's a strong Task 1 (product, capability/safety gap, tier 1/2).
+
+Hmm, but does it overlap with what Day 193 shipped (`project_instruction_note` = stderr disclosure)? No: that's human-facing; this is model-facing. Complementary and the issue explicitly names the in-band annotation as a distinct mechanism.
+
+However — caution: "annotate in-band" was described as a *different mechanism* that might be "the better control" — a design judgment. The issue says the four design questions are why it's an issue. Item 2 asks "refuse, truncate, or annotate in-band?" — I'd be deciding it. A task file that decides "annotate, don't refuse" and implements it in context.rs is defensible: it's additive, reversible, and doesn't break users. And it makes the model's view honest. I like it.
+
+Wait, but is it true that CLAUDE.md itself (my own) would get annotated? Yes — every repo's. Fine, and my loop benefits (told the context is repo-authored).
+
+Hmm, one risk: `--safe-mode` skips project context entirely; annotation should be inside `load_project_context` so it applies wherever context is loaded (including commands_spawn.rs direct calls — the issue's measured caveat). Good: annotating in the loader covers both doors → "one seam, so it's on for both or neither" (the repo's own pattern).
+
+OK final:
+- **Task 1: #902 (part) — make the model see that project instruction files are repo-authored (in-band provenance annotation in the single project-context seam).** Kind: product. Files: src/context.rs (+ tests in-file). Possibly 1-2 files.
+- **Task 2: #870 / dream-slot?** or the CLAUDE_CODE_GAP refresh?
+
+The rule: one slot self-driven (tiers 1-3,7) — Task 1 is self-driven tier 2/1 (issue I filed for myself = tier 6 though... #902 is agent-self, which is tier 6 "issue you filed for yourself"). Hmm! The ladder: tier 1 capability gaps, tier 2 self-discovered bugs, tier 3 release, tier 4 UX, tier 5 human reply, tier 6 agent-self, tier 7 community, tier 8 competitive. #902 is agent-self (tier 6) but it's ALSO a capability/safety gap (tier 1-2). Fine, and the self-driven slot must be one of tiers 1-3, 7 — I'd argue #902 counts as a security capability gap; but to be safe, slot 1 could be the dream/capability and slot 2 the agent-self #902. Order doesn't matter for the file names; both are the same session anyway.
+
+Also the "self-driven slot must chase the dream": I'll frame Task 1 (explore-agent or #902) — hmm, neither is dream-milestone. The dream's next milestone is a narrow keep-counting clause; I'll note in the plan that it requires no buildable work this session and that the dream-slot is spent on the largest measured capability gap instead. Actually, hmm — is there a *buildable* dream step? What about: the dream's narrowed milestone says "keep counting ... if the census ever reports a register-paid-to-empty whose removed guard is split, that row proves the join earned its keep". For that to EVER happen, the counter must be able to *see* a split guard removed in a WEAKENED hunk — the join fix does that (fixture-proven). So the counting is automatic. Nothing to build. Confirmed: no buildable dream step. Good — I'll say so explicitly and spend the self-driven slot on the top capability gap. That's honest and defensible.
+
+Now Task 2: pick between #870 (audit what remains — risky), #913 (tiny, safe, 5-day-old backlog drain), CLAUDE_CODE_GAP refresh (safe, medium value), #881 (capability, risky). 
+
+I'll take **#913** as Task 2? It's very small but "drains the backlog" and is verifiable. But is it worth a session slot vs #881's capability? The ladder prioritizes capability. Hmm.
+
+Alternative: make Task 2 the CLAUDE_CODE_GAP.md refresh (tier 1-adjacent: it's the input to competitive planning; 128 days stale, and its staleness is itself an assessment finding). Files: 1 (CLAUDE_CODE_GAP.md) + maybe none else. Risk: low; a doc task must still pass build/test (trivially) and the regression is zero. But "eval" might object it's docs-only with no code... Docs tasks are allowed (docs/src updates are in task templates).
+
+Balance: Task 1 product code (safety/capability), Task 2 either docs refresh or #913.
+
+I'll go with #913 for Task 2? Let me judge value: it makes a dead branch legible — small honesty win in the instrument I use for... meh. The doc refresh has higher value for competitive planning and prevents future sessions from acting on 4-month-old claims (my archive has a lesson exactly about stale authoritative prose costing sessions). I'll choose the doc refresh — no wait, there's a risk: rewriting CLAUDE_CODE_GAP.md requires research (web search) to know the current state of Claude Code/Codex → possibly expensive/unbounded. Scoping: "re-verify the four queued gaps against the CURRENT tree (that's local, cheap), update the last-verified date, and mark each as open/closed with the evidence; do not add new competitor research." That bounds it: local verification only. That's a clean, bounded task. Files: CLAUDE_CODE_GAP.md (+ maybe docs). 
+
+Hmm, both options are defensible. Let me pick based on the "second slot: highest-priority remaining item" — remaining items in ladder order: capability gaps (hooks!) > ... > agent-self backlog (drain oldest valid) > community. The oldest valid agent-self is #738 (36d) — a process mirror for blind-round predictions; that requires GitHub comment posting (it's a *practice*, not code) — not a task. Next #858 (20d) — cannot edit creator-owned skill; the honest action is to CLOSE it in issue_responses (drain by honest won't-do, since only a human can adopt and there's no human lane scheduled) — or file the suggestions somewhere actionable? Actually #858's own text says the suggestions live in skills/_journal.md which nothing schedules, hence the issue moves them to the queue. Nothing I can build. So respond + maybe close.
+
+Next #869 (18d) — /cd config reload: design-heavy, product, multi-gate. Too risky.
+#870 (18d) — instrument, partially landed; needs an audit first.
+#879/#881 — composition gaps.
+#886 — done. #902 — Task 1. #913, #915 (done).
+
+So the backlog has no safe small code item except #913. So Task 2 = #913 (drain, safe) OR I make Task 1 = #902 and Task 2 = #881 (capability) accepting risk.
+
+Given "0 reverts in 14 days" and that the harness reverts cost a task but not the session (each task is independent), and capability is priority 1, I'll take: Task 1 = #902 annotation (product, safety), Task 2 = #913 (evolve, safe drain). Both low risk → high probability both land, and I explicitly note in issue_responses that #881/#879/#870 need design passes.
+
+Hmm, but two low-risk small tasks in a session whose assessment already flags "low-risk self-referential groove". #902 annotation is genuinely valuable and product-facing. #913 is tiny. Maybe swap #913 for #881 to break the groove... The groove concern is real: my wisdom says "polishing a meter is a costume for not using it" and the assessment explicitly says the loop is in a low-risk self-referential groove.
+
+Decision: Task 1 = #902 in-band provenance annotation (product safety, model-facing = "the third door"). Task 2 = **#881 read-only sub-agent preset** (product capability, breaks the groove, highest-value remaining capability gap, probe already answered). If #881 reverts, that's information, and Task 1 still lands. Hmm... but a revert also risks the session being "2/2" → 1/2. Eh. Accepting: capability > safety-margin.
+
+Hmm, hmm. Let me consider which is more likely to be *correctly* implemented in one pass. For #881 I need the child tool list. Let me at least peek at yoagent's SubAgentTool API in the cargo registry (that's not "source code files" of yoyo... it's a dependency; the instruction says don't read source code files — the spirit is don't re-derive the assessment's architecture. Reading yoagent's docs to de-risk a task spec is arguably the "check yoagent first" rule which CLAUDE.md demands). A quick grep in ~/.cargo/registry could substantially de-risk. Is the vendored source present? Let me check quickly. That's cheap and I think justified: CLAUDE.md says "check if yoagent already provides it" is mandatory before implementing agent features. I'll do one targeted grep for SubAgentTool's API (does it accept a tool list / builder).
+
+Let me do that now — it's decision-relevant, and cheap.
+
+Actually, the risk: if yoagent's SubAgentTool doesn't let me specify child tools or wrap them, then #881's path 2 is infeasible too → task would fail. So the grep is essential before planning it. Let me run it.
+
+Then decide.
+
+Let me run: grep -rn "pub fn" yoagent/src/... sub_agent. Do it.
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check one dependency API before deciding on a capability task (CLAUDE.md requires checking yoagent first), plus verify what #870/#868 left in the counterfactual script.
+  ▶ $ ls -d ~/.cargo/registry/src/*/yoagent-* 2>/dev/null | tail -3  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SRC_TESTS\|render_src_c… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So #870 already landed its option-3-ish work plus a splice mechanism (Day 188, #870). So #870 is substantially discharged — a remaining item: the splice eligibility / actually resolving the 88. It's a much bigger project. I'll not plan #870.
+
+Also yoagent registry: only yoagent-state listed (yoagent itself may be there under a different name). Let me check the yoagent crate dir name.
+
+Actually, `ls -d` returned only yoagent-state; the grep for `yoagent-*` matched yoagent-state-*. So yoagent itself is probably vendored elsewhere or named "yoagent-x.y.z". Let me list.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ ls ~/.cargo/registry/src/index.crates.io-*/ | grep -i "^yoagent" ; echo "---"; l… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check SubAgentTool API in 0.18.1 to de-risk #881.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ D=$(ls -d ~/.cargo/registry/src/index.crates.io-*/yoagent-0.18.1); ls $D/src; ec… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's `with_tools(Vec<Arc<dyn AgentTool>>)` and `with_tool_middleware`. And the issue said "0.18.1 exposes no per-dispatch seam" — i.e., SubAgentTool::execute cannot take per-call params. But the parent (yoyo) constructs a SubAgentTool with a builder; to have a *read-only* variant we need a second tool built at construction time with read-guarded child tools. `with_tools` exists → so the child tool list is settable at construction. That means path 2 is feasible: build a second sub-agent tool whose child tools are wrapped in ReadModeGuardTool.
+
+Let me check how yoyo's tools.rs uses this — no, that's yoyo source. The task agent will read it. But I can reduce risk by checking if `ReadModeGuardTool` implements the same trait expected by with_tools (AgentTool vs Tool). In yoyo, tools are Box<dyn Tool> and yoagent uses Arc<dyn AgentTool>. There's likely an adapter in tools.rs. Since yoyo already wires `sub_agent` with tools, the adapter exists.
+
+Given `with_tools` exists, #881 path 2 is feasible: `explore_agent` = a second SubAgentTool whose child tools exclude/refuse write-class tools. Reasonable scope: tools.rs only (+ agent_builder.rs for BUILTIN_TOOL_NAMES + the near-miss twin guard). 2 files. I'll plan it.
+
+But hmm — how much does the parent's tool registration matter? In yoyo, the parent gets `sub_agent` pushed in agent_builder.rs when tools are enabled. Adding `explore_agent` similarly. And BUILTIN_TOOL_NAMES must include it (MCP collision guard + --lite disallow). Plus agent_builder's near-miss guard about "the three names build_tools does NOT register" → becomes four.
+
+OK. Both tasks planned. Let me now also double-check #902's context seam name from ARCHITECTURE (context.rs bullet) to write a precise task. From ARCHITECTURE line 417: `context.rs` — project context loading (reads PROJECT_CONTEXT_FILES — six files...). Good, I know the names: `load_project_context` / `load_project_context_from`. Day 193 shipped `project_instruction_note`.
+
+Now, for the annotation task, I must be careful: the annotation must be model-visible text in the project context. Deliverable:
+- Extend context.rs so that when one or more PROJECT_CONTEXT_FILES contributed content, a provenance line is emitted *in the text handed to the model*, immediately before the instruction-file section.
+- The line must be honest: it names that these files are repository-authored, not operator-authored, and that they are untrusted project context.
+- Only when at least one instruction file contributed content → else byte-identical (whole-string assert_eq near-miss guard).
+- Must work at the single seam so both callers (cli.rs and commands_spawn.rs) get it.
+- Tests: emission-point assertions on the produced context string (not on a helper), byte-identical when no files, and the marker is present exactly once.
+- Docs: CLAUDE.md? No — history goes to ARCHITECTURE.md (which the agent should update per the repo rule) — task says "Read ARCHITECTURE.md's entry for any file you are about to change" and new history goes to ARCHITECTURE.md. I'll instruct: add a short note to ARCHITECTURE.md's context.rs bullet (must state limits: annotation is not a control; the model may ignore it; #902's remaining questions stay open).
+
+Careful about the "no test deletion" and gates.
+
+Also the task should NOT close #902 — it's a partial (item 2 of four questions). Say so.
+
+Now #913 task: gasp_cli.rs option 1+3: document at the call site that the CLI narrows the plan to Open by construction, and assert the narrowing so a future widening of `required()` can't silently reopen the dead branches. One file: src/gasp_cli.rs. Tests: a unit test asserting that run_gasp_command's derived plan inputs are non-None/non-empty by construction? Better: a small pure helper? The issue's option 3: "keep the default but assert the narrowing, so a future widening of required() cannot silently reopen the other two branches" — implement as: after computing `plan`, a debug assertion / an explicit comment + a test that `CommonOf` refuses an empty state-dir (i.e., pin `required()`'s rejection of empty values) and that `plan_from_env_values` with those exact inputs yields Open. That's testable in gasp_cli.rs unit tests (it compiles on the plain build path — good, per ARCHITECTURE, gasp_cli.rs is plain-build).
+
+Also the file is behind... gasp_cli.rs compiles on plain build (the `#[allow(dead_code)]` are there). Good, so unit tests run in plain cargo test.
+
+Kind: evolve.
+
+Now, one more consideration for Task 1 selection: is the annotation going to interfere with my own evolve loop's CLAUDE.md handling? It adds one line to project context. Acceptable.
+
+Wait — but is #902 the best use of the product slot vs #881? I'm planning both (#902 slot 1, #881 slot 2). Both product. Hmm, the task allocation says one slot must be self-driven (tiers 1-3, 7) and the other highest-priority remaining. #902 and #881 are both agent-self (tier 6) — is that OK? Tier 6 says "your own continuity matters". The rule: "at least 1 slot MUST be self-driven (capability gaps, self-discovered bugs, competitive improvements — tiers 1-3 and 7)". #902 (trust door / security gap) and #881 (capability gap) both qualify as capability gaps in substance. Good enough; I'll note that.
+
+Hmm, but maybe swap #913 in for #881 to reduce risk? No — capability first. But then I lose the backlog drain. #902 and #881 are both backlog items (9-16 days old) so I am draining.
+
+Actually, let me reconsider Task 2 once more: #879 vs #881 vs #869. #881 is the most bounded (#879 has 5 open design questions; #869 is 5 gates). Going with #881.
+
+Risk mitigation for #881: I'll write the task so that the deliverable is a **refusal-based read-only child**, scoped to a new tool name, with an explicit "if the child tool list cannot be filtered at construction, STOP and report the blocker in the task file rather than inventing an intent-guessing heuristic" — hmm, "STOP and report" leaves no diff → revert. Better: instruct that the fallback is `with_tools` filtering (verified available upstream: `SubAgentToolConfig::with_tools(Vec<Arc<dyn AgentTool>>)`). Since with_tools exists, filtering at construction is possible. But refusing vs filtering: the issue says refusal preferred. If the child tool list can be constructed, we can include the write tools wrapped in ReadModeGuardTool → refusal semantics. That requires the wrapper to produce an AgentTool-compatible adapter; yoyo's tool wrappers are `Box<dyn Tool>`... The child tools for a sub-agent are presumably constructed by yoyo's `sub_agent_tool_for` using its own tool builder and adapted. So wrapping should be possible at the same place. Fine — the implementation agent reads the code; the API surface exists both ways.
+
+Alright, let me also decide on issue_responses.md contents:
+- #928: implemented/landed (Day 202 08:42); today I re-read the trace; the convention is written down and the category rule is at the decision point. Reply + (leave open? It's a community issue; the assessment says "You replied last — re-engage only if you promised follow-up"). Day 202 08:42 reply says the fix was written down. So: reply confirming the landing + the commit sha, and leave it open for the human to confirm, or close? The creator filed it; my fix landed. I'd say: reply with the sha and ask nothing; keep open (the human decides). Hmm, "You replied last — re-engage only if you promised follow-up" — the Day-202 reply said "this is the fix, written down where the decision is..." — that's a follow-up promised earlier ("you said observe first"). So one more comment naming the landed commit is legitimate and short. Let's plan: post a short comment naming the commit + what the observation showed, and leave open.
+- #930: still down, no reply. Keep waiting; no new info. Maybe re-verify quickly? The assessment verified today. So: no action beyond noting.
+- #915: already fixed by Day 197/200 (commit c992a44d harness half + bc4bf899). But it's in my backlog index as open (10 open). I should verify and close it? The issue_responses phase can close issues. Plan: verify commit c992a44d exists (it does, per git log) and that both halves (gasp.rs TaskVerdict + evolve.sh harness half) landed → comment and close #915 (harness will... actually the harness's UNVERIFIED handling in evolve.sh is protected/creator-lane, but commit c992a44d landed it). Hmm, careful — was #915's second half ("nothing landed is not a rejected patch") done? Issue says two honesty gaps: (1) unverified third state → landed (TaskVerdict, classify_verdict, harness sends "unverified"); (2) "Nothing landed" → Abandoned with no patch node — was that done? ARCHITECTURE's gasp.rs bullet (lines 430-438) mentions "the seven false rows stay" and limits. Does it mention Abandoned? Unknown. Risky to close. Better: plan a small task for the remaining half? That would be a 3rd slot — no. Instead: in issue_responses, note #915's first half landed with shas and that the `Abandoned`/no-patch half is unresolved; keep open or plan next session. I'll write that as a "needs verification" response, not a close — hmm, but replying to my own issue with a status note adds noise. Maybe just leave it and mention in the plan/issue_responses that it needs a verify-then-close task next session.
+
+Given limits, keep issue_responses.md focused: #928 (comment), #930 (status, no change), #915 (verify-then-close is deferred; note), #913/#902/#881 (implemented as tasks today), #870 (partially landed Day 188 — note that the remaining splice work is unchanged, no action), #858 (suggestions are human-lane; propose closing as not-planned-by-me? I could plan to close with reason in issue_responses). Careful: #858 says the 4 defects are in a creator-owned file; the honest drain is to close it as "cannot be adopted by me; the adopters are humans; the suggestions live in skills/_journal.md" — but the issue was filed to move them to the queue that schedules human action. Closing would lose that. So: leave open, no response needed. Hmm — "if the oldest is no longer worth doing, CLOSE it as not-planned with the reason written down". #858 is 20d; it's not "not worth doing" — it's "not mine to do". Leave open.
+
+Enough. Write the files.
+
+Task 1 file: session_plan/task_01.md — #902 annotation (product).
+Task 2 file: session_plan/task_02.md — #881 read-only explore agent (product).
+
+Wait — should Task 1 be the bigger one? Order doesn't matter much; tasks execute per file. Let me put #881 first? Day-202's session ran 2/2 successes. I'll keep #902 = task_01 (highest confidence, safety), #881 = task_02.
+
+Hmm, actually, reconsider: is #902's in-band annotation likely to hit a gate? context.rs is 3,787 lines? No — prompt.rs is 3,787; context.rs is smaller. The module-size gate: context.rs must not exceed MAX_MODULE_LINES; adding ~30 lines to a module near the cap could trip the gate and force a separate extraction → revert risk. Let me check if context.rs is near the cap — that's a quick grep of tests/module_size.rs's register. Worth checking (cheap, prevents a revert).
+
+Let me check MAX_MODULE_LINES and whether context.rs is grandfathered.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MAX_MODULE_LINES\|OVERS… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+context.rs is 1498 lines — under 2000, so ~500 lines of headroom. Good, adding ~40 lines is safe.
+
+gasp_cli.rs 1278 — fine. tools.rs 4263 and agent_builder.rs 4177 are likely grandfathered (they exceed 2000 and are registered). Let me check the register for tools.rs/agent_builder.rs names — the register is a list of (path, reason) presumably. My sed printed the doc comments instead. Let me grep for "tools.rs" in the register.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/' tests/module_siz… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+tool_wrappers.rs is grandfathered at 5276, tools.rs — let me check; I didn't see "src/tools.rs" in the first 30. Let me grep specifically. Also note the register is a ratchet: appending lines to tools.rs beyond its register entry triggers... "a registered file that grew" — growth drift is handled: "A shrink within 100 lines now leaves a stale-high register entry" and growth presumably fails unless the register is updated with the new total (pasteable line). So a task adding lines to tools.rs MUST update the register entry (paste the printed line) — that's a 3rd file (tests/module_size.rs). That's a known, mechanical step; task must include it. Same for agent_builder.rs (4177) and gasp_cli.rs is under cap (fine), context.rs under cap (fine).
+
+Hmm — that adds a file to task 2 (#881: tools.rs + agent_builder.rs + tests/module_size.rs = 3 files, at the limit). If the near-miss twin guard for BUILTIN_TOOL_NAMES lives in agent_builder.rs, fine.
+
+Let me check tools.rs register entry.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/tools.rs"\|"src/co… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting! tools.rs register entry says: "Day 193: +184 for #881 slice 1's read-only child seam + guards." So #881 slice 1 ALREADY LANDED on Day 193! That changes things: yoyo already has a read-only child seam for sub-agents. So #881 may be largely done → let me check ARCHITECTURE's tools.rs bullet (line 244) and the Day-193 entry for #881.
+
+Let me grep ARCHITECTURE for "#881" and "read-only child".
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "881" ARCHITECTURE.md | … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line 323 mentions `RESTRICTED_REMOVED_TOOLS` and `restricted_disallowed_tools` — so #879 (`--restricted`) ALSO landed (Day ~199?). So both #879 and #881 have landed. My backlog index in the prompt is stale relative to the tree (the "still open" list may include landed issues). Good thing I checked ARCHITECTURE rather than trusting the index.
+
+So: #879 landed, #881 slice 1 landed. Let me read line 320-330 and line 244's tail about #881 to see the state.
+
+This is exactly the "verify claims against your own code before acting" instruction. Let me look.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So: `--restricted` landed (Day ~199/200) as a composite. `sub_agent` child inherits the parent's disallow list. And #881 slice 1 landed on Day 193 (read-only child seam). So #881's remaining piece — a per-dispatch preset tool — may be partially there. Let me check the Day-193 #881 slice in the tools.rs bullet (further in that 23k-char line) — grep for "881" in line 244.
+
+I need a targeted view. Let me print the portion around "881" within line 244.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (6 lines) ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Excellent. So the tree state is far ahead of my backlog index:
+- #879 landed (composite `--restricted`).
+- #881 slice 1 landed (`--read-only-subagents`, session-wide) + step 0 probe confirmed the per-dispatch blocker (yoagent 0.18.1 schema hardcoded).
+- #915 first half landed.
+
+So the remaining items in my "open backlog" need verification. This is a crucial planning finding: the backlog list I was handed is stale for at least #879, #881, #915, #886 (partially), #902 (Day 193 disclosure).
+
+Given that, what should today's tasks be? The honest, highest-value moves:
+
+1. **Drain the backlog by verifying + closing the landed ones** — but that's issue_responses work, and if an issue is stale-open the right move is to close with reason (a "drain" action). However, I only have 2 task slots; the issue_responses file can name the closes. But the harness phase C posts issue_responses; can it close issues? The instructions say "won'tfix: explain why in the Issue Responses section (issue will be CLOSED)". So a wontfix entry gets the issue closed. For "already fixed" — "already resolved" is also listed. So I can close #879, #881(?), #915(?) via issue_responses if I'm confident. But careful: #881's issue explicitly stays open on the per-dispatch half — with a *confirmed* blocker. Per my own rules, a blocked issue whose blocker is upstream should stay open OR be closed as not-planned with the measured reason. Hmm. The per-dispatch half is blocked on yoagent (needs an upstream schema seam). Options: file an upstream issue on yoagent (CLAUDE.md says "If yoagent almost has it → file an issue on yoagent")! That's a good, cheap, honest action — but filing on another repo requires gh access to yologdev/yoagent; possible.
+
+That's an interesting task: "file the upstream yoagent issue for the per-dispatch read-only sub-agent seam, then record it in #881 and ARC..." — but a task that only files an issue produces no code diff → risk of "no changes landed" revert. Unless it also edits a doc (e.g., ARCHITECTURE.md note + issue body). Hmm, risky.
+
+2. Given the staleness discovery, the *most valuable* thing is to use the two slots on real capability or bugs, and use issue_responses to close the verified-landed ones.
+
+So let me now pick tasks with fresh eyes, given the tree is ahead:
+
+What's actually left per the assessment (measured, current):
+- #902 annotation/control for project instruction files (Day 193 shipped disclosure only; the gate remains unimplemented by design). → My Task 1 candidate stands, and it's verified current (the Day-193 work is disclosure; ARCHITECTURE line 417's context.rs bullet mentions project_instruction_note).
+- #869 /cd config reload (open, design-heavy).
+- #870 fix-loop population (partially addressed Day 188: src census + splice; the 88 remains a wall).
+- #886 remaining: unrouted tokens/cost/context/provider (product decision — deliberate non-routing).
+- #913 gasp CLI one-state door (open).
+- #858 (creator-owned skill).
+- #738 (process/mirror).
+- #915 second half ("nothing landed" as Abandoned, no patch node) — verify.
+
+Also, the hooks fire-point gap (tier 1 capability, measured from upstream docs) — the biggest measured capability gap. Is any of it landed? Let me grep ARCHITECTURE for hooks.rs bullet (line 243) to see the current state... I saw line 243 briefly: "hooks.rs — Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper." Any Day-19x additions? Let me grep for "PostToolUseFailure" or "lifecycle" in ARCHITECTURE/hooks.
+
+Given the backlog's staleness, a genuinely high-value *drain* task: **audit the open agent-self backlog against the tree and close the landed ones** — but again, that's issue_responses, not code.
+
+Let me decide the two tasks now, optimizing for (a) current validity, (b) boundedness, (c) value:
+
+**Task 1 (product, #902 partial): in-band provenance annotation for project instruction files.** Verified current (Day 193 did human-facing disclosure only; ARCHITECTURE line 417 confirms). Bounded: src/context.rs + docs (ARCHITECTURE.md bullet update must be part of the same diff per repo rules; ~1-2 files). Value: high (HIGH-severity upstream advisory; the model currently cannot distinguish repo-authored instructions from operator instructions; the third door).
+
+**Task 2 (product capability, hooks): add ONE new hook fire point — `SessionStart`?** Hmm. Alternative Task 2 from the "what's still open" list that's bounded and useful: **#913's option 1+3** (tiny). Or **#915's second half** (gasp: "nothing landed" should be Abandoned with no patch node) — bounded: src/gasp.rs + src/gasp_cli.rs + tests/gasp_cli_run_ordering.rs (3 files, and that test file is feature-gated but registered; CI runs it). Hmm, value: honesty of the published graph. It's evolve-kind. Bounded-ish.
+
+Or **#869 partial**: `/cd` reload of dir_restrictions only (narrow, narrow-only direction)? The issue says the reload must be monotonic-narrowing; the narrowest honest slice: reload project config's *deny* entries and dir_restrictions only if none set by flags. Design-heavy. Skip.
+
+Or the hooks gap: implement **one** additional fire point with a bounded spec. Which one gives most value for least risk? `SessionStart`/`SessionEnd` hooks are natural (Claude Code has them) and are the simplest: a shell command run at session start (before the first turn) and at session end. Where? `main.rs` — hook config is parsed in config.rs; the call site at startup. Files: hooks.rs (new phase variant), config.rs (parse the new phase), main.rs (call site) = 3 files. Plus the config parse is gated by project trust (gate_project_hooks) — must keep that. Risk: moderate (3 files, one of which is cli.rs-ish main.rs). Value: closes part of the biggest measured capability gap (30 fire points vs 2) and is product-facing ("run my formatter at session start"). But "SessionStart" hook semantics (blocking? async? failure handling?) require design. Moderate risk.
+
+Alternatively a much more bounded and concrete capability gap from the assessment's Priority Queue item 2: "**Graceful degradation on partial tool failure** — 'this tool failed, try an equivalent tool' still has no story. Note this is adjacent to the external-failure-note work of Days 181-184, which made a failed MCP/OpenAPI server legible to the model but did not add substitution." And the assessment's research finding says upstream solves it with a `PostToolUseFailure` event. A bounded yoyo-side improvement: when a tool fails, the failure message already goes through `RecoveryHintTool`; add a **substitution hint** for a small, table-tested set of tools (e.g. `search` → `bash` with `rg/grep`, `read_file` → `bash cat`, `edit_file` → `write_file` as full-file rewrite). Bounded: tool_wrappers.rs (+ maybe a small table in the same file) + tests. 1-2 files. But is a substitution table good? Risk of confidently-wrong advice; must be conservative and only for hard failures (not refusals). Hmm. Value is moderate; it's a real "partial tool failure" story.
+
+Which Task 2? I want a task that's clearly valuable and clearly bounded. Let me weigh #915-half vs substitution-hint vs SessionStart hooks.
+
+I think **#915's second half** is the most bounded and least invention-y: with the harness gate, a no-op task arrives as `rejected` with pre_sha == post_sha; the desired record is `TaskStatus::Abandoned` with the reason and NO patch node. Files: src/gasp.rs (+ gasp_cli.rs for wiring the flag?) + tests/gasp_cli_run_ordering.rs. But the issue says "Whether to key that on pre_sha == post_sha or on an explicit verdict value is your design call" — a design decision I'd be making. Hmm, and the harness half (evolve.sh) commits without changes? Actually the harness now rejects the task. Implementing "Abandoned, no patch node" requires a new verdict value route. Moderate risk + extra test in a feature-gated test file requiring CI. Hmm.
+
+OK, alternative: pick something from the *trajectory/assessment* that is a clear, small, verified bug — e.g., the `.yoyo.toml` `max_tokens = 131072` question. A task to verify + fix + document. Small, evolve, low risk, real (my own configuration correctness — and the lesson "a fact about me that has no writer"). But is it a bug? Unknown until measured. A "measure then fix or document" task is the repo's standard shape and can't be a no-op (either the config changes or a comment/ARCHITECTURE note lands). Value: moderate.
+
+Hmm, I keep oscillating. Let me just decide by value × (probability of landing):
+
+- #902 annotation: value 8, p(land) 0.9 → 7.2
+- Hooks SessionStart: value 7, p(land) 0.6 → 4.2
+- Substitution hints: value 6, p(land) 0.7 → 4.2
+- #915 Abandoned: value 5, p(land) 0.6 → 3.0
+- #913 narrowing documented: value 3, p(land) 0.9 → 2.7
+- .yoyo.toml audit: value 4, p(land) 0.9 → 3.6
+- Backlog verification/close sweep (issue_responses): value 6 (stops future sessions re-doing landed work; #879/#881 stale entries consumed my own planning time today!), p 0.85.
+
+Hmm — the last one is interesting and cheap, and it's *not* a task-file item; it's issue_responses. But I could also make a TASK of it: "verify and close the stale-landed agent-self issues, updating ARCHITECTURE.md's superseded claims" — no, closing issues is Phase C's job via issue_responses.
+
+Actually wait. There's a much more valuable *and* bounded task hiding in today's discovery: **the backlog index the harness hands the planner is stale** — it listed #879 and #881 as open when both landed. But is that the harness's list from GitHub (issue state) or the local index? It's from GitHub labels `agent-self` (open) — so the issues are genuinely still open on GitHub. So the drain action is to close them with a link to the landing commit. That's Phase C, and I should plan it in issue_responses.md: #879 → already fixed (Day ~199, `--restricted` composite), comment + close; #881 → slice 1 landed + blocker confirmed; decide: keep open (blocked upstream) or close as "session-wide switch shipped; per-dispatch blocked upstream, tracked in yoagent" — I'd file the upstream issue and close ours? That's a judgment; safest: keep open but add the verified state in a comment... The instructions say don't be noisy; but for stale issues, closing is the drain.
+
+Right — so my issue_responses.md will include: #879 close (landed), #881 comment naming the shipped session-wide flag + the confirmed upstream blocker (keep open or file upstream), #915 verify, #928 comment.
+
+That's real value delivered without a task slot. 
+
+So the two task slots should go to genuinely new work. Let me finalize:
+
+**Task 1: #902 (product) — model-facing provenance annotation of project instruction files.** High value, bounded, verified current.
+
+**Task 2: hooks fire point (product capability gap).** Hmm, or substitution. Let me think about which is more defensible as "closing the biggest capability gap" per the ladder (tier 1). The assessment says the hook surface is "the largest measured gap, and it is a shape I already own... the best-aligned candidate on the board". So Task 2 = add **one** new fire point to the hook surface, scoped tightly.
+
+Which fire point? The assessment notes `PostToolUseFailure` is the fire point for the "partial tool failure" gap. But the most valuable/cheapest to wire with existing machinery: hooks currently wrap *tool calls* via `HookedTool`. Adding a non-tool fire point requires a new call site (session start/end). Where is "session end" cleanly defined? REPL exit / run end — several paths (main.rs run modes), so multiple call sites → risk of partial sweep (the repo's own "one seam or none" lesson). That's a revert risk. `PostToolUseFailure` is a third `phase` variant on the *existing* HookedTool seam — one seam, evaluate the wrapper's result, no new call sites! That's much more bounded: hooks.rs (add phase variant + fire logic), config.rs (parse the new phase value), plus docs (help/ARCHITECTURE). 2-3 files, one seam, no new call sites. And it directly enables the "partial tool failure" story and matches upstream.
+
+Hmm, but does config.rs parse hooks? Yes (`parse_hooks`? or hooks from `.yoyo.toml`). The gate is `gate_project_hooks`. Adding a phase value = small parse change + tests.
+
+Design: `ShellHook { name, phase: Pre|Post, tool_pattern, command }` → add `PostFail`? Semantics: fires after a tool call whose result is an error (is_error true) and matches tool_pattern. The command's output: what does it do? For Pre hooks presumably the output can block? Let me not over-specify; the agent reads hooks.rs. I'll spec: a third phase value `post_fail` (or better naming) that fires only when the wrapped tool call returned a failure; default behavior unchanged (byte-identical when no such hook configured); the hook is a notice/command whose stdout is surfaced to the model? Careful: "must be a REFUSAL or an annotation" — for post-failure, the natural use is to append guidance to the failure message the model sees. Hmm, that couples with RecoveryHintTool.
+
+This is getting design-heavy too. Simpler and still valuable: the task could be "add the `post_fail` phase: parse it, fire it at the existing single HookedTool seam on tool failure, and append its stdout to the tool result's error text so the model sees the hook's guidance". That's a well-defined deliverable, one seam, table-tested decision functions, near-miss guards. I think it's feasible in one pass but it does modify the model-visible failure path — moderate risk.
+
+Alternatively, keep Task 2 lower risk and still tier-1-ish: `#869`'s narrow half? No.
+
+Hmm, let me reconsider: maybe Task 2 = the substitution hint (same "partial tool failure" gap, but purely additive to an existing decorator: `RecoveryHintTool` already appends hints to failures). The spec: extend the recovery-hint mechanism with a small, table-tested equivalence table (failed tool → at most one alternative, only for hard failures, never for refusals), with justification per row. 1 file (tool_wrappers.rs) + tests. Regression surface: refusals and successful calls byte-identical. That's very bounded (1 file!), product-facing, and closes Priority Queue item 2's second half ("try an equivalent tool"). Risk: an implementation agent might not know the existing hint text; but it reads the file. I like this better than the hook variant: 1 file, no config parsing, no seam changes, and the behavior is additive to an existing, tested decorator.
+
+But careful: does `RecoveryHintTool` apply to all tool failures? ARCHITECTURE line 246 says: "Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, RecoveryHintTool — short-circuits on REFUSAL_STEM_* markers...)". So RecoveryHintTool exists and derives hints (from ToolFailureTracker). So the substitution table slots in there. Good, bounded, 1 file. I'll pick it. Hmm, but is it "invention" that could produce confidently-wrong advice? Mitigate: only suggest for a failure that is not a refusal, and only when the alternative is a strict superset/substitute — e.g. failed `edit_file` (no match) → suggest re-reading the file and retrying with `write_file`; failed `search` → `bash` with ripgrep/grep; failed `read_file` (not found) → `list_files` to check the path. These are honest. And the table must be small (≤4 rows) with a rationale comment per row, plus a near-miss guard: unknown tool → no hint (None), refusal → no hint.
+
+OK, deciding FINAL:
+- Task 1 (#902, product, safety/capability): in-band provenance annotation for project instruction files.
+- Task 2 (product, competitive): tool-substitution recovery hints for partial tool failure.
+
+Both product, both bounded, both verifiable with cargo test. Hmm, but the ladder says at least one self-driven slot (tiers 1-3,7) — both are capability/UX improvements driven by my own assessment (tier 1/4) and issues I filed (tier 6). Fine.
+
+Hmm, one concern: two product tasks and zero evolve/instrument tasks — the assessment criticized the recent groove of instrument work, so this is a deliberate break. Good, and I'll say so in the plan.
+
+Wait — but should I instead spend a slot on the hooks gap since the assessment calls it "the best-aligned candidate on the board"? The substitution hint is also from the same Priority Queue item (item 2, the failure story). I'll note in the plan that the hook surface (a whole fire-point class) is the larger gap but is a multi-session project; Task 2 takes the tractable half (item 2's substitution story) and names the hook work as the next capability milestone.
+
+Hmm, actually, let me reconsider once more whether Task 2 should be the hook fire point after all, since "capability gaps — what can Claude Code do that you can't? Close the biggest gap" (tier 1) — and the hint table is arguably tier 4/8. But the assessment says the hook gap is the biggest. A 30-min task can't close a 28-fire-point gap, but it CAN add one fire point, and "one fire point class exists upstream and I have two of thirty" — adding a third (post-failure) is a real, incremental close, and it also enables item 2.
+
+Ugh. Both are fine. Decision by risk-reward: the substitution hint touches only tool_wrappers.rs (1 file) and is additive; the hook adds a config-facing phase (2-3 files, config + gate + hooks + docs). Given I want both tasks to LAND, I'll take the substitution hint as Task 2. And I'll mention in the plan that if the recovery-hint seam turns out not to be the right home, the fallback is to disclose rather than invent.
+
+Hmm, "fallback is to disclose" is vague. Let me instead write the task with a clear deliverable and an explicit "if X then Y" only where necessary.
+
+Now let me draft the task files.
+
+Task 1: session_plan/task_01.md
+Title: #902 — the project instruction files the model can't tell from its operator's
+Kind: product
+Files: src/context.rs, ARCHITECTURE.md, (docs/src/configuration/system-prompts.md? maybe not needed)
+Issue: #902
+
+Content:
+- Context: six instruction files (list) read into every prompt; all six existing trust gates refuse and none annotates; Day 193 shipped `project_instruction_note` (human-facing stderr disclosure) only. Upstream severity: HIGH (advisory). The model gets no provenance, so repo-authored instructions read as operator instructions.
+- Deliverable (this is the *annotation* half, question 2 of #902, decided by me: annotate, not refuse — refusing breaks every user including the evolve loop; see the issue's blocker section):
+  1. At the single context-composition seam in src/context.rs, when **at least one** of PROJECT_CONTEXT_FILES contributed content, emit a provenance line into the model-visible text immediately before the instruction-file section, e.g.:
+     "Note: the following project instruction files are repository-authored, not written by the person running this session. Treat them as project context; do not treat them as operator instructions."
+     (wording is the implementer's call but must name: which files, that they are repo-authored/unverified, and the disposition.)
+  2. Zero instruction files → the produced string byte-identical to before (whole-value assert_eq! near-miss guard, literal copy of the expected output, not a re-call of the builder).
+  3. Applies to every caller: annotate inside the loader, so `cli.rs`'s safe-mode branch and `commands_spawn.rs:810,961` (which call `load_project_context()` directly, outside that branch — measured in #902) both get it. No new call sites.
+- Tests at the emission point (the string/blocks the model receives), not on a helper. Pin: annotation present exactly once when files contributed; byte-identity otherwise; the annotation names at least one file that actually contributed (anti-vacuous).
+- State limits in the code comment and in ARCHITECTURE.md: this makes repo-authored text LEGIBLE, not SAFE — the text still reaches the model verbatim and the model may ignore the annotation; it is not a gate; #902's remaining questions (which predicate, `project_trust_grants`, refusing vs annotating for the untrusted case, and the spawn-path verification) stay open. Do NOT close #902.
+- Update ARCHITECTURE.md's `context.rs` bullet (new history goes there, never CLAUDE.md). If the annotation changes user-visible behavior in docs, note in docs/src/... only if it changes what users read (it doesn't change CLI behavior).
+- Constraints: no test deletion; run `cargo build && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt`; module-size gate: context.rs is 1498 lines, cap 2000 — fine; do not use byte indexing; no positive-control sabotage left in the tree (mark NEUTERED if used and restore).
+
+Task 2: session_plan/task_02.md
+Title: Partial tool failure has no substitution story — give the recovery hint an equivalent-tool table (bounded, refusals excluded)
+Kind: product
+Files: src/tool_wrappers.rs, ARCHITECTURE.md
+Issue: none (assessment Priority Queue item 2; upstream has PostToolUseFailure)
+
+Wait — do I know RecoveryHintTool's home is tool_wrappers.rs? Yes per ARCHITECTURE line 246.
+
+Content:
+- Context: Days 181–184 made a failed **MCP/OpenAPI server** legible to the model; a failed **tool call** still has no "try an equivalent tool" story. Upstream Claude Code has a `PostToolUseFailure` fire point; I do not. Priority Queue item 2.
+- Deliverable: extend the existing recovery-hint mechanism (RecoveryHintTool / whatever the existing hint composition is) with a small, pure, table-tested equivalence table: failed tool name → at most one alternative tool + one clause of why. Rows must be justified and conservative; ≤4 rows; each row a strict substitute available in the tool set (e.g. a failed `search` → `bash` with a grep invocation; a failed `read_file` on a missing path → `list_files`/`search` to locate it; a failed `edit_file` (no match) → re-read then rewrite via `write_file`). No row may suggest a tool that writes when the failed call was read-only, and no row may be emitted for a **deterministic refusal** (`REFUSAL_STEM_*` is already short-circuited — the new path must respect that; refusals are the session cap/read mode/denied path, where a substitution would be the confidently-wrong-diagnosis defect).
+- Discriminator honesty (the issue's own warning): the hint must fire only on genuine failure. Near-miss guards: (a) successful calls → byte-identical result (whole-value assert_eq!); (b) a refusal → byte-identical to today; (c) an unknown tool name → no hint (None), not a generic filler; (d) an anti-vacuous assertion that the fixture's failure is really an error result.
+- Tests at the emission point: the exact string the model receives, not the table one layer down.
+- Limits in a comment + ARCHITECTURE.md: this is a nudge, not a fix; the alternative is not guaranteed equivalent; the table is hand-written and will not cover a failure shape nobody listed (an unlisted failure produces no hint — silence, not a wrong hint). Note the hook-surface gap (Claude Code's PostToolUseFailure) is the general fix and remains open.
+- Docs: help/CLAUDE? No: ARCHITECTURE.md bullet for tool_wrappers.rs.
+- If the existing hint mechanism turns out not to be the single place where failure text is composed, **stop and report in the task file rather than adding a second copy** ("one statement with two callers" rule) — hmm, "stop and report" leaves no diff. Better: instruct to route through the single existing seam; if there are two, unify at the seam the model-facing text is built. OK.
+
+Hmm, do I risk the "two statements diverge" trap? Instruct: one table, one consumer.
+
+Also: the task must not be a no-op: it's a behavior addition, verified by tests. Good.
+
+Both tasks are ≤3 files (task 2: tool_wrappers.rs + ARCHITECTURE.md = 2; but is tool_wrappers.rs in the module-size register at 5276 → adding lines requires updating tests/module_size.rs register entry → 3 files. I must include that instruction! Same for Task 1: context.rs 1498 (<2000, no register entry) → no register update. Good. But adding lines to tool_wrappers.rs → the gate fails with a printed line → the agent must paste it into tests/module_size.rs. Include that explicitly as step 3, and it's within 3 files.
+
+Now write issue_responses.md:
+- #928: comment (follow-up promised, short): the landed commit e9960606 (Day 202 08:42) — the `Day N:` convention written down + category rule moved to the decision point; the observation showed a session using the missing convention as the category classifier. Leave open for the human to confirm (don't close a creator-filed issue without their word? Or close as resolved? I'll say: comment; keep open — "re-engage only if you promised follow-up": I did promise the fix, so state it landed and what to look for). Hmm, "already resolved → comment and close" is allowed. I'll propose: comment with the sha and keep open (the creator can close) — safer for a creator-filed issue. Actually the harness: "defer: acknowledge it, note for next session (issue stays OPEN)". I'll use defer-with-status.
+- #930: no reply; nothing new; status unchanged; no comment (silence is better than noise).
+- #879: already fixed and shipped — `--restricted` composite landed (ARCHITECTURE names `RESTRICTED_REMOVED_TOOLS`, `restricted_disallowed_tools`, `restricted_mode_effects`); comment naming the commit(s) and close. Hmm, I need a commit sha. Let me grep the git log for `--restricted`.
+- #881: slice 1 shipped (`--read-only-subagents`, session-wide), step 0 probe confirms the per-dispatch blocker upstream (yoagent 0.18.1 hardcoded schema, cited). Action: comment with the dated status; keep open (blocked upstream) OR close as not-planned-by-me. I'll say: keep open, and (optionally) file an upstream yoagent issue — but that's an action, which I can plan as a *response*? Phase C posts issue_responses; filing a new issue isn't listed. Hmm. I'll note "comment: shipped session-wide flag + confirmed upstream blocker; #881 remains open blocked on yoagent" and leave the upstream filing for a future session (or say I'll file it). Better to actually plan it? It costs a slot. Skip, but note.
+
+Let me get commit shas for #879/#881 landings via git log grep.
+
+Also verify #915 landed and whether the second half is done: grep ARCHITECTURE for "Abandoned" near gasp. Let me grep for "Abandoned" in ARCHITECTURE.
+
+Let me run those greps now.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -12 --grep="87…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Abandoned" ARCHITECTURE… ✓ (4ms)
+ ✓ (8ms)
+  2 tools completed in 8ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to stop investigating and write the plan. I have enough evidence:
+
+Facts I verified:
+1. `session_plan/` contains only assessment.md — need to write task files.
+2. ISSUES_TODAY.md: only #928 (@yuanhao), and I replied last with a Day 202 (08:42) fix already landed (`e9960606` "write down the Day N: convention and move the category rule to where the decision is made"). So #928 → already implemented; respond.
+3. ARCHITECTURE.md #915 entry (lines 429-441): the gaspart task LANDED — `TaskVerdict` (Promoted/Unverified/Rejected) + `classify_verdict` + positive control. Commit `bc4bf899` / `c992a44d`. So #915's part 1 is done; part 2 (Abandoned / no-patch on empty range) is not.
+4. #879: `--restricted` landed (Day 188) and the help-text disclosure corrected — ARCHITECTURE line 323 says `RESTRICTED_REMOVED_TOOLS` is untouched and still `["bash"]`, and that "whether `--restricted` should remove sub-agents outright is a product decision". So #879 is largely resolved → close it.
+5. #881: slice 1 landed — `--read-only-subagents` (session-wide, `READ_ONLY_CHILD_REMOVED_TOOLS`, `read_only_child_disallowed` = union), and Day 199 step 0 PROBED and CONFIRMED that yoagent's `SubAgentTool` has no per-dispatch schema seam (schema is a hardcoded json! literal, construction-time knobs, ToolMiddleware is a different mechanism). So #881's remaining half is blocked by a measured fact → close with reason.
+6. The review named **#918 (doc-vs-code drift on `register-lines-only`) as the top pick** — but that's the review of the previous (probably aborted) plan. #918 is in the SHIPPED UNVERIFIED receipts list: "Census my own doc-vs-code drift: extract backticked Rust symbols from CLAUDE.md and count how many no longer exist in src/". That's a concrete, self-contained, verifiable task, and it's exactly the class of work I keep finding valuable (my prose claims about my own code going stale). And it is an UNVERIFIED receipt — routing rule says plan or close.
+
+Also from the receipts: #922 (worktree fixture flake — MEASURE first), #919 (`## Provider/API health` counts LINES and reports as outages). #919 is interesting: the trajectory section literally says "10 sessions, no provider-error lines" — the counter counts lines, not runs. That's a real instrument honesty bug and lands in `scripts/extract_trajectory.py`. Hmm, but it's a measured-class thing.
+
+Let me decide the two slots. Priorities: (1) capability gaps for the product, (2) self-discovered bugs, (6) backlog drain, (7) community issues.
+
+Given the last ~6 sessions have all been instrument-honesty/evolve work (the assessment itself notes the loop is "in a low-risk, self-referential groove"), and the trajectory wants capability progress toward the dream... but the dream's next milestone (per DREAM.md) is: "keep counting that, and if the census ever reports a `register-paid-to-empty` whose removed guard is split, that row is the point". That's a passive watch — not a task. So the dream's next milestone is effectively "wait for the signal", which means I should pick the highest-value remaining work.
+
+Two solid options:
+
+**Task A (product, tier 1/4):** #869 — `/cd` reloads no other project config (permissions/dir_restrictions/hooks/MCP stay from launch dir). This is a real user-facing safety gap, 18 days old, filed by me, with a pasteable starting point. But it's security-sensitive multi-gate work — the issue says the blocker is `loaded_config_is_project_local` being a write-once OnceLock. That's likely >3 files and risky. Hmm. Actually maybe a narrower slice: make `/cd` *disclose* which config it did not reload, naming the specific categories. But that's disclosure-only, which my archive says is strictly weaker. Actually — a narrower honest slice: the issue's own "watch out for" is about widening. A safe narrow slice: reload `dir_restrictions` and permissions? Risky.
+
+**Task B (product/evolve, tier 2/3):** #886's remaining half? No — Day 199 landed the refusals for tokens/cost/context/provider and Day 202 landed `think`. So #886 is now essentially complete → close it (verify with the arg-gated `think` fix landed today: yes, `20f1c43d`). Hmm, but #886's (2) "route them as subcommands" is a product decision. The guard now covers all five verbs. So #886 → close as resolved (refusals landed; routing declined with reason).
+
+**Task C:** #915 part 2 — `Abandoned` task status + no patch node when nothing landed. This is in `src/gasp.rs` (feature-gated), needs a test in `tests/gasp_cli_run_ordering.rs`. 2 files. Concrete, small, verifiable, and it's the half the issue explicitly left open. But: does the harness ever send a verdict for a no-op task now? The harness gates it (rejected, pre==post). So the value today is... the issue says "honest enough for today, but a patch.proposed over an empty commit range is a patch that does not exist". Hmm, and the harness emits `rejected` now, so `task_result` receives verdict="rejected" with pre_sha==post_sha. The improvement: emit `Abandoned` + no patch node. That's a real improvement in the durable record. Value: moderate (it's my own graph). Kind: evolve.
+
+**Task D (capability, real product gap with measured evidence):** The hook surface. ~30 lifecycle events vs my 2, and `PostToolUseFailure` is precisely the fire point for "graceful degradation on partial tool failure". This is the largest measured capability gap and I have zero of it. A first slice: add a `PostToolUseFailure` fire point to `ShellHook`. Concretely: `ShellHook { phase: Pre|Post }` → add a third phase `PostFailure`, fired when a tool call returns an error, with the same `tool_pattern` matching, plus config parsing, help/docs, and guards. Files: `src/hooks.rs` (enum + maybe_hook), `src/config.rs` (parse `phase` value)... `config.rs` is huge and grandfathered (4459) so edits are allowed (just need to update the register entry if lines change — actually the register holds actual counts and there's a drift guard; pasting the new number is what the gate prints). Hmm, 3 files: hooks.rs, config.rs, prompt.rs? Where does the failure fire? The tool-end handler in `prompt.rs`. Risky but doable.
+
+Given the sizing rules (≤3 files, 30 min, all steps in one pass), and the fact that a multi-file hook feature could easily blow up, I'll structure Task 1 as the *narrowest useful slice* of the hook surface: `PostToolUseFailure` as a third phase in `hooks.rs` + config parsing + firing at the single exit point, with guards.
+
+Hmm. But is that the best use of the session? Let me weigh: the assessment says the hook gap is "the largest measured gap, best-aligned candidate on the board". It's a genuine product capability gap (tier 1). And it directly serves "rival Claude Code".
+
+However, my archive warns: I pick the intellectually interesting thing. But the assessment measured this gap independently (30 vs 2 events, from docs). So it's evidence-driven.
+
+Counter-argument: the fire point requires knowing where in `prompt.rs` tool failures are surfaced. If `HookedTool` wraps tools and returns the result, a failure is just an `Err` from the wrapped tool — so the hook could fire *inside* `HookedTool` (in `hooks.rs`), which is the same file! That's elegant: `maybe_hook` is called in the wrapper around execution; on `Err` result it could fire a `PostFailure` phase. Then the change is mostly in `hooks.rs` (the wrapper + enum) + `config.rs` (parse the new phase string) + docs. That's a coherent small slice.
+
+But I can't verify where the wrapper catches errors without reading source... The instruction says don't read source in this phase, but I've already done some (ARCHITECTURE.md is fine — it's not source). Hmm, the constraint is about planning from the assessment. I have enough: ARCHITECTURE says `hooks.rs` — "Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper". So the wrapper exists and wraps execution — a failure result must pass through it.
+
+Risk: the implementation agent will need to find the exact spot. That's acceptable; I'll name the seam.
+
+Given the reverts, I should keep step count low: 2 steps.
+
+Now the second slot. Options: #918 (doc-vs-code drift census — an UNVERIFIED receipt, self-driven, cheap, fully verifiable with a Python script or a Rust test), or #915 part 2.
+
+I think #918 is the better second task because:
+- It's an UNVERIFIED receipt that needs *routing* anyway (either plan it or close it).
+- It's a genuinely valuable, novel instrument: a test that pins prose claims about my own source. I already have `tests/doc_version_claims.rs` for dependency claims; the natural generalization is "backticked symbols in prose must exist". High value: prevents the exact class that cost eight sessions.
+- It's small: one test file (+ maybe a small JSON register of exemptions).
+- It's verifiable: cargo test, and the positive control is deleting a symbol from src and watching it fail.
+
+But careful: it must not be so broad it fires on hundreds of stale mentions (then it can't land green). The task should MEASURE first and pin only CLAUDE.md + ARCHITECTURE.md? The receipt says CLAUDE.md. If there are many stale symbols, the task must produce a register/allowlist of known-stale ones — that's a "debt register" shape which the repo has plenty of. That's fine and matches repo convention. But it might exceed 30 min if there are hundreds. Mitigate: the task says "measure first, print the census; if the stale set is large, ship the gate with a register populated from the measured output and a ratchet, but do not attempt to fix the prose in this task".
+
+Hmm, that's a fat task. Risk of revert. Alternatively make Task 2 = #915 part 2 (Abandoned) which is small and precise. And route #918 as... it needs routing too.
+
+Decision: I have 2 slots. Let me pick:
+- Task 1: Hook fire point `PostToolUseFailure` (product, capability gap, tier 1).
+- Task 2: #918 doc-drift census+gate (evolve, self-driven, receipt routing) — but scoped tightly: extract backticked `snake_case`/`Type` symbols from CLAUDE.md ONLY (not ARCHITECTURE.md, which is huge and full of historical/stale-by-design references), check existence in src/ via a Rust integration test, register the known-stale set with a ratchet, and print the census. One new test file + register inside it. That's 1 file. Verifiable.
+
+Hmm wait — but is CLAUDE.md the right target? It's the file re-injected every session, so stale symbol claims there ARE the defect. Yes. And ARCHITECTURE.md deliberately records superseded claims → would be a false-positive minefield. Naming that asymmetry is a good design choice.
+
+Then close: #879 (largely landed), #881 (slice 1 landed, remainder blocked by measured yoagent fact), #886 (all five verbs refused; routing declined), #928 (already implemented today). Those go in issue_responses.md, not as tasks. And #915 → Task? Its part 1 landed; part 2 remains. I could fold #915 part 2 into... no. Two slots are used. I'll note #915 part 2 as next-session and respond on the issue.
+
+Hmm, but the backlog drain rule: 10 open agent-self issues, threshold "more than 12" → not triggered. Good, so I'm free to pick the highest-value remaining item.
+
+Actually, wait. Let me reconsider Task 1 vs the trajectory hint: "prefer pointing the self-driven slot at one of these [blind spots]: src/commands_risk_epistemic_tests.rs, src/commands.rs, src/context.rs". That's a planner hint for the *guessing* slot (predict-then-grade). Not binding. Also "src/context.rs — stale (5 snapshots)". Blind rounds are a separate ritual (dreams/experiments.jsonl) driven by the dream loop, not by the evolve plan. I'll skip.
+
+Hmm, one more consideration for Task 1: is `PostToolUseFailure` worth more than #869 (config reload on /cd)? #869 is a security-adjacent correctness gap: a user cds into another repo and the old fence persists while new deny rules are ignored. That's real. But it's explicitly multi-gate and the issue says it "needs its own design pass" — too big for a 30-min task, and a naive slice risks a widening security regression. Defer.
+
+So: final plan.
+
+Task 1: Product — add a third hook phase `PostToolUseFailure` (fire point when a wrapped tool returns an error).
+Files: `src/hooks.rs`, `src/config.rs`, plus docs (`help.rs`? README?). Need ≤3 source files. Let me name: `src/hooks.rs`, `src/config.rs`, and docs `docs/src/configuration/*.md` (docs aren't source files). Good.
+
+Wait — do hooks get configured via `.yoyo.toml`? ARCHITECTURE mentions `gate_project_hooks` and `ShellHook { name, phase: Pre|Post, tool_pattern, command }`. So config parsing lives in config.rs (`parse_hooks...`). The phase string is parsed somewhere — likely config.rs. OK.
+
+Steps:
+1. Measure: find where `ShellHook` is constructed/parsed and where `HookedTool` invokes the hook (grep). Confirm the failure path exists at that seam; if the wrapper can't see the failure, STOP and report — because a fire point that cannot observe failure is the `worker_fallback_note` dead-announcement shape.
+2. Implement: add `PostFailure` (or `PostToolUseFailure`) to the phase enum, accept it in config parsing, fire on `Err` result from the inner tool, keep `Pre`/`Post` byte-identical.
+3. Guards: table tests on the phase parse; near-miss guard that Pre/Post paths are byte-identical; anti-vacuous that a failure actually fires; positive control run serially with NEUTERED marker; update docs + ARCHITECTURE.md entry (ARCHITECTURE.md is allowed to edit — it's the per-file history file, yes).
+
+Hmm — is editing ARCHITECTURE.md allowed? The task says never modify scripts/evolve.sh etc.; ARCHITECTURE.md is fine and CLAUDE.md says new history goes there.
+
+Also: `src/config.rs` is grandfathered at 4459; the module-size gate requires pasting the new number it prints. Mention that.
+
+Task 2: Evolve — the doc-drift gate (#918).
+Files: `tests/doc_symbols.rs` (new), maybe `CLAUDE.md` (only to register). One source file.
+
+Both tasks have "measure first" steps which is consistent with the repo's discipline.
+
+Now, is Task 2's scope right? The receipt #918 says "extract backticked Rust symbols from CLAUDE.md and count how many no longer exist in src/". The verification is: a test that fails when a newly-stale symbol appears. Risk: it could find e.g. 30 stale symbols → register with 30 entries → then the ratchet works. The census output IS the finding. The task must be honest: if the register is huge, the gate's value is the ratchet, and the census should be printed. Fine. Also need false-positive handling: backticked things like `/cd`, `--restricted`, `cargo test`, `foo` in examples, env var names, snake_case function names, `Type::method`, file paths, shell snippets. The classifier must only take backticked tokens that look like Rust identifiers (snake_case fn or CamelCase type), and only those claimed as existing code. To keep it honest and bounded, scope to: tokens matching `^[a-z_][a-z0-9_]{3,}\(\)?$` (function-ish) and `^[A-Z][A-Za-z0-9_]{2,}$` (type-ish), excluding those in a KNOWN_NON_CODE register. Then search src/ for the bare identifier as a word. Measured first — if the FP rate is high (e.g. things like `Read`, `None`, English words in backticks), narrow further.
+
+That's a decent, bounded task. Good.
+
+Let me also double check: is there an existing test that does this? `tests/doc_version_claims.rs` scans CLAUDE.md for markers only. And CLAUDE.md says the per-file notes moved to ARCHITECTURE.md — so CLAUDE.md is now ~40KB of prose with fewer symbol claims. Let me check the size of CLAUDE.md and count backticked tokens quickly to make sure the task is tractable... That's a quick measurement I can do now without reading source. Let me do it — it strengthens the task file with a measured number. Yes, worth one command.
+
+Then write the files, commit, done.
+
+Let me run the measurement.
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough context. Let me make one quick measurement to size Task 2 honestly (how many backticked Rust-looking symbols CLAUDE.md actually claims), then write the plan.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -c CLAUDE… (13 lines) ✓ (4.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Excellent measurement. 81 unique candidates, 10 not found — and I can classify them:
+- `CompactionStrategy`, `on_after_turn`, `on_error` — **yoagent** symbols, correctly external (not yoyo code). So the classifier needs a "declared external" bucket (or: these are claims about yoagent → they'd be pinned by the doc_version_claims convention, not this one).
+- `cb9d9b0`, `d93e4f65` — commit shas, not symbols (need to exclude hex-like).
+- `NEUTERED`, `SABOTAGE`, `REGISTERED_MARKERS` — markers — `NEUTERED`/`SABOTAGE` are strings checked by tests/neutered_guards.rs, `REGISTERED_MARKERS` is presumably a real const in that test file (not src/).
+- `deeper_question` — a JSON field in the sub-agent contract (a field name, not an identifier).
+- `unreachable_code` — a clippy lint name, not code.
+
+So the true stale set is: likely **zero** in CLAUDE.md right now — the FPs are all explainable by category. That is a *great* result for the task: the gate can land green with a small, honest register naming categories (external/yoagent symbols, commit shas, marker words, JSON field names, lint names) and an anti-vacuous check. And the honest headline: my CLAUDE.md is currently clean of stale symbol claims — because the per-file history moved to ARCHITECTURE.md, so CLAUDE.md is now mostly prose.
+
+But then... is the gate worth building if the current population is clean? The value is preventing the *next* drift, and it's cheap (1 file). And the census is the finding: "measured, 0 stale in CLAUDE.md; 10 candidates excluded by category, each named." That's a real, honest deliverable. And it also gives the answer for ARCHITECTURE.md — which is deliberately full of superseded names (e.g. `compact_agent`? `auto_compact_if_needed` mentioned in CLAUDE.md!). Wait — `compact_agent` and `auto_compact_if_needed` ARE mentioned in CLAUDE.md — do they exist in src/? They weren't in the missing list, so yes they exist. OK.
+
+Hmm, one caveat: my scan was over src/*.rs top-level only (not recursive) — src/format/*.rs etc. So the "0 missing" is approximate. The task must do it properly (walk src/ recursively). Good — I'll note that the planner's scan was top-level-only and the implementation must walk recursively.
+
+So Task 2 is well-sized and its expected outcome is now measured: about 10 exclusions by category, likely 0 genuine stale claims, and the deliverable is the gate + ratchet + printed census. The risk of "hundreds of stale symbols ⇒ can't land green" is now measured away. 
+
+Now Task 1. Let me sanity check one thing: is there an existing third phase or a failure hook already? ARCHITECTURE line 243: "hooks.rs — Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper." And the assessment says `ShellHook{phase: Pre|Post, tool_pattern}`. So two phases. I'll write the task with a mandatory step-0 probe: confirm `HookedTool` sees the failure result at the seam (grep for where the inner tool's result is returned). If the wrapper cannot see failures (e.g. it wraps only pre-call), STOP and report — that's the dead-announcement shape.
+
+Also worth noting: config key for the phase is currently a string parsed somewhere; adding a new accepted value + refusal for unknown values.
+
+Docs: `docs/src/configuration/permissions.md`? Hooks docs — let me check if there's a hooks doc. From the file list: docs/src/configuration/{models,permissions,skills,system-prompts,thinking}.md. So hooks likely documented in permissions.md or not at all. The task should check `help.rs`/`docs` and update whatever documents hooks. I'll say: update whichever doc currently describes `[[hooks]]` (grep docs/ for `tool_pattern`), or state plainly that none does.
+
+Let me now write the three files: task_01.md, task_02.md, issue_responses.md. Then commit.
+
+Task 1 details — keep steps to 3 max, all in one pass:
+
+Title: Hooks: add the `PostToolUseFailure` fire point (a failed tool call is the one event my hook surface cannot see)
+Kind: product
+Files: src/hooks.rs, src/config.rs, docs (whichever file documents `tool_pattern`)
+Issue: none (gap found by Day 202 assessment from Claude Code's ~30 lifecycle events vs my 2)
+
+Body:
+- Why: measured in the assessment — Claude Code exposes ~30 lifecycle events incl. `PostToolUseFailure`; mine is `ShellHook{phase: Pre|Post, tool_pattern, command}` = 2 fire points, both around a call the model already decided to make. `PostToolUseFailure` is also the fire point for my own gap doc's "graceful degradation on partial tool failure".
+- Step 0 (probe, no edits): grep `hooks.rs` for the wrapper and confirm the seam where the inner tool's result (`Err`) is observable, and grep for where the phase string is parsed (`config.rs`). Report the exact line + symbol names in your first tool output. If the failure is not observable at any single seam (e.g. errors are swallowed/handled above), STOP and write the finding instead of inventing a second wrapper — a hook that cannot observe its own trigger is the `worker_fallback_note` dead-announcement shape (ARCHITECTURE.md, `gasp_cli.rs` bullet).
+- Step 1: add the third phase to the HookPhase enum (pick the name matching the repo's vocabulary; `PostToolUseFailure` is Claude's, prefer a yoyo-native name only if one exists) + accept it in config parsing, and refuse an unknown phase value loudly naming the accepted set.
+- Step 2: fire it exactly once per failed tool call, with the same `tool_pattern` matching as Post. `Pre`/`Post` behaviour byte-identical.
+- Guards: table test for phase parsing incl. the unknown-value refusal; anti-vacuous test that a failing tool actually fires the hook (not just that the config parses); near-miss guard that a successful call fires `Post` and NOT the new phase, and that with the phase unconfigured the tool result is byte-identical (whole-value assert_eq where observable).
+- Positive control: one atomic mutate→run→restore with `NEUTERED` on the mutated line, run serially, scoped (e.g. `cargo test --bin yoyo hooks`) so it fits the 600s cap. Restore must leave a byte-empty `git diff`.
+- Module-size gate: `src/config.rs` is grandfathered (4459 lines) — paste the number the gate prints rather than computing it.
+- Docs: update whatever documents `[[hooks]]` (grep docs/ and `help.rs`); ARCHITECTURE.md's `hooks.rs` bullet gets the new phase, its limit (still cannot see failures *outside* the wrapped tool call), and a superseded line for the "phase: Pre|Post" claim if it appears there.
+- Explicitly out of scope: the rest of Claude's ~30 events; no new hook *types*.
+
+Task 2 details:
+
+Title: A gate for prose that names code: backticked Rust symbols in CLAUDE.md must still exist in src/ (#918)
+Kind: evolve
+Files: tests/doc_symbols.rs (new)
+Issue: #918
+
+Body:
+- The receipt: #918 "Census my own doc-vs-code drift: extract backticked Rust symbols from CLAUDE.md and count how many no longer exist in src/" was accepted UNVERIFIED — this task re-checks the objection against the current tree and closes it with a landed gate or a measured reason.
+- Why CLAUDE.md only, and NOT ARCHITECTURE.md: CLAUDE.md is prepended to every prompt of every loop, so a stale symbol there is read as authoritative by every session; ARCHITECTURE.md's job is to record superseded claims, so stale names there are the *content*, not the defect. State this at the top of the test's module doc.
+- Planner's measurement (2026-09-18, top-level src/*.rs only — re-derive recursively in the task): 302 backticked tokens, 96 fn-shaped, 38 type-shaped, 81 unique candidates, 10 not found: CompactionStrategy, NEUTERED, REGISTERED_MARKERS, SABOTAGE, cb9d9b0, d93e4f65, deeper_question, on_after_turn, on_error, unreachable_code. Every one is explainable by category rather than by staleness — yoagent symbols (CompactionStrategy/on_after_turn/on_error), commit shas, marker words, a JSON field name in the sub-agent contract, a clippy lint name. So the expected landing is a green gate plus a small register naming the categories, and if the recursive re-derivation finds real stale names, the census is the finding and the fix to prose is a FOLLOW-UP (do not fix prose in this task — that is how this reverts).
+- Shape (follow tests/doc_version_claims.rs and tests/feature_gated_tests.rs): pure table-tested classifier + all filesystem walking at one call site + fatal on the unnamed case + register for deliberate exceptions + ratchet both directions + limits printed on every passing run through a raw `std::io::stderr()` handle (libtest discards output from passing tests) + anti-vacuous check that the scan found a non-zero number of candidates (a scanner that finds nothing must fail loudly).
+- Two invariants running in opposite directions: (a) a candidate not found in `src/**.rs` and not in the register → fatal, with both remedies verbatim (fix the prose, or paste the literal register line); (b) a registered name that NOW exists in src/ → fatal (a debt register only pays down if improving is also a failure).
+- Match on word boundaries, walk `src/` recursively, and search for the bare identifier including `::`-qualified and `()`-suffixed forms.
+- Positive control: delete a symbol (e.g. rename `redact_secrets`) so a CLAUDE.md mention goes stale, watch the gate go red BY NAME; restore and watch it pass, as one atomic mutate→run→restore with the sabotage line marked `NEUTERED`. Run serially.
+- Also verify the test file is NOT feature-gated (`tests/feature_gated_tests.rs` gate) and is picked up by plain `cargo test`.
+- Do not edit CLAUDE.md's measurements; if the gate needs a prose line to explain the convention, it goes in ARCHITECTURE.md's `tests/` section, not in CLAUDE.md (which is capped at ~40KB and already 38KB).
+
+Great — that last point is a real, measured constraint: CLAUDE.md is 38,045 bytes and the rule says past ~40KB is itself the defect.
+
+issue_responses.md: 
+- #928: already implemented in this session's earlier run (commit e9960606) — the `Day N:` convention is written down and the category rule moved to where the decision is made; comment and close? Hmm — careful: my Day 202 08:42 task landed it, and I already replied at Day 202. The ISSUES_TODAY note says "⏸️ You replied last — re-engage only if you promised follow-up". So: respond with a short close note (measurement already posted) — or stay silent. The plan should say: post a brief closing comment pointing at the landed commit, then close (it's my own issue? No — author is @yuanhao, the creator). Closing someone else's issue: I've been replying with measurements. I'd say: reply confirming the landed fix + close as resolved since the convention is now recorded where the decision is made. Hmm, the creator converted conversations into issues as receipts; closing an issue he opened is his call? My Day 201/202 comments were substantive measurements. I'll say: post one short comment naming the landed commit as the receipt, and ask whether he wants it closed or kept open as a standing watch — no, that's asking permission for something I can decide. Better: leave it open but note it's discharged, or close it. The Phase C posting is automated from my issue_responses.md. I'll write: "#928: already resolved in the Day 202 (08:42) session — commit e9960606 ... Response: post a short closing comment with the receipt and close as completed." Since it's the creator's issue about my own behaviour, and the fix is mine, closing is appropriate.
+- #879: close, not-planned-as-filed — the composition landed (Day 188 `--restricted` + narrowed behaviour + help text), and the one open sub-question (should `--restricted` remove `sub_agent`) needs a product decision; state it.
+- #881: close — slice 1 landed (`--read-only-subagents`), remainder blocked by a measured yoagent fact (Day 199 step 0, cited).
+- #886: close — all five verbs now refuse before any billed turn; routing them as subcommands is declined with the reason (`handle_tokens`/`handle_cost` report session usage; a one-shot process has none → a confidently wrong zero). Wait: is #886 closeable? #886's body has two options: (1) widen the guard, (2) route `model` (landed Day 187). And the remaining five verbs: 4 refused Day 199 + think Day 202 (arg-gated). So the defect (billed turn) is closed for all five declared instances; only the product decision (route them?) remains, which is deliberately declined. So close with that reason.
+- #915: part 1 landed (TaskVerdict + classify_verdict + positive control, commits bc4bf899/c992a44d; harness half c992a44d). Actually c992a44d is "evolve.sh: an UNVERIFIED accept is sent to the graph as 'unverified'" — the harness half, landed by creator. Part 2 (Abandoned / no patch node on empty range) remains → plan next session; keep open. Say: "keep open; the remaining half (Abandoned + no patch node) is planned for the next session; part 1 verified landed."
+- #918: implement as task_02.
+- #869, #870, #902, #913, #858, #738: unchanged, say deferred with one-line reasons (not silence? The instruction: skip issues where you have nothing new to say. For my own backlog I should list status briefly.) I'll include short lines.
+- Also the other UNVERIFIED receipts (#922, #919): route. #919 (`## Provider/API health` counts LINES and reports them as outages) — that's a concrete instrument bug in `scripts/extract_trajectory.py`; the trajectory section today shows 5 patterns ×3 each, presented as "recurring CI errors" with a "superseded by a green run" note. Hmm. I'll say: keep open, deferred to next session (one-line reason: it's a script-only change in a protected-file-adjacent script... actually scripts/extract_trajectory.py is not protected). Defer with reason: two slots used; cheapest to pair with #918's class (both are "my own instrument reports a count it has not earned") → next session.
+- #922 worktree fixture flake: keep open, deferred (needs a MEASURE-first pass that is its own slot).
+- #930: no reply from human; nothing actionable client-side; keep open (already filed as help-wanted).
+
+Also: should I file anything new? The `.yoyo.toml` max_tokens=131072 vs context_window=750000 question is flagged as unverified. That's a config check, not a code change. Could be a tiny task… but two slots are used. I'll add a note in the plan as an observation for the next session, or better: mention in Task ... no. I'll put it in issue_responses.md as an observation? It doesn't belong to an issue. I'll add a short "Deferred observations" section in the plan (task_02? no). Hmm — issue_responses.md is for issues. I'll include a short "Carried forward" section at the top of task_01? No, cleaner: put it in issue_responses.md under a "No issue filed (carried forward)" heading — the phase C poster may post it, which is odd. Better: keep it in the plan file only via a "Notes for the next session" block in issue_responses.md. Acceptable — it's a plan file. Actually, to be safe about Phase C posting weirdness, I'll add it as a comment in task_02's body line "Out of scope / carried forward". Fine — I'll put a short section at the end of issue_responses.md labeled clearly as not-an-issue.
+
+Let me write the files now. Keep them detailed but tight.
+
+Also note task sizing: each task ≤3 source files. Task 1: hooks.rs, config.rs, + docs (docs aren't "source files" but I'll count conservatively: 2 source files). Task 2: 1 file.
+
+Commit message: "Day 202 (14:13): session plan".
+
+One more consideration on Task 1's kind: product (hooks are user-facing config). Yes.
+
+Write now.
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough verified context. Writing the plan now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (116 lines) ✓ (1m 52s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (109 lines) ✓ (1m 51s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now issue_responses.md. Then commit. Then verify the files exist.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (94 lines)

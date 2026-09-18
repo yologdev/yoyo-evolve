@@ -1,0 +1,104 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the diff against the task. The task asked for a new test file `tests/doc_symbols.rs` implementing a gate. The diff shows exactly that plus ARCHITECTURE.md documentation. Let me do a quick focused check: run the new test to confirm it passes and check the register consistency.
+
+Actually the harness says build/tests pass. But let me do one focused check: verify the test file exists and the register lists correct symbols. Also check the claim about `the_scan_covers_nested_src_modules` (94 files?). A quick check is warranted: does the file exist and does the test run green? Let me do a fast targeted run of just that test file — the instructions say don't re-run the full suite, but running one test binary is cheap.
+
+Let me check the counting claim: 81 candidates, 10 absent. Let me verify quickly with a script? That could be a moderate effort but useful. Actually the key check: is the gate green on the live tree and non-vacuous. Running `cargo test --test doc_symbols` would confirm. That's a single test binary; may take ~30-60s to compile. Let's do it.
+
+Also check that the new file is not feature-gated (no cfg(feature)). And check tests/feature_gated_tests.rs doesn't require registration.
+
+Also verify the register entries match actual absent symbols — I can write a python script to replicate the extraction quickly. That's more work but valuable. Let me do the test run plus a quick python replication.
+
+Let me look at the repo.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la tests/doc_symbols.rs && g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && git lo… ✓ (10ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, the file exists, committed, not feature-gated. Now let me verify the gate actually passes and its census is honest. Let me run the specific test binary and also independently replicate the extraction with python to check the claim "81 unique candidates, 10 absent" and that the register covers exactly the 10 absent.
+
+Let me run the test first.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test do… ✓ (316ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The gate passes: 134 mentions, 81 unique, 94 files, 10 registered. Matches the ARCHITECTURE.md claim. Now let me independently verify that the 10 registered are exactly the 10 absent — i.e., the register isn't hiding a real stale symbol and isn't over-broad (which the ratchet catches). Since the gate passes with the ratchet (registered-but-live is fatal, and all 10 registered must be mentioned in CLAUDE.md and absent from src/), a passing run means: all 10 registered are absent from src/ and all are mentioned in CLAUDE.md. And 81-10=71 present. So the register is exactly the absent set minus nothing... unless an absent symbol exists that IS covered... wait, all 81 unique either present or absent; absent ones must be registered (else fatal). So register size >= number of absent. Register size = 10, so absent count <= 10 and >= ... all 10 registered are absent, so absent count = 10 exactly. Good — internally consistent. So no unregistered stale name.
+
+Independent verification: let me quickly do a python replication to confirm the absent set is as claimed (categories). Actually that's essentially what the gate does; the gate is the artifact; re-deriving is a nice extra. Let me do a quick python script replicating the logic to enumerate the 10 absent names.
+
+Also check that `cargo test --test module_size` is unaffected (no src change → fine). And the ARCHITECTURE.md "eleventh/twelfth" claim — is this gate really the twelfth? Let me check tests/ enumeration. The task said update the tests census prose in ARCHITECTURE.md if it enumerates the gate list. The entry says "the twelfth deterministic gate". Let me count deterministic gates in tests/. Quick check of tests dir.
+
+Let me do both quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls tests/ &&… (28 lines) ✓ (147ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+My independent replication confirms: 81 unique, 10 absent, and exactly the 10 registered, matching the claimed categories. No stale symbol claims (each absent name is an explainable category).
+
+Wait — one thing: `NEUTERED` and `SABOTAGE` are in CLAUDE.md — but those are marker words that appear in the CLAUDE.md text itself... hold on. CLAUDE.md contains "NEUTERED", "DO NOT COMMIT", "SABOTAGE", "TEMPORARILY DISABLED" as described marker vocabulary. Fine — CLAUDE.md is not a source file, so no neutered_guards issue. But wait: does tests/neutered_guards.rs scan CLAUDE.md? The doc_symbols.rs register uses concat! to avoid self-flagging. Does neutered_guards scan tests/**? It scans source lines of src presumably. Anyway tests pass.
+
+Now: is doc_symbols really the "twelfth" gate? tests/ contains doc_version_claims, feature_gated_tests, module_size, neutered_guards, orphan_modules, blind_round_grades, git_chokepoint, git_config_injection, global_state_races, lock_recovery_chokepoint, system_prompt_chokepoint, gasp_cli_run_ordering, gasp_session_end_guard, doc_symbols... That's more than 12. But ARCHITECTURE.md's "eleven invariant gates" refers to a specific enumerated set (the eleven invariant gates in ARCHITECTURE.md). So "the twelfth" is relative to that set — not counting other tests. Let me quickly check ARCHITECTURE.md's gate census to see whether the enumeration is numbered and whether a correction is owed. Task said: "Update the tests/ census prose in ARCHITECTURE.md if it enumerates the gate list (that count is already flagged as a reader's summary that goes stale — correct it there)."
+
+The entry says "the twelfth deterministic gate, built in the same shape as the eleven above". Let me grep for "eleven invariant gates" and a numbered list.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "eleven\|twelfth\|tenth … ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ARCHITECTURE.md numbering is sequential: sixth, seventh, eighth, ninth, tenth, eleventh → twelfth. Consistent. The "eleven invariant gates" list at line 7 refers to the original set; the new entry says "twelfth deterministic gate, in the same shape as the eleven above". Whether the gate-list census needs correcting: the task said update if the file enumerates the gate list. The new entry is added in the sequence, which is the update. Fine.
+
+Doc sync: the task said don't add prose to CLAUDE.md — and the diff didn't touch CLAUDE.md. Good. ARCHITECTURE.md updated as required.
+
+Forgotten touchpoints: new test file, all definitions used (writer_limits called, classifier used, etc.). Tests pass so no dead code. feature_gated_tests gate: is there a register in feature_gated_tests.rs requiring registration of new test files? The gate forbids an unregistered *gated* file; doc_symbols.rs isn't gated. Let me quickly check whether feature_gated_tests has a register that enumerates known files needing updates — no, it likely scans for cfg(feature) in tests/ and compares against a register of allowed ones. Since doc_symbols has no cfg(feature), no change needed. The full test suite passed per harness, which includes feature_gated_tests.
+
+Product surface: tests-only + docs. No product surface. N/A.
+
+One more consideration: does the register hide a real stale symbol? I independently verified the 10 absent names, and each is legitimately a category (yoagent API, shas, marker words, tests const, JSON wire key, clippy lint). No real stale Rust symbol in CLAUDE.md. Good. Note `on_after_turn`/`on_error`/`CompactionStrategy` — are they truly yoagent APIs? Let me quickly check yoagent source, cheap.
+
+Actually that's a nice verification. Let me grep the cargo registry.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/ 2>/d… ✓ (71ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed yoagent symbols exist in the dependency. My independent replication found 81/10 matching the register exactly, gate passes, 94 src files recursively including src/format/mod.rs.
+
+Verdict: PASS.
+
+Write the verdict file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 36s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+What I checked:
+• **Artifact exists and is the right shape:** `tests/doc_symbols.rs` (840 lines), not `src/`, with a pure table-tested classifier, single filesystem-walk call site, fatal-on-unnamed with both remedies, a closed category set, a two-direction ratchet, anti-vacuous branches, and limits printed on passing runs.
+• **Ran the gate:** cargo test --test doc_symbols → 15 passed; disclosure reads 134 mentions / 81 unique / 94 src files / 10 registered.
+• **Independently re-derived the census** in Python: 81 unique, exactly the same 10 absent names as the register — so the register is not masking a stale symbol. I also confirmed the "yoagent API" category is real (on_after_turn/CompactionStrategy occur in the yoagent crate source).
+• **No src/ change**, no feature gate on the new test, CLAUDE.md untouched (per its 40 KB ceiling rule), and ARCHITECTURE.md's gate enumeration correctly extended to "twelfth".
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
