@@ -1,0 +1,321 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check the key claims: does the diff match the task? The task asked for edits to src/commands_config.rs and tests/module_size.rs. The implementation instead created a new file src/commands_config_mcp.rs, and deleted the register entry rather than adding one.
+
+Let me verify a few key things:
+1. The claimed file size: commands_config.rs is now 1999 lines (under cap), so no register entry needed. Let me check.
+2. mcp_failure_marker returns Option<String>, task said "takes mcp_failed: &[String] and the resolved command string of one row, and answers whether that row failed." — that's satisfied.
+3. The structured row id: task said record_failed_server records resolved command string. But the diff shows structured configs record `format!("{} ({})", name, command)` — that's the existing behavior. The marker builds row_id = mcp_failed_server_id(&cfg.name, &cfg.command) = "name (command)". But wait — is that right? For a structured server, the recorded id is "name (command)" where command is `server_cfg.command` only (not args). Let me verify the reader builds exactly the same. Yes, both use name and command. Good.
+
+Hmm, but the task description said the ids in mcp_failed are the resolved command strings `command + " " + args.join(" ")` shape. That's actually wrong per the diff — the structured loop records name (command). The implementer noticed this and handled it. Actually the task text says "record_failed_server("mcp", <resolved cmd>) is the single write site, so the ids in mcp_failed are the resolved command strings". Let me check the actual code in agent_builder.rs to see the writer for both loops.
+
+Let me check actual file line counts and the git diff for the writer.
+
+Also need to verify the doc requirement: task says update docs/src/usage/commands.md if /mcp documented there. The diff updates README.md instead. Hmm, README has a /mcp line in the command table, updated. Did docs/src/usage/commands.md show /mcp list output? The task said "If docs/src/usage/commands.md (or wherever /mcp is documented) shows the /mcp list output, add one line". README's command table is where /mcp is documented, and it was updated. Acceptable.
+
+Let me check whether docs/src/usage/commands.md exists and mentions /mcp. Quick grep.
+
+Also module_size register: the diff removed the ("src/commands_config.rs", 2029) entry — but did that entry exist before this task? The task claims it did (2029 lines, warned). The diff shows removal in the context. Let me verify by checking git show HEAD.
+
+Actually the diff hunk at line 198 shows the register context: it inserts a comment where the entry was and the line "src/commands_file.rs" follows. Let me check the original file to see if ("src/commands_config.rs", 2029) was there.
+
+Let me run a few quick checks.
+
+Also need to verify the actual current line counts.
+
+Let me do this efficiently.
+────────────────────────────────────────────────────────────────────────────────
+
+I'll verify the key factual claims in the diff.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD:tests/module_size.… ✓ (7ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting: HEAD's tests/module_size.rs already had no commands_config entry — because HEAD is the task commit itself. Let me check HEAD~1 (before the task). Actually the task commit is HEAD (324637f7). So HEAD:tests/module_size.rs is after. Let me check HEAD~2 or the parent... wait, HEAD~1 and HEAD~2 are session plan/assessment commits. So the task commit's parent is 10629030? No — git log order: 324637f7 (task 1), 398ebdfe (session plan), 10629030 (assessment). So parent of 324637f7 is 398ebdfe. Let me check tests/module_size.rs at 398ebdfe for commands_config entry.
+
+Also docs/src/usage/commands.md has no /mcp mention (grep returned nothing for /mcp). Let me confirm.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.8s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== parent register ==="; …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== writer loops ==="; gre… ✓ (3ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed:
+- Parent (398ebdfe) had NO commands_config entry in the register, and commands_config.rs was 2029 lines. So the task's STEP 0 instruction said the file was NOT in GRANDFATHERED_OVERSIZED_MODULES and to ADD a register entry. The implementer instead split the file to 1999 lines, so no register entry needed. That's a legitimate alternative that satisfies the gate's intent (file under cap). Actually STEP 0 mandated adding the entry; the implementer removed the need for it. The task said "Registered so this task's tests cannot make it fatal; the file needs a split, not another append." The implementer did the split, which is the better remedy and mentioned as the gate's stated remedy. So this is fine — not a task mismatch, just a better approach. The end state: file 1999 lines, under cap, no register entry.
+
+Wait, but the diff shows removal of a `("src/commands_config.rs", 2029)` line in the module_size.rs hunk context. Actually the diff hunk shows adding a comment in place of... let me re-read. The diff at @@ -190,6 +198,14 @@ shows insertion of the Day 202 comment before ("src/commands_file.rs", 2804). And the removal lines aren't shown as `-`. Hmm, the diff shows only added lines there. Let me re-check: the hunk shows:
+
+```
+     // Day 174: +2 absorbed since Day 166.
++    // Day 202: the entry that stood here (2029) is GONE, ...
+     ("src/commands_file.rs", 2804),
+```
+
+That claims an entry stood there, but in parent it didn't. Let me check the actual parent register more carefully — maybe the entry was `("src/commands_config.rs", 2029)` elsewhere and grep for commands_config in 398ebdfe returned nothing. The grep exit code 1 = no match. So the parent had NO commands_config entry. So the comment "the entry that stood here (2029) is GONE" is false relative to git. Hmm wait — maybe it was there but with a different form. Let me grep the parent register for "2029" and dump the register section.
+
+Actually, wait. The comment says "Day 202: the entry that stood here (2029) is GONE". If the entry never existed in the parent, this comment is a fabricated narrative. But also the hunk header @@ -190,6 +198,14 @@ implies +8 lines added at that spot and no deletions... Actually +198,14 vs -190,6: the hunk covers 14 lines in new, 6 in old — that means there ARE deletions? No: hunk header old count 6, new count 14 → +8 net, all additions shown. So no deletion line. But the diff for agent_builder register at top did show `-    ("src/agent_builder.rs", 4275),` -> `+...4314`. So there is a modified entry there.
+
+Hmm, so where would a `("src/commands_config.rs", 2029)` deletion appear? It doesn't appear in the diff at all. So the comment claims an entry was removed but no removal is in the diff. Let me check the register in parent full list vs child.
+
+Let me dump both registers.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.8s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== PARENT register ==="; … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: no commands_config entry existed before, and none after. The Day 202 comment claiming "the entry that stood here (2029) is GONE" is a false narrative — no such entry was ever in the register in this commit's parent. That's a documentation inaccuracy in a comment, not a functional defect. Hmm, but wait — maybe the entry existed in an even earlier state and was removed in an intermediate commit (398ebdfe / 10629030)? Those are session plan/assessment commits. Let me not go down a rabbit hole. Let me check the immediately-preceding commit that touched module_size.rs. Actually the key thing: `git show 398ebdfe:tests/module_size.rs` had no entry and 2029 lines. The task's own description said the file was NOT in the register. So the comment is inaccurate prose. Minor.
+
+Now let me actually exercise the feature — the task says if a user-facing feature, run the binary. Let's build and run something. Actually build already passed (harness). Let me try running the binary with a config that has an MCP server that fails to connect, then `/mcp list`.
+
+Hmm, that's more involved. Let's check if target/debug/yoyo exists.
+
+Actually, a simpler approach: run the tests for commands_config_mcp and check the output. But tests already pass. The instruction says actually try the feature. Let me try to run the binary.
+
+Let's see: yoyo --mcp "false" ... then /mcp list. Probably easiest via piped mode: `echo "/mcp list" | ./target/debug/yoyo --mcp "npx nothing"`. But it needs an API key maybe. Let's try.
+
+Let me check target/debug.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (134ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Binary exists. Let me try running with a failing MCP server and a /mcp list command. Piped mode: echo "/mcp list" | yoyo --mcp "..." . Let's use a command that fails to spawn, e.g. `--mcp "definitely-not-a-real-binary-xyz"`. Actually the pre-flight retries twice etc. Let's try in a temp dir with no API key — /mcp list may not need the API. Let's try.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && mkdir -p mcptest && cd mcptest && printf '/mcp list\n' | timeout 60 /… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Piped mode doesn't run slash commands. Need REPL mode. Slash commands require REPL. I can feed stdin to the REPL: `printf '/mcp list\n/quit\n' | yoyo ...`. Let's try. It may need an API key though — /mcp list is handled locally. Let's try.
+
+Note the recorded id for a --mcp server: `record_failed_server("mcp", mcp_cmd)` — the raw command string "definitely-not-real-xyz --flag". So mcp_failure_marker compares against cmd = raw command string. Good.
+
+Let's run in REPL mode.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/mcptest && printf '/mcp list\n/quit\n' | timeout 90 /home/runner/work/yo… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Nothing printed? Maybe stdout was consumed/cleared or the REPL needs a TTY. Let me capture stderr+stdout together and see.
+
+Actually the "mcp: agent rebuilt ... " shows the session proceeds. Let me capture all output.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/mcptest && printf '/mcp list\n/quit\n' | timeout 90 /home/runner/work/yo… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Piped stdin is treated as piped mode, not REPL. To exercise the REPL I'd need a PTY. Let me try `script` to fake a TTY. Is `script` available?
+
+Alternative: write a small integration test? No — I must not modify code. But I can run an existing test that exercises the feature. The tests in commands_config_mcp.rs test the pure functions. The handle_mcp wiring itself is only exercised... let me check whether there's a test calling handle_mcp("list", ...). The task said commands_config.rs:1523-1550 calls handle_mcp directly in tests. So handle_mcp list path is tested. Those tests pass.
+
+But the wiring reads external_server_report() which in tests is empty → byte identical. So the wiring itself isn't verified end-to-end by tests. Let me try to exercise via PTY with `script`.
+
+Let me check if `script` exists.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ which script python3 expect 2>/dev/null; echo "---"; cd /tmp/mcptest && printf '… ✓ (291ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The feature works end-to-end: `/mcp list` shows the failed row marked with `✗ failed to connect: definitely-not-real-xyz --flag`.
+
+Now let me check the structured-config path too (name (command)) since that's the trickier identity matching. Let me create a .yoyo.toml with an [mcp_servers.x] entry that fails and one that succeeds? A succeeding server is hard without a real MCP server. But we can at least test the structured failing path.
+
+Let me do that quickly — it's the path where the writer records "name (command)" and the reader rebuilds it. If they mismatched, the row would be unmarked. Let's verify.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/mcptest && cat > .yoyo.toml <<'EOF' (6 lines) ✓ (276ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/mcptest && cat -v /tmp/out3.txt | sed -n '1,60p' ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The trust prompt consumed stdin. Need `--trust-project`. Let's rerun with that flag.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/mcptest && printf '/mcp list\n/quit\n' | timeout 90 script -qec "/home/r… ✓ (277ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both identities work: structured row marked with `pgtest (definitely-not-real-pg)` — matching the writer's id. The `--mcp` row works too.
+
+Now verify the "2 of 3 failed vs 3 of 3 failed" differentiation — that was the core motivation. We've shown a failed row is marked, so 2-of-3 vs 3-of-3 differ. Good enough.
+
+Now check: task said the helper should take `mcp_failed: &[String]` and the resolved command string of one row, answering whether that row failed. ✓ (mcp_failure_marker). Task said put it in src/commands_config.rs — implementer put it in a new src/commands_config_mcp.rs. This is a deviation from the stated Files list, but justified: STEP 0 required adding a register entry to avoid the module gate being fatal; the implementer instead split the file, which is the gate's stated remedy and results in the file being under the cap. The files list in the task is "Files: src/commands_config.rs, tests/module_size.rs". Adding a new file is a deviation but accomplishes the same or better. Is this a FAIL? The task explicitly said STEP 0 mandatory: add the register entry. The implementer didn't. Instead they split. The result: gate passes, file under cap. The task's stated purpose of STEP 0 was "so this task's tests cannot make it fatal". That purpose is served. And the comment in module_size.rs inaccurately claims an entry "stood here" (2029) and was removed — it never existed in the parent. That's a false claim in a comment. Hmm, this is a real inaccuracy. But is it a "minor imperfection"? It's in the git history documentation. The evaluator guidance: fail only for substantive issues. A false narrative in a comment is a minor imperfection, though in this repo, false claims in ARCHITECTURE.md are treated seriously.
+
+Wait, let me double check: maybe the register entry existed at some point in this repo's history and was removed by some earlier commit, and the task text's author knew that... no, the task text explicitly said "the file is NOT in GRANDFATHERED_OVERSIZED_MODULES (grep for commands_config in tests/module_size.rs returns nothing)". So both the task author and the parent tree agree the entry doesn't exist. The implementer's comment saying "the entry that stood here (2029) is GONE" contradicts the parent tree and the task text. That's a fabricated detail in the diff, in a file whose comments are the repo's memory.
+
+Hmm. But actually — maybe I should re-read: is it possible the comment refers to a transient state where the implementer themselves added the entry (per STEP 0) and then removed it? The diff shows no added-then-removed line. Unless... the diff shown is against the final state and git shows net diff. If the implementer added then removed, net effect = nothing, and the comment stands alone. That is plausible: they followed STEP 0, added ("src/commands_config.rs", 2029), then decided to split, made it 1999, and removed the entry, leaving the comment explaining the removal. The commit diff on module_size.rs would then only show the comment insertion — which is exactly what we see. And the comment says "the entry that stood here (2029) is GONE". Under that reading, the comment is accurate about the intermediate state of the working tree, but it's confusing since git history has no such entry.
+
+Hmm, which is it? Either way it's a comment about git state that no reader can verify from the final tree. It's confusing but it does convey the correct design decision. This is a documentation nit, not a functional defect. I'd mention it as cleanup feedback, not fail.
+
+Actually, holistically the comment's core message — "this file went under the cap so no register entry is needed; registering would convert paid debt into a ceiling" — is accurate and valuable.
+
+Now, other checkpoints:
+
+1. forgotten_touchpoints: new definitions:
+- `capped_failure_id` in agent_builder.rs — consumer: mcp_failure_marker. ✓
+- `mcp_failed_server_id` — consumers: writer at 663 and reader in commands_config_mcp.rs. ✓
+- `EXTERNAL_FAILURE_ID_MAX_BYTES` widened to pub(crate) — used by capped_failure_id + test. ✓
+- `commands_config_mcp` module added to main.rs. ✓
+- `mcp_list_text` — consumer: handle_mcp. ✓
+- Does `external_tool_failure_note` still use the cap? It used to have its own inline truncation? Let me check that the refactor to capped_failure_id didn't break the model-facing path. Let me grep for capped_failure_id usage.
+
+Let me check the diff for agent_builder.rs more fully — the diff shown only shows the const + two new fns + the writer change. Was the model-facing note's truncation replaced by capped_failure_id? If not, capped_failure_id is only used by the MCP marker — fine. But the const was previously private and used by the model note. Now it's pub(crate) — still used there too. Need to verify the model path still compiles (build passed). Fine.
+
+Wait — is there a dead-code risk? capped_failure_id is used in mcp_failure_marker. ✓
+
+2. The task said the helper "takes mcp_failed: &[String] and the resolved command string of one row, and answers whether that row failed." ✓.
+
+3. "Return None/false for an empty mcp_failed — pin it with assert_eq! on the full rendered block" ✓ (mcp_list_text byte-identity test).
+
+4. Glyph-free under is_plain_output — the helper takes `plain: bool` param rather than reading is_plain_output internally; that's the `_with` pattern used elsewhere. Caller passes is_plain_output(). ✓ tested.
+
+5. Cap on char boundary with elision in band, dropped byte count agrees. ✓ tested.
+
+6. No OpenAPI. ✓.
+
+7. handle_mcp signature unchanged — let me verify. The diff shows handle_mcp body changed but signature not. Let me confirm quickly by checking the existing tests calling handle_mcp pass (tests PASS). ✓
+
+8. Existing tests green unedited — tests PASS given by harness. Let me spot check whether tree modifications to existing tests happened — the diff of commands_config.rs only shows the list arm replaced and the import added. No test edits in commands_config.rs (diff shows nothing in tests mod). Hmm, but the task said "Existing tests must stay green unedited". Need to ensure handle_mcp tests that asserted exact output still pass — harness says tests PASS. But wait: did existing tests assert the printed output of /mcp list? They call handle_mcp and it prints to stdout; tests likely just check it doesn't panic. The refactor changed output slightly (RESET placement). Tests pass.
+
+Hmm, one thing: the change from `println!` to `print!` — the old code printed `"...connected{RESET}\n"` i.e. newline after RESET; new prints text (ending with "\n\n") then RESET. So the final output has `\n\nRESET` instead of `\nRESET\n`. Visually same. Fine, and disclosed in a comment.
+
+9. Docs: README updated (two places: feature bullet + command table). Task said "If docs/src/usage/commands.md (or wherever /mcp is documented) shows the /mcp list output, add one line". docs/src/usage/commands.md has no /mcp mention at all (grep found nothing). So where /mcp is documented is README, and it was updated. ✓ doc_sync PASS.
+
+Wait — does docs/src/usage/commands.md exist and document slash commands generally? grep -i mcp returned nothing. So /mcp isn't documented there. README command table is the doc. Updated. Good.
+
+10. product_surface: Kind: product. The change is to product surface (/mcp list output) — but it's an improvement, not a config default/CLI flag/wizard/startup change. So N/A? The rule: "evolve-kind task touching config defaults, CLI flags, wizard or startup behavior must be opt-in". This is product-kind and doesn't change defaults. So product_surface: PASS (the change is product-facing and additive/safe — no new defaults, no flags).
+
+Actually let me be careful: the RED FLAG is about evolve-kind tasks changing product surface. This is product-kind, so not applicable. I'll mark PASS with explanation.
+
+11. One more: task said "Read the snapshot with crate::agent_builder::external_server_report()" ✓ done.
+
+12. Task "Do not change handle_mcp's signature" ✓.
+
+Now, is there any bug? Let's think about the `mcp_list_text` correctness: for structured configs, row_id = mcp_failed_server_id(&cfg.name, &cfg.command). The writer records the same when connect fails. But note: the writer's Err arm — is it reached for ALL failure types, or are some failures (e.g., collision guard skip) deliberately not recorded? Line 528 comment: "Deliberately NOT recorded via record_failed_server" for the collision-guard skip. So a server skipped for collision won't be marked in /mcp list — consistent with the design ("a refusal working as designed"). Fine.
+
+Also: the display shows `mcp_count > 0` → "N server(s) configured, M connected". With 1 configured and 0 connected → mcp_not_connected_message. Fine.
+
+Another consideration: the diff displays the failed row's id capped at 200 bytes but the row itself prints the full command; the marker duplicates the command. Slight redundancy but acceptable.
+
+Potential issue: `mcp_failed_server_id` uses the raw `server_cfg.command`, while the writer also uses `server_cfg.command` (not the args-joined full command). And the error message at 653-655 shows `server_cfg.name`. Consistent. And we verified empirically the row is marked. 
+
+Now, the false narrative comment. Let me investigate whether the entry was added-then-removed by checking if there's any reflog / the task commit's intermediate state. Can't. But let me check git log -p for module_size around this commit... only one commit. Can't verify. However, I realize: maybe the entry DID exist in the working tree before the task commit, because the assessment commit 10629030 might have... no, 398ebdfe (session plan) is parent, and it has no entry. And 10629030 is grandparent? No: 324637f7's parent is 398ebdfe. Let me verify with git log --graph. Order printed: 324637f7, 398ebdfe, 10629030 — so 398ebdfe is parent of 324637f7. And 398ebdfe:tests/module_size.rs has no commands_config entry. So at the moment the task started, no entry existed. Therefore STEP 0's instruction (add the entry) was about a planned 2029-line file; the implementer chose the split instead and their comment narrates the entry as if it had existed. It's a minor narrative inaccuracy: "the entry that stood here (2029) is GONE" describes a working-tree intermediate state (they may have added it per STEP 0 then removed it) — plausible and harmless.
+
+Given the guidance to not fail for minor imperfections and to mention cleanup in Reason, and everything functionally verified working, I'll go PASS with a note about the misleading comment.
+
+Hmm, but let me reconsider the deviation from the task's stated file plan more carefully. The task's "Files" line is a hint, and STEP 0 was explicitly "MANDATORY, DO THIS FIRST, BEFORE ANY OTHER EDIT". The implementer did not do STEP 0 as written. Deviating from a "MANDATORY" instruction is a notable deviation. But the *purpose* of STEP 0 was to prevent the module gate from going fatal, and the implementer achieved that by a superior remedy (the file is now under the cap; the gate even has a ratchet branch that fired). The task itself says "the file needs a split, not another append". So the split is aligned with the task's own diagnosis. I judge this as aligned intent, not a violation.
+
+Also verify module_size gate actually passes and reports commands_config inside headroom — the harness ran cargo test (PASS), which includes tests/module_size.rs. Let me run just that test quickly to confirm and see output. Task asked to run it. Let's do it (quick).
+────────────────────────────────────────────────────────────────────────────────
+
+Feature verified end-to-end in both identity shapes. Two final focused checks:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "capped_failure_id\|EXTE… ✓ (3ms)
+ ✓ (132ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note: `external_tool_failure_note` (line 432) still has its OWN inline truncation copy rather than calling `capped_failure_id`. So the "one definition for both audiences" claim in the doc comment is not fully true — the model-facing note duplicates the arithmetic, though with a different suffix? Let me check lines 428-445.
+
+The doc comment for capped_failure_id says: "One definition for both audiences above: two copies of this arithmetic would agree the day they were written and diverge..." But line 432 shows the model note still does its own `if f.id.len() <= EXTERNAL_FAILURE_ID_MAX_BYTES { ... } else { let head = safe_truncate(...) }`. So the claim is contradicted by the code: there ARE two copies of the arithmetic (the model note's and capped_failure_id's). The only thing genuinely shared is the const and safe_truncate.
+
+Is this a functional defect? No — both behaviours are correct and tested. But it's a false claim in a comment, and it's the kind of thing this repo treats seriously ("superseded claim recorded rather than erased"). Hmm. Is it worth a FAIL? The evaluator criteria: FAIL only if implementation doesn't match task, tests pass but feature doesn't work, obvious bugs, security issues. This is a doc/comment inaccuracy, not a functional bug. The task's requirement was "Cap the interpolated id the way external_tool_failure_note does" — done (an independent but equivalent cap). The task did not require sharing the helper.
+
+Let me look at 428-445 to be precise.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:424..452 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: the model-facing note still has its own copy of the identical truncation arithmetic (lines 432-440), byte-identical logic to capped_failure_id. So the doc comment on `capped_failure_id` claiming "One definition for both audiences above: two copies of this arithmetic would agree the day they were written and diverge the first time one side was re-worded" is factually wrong — there ARE two copies, and the author didn't migrate the first one. Ironically the comment warns exactly against what the code still does.
+
+Also ARCHITECTURE.md claims: "`agent_builder::capped_failure_id(id)` likewise got **one** definition serving both audiences" — also inaccurate.
+
+Is this a FAIL? Criteria: "The implementation doesn't match the task description" — the task didn't require deduping. "Obvious bugs that tests don't catch" — not a bug; both copies are correct and produce identical output. So functionally fine.
+
+But the repo's culture strongly penalizes false claims in the diff, and the reviewer instruction says fail for false claims? Actually instruction says FAIL only for those four bullets; a false comment isn't one. It says do NOT fail for "minor imperfections". A wrong comment is a minor imperfection. But it's a claim in ARCHITECTURE.md that a future reader will trust and that's the repo's memory file... The repo's own rule: "New history goes in ARCHITECTURE.md" and superseded claims must be recorded. A false positive claim ("one definition, two audiences") could mislead a future agent into believing the dedup exists.
+
+Hmm. Let me weigh. The core deliverable — the user-facing feature — works, is tested, and is verified end-to-end by me. Docs updated. Gate passes. The deviations are: (1) new file instead of the mandated register entry (justified, file now under cap); (2) a comment narrating a register entry that never existed in git; (3) a "one definition, two audiences" claim that is false because the model path keeps a duplicate copy.
+
+Given the guidance "Be strict but fair. FAIL only if: implementation doesn't match task description / feature doesn't work / obvious bugs / security issues", none of these strictly apply — the feature works. But (3) is a false claim about the diff's own content, in the file ARCHITECTURE.md which the repo treats as authoritative memory, and the task explicitly said "Do not touch the model-facing external_tool_failure_note path" — the implementer didn't touch it (good), but then claimed to have unified it (bad claim, mitigated by not touching it).
+
+I think the fair verdict is PASS with cleanup feedback naming the inaccurate claims, since the functional requirement is fully met and verified. Mentioning these in Reason as feedback is what the instructions direct ("mention them in Reason as cleanup feedback instead of failing").
+
+Hmm, but should I fail because the claim is false in ARCHITECTURE.md which is the repo's memory? The instruction's spirit: don't fail for style/minor imperfections. A comment's accuracy... In this specific repo, false claims are the cardinal sin (the whole CLAUDE.md is about superseded claims). Two false claims shipped: (a) the module_size.rs comment narrating a nonexistent register entry, (b) the "one definition serving both audiences" claim contradicted by lines 432-440.
+
+Let me judge severity: (b) is a claim about refactoring that was NOT done. It says two copies "would agree the day they were written and diverge the first time one side was re-worded" — while leaving exactly two copies in the tree. That is self-contradicting and would mislead. However, both copies are byte-identical in behaviour today and both are covered by tests (3344, 3369 test the cap; external note has its own tests). No functional risk.
+
+I'll go with PASS, and clearly flag the three inaccuracies as cleanup feedback in Reason. That follows the evaluator's own rules. Actually — the reason field should be 1-2 sentences. I can put a bit more but keep it tight.
+
+Let me also double check one more requirement: "Existing tests must stay green unedited — that is the regression evidence." Did the diff edit any existing test in commands_config.rs? The diff for commands_config.rs shows only import + list arm. No test mod changes. ✓ (And module_size.rs edits are comments/register only, no test assertions weakened — the register entry for agent_builder went 4275→4314, which is a legitimate drift update; and no entry deleted since none existed.)
+
+Wait — for the register, the diff modified ("src/agent_builder.rs", 4275) → 4314. Is that within REGISTER_DRIFT_GRACE_LINES (100)? +39, yes. Fine.
+
+Also, did the diff delete `("src/commands_config.rs", 2029)`? No, because it never existed. But the diff hunk header showed a context indicating... fine.
+
+One more: the task listed `tests/module_size.rs` as a file to modify — done. `src/commands_config.rs` — modified (import + arm) plus new module file.
+
+Now write the verdict.
+
+Checked lines:
+- intent_alignment: PASS
+- forgotten_touchpoints: PASS
+- doc_sync: PASS
+- product_surface: PASS
+
+Let me write the file.
+────────────────────────────────────────────────────────────────────────────────
+
+Feature verified working end-to-end (both row-identity shapes). Writing the verdict.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (1m 9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS — written to session_plan/eval_task_1.md.
+
+What I verified beyond the diff:
+
+• **Ran the feature in a PTY** (script -qec, since piped stdin bypasses the REPL):
+  • `--mcp "definitely-not-real-xyz --flag" → row marked ✗ failed to connect: definitely-not-real-xyz --flag`
+  • `[mcp_servers.pgtest] with a bogus command → row marked ✗ failed to connect: pgtest (definitely-not-real-pg)`
+  • Both recorded-id shapes (raw command vs name (command)) match the writer, which was the silent-failure risk the task flagged.
+• `cargo test --test module_size src_modules_respect_the_size_gate → ok; commands_config.rs is 1999 lines, under MAX_MODULE_LINES`.
+• Docs: README updated in both /mcp spots; docs/src/usage/commands.md has no /mcp content to sync.
+
+Cleanup feedback (not failures, recorded in Reason):
+1. The new tests/module_size.rs comment narrates a ("src/commands_config.rs", 2029) register entry being "GONE" — git show 398ebdfe:tests/module_size.rs shows no such entry ever existed there. The split superseded STEP 0; the comment should say that instead of recounting a removal.
+2. `capped_failure_id's doc comment and ARCHITECTURE.md claim "one definition serving both audiences", but external_tool_failure_note` (src/agent_builder.rs:432-440) still carries a byte-identical copy of the same truncation arithmetic. The claim is false as written and the duplication it warns against is still in the tree.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
