@@ -261,14 +261,51 @@ pub(crate) struct FailedServer {
     pub(crate) id: String,
 }
 
-/// Cap on an interpolated server identifier inside the model-facing note.
+/// Cap on an interpolated server identifier inside an external-failure note.
 ///
 /// A judgment threshold, not a measurement: long enough that a realistic
 /// `npx -y @scope/package --flag=value` command survives whole, short enough
 /// that one pathological config entry cannot eat the turn's context. Cut on a
 /// **char** boundary with the elision marked in band, never a raw byte index
 /// (#250) — the same discipline `goal_verify_refusal_message` uses.
-const EXTERNAL_FAILURE_ID_MAX_BYTES: usize = 200;
+///
+/// `pub(crate)` because there are now **two audiences** for the same fact (Day
+/// 202): the model-facing note below and the user-facing `/mcp list` marker
+/// (`commands_config::mcp_failure_marker`). They differ in wording, not in how
+/// much of a repo-authored config value either is willing to print, so the cap
+/// is read by both rather than copied into the second one.
+pub(crate) const EXTERNAL_FAILURE_ID_MAX_BYTES: usize = 200;
+
+/// Render an external-server identifier for display, eliding an over-long one
+/// on a **char** boundary with the cut marked in band.
+///
+/// One definition for both audiences above: two copies of this arithmetic would
+/// agree the day they were written and diverge the first time one side was
+/// re-worded, and the in-band byte count is the part most likely to be left
+/// behind by a copy — a marker that lies about what it dropped is worse than no
+/// marker.
+pub(crate) fn capped_failure_id(id: &str) -> String {
+    if id.len() <= EXTERNAL_FAILURE_ID_MAX_BYTES {
+        return id.to_string();
+    }
+    let head = crate::format::safe_truncate(id, EXTERNAL_FAILURE_ID_MAX_BYTES);
+    format!(
+        "{head}… [yoyo: {dropped} bytes elided from this identifier]",
+        dropped = id.len() - head.len(),
+    )
+}
+
+/// The identifier `record_failed_server` records for a `[mcp_servers.*]` entry
+/// that failed to connect.
+///
+/// One definition, two call sites: the `Err` arm of the structured-MCP connect
+/// loop (the writer) and `/mcp list` (the reader that marks the failed row,
+/// Day 202). A copied format string would agree the day it was written and
+/// diverge the first time either side was re-worded — and that failure is
+/// **silent**: the row simply stops being marked and nothing else notices.
+pub(crate) fn mcp_failed_server_id(name: &str, command: &str) -> String {
+    format!("{name} ({command})")
+}
 
 /// Servers that failed to connect this session, recorded for the model.
 ///
@@ -618,10 +655,12 @@ pub(crate) async fn connect_external_servers(
                 eprintln!("{RED}  ✗ mcp: failed to connect to '{shown_name}': {e}{RESET}");
                 // Same second audience as the --mcp loop above, one statement
                 // of the rule per loop. The *resolved command* is what a user
-                // can act on, so record it beside the friendly name.
+                // can act on, so record it beside the friendly name — through
+                // the shared builder, because `/mcp list` marks the failed row
+                // by matching this exact string back (Day 202).
                 record_failed_server(
                     "mcp",
-                    &format!("{} ({})", server_cfg.name, server_cfg.command),
+                    &mcp_failed_server_id(&server_cfg.name, &server_cfg.command),
                 );
                 // Same rebuild, same loss, same reset — one statement of the
                 // rule per loop, never two copies that agree today (#842).

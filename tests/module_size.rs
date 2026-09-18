@@ -145,7 +145,15 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // with `build_tools_with_hooks`; +98 is that seam plus the comment that
     // says why the wrap is not tidiness, and the weak source-level guard
     // that pins both wrappers. Number pasted from what the gate printed.
-    ("src/agent_builder.rs", 4275),
+    // Day 202: 4275 -> 4314 (+39, inside REGISTER_DRIFT_GRACE_LINES, so a
+    // warning rather than the ratchet). The `/mcp list` failure disclosure added
+    // `capped_failure_id` and `mcp_failed_server_id` HERE on purpose: this file is
+    // the single write site for a failed server, so the string the user's surface
+    // matches back must be built by the same code that records it, not by a copy
+    // in `commands_config_mcp.rs` that would agree today and diverge silently
+    // later — the `--mcp` id and the `[mcp_servers.*]` id are different strings,
+    // and getting that wrong marks no row at all. Number pasted from the gate.
+    ("src/agent_builder.rs", 4314),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
@@ -190,6 +198,14 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // silently re-emitting the raw @path; plus tests pinning the warning string,
     // free-form-mention silence, and the unreadable-file behavior.
     // Day 174: +2 absorbed since Day 166.
+    // Day 202: the entry that stood here (2029) is GONE, and its removal is the
+    // point rather than tidiness. This file was 29 lines past the cap when the
+    // `/mcp list` failure-disclosure work was planned; instead of registering the
+    // overshoot, the new code went to `src/commands_config_mcp.rs` (a clean seam
+    // — those functions read nothing but their arguments), which took this file
+    // to 1999 and under the cap. Branch 3 fired the moment that happened, which
+    // is the ratchet working: registering would have converted a paid debt into
+    // a permanent ceiling. Restoring an entry here would be a regression.
     ("src/commands_file.rs", 2804),
     ("src/commands_git.rs", 3484),
     // Day 174: +25 absorbed since Day 166.

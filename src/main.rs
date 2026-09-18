@@ -43,6 +43,7 @@ mod commands;
 mod commands_ast_grep;
 mod commands_bg;
 mod commands_config;
+mod commands_config_mcp;
 mod commands_dev;
 mod commands_file;
 mod commands_fork;

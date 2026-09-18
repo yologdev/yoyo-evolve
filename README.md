@@ -223,7 +223,7 @@ Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek
 
 ### 🧩 Extensibility
 - **Custom slash commands** — drop `.md` files in `.yoyo/commands/` (project) or `~/.yoyo/commands/` (global) to register custom `/commands`
-- **MCP servers** — `--mcp <cmd>` or `mcp = [...]` in `.yoyo.toml` connects to MCP servers via stdio transport
+- **MCP servers** — `--mcp <cmd>` or `mcp = [...]` in `.yoyo.toml` connects to MCP servers via stdio transport. `/mcp list` marks any server that failed to connect, so `2 of 3 failed` never renders like `3 of 3 failed`
 - **OpenAPI tools** — `--openapi <spec>` registers tools from OpenAPI specifications
 - **Skills system** — `--skills <dir>` loads markdown skill files with YAML frontmatter; search GitHub for community skills (`/skill search`), install from local paths or GitHub repos (`/skill install gh:user/repo`)
 - **RTK integration** — auto-detects [RTK](https://github.com/rtk-ai/rtk) and uses it to compress tool output by 60-90% (`--no-rtk` to disable)
@@ -371,7 +371,7 @@ Create a `YOYO.md` (or `CLAUDE.md`) in your project root with build commands, ar
 | `/map` | Structural repo map of file symbols (ast-grep backend) |
 | `/mark <name>` | Bookmark current point in conversation |
 | `/marks` | List all conversation bookmarks |
-| `/mcp` | List and manage MCP server connections |
+| `/mcp` | List and manage MCP server connections (a failed connect is named inline) |
 | `/memories` | List or search project memories |
 | `/model <name\|list\|info>` | Switch, list, or inspect models |
 | `/move` | Move a method between files |

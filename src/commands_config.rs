@@ -5,6 +5,7 @@
 
 use crate::cli::{is_verbose, AUTO_COMPACT_THRESHOLD};
 use crate::commands::thinking_level_name;
+use crate::commands_config_mcp::mcp_list_text;
 use crate::config_paths::{
     demoted_config_file, demoted_write_warning, detect_loaded_config_path, existing_config_paths,
     shadowed_write_warning, shadowing_config_file, skipped_config_sources,
@@ -1141,50 +1142,19 @@ pub fn handle_mcp(
             println!("{DIM}{}{RESET}", mcp_help_text());
         }
         "" | "list" => {
-            let has_cli = !cli_servers.is_empty();
-            let has_configs = !server_configs.is_empty();
-
-            if !has_cli && !has_configs {
-                println!("{DIM}  No MCP servers configured.");
-                println!();
-                println!("  Add servers to .yoyo.toml:");
-                println!("    [mcp_servers.myserver]");
-                println!("    command = \"npx\"");
-                println!("    args = [\"-y\", \"@modelcontextprotocol/server-fetch\"]");
-                println!();
-                println!("  See /mcp help for more details.{RESET}\n");
-                return;
-            }
-
-            println!("{DIM}  MCP Servers:");
-
-            // List structured configs first
-            for cfg in server_configs {
-                let full_cmd = if cfg.args.is_empty() {
-                    cfg.command.clone()
-                } else {
-                    format!("{} {}", cfg.command, cfg.args.join(" "))
-                };
-                println!("    {:<14}{}", cfg.name, full_cmd);
-            }
-
-            // List CLI --mcp servers
-            for cmd in cli_servers {
-                // Use the command name (first word) as an identifier
-                let label = cmd.split_whitespace().next().unwrap_or("unknown");
-                println!("    {:<14}{}", label, cmd);
-            }
-
-            let total = cli_servers.len() + server_configs.len();
-            println!();
-            if mcp_count > 0 {
-                println!(
-                    "  {} server(s) configured, {} connected{RESET}\n",
-                    total, mcp_count
-                );
-            } else {
-                println!("{}{RESET}", mcp_not_connected_message(total));
-            }
+            // Non-draining read of a process-global in a display path — the same
+            // shape, and the same reason, as `format::is_quiet()`. The
+            // model-facing note has its own store precisely so this reader cannot
+            // steal it (`agent_builder::external_server_report`).
+            let report = crate::agent_builder::external_server_report();
+            let text = mcp_list_text(
+                cli_servers,
+                server_configs,
+                mcp_count,
+                &report.mcp_failed,
+                crate::format::is_plain_output(),
+            );
+            print!("{DIM}{text}{RESET}");
         }
         _ => {
             println!("{DIM}  Unknown /mcp subcommand: {arg}");
