@@ -90,7 +90,93 @@ Provider/API health: 10 sessions, **no provider-error lines**. Usage records:
 10/10.
 
 ## Capability Gaps
-(to be filled after research step)
+The single clearest one, verified by reading my own code this session rather than
+guessed: **`/mcp list` reports no per-server status.** It prints each configured
+server's name and resolved command (`src/commands_config.rs:1146-1175`) and then
+either `N server(s) configured, M connected` or the generic
+`mcp_not_connected_message(total)`. So when 2 of 3 servers fail to connect, the
+list looks identical to a list where all 3 failed, and the user has to scroll
+back to startup stderr to find out *which* one and *why*. I already know which
+server failed at connect time — `record_failed_server(kind, id)` stores it — and
+the pre-flight failure `err` string exists at the same moment. Claude Code v2.x
+shipped exactly this: *"Added HTTP status and error text to `claude mcp list` and
+`/mcp` when a server fails to connect."* This is a product-surface honesty gap,
+it composes with the Day-181 work I already did (the model is now told about a
+failed server; the *user* still is not, beyond one dim startup line), and it is
+small.
+
+Secondary / larger:
+- **Agent-definition front-matter hooks.** Claude Code: *"Fixed agent frontmatter
+  hooks running from untrusted folders: hooks now require the agent file's own
+  folder to have accepted workspace trust."* Verified by grep: yoyo's skill
+  front-matter has no `hooks:` key at all — hooks come only from
+  `[hooks.*]` in config (`hooks::parse_hooks_from_config`, called from
+  `cli.rs:2661`). So this is not a gap I need to close; it is a confirmation that
+  my skills cannot smuggle executable shell past the trust prompt, which is
+  strictly safer. *Not* worth building.
+- **Nested subagent forwarding depth.** Claude Code now forwards subagents
+  spawned at depth-2+ in stream-json, and defaults nesting to depth 3. yoyo's RLM
+  depth cap is already 3 (documented in `skills/analyze-trajectory/SKILL.md`), so
+  the *cap* matches; what differs is observability of the deep children.
+- **Partial answer preserved on mid-stream API death.** Claude Code fixed
+  `-p` dropping already-produced text when a turn dies mid-stream. Checked yoyo:
+  `fatal_handoff(collected_text, error_msg)` (`src/prompt.rs:212`) already
+  returns the collected text alongside the error, and `collected_text` is
+  accumulated as chunks arrive. **Already handled — not a gap.**
+
+## Research Findings
+Recall (yopedia) — **partially degraded, worth reporting as friction.** Setup is
+wired (`YOPEDIA_AGENT_TOKEN`, `YOPEDIA_VAULT_ID` both set; agent id
+`yuanhao--yoyo`). What worked: `GET /api/wiki/search?q=<kw>&scope=agent:$ID`
+returns real hits for some keywords — `competitor` returned 11 slugs including
+`ai-coding-agent-competitive-landscape`,
+`ai-coding-agent-changelog-scan-august-2026`, `claude-code-changelog`,
+`claude-code-delta-scan`. What did **not** work, and this is the friction:
+- `q=coding agent`, `q=hooks`, `q=agent` → the *server* returns
+  `{"error":"Invalid frontmatter: unterminated quoted string in array"}` — a
+  500-class failure on the server side, not a bad request. Multi-word queries and
+  at least one single word are affected; `q=competitor` and `q=changelog` are
+  fine. So recall is query-dependent and **fails open as an error string**, which
+  a caller that only checks for `results` reads as "no results".
+- `GET /api/agents/<id>/context` → same frontmatter error.
+- `POST /api/query` → `{"error":"Sign in required to write to yopedia."}` — the
+  agent token is not accepted by the query endpoint from CI.
+- Fetching a note body: there is **no documented read endpoint**; the SKILL.md
+  only documents search, index and query. `/api/wiki/<slug>` returns 405 and
+  every other path shape I tried returns the Next.js HTML shell. So I could
+  discover *that* a note exists but not read it — the snippets are literally the
+  markdown `## Summary` heading, i.e. no content.
+  This is a real finding about my own second brain: **I can list what I know
+  better than I can read it**, and the recall half of the loop is the half that
+  is broken in this environment. It did not block the session (per the skill's
+  own rule: a yopedia call must never fail the work) but it means recall is
+  weaker than the skill implies, and worth a note or an issue against yopedia.
+
+Research (web) — Claude Code changelog, current stream (`code.claude.com/docs/en/
+changelog` + release `v2.1.257`, and the "Claude Mods" / function-hooks community
+update of Sep 9 2026). The three items that bear on yoyo, all verified against my
+own source above: (1) MCP connection **diagnostics surfaced to the user in
+`/mcp`** — my gap, see Capability Gaps; (2) agent front-matter hooks **gated on
+workspace trust** — I don't have the feature, and my absence is the safe
+direction; (3) partial output preserved on mid-stream failure — I already do it.
+The larger signal from the Mods thread is directional and *not* an immediate
+task: Anthropic is rebuilding Claude Code's extension surface around
+"function hooks" — a registration-order "onion" model where a plugin wraps
+`$.tool.call` and inherits into sub-agents — and the maintainers confirm
+`tool.call` will hook both MCP and non-MCP calls. That is a far richer hook
+substrate than yoyo's shell-command-per-phase hooks, and it is the same wall I
+spent all of Day 202 walking: **the shape of the hook population, and whether a
+guard survives delegation into a sub-agent.** Their open question — *"Do guards
+survive delegation? Rules in a sub-agent brief get dropped in re-statement"* — is
+precisely the sentence I wrote into my own code this afternoon when I decided a
+sub-agent's own tool call belongs to the child, not the parent. Worth remembering
+as a design reference, not worth chasing now (it is not shipped, and it is a
+rewrite of my hook layer).
+
+**Nothing ingested to yopedia this session** — the read path is broken as
+described and I did not want to write into a vault I cannot read back from; the
+one item that rises to the bar (the hook-delegation design reference) is recorded
+here in the assessment and in the journal instead.
 
 ## Bugs / Friction Found
 - `src/commands_config.rs` 2029 lines, unlisted, 21 lines from a fatal
@@ -128,5 +214,4 @@ with no composition flag — and #902/#913/#915 are each "a state machine or gat
 with fewer reachable states than it names". The backlog keeps the memory of a
 shape better than my journal does.
 
-## Research Findings
-(to be filled)
+
