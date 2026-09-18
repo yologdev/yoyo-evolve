@@ -1,0 +1,92 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the diff against the task. Key things:
+
+1. `skills/social/SKILL.md` — added `### Which category` under `## Proactive Posting`, cut the old block at :186-190, added pointer. Check.
+2. `skills/_journal.md` — evt-0024 entry. Check.
+3. Did NOT touch scripts/social.sh or skills/skill-evolve/SKILL.md. Let me confirm the diff shows no such files. Diff shows ARCHITECTURE.md, skills/_journal.md, skills/social/SKILL.md, tests/integration.rs. Good.
+4. Product surface: none, evolve kind docs-only.
+
+Let me do a quick focused check on the actual file contents to confirm the diff matches reality (the diff may be truncated). Also check whether the pointer text and old block removal is right, and that the tests exist.
+
+Let me look at the actual files quickly.
+
+Also check: the new test references `section.contains("Every trigger ends in one of three stated outcomes")` — need the section slice from `## Proactive Posting` to next `## ` to include that. The "Every trigger ends in one of three stated outcomes" line is at line 166ish, before "### Which category" at 168. Where is `## Proactive Posting` heading? Let me check the file.
+
+Let me run a few greps.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,215p' skills/social/… ✓ (2ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The file matches the diff. Note the test slices from `## Proactive Posting` to the next `\n## ` — which is `## Social Learning`. Wait, within that slice there are `### ` headings, but the test looks for `\n## ` (two hashes followed by space). `### Which category` starts with `\n### ` — does `"\n## "` match inside `"\n### "`? `\n### Which` — at position 0 is `\n`, then `#`, then `#`, then `#`. The find for `\n## ` requires `\n`, `#`, `#`, ` `. In `\n### ` we have `\n`,`#`,`#`,`#` — the fourth char is `#` not space, so no match. Good, `### ` won't terminate the slice.
+
+But wait — the section slice check requires `section.contains("Every trigger ends in one of three stated outcomes")` which is at line 166, inside the slice. Good.
+
+Also the test asserts section.len() >= 400 and < text.len()/2. Section is "Proactive Posting" through just before "## Social Learning" — that's lines 156-201, roughly 3500 bytes per the journal note. text.len()? File ~ let me check. Probably fine. Tests pass per harness anyway.
+
+Now check the old block removal — the old "- **Journal Club** — sharing journal entries or reflections" is gone. Confirmed by diff (replaced). The count check passes since tests pass.
+
+Now check constraints: scripts/social.sh untouched (not in diff), skill-evolve untouched. Good.
+
+Check journal entry follows existing format. It's evt-0024 with skill/trigger/diff/validation/score-delta/eval-summary/parent-event/expected/note fields. Let me verify against the schema format of an existing entry (evt-0023). Quick check.
+
+Also "no src/ change" — diff confirms. Doc sync: ARCHITECTURE.md updated (per project convention new history goes there). CLAUDE.md not required.
+
+One thing: the task said file list is `skills/social/SKILL.md, skills/_journal.md` but diff also adds a test in tests/integration.rs and ARCHITECTURE.md — that's normal for this repo (guards + history). Not a failure.
+
+Let me quickly confirm the journal entry field format matches existing entries and there are no stray files.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 4s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== files in commit ===" &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- provenance headers ---… ✓ (7ms)
+ ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All requirements met:
+1. Convention written down with `Day N: <claim>` title form, discriminator sentence, wrong inference named. ✓
+2. Rule moved to `## Proactive Posting` as `### Which category`; old block cut and replaced by pointer. ✓
+3. Honest half: `Day N:` is Journal Club marker not global; cannot name claim → don't post. ✓
+4. Journal entry evt-0024 with the fields matching format. ✓
+5. No scripts/social.sh, no skill-evolve change. ✓
+6. No src/ change; product surface untouched (docs only). ✓
+7. Guard added in tests/integration.rs with anti-vacuity; existing sibling guards stay green.
+
+One nuance: the journal entry `expected:` line is required by the task's verification step ("write the measurement into the task's own follow-up"). Present. ✓
+
+Doc sync: ARCHITECTURE.md updated per repo convention; CLAUDE.md not needed. Fine.
+
+Verdict PASS.
+
+Also let me note the frontmatter parses (loader test green per harness). The task said the "Files" list was 2 files but 4 files changed including a test and ARCHITECTURE.md — expected for this repo.
+
+Write the verdict file.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.3s (2 ✓)
+
+All four task deliverables are present and correct in the committed diff. Writing the verdict.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS
+
+Wrote session_plan/eval_task_2.md. Summary of what I verified against the committed diff (e9960606):
+
+• **Item 1 — convention written down:** `skills/social/SKILL.md:169-179` states *"The category is chosen by the post's SHAPE, never by the title's shape"*, the title form `` `Day N: <the claim the post makes> , and names the wrong inference verbatim ("Journal Club ones are \Day N:\ titled, therefore anything without that prefix belongs in General."`).
+• **Item 2 — moved to the decision point, one statement:** the rule lives in a new `### Which category` under `## Proactive Posting` (line 168); the old block at `:187-191` is gone (`grep "sharing journal entries or reflections" → 0 hits) and replaced by the pointer see \### Which category\ above`. The category list appears exactly once.
+• **Item 3 — honest half:**  Day N: is the Journal Club marker, not a global convention plus "cannot name the day's claim → not a reason to drop the prefix and post anyway".
+• **Item 4 — journal:** `skills/_journal.md` evt-0024 follows the file's existing field order (`skill/trigger/diff/validation/score-delta/eval-summary/parent-event/expected/note`) and carries the expected: follow-up measurement the task required.
+• **Constraints:** `git show --stat` shows only 4 files — `scripts/social.sh` and `skills/skill-evolve/SKILL.md` untouched, no `src/` change. The guard added to `tests/integration.rs is scoped to the ## Proactive Posting` slice with an anti-vacuous preamble, and the harness reports build/tests PASS. ARCHITECTURE.md (the repo's designated history file) was updated in the same commit; nothing product-facing changed, so the #448 red flag does not apply.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

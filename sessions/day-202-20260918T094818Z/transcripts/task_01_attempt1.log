@@ -1,0 +1,697 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the task-scope file to understand the existing structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,240p' src/dispatch_n…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "THINKING_LEVELS" src/co… ✓ (5ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read the full context of the file around lines 140-230 with proper output.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs:140..240  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no_routed_verb_is_ever_… ✓ (1ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read the tests sections around 370-560.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs:370..500  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs:500..580 ✓ (0ms)
+ ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check the beginning of the file and how `repl_only_commands()` works, plus whether the doc comment at line 462-464 needs updating too (it says `think` deliberately NOT in the const — that's about the const, still true).
+
+Let me look at lines 1-100 and also around 60-70.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs:1..101 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I understand the structure. Let me implement.
+
+Step 1: Add `REPL_ONLY_MULTI_TOKEN_ARG_GATED` const and the consumer.
+
+Note: `REPL_ONLY_MULTI_TOKEN_VERBS` doc comment says `think` is deliberately EXCLUDED. I need to rewrite that paragraph.
+
+Design:
+```rust
+pub const REPL_ONLY_MULTI_TOKEN_ARG_GATED: &[(&str, &[&str])] =
+    &[("think", crate::commands::THINKING_LEVELS)];
+```
+
+Consumer in `repl_only_multi_token_verb`:
+```rust
+if !REPL_ONLY_MULTI_TOKEN_VERBS.contains(&verb) {
+    for (gated_verb, vocab) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
+        if *gated_verb == verb {
+            let arg = args[2].as_str();
+            if vocab.contains(&arg) {
+                return Some(verb);
+            }
+        }
+    }
+    return None;
+}
+Some(verb)
+```
+
+Wait — careful about `yoyo think high --json`. The task says "allowed to fire only if your predicate reads args[2]". Our predicate reads args[2] only, not checking length beyond >= 3. So `yoyo think high --json` fires. That's fine — pin it. Actually the task says state which you chose and pin it. I'll choose that it fires (predicate only reads args[2]) and pin it. Hmm, but is firing on `yoyo think high --json` the right product decision? The `--json` flag... Let's check whether `-p` style hatch. `yoyo think high --json` — there's no valid `--json` global flag presumably. Since `think high` is the command shape, the extra flag doesn't change that it's a command shape. Firing is consistent with `yoyo tokens today` which also fires on extra tokens. So fire, and pin.
+
+Actually wait, hmm: could `yoyo think high about the schema` be a plausible prompt? "think high about the schema"... unlikely. And `yoyo tokens today` fires with arbitrary trailing tokens anyway. Keep consistent: only args[1] and args[2] matter.
+
+Note that `args[2]` is safe since len >= 3.
+
+Also note the exact argument match — vocab contains exact words like "off", "minimal". Should the check be case-sensitive? "exact member" per task. Yes.
+
+Now, clippy: comparing `*gated_verb == verb` — types `&&str` vs `&str`. `*gated_verb` is `&str`, `verb` is `&str`. OK.
+
+Now step 2: tests.
+
+Add test after `multi_token_repl_only_verbs_are_refused_before_any_billed_turn`. Let me write:
+
+```rust
+    /// The FIFTH verb of #886's class, and the one that needed an ARG GATE rather
+    /// than a list entry: `yoyo think about the architecture` is a plausible
+    /// imperative prompt, `yoyo think high` is the command shape, and the second
+    /// token is what tells them apart mechanically.
+    #[test]
+    fn arg_gated_think_level_is_refused_before_any_billed_turn() {
+        assert!(
+            !crate::commands::THINKING_LEVELS.is_empty(),
+            "the thinking-level vocabulary is empty — this is a REFUSAL, not a clean \
+             scan: an empty vocabulary would make the loop below a silent pass"
+        );
+
+        let msg = repl_only_multi_token_refusal(&argv(&["yoyo", "think", "high"]))
+            .expect("`yoyo think high` is the command shape that used to bill");
+        assert!(msg.contains("/think"), ...);
+        assert!(msg.contains("yoyo -p \"think high\""), ...);
+
+        // Every level fires, and this loop is anti-vacuous only because of the
+        // assertion above.
+        for level in crate::commands::THINKING_LEVELS {
+            assert!(
+                repl_only_multi_token_refusal(&argv(&["yoyo", "think", level])).is_some(),
+                "`yoyo think {level}` is the command shape but still reaches the model"
+            );
+        }
+
+        // The predicate reads args[2] and nothing beyond it, deliberately: extra
+        // tokens after a valid level do not make `think high` prose again...
+        assert!(repl_only_multi_token_refusal(&argv(&["yoyo", "think", "high", "--json"])).is_some());
+    }
+```
+
+Hmm wait, careful: loop `for level in crate::commands::THINKING_LEVELS` — level is `&&str`. In format! it's fine. `argv(&["yoyo", "think", level])` — level: &&str, but the slice expects &str. Need `*level`? With auto-deref coercion in array literal... `&["yoyo", "think", level]` where element type is `&str` and `level` is `&&str` — Rust does not auto-deref in array literals for type inference? Actually deref coercion applies at coercion sites; array elements are coercion sites to the inferred element type. Coercion from `&&str` to `&str` is a deref coercion, which does apply at coercion sites. I think it works. But to be safe use `*level`. Let me use `*level` explicitly... Actually `for level in crate::commands::THINKING_LEVELS` iterates over `&&str` (since the const is `&[&str]`, iterating gives `&&str`). Use `for &level in ...` to get `&str`. Cleaner.
+
+Then near-miss guards test:
+
+```rust
+    /// THE REGRESSION SURFACE for the arg gate: prose stays a prompt.
+    #[test]
+    fn arg_gated_guard_leaves_think_prose_untouched() {
+        let prompts = [
+            &["yoyo", "think", "about", "the", "architecture"][..],
+            &["yoyo", "think", "harder"][..],
+            &["yoyo", "think"][..],
+            &["yoyo", "do", "the", "thing"][..],
+            &["yoyo", "explain this repo"][..],
+            &["yoyo", "-p", "think high"][..],
+        ];
+        for parts in prompts {
+            assert_eq!(repl_only_multi_token_refusal(&argv(parts)), None, ...);
+        }
+    }
+```
+
+Wait `yoyo think harder` — 3 tokens, args[2] = "harder", not in vocab → None. Good.
+
+`yoyo think` — 2 tokens → None. Good.
+
+Note the existing test `multi_token_guard_leaves_real_prompts_untouched` already includes `think about the architecture`. I'll add the new test with the full list as the task asks; a bit of overlap is acceptable but the comment in the existing test at line 462-464 says "`think` is deliberately NOT in the const" — that is still true of `REPL_ONLY_MULTI_TOKEN_VERBS`, but now it's in the gated const. I should update that comment to point at the arg gate to avoid a stale comment. The task says don't touch the byte-identical test; other tests I can adjust comments. Let me update the comment there to avoid a misleading statement.
+
+Also extend `no_routed_verb_is_ever_refused_by_the_multi_token_guard` to cover the gated verbs in both directions: assert the gated verb isn't routed, and that a routed verb with a same-named gated... well the second direction: for each `(verb, vocab)` in gated, assert `!ROUTED_SUBCOMMANDS.contains(verb)`, and assert that `repl_only_multi_token_refusal(&argv(&["yoyo", verb, <some non-vocab token>])) == None`? Hmm the existing second direction loops ROUTED_SUBCOMMANDS with "list" and asserts None. That already covers routed verbs. For the gated direction: assert that each gated verb is not routed (so the guard doesn't shadow a working verb), and that the gated verb's *first* token alone (e.g. `yoyo think high` where think were routed) ... hmm.
+
+The task: "Extend the existing `no_routed_verb_is_ever_refused_by_the_multi_token_guard` test so that a routed verb is still never refused, in both directions." I read that as: make sure adding the gated list doesn't start refusing routed verbs — add both lists to the first-direction loop, plus maybe check the vocab's words aren't... Hmm. Actually a real risk: what if a gated verb's level word happens to be a routed subcommand? Not relevant.
+
+The concrete extension: 
+1. First direction loop: `for (verb, _) in REPL_ONLY_MULTI_TOKEN_ARG_GATED { assert!(!ROUTED_SUBCOMMANDS.contains(verb), ...) }`.
+2. Second direction: for each routed verb `v`, assert that neither `yoyo v list` nor... well nothing changed there. But there's a new risk: could the gated branch fire on a routed verb? Only if the routed verb is a gated key, which check 1 covers.
+
+Also add: assert the two lists' verb sets are disjoint (`REPL_ONLY_MULTI_TOKEN_VERBS` vs gated keys) — because a verb in both would... actually not harmful, but it's a duplicate statement. Hmm, having "think" in both would be redundant not harmful. But better: assert disjoint so the doc's two-door story holds? I'd rather assert that every gated verb is a real REPL command too (the `every_multi_token_verb_is_really_a_repl_command` test). The message claims `/think` exists — extend that test to also cover the gated verbs, since the message is composed identically. That's an important extension: the refusal for `think` names `/think`, so `/think` must exist in KNOWN_COMMANDS. Let me check KNOWN_COMMANDS includes /think.
+
+Let me check.
+
+Also I need to verify the guard is actually wired into main. Let's check where `repl_only_multi_token_refusal` is called.
+
+Let me also check `dispatch_sub.rs` re-export — `REPL_ONLY_MULTI_TOKEN_VERBS` is re-exported? Adding a new pub const may need re-export if used elsewhere. Only used in this file, so fine. But maybe main.rs uses the const? Let me grep.
+
+Also add tests to the Arg-gated positive control.
+
+Let me check KNOWN_COMMANDS for /think and where the refusal is called.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "repl_only_multi_token_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/dispatch_sub.… ✓ (9ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. `/think` is in KNOWN_COMMANDS (line 96). And main.rs:969 calls the refusal. Let me check main.rs:960-985 to confirm ordering.
+
+Now let me write the implementation. First edit the doc comment and add the const.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '955,985p' src/main.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the implementation. First the doc comment and the new const:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (5 → 16 lines)
+  - /// **`think` is deliberately EXCLUDED and must not be added back:**
+  - /// `yoyo think about the architecture` is a plausible imperative prompt, and
+  - /// refusing it is the worse error. Excluding a verb costs one billed turn on a
+  - /// rare typo; including a wrong one costs a user their actual prompt.
+  + /// **`think` stays out of THIS list, and the reason is PROSE.** That exclusion is
+  + /// still correct here and must not be undone: `yoyo think about the architecture`
+  + /// is a plausible imperative prompt, and refusing it is the worse error. Excluding
+  + /// a verb costs one billed turn on a rare typo; including a wrong one costs a user
+  + /// their actual prompt.
+  + ///
+  + /// **But the blanket exclusion was written before the argument vocabulary existed
+  + /// as data, and it is too wide.** `yoyo think high` is not a plausible prompt — it
+  + /// is the *command* shape, and the second token is what tells the two apart
+  + /// **mechanically**, so it needs a gate on the argument rather than a list entry.
+  + /// That is `REPL_ONLY_MULTI_TOKEN_ARG_GATED` below: this is the **fifth verb of
+  + /// #886's class** (Day 202), measured on the built binary rather than argued —
+  + /// `yoyo think` exited 2 with the two-token wording while `yoyo think high`
+  + /// started a **billed LLM turn with write-capable tools attached**, byte-for-byte
+  + /// the defect Day 199 fixed for the other four.
+    ///
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (1 → 27 lines)
+    pub const REPL_ONLY_MULTI_TOKEN_VERBS: &[&str] = &["context", "cost", "provider", "tokens"];
+  + 
+  + /// REPL-only verbs refused in their multi-token form **only when the second token
+  + /// is an exact member of a closed argument vocabulary** — the verbs whose prose
+  + /// second token is too plausible to refuse outright.
+  + ///
+  + /// The discrimination is literal rather than probabilistic: `yoyo think high` is
+  + /// the command, `yoyo think about the architecture` is a prompt, and the argument
+  + /// set is a **closed vocabulary of non-prose words** (`off`, `minimal`, `low`,
+  + /// `medium`, `high`) drawn from the same data the REPL's own completion uses —
+  + /// `crate::commands::THINKING_LEVELS`. Derived, never re-typed here: a level added
+  + /// to that list is covered the day it is added, and one removed cannot leave a
+  + /// stale word firing the guard.
+  + ///
+  + /// **Why a gate and not a list entry.** Adding `think` to
+  + /// `REPL_ONLY_MULTI_TOKEN_VERBS` would contradict a written decision *and* eat real
+  + /// prompts (`yoyo think harder` is refused either way, but
+  + /// `yoyo think about the architecture` would be too). The gate refuses the exact
+  + /// command shape and leaves every prose shape a prompt — one billed turn saved on a
+  + /// mistyped command, zero prompts eaten.
+  ... (7 more lines)
+ ✓ (13.3s)
+  - /// **`think` is deliberately EXCLUDED and must not be added back:**
+  - /// `yoyo think about the architecture` is a plausible imperative prompt, and
+  - /// refusing it is the worse error. Excluding a verb costs one billed turn on a
+  - /// rare typo; including a wrong one costs a user their actual prompt.
+  + /// **`think` stays out of THIS list, and the reason is PROSE.** That exclusion is
+  + /// still correct here and must not be undone: `yoyo think about the architecture`
+  + /// is a plausible imperative prompt, and refusing it is the worse error. Excluding
+  + /// a verb costs one billed turn on a rare typo; including a wrong one costs a user
+  ... (12 more lines)
+ ✓ (26.7s)
+    pub const REPL_ONLY_MULTI_TOKEN_VERBS: &[&str] = &["context", "cost", "provider", "tokens"];
+  + 
+  + /// REPL-only verbs refused in their multi-token form **only when the second token
+  + /// is an exact member of a closed argument vocabulary** — the verbs whose prose
+  + /// second token is too plausible to refuse outright.
+  + ///
+  + /// The discrimination is literal rather than probabilistic: `yoyo think high` is
+  + /// the command, `yoyo think about the architecture` is a prompt, and the argument
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+As expected — dead code until I add the consumer. Now the consumer in `repl_only_multi_token_verb`, plus the doc comment there.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 28.1s (2 ✓)
+
+Expected — the definition needs its consumer. Adding the gated branch now:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (19 → 31 lines)
+    /// - `args[1]` must not start with `-` — `yoyo -p "tokens today"` is the very hatch
+    ///   this guard's own message names, and it must reach the prompt path.
+  - /// - `args[1]` must be an **exact** member of `REPL_ONLY_MULTI_TOKEN_VERBS`.
+  + /// - `args[1]` must be an **exact** member of `REPL_ONLY_MULTI_TOKEN_VERBS`, **or**
+  + ///   an **exact** member of `REPL_ONLY_MULTI_TOKEN_ARG_GATED` whose `args[2]` is in
+  + ///   turn an **exact** member of that verb's closed argument vocabulary.
+  + ///
+  + /// The gated branch reads `args[2]` and deliberately **nothing beyond it**: extra
+  + /// tokens after a valid level (`yoyo think high --json`) do not make `think high`
+  + /// prose again, which is the same reading the listed verbs already get
+  + /// (`yoyo tokens today so far`). Pinned by test in that direction.
+    ///
+    /// Everything else returns `None` and keeps today's behaviour byte-for-byte.
+    /// `args[0]` is the binary path.
+  ···
+        if verb.starts_with('-') {
+            return None;
+        }
+  -     if !REPL_ONLY_MULTI_TOKEN_VERBS.contains(&verb) {
+  -         return None;
+  ... (11 more lines)
+ ✓ (1m 37s)
+    /// - `args[1]` must not start with `-` — `yoyo -p "tokens today"` is the very hatch
+    ///   this guard's own message names, and it must reach the prompt path.
+  - /// - `args[1]` must be an **exact** member of `REPL_ONLY_MULTI_TOKEN_VERBS`.
+  + /// - `args[1]` must be an **exact** member of `REPL_ONLY_MULTI_TOKEN_VERBS`, **or**
+  + ///   an **exact** member of `REPL_ONLY_MULTI_TOKEN_ARG_GATED` whose `args[2]` is in
+  + ///   turn an **exact** member of that verb's closed argument vocabulary.
+  + ///
+  + /// The gated branch reads `args[2]` and deliberately **nothing beyond it**: extra
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests. Adding the fire + near-miss + routed-verb extensions:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (1 → 81 lines)
+  +     /// The FIFTH verb of #886's class (Day 202), and the one that needed an ARG
+  +     /// GATE rather than a list entry: `yoyo think high` is the command shape that
+  +     /// used to start a **billed LLM turn with write tools attached**, while
+  +     /// `yoyo think about the architecture` is a plausible prompt that must keep
+  +     /// reaching the model.
+  +     ///
+  +     /// ANTI-VACUOUS, in two places: the vocabulary must be non-empty FIRST (an
+  +     /// empty one would make the loop below a silent pass), and the loop must
+  +     /// actually be iterating it.
+  +     #[test]
+  +     fn arg_gated_think_level_is_refused_before_any_billed_turn() {
+  +         assert!(
+  +             !crate::commands::THINKING_LEVELS.is_empty(),
+  +             "the thinking-level vocabulary is empty — this is a REFUSAL, not a clean \
+  +              scan: the gate could never fire and `yoyo think <level>` would still bill"
+  +         );
+  + 
+  +         let msg = repl_only_multi_token_refusal(&argv(&["yoyo", "think", "high"]))
+  +             .expect("`yoyo think high` is the command shape that used to bill");
+  +         assert!(
+  ... (61 more lines)
+ ✓ (1m 37s)
+  +     /// The FIFTH verb of #886's class (Day 202), and the one that needed an ARG
+  +     /// GATE rather than a list entry: `yoyo think high` is the command shape that
+  +     /// used to start a **billed LLM turn with write tools attached**, while
+  +     /// `yoyo think about the architecture` is a plausible prompt that must keep
+  +     /// reaching the model.
+  +     ///
+  +     /// ANTI-VACUOUS, in two places: the vocabulary must be non-empty FIRST (an
+  +     /// empty one would make the loop below a silent pass), and the loop must
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (16 → 45 lines)
+                    "{verb} is BOTH routed and refused — the dispatcher would never be reached"
+                );
+            }
+  -         // And from the other direction, at the emission point.
+  +         // The arg-gated verbs carry the same obligation, and a shadowed route is
+  +         // exactly how the gate would break a verb that works.
+  +         for (verb, _) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
+  +             assert!(
+  +                 !ROUTED_SUBCOMMANDS.contains(verb),
+  +                 "{verb} is BOTH routed and refused — the dispatcher would never be reached"
+  +             );
+  +         }
+  +         // And from the other direction, at the emission point: a routed verb keeps
+  +         // its multi-token form even when another list names it.
+            for verb in ROUTED_SUBCOMMANDS {
+                assert_eq!(
+                    repl_only_multi_token_refusal(&argv(&["yoyo", verb, "list"])),
+                    None,
+                    "{verb} is routed — refusing its multi-token form would break a working verb"
+                );
+  ... (22 more lines)
+ ✓ (1m 40s)
+                    "{verb} is BOTH routed and refused — the dispatcher would never be reached"
+                );
+            }
+  -         // And from the other direction, at the emission point.
+  +         // The arg-gated verbs carry the same obligation, and a shadowed route is
+  +         // exactly how the gate would break a verb that works.
+  +         for (verb, _) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
+  +             assert!(
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, that last block is convoluted and uses `repl_only_refusal_message` which is fine (it's in the module). But it re-computes the expected message via the builder — agreeing by construction (a weakness). Better: assert directly on the verdict in the current configuration, i.e. since the gated verb is NOT routed (asserted above), `yoyo think high` must fire. But that duplicates the arg-gated test. Actually the point of "both directions" is: does the gate ever refuse a routed verb's invocation? A routed verb's invocation is `yoyo <routed> <word>`. Since no gated verb is routed, the gate can't fire on routed verbs. The building expected message via the builder is agreeing-with-itself. Let me simplify: assert that for each gated verb, the invocation fires exactly when the verb is not routed — but since we've already asserted it's not routed, we can simply assert it fires. However, the "in both directions" phrasing in the task: "Extend the existing test so that a routed verb is still never refused, in both directions."
+
+Simplify to avoid the self-agreeing build:
+
+```rust
+        // The gated path's second direction: no invocation of a ROUTED verb may be
+        // claimed by the gate, whatever its second token is.
+        for verb in ROUTED_SUBCOMMANDS {
+            for (gated_verb, vocabulary) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
+                let word = vocabulary.first().copied().unwrap_or("");
+                assert_eq!(
+                    repl_only_multi_token_refusal(&argv(&["yoyo", verb, word])),
+                    None,
+                    ...
+                );
+            }
+        }
+```
+
+Wait but that's weird: `yoyo <routed> high` e.g. `yoyo goal high` — args[1]="goal", not gated → None. Good, that's a real check that the gate keys on args[1] exactly.
+
+Hmm, but using `vocabulary.first()` — if vocabulary empty, `unwrap_or("")`. Fine. Actually the anti-vacuous check on the vocabulary is elsewhere.
+
+Let me replace that last block with the cleaner version.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (21 → 15 lines)
+  -         // And the gated path's own second direction: a routed verb never fires the
+  -         // gate even when its second token IS an exact vocabulary word.
+  -         for (gated_verb, vocabulary) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
+  -             for &word in *vocabulary {
+  -                 assert_eq!(
+  -                     repl_only_multi_token_refusal(&argv(&["yoyo", gated_verb, word])),
+  -                     if ROUTED_SUBCOMMANDS.contains(gated_verb) {
+  -                         None
+  -                     } else {
+  -                         Some(
+  -                             repl_only_refusal_message(
+  -                                 gated_verb,
+  -                                 &format!("{gated_verb} {word}")
+  -                             )
+  -                         )
+  -                     },
+  -                     "`yoyo {gated_verb} {word}` must follow its route iff it is routed"
+  -                 );
+  +         // And the gated path's own second direction: no invocation of a routed verb
+  +         // is claimable by the gate, whatever the second token is — the gate keys on
+  ... (13 more lines)
+ ✓ (1m 37s)
+  -         // And the gated path's own second direction: a routed verb never fires the
+  -         // gate even when its second token IS an exact vocabulary word.
+  -         for (gated_verb, vocabulary) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
+  -             for &word in *vocabulary {
+  -                 assert_eq!(
+  -                     repl_only_multi_token_refusal(&argv(&["yoyo", gated_verb, word])),
+  -                     if ROUTED_SUBCOMMANDS.contains(gated_verb) {
+  -                         None
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now: extend `every_multi_token_verb_is_really_a_repl_command` to cover the gated verbs (message claims `/think` exists). And update the stale comment at line ~462 in `multi_token_guard_leaves_real_prompts_untouched`. Let me do both.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (8 → 17 lines)
+            for verb in REPL_ONLY_MULTI_TOKEN_VERBS {
+  +             assert!(
+  +                 repl_only.contains(verb),
+  +                 "{verb} is refused with a message pointing at /{verb}, but no such \
+  +                  REPL command exists — the refusal would be a lie"
+  +             );
+  +         }
+  +         // The arg-gated verbs compose the SAME message through the same builder, so
+  +         // they inherit the same obligation: `/think` must really exist.
+  +         for (verb, _) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
+                assert!(
+                    repl_only.contains(verb),
+                    "{verb} is refused with a message pointing at /{verb}, but no such \
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (3 → 4 lines)
+  -             // `think` is deliberately NOT in the const: this is a plausible prompt
+  -             // and refusing it is the worse error.
+  +             // `think` is deliberately NOT in REPL_ONLY_MULTI_TOKEN_VERBS: this is a
+  +             // plausible prompt and refusing it is the worse error. The arg-gated
+  +             // list covers the COMMAND shape (`think <level>`) without touching this.
+                &["yoyo", "think", "about", "the", "architecture"][..],
+ ✓ (1m 37s)
+  -             // `think` is deliberately NOT in the const: this is a plausible prompt
+  -             // and refusing it is the worse error.
+  +             // `think` is deliberately NOT in REPL_ONLY_MULTI_TOKEN_VERBS: this is a
+  +             // plausible prompt and refusing it is the worse error. The arg-gated
+  +             // list covers the COMMAND shape (`think <level>`) without touching this.
+                &["yoyo", "think", "about", "the", "architecture"][..],
+ ✓ (3m 15s)
+            for verb in REPL_ONLY_MULTI_TOKEN_VERBS {
+  +             assert!(
+  +                 repl_only.contains(verb),
+  +                 "{verb} is refused with a message pointing at /{verb}, but no such \
+  +                  REPL command exists — the refusal would be a lie"
+  +             );
+  +         }
+  +         // The arg-gated verbs compose the SAME message through the same builder, so
+  ... (5 more lines)
+  2 tools completed in 3m 15s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check current state — I was mid-edit. Let me run fmt and the tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && cargo fmt … ✓ (1.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Clippy clean. Now run the targeted tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib dispatch_near_m… ✓ (124ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo dispatch_n… ✓ (120ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 15 pass. But wait — my new test `arg_gated_think_level_is_refused_before_any_billed_turn` — was it run? dispatch_near_miss filter should match module names. 15 tests in that module. Let me confirm the new tests are there by name.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo dispatch_n… ✓ (120ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both new tests and the byte-identical pin are present and green. Now the required positive control — mutate → run → restore as one atomic command:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/dispa… (18 lines) ✓ (42.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Positive control: failed by name, restored (0 NEUTERED lines), passes again. 
+
+Now full gate, then verify the actual binary behavior end-to-end.
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired by name, restored (0 markers), green again. Now the full gate plus an end-to-end check on the built binary:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 24s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All test binaries green, no failures. Now the empirical end-to-end check, the very measurement the task used to justify it — before/after on the built binary.
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now the empirical end-to-end check on the built binary — the same measurement the task used to indentify the defect:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && export PROVI… (4 lines) ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Exactly as designed: `yoyo think high` now exits 2 with zero billing, `yoyo think` unchanged, prose still reaches the prompt path.
+
+Now check docs: does anything document the near-miss guard behavior that would go stale? The task says "No docs change needed". Let me quickly grep for any doc mentioning `think` being excluded from the guard.
+
+Then commit.
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the intended behavior. Checking whether any doc statement went stale:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "tokens today\|REPL-onl… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No docs statements about the near-miss guard that need updating (the ARCHITECTURE.md hits are about other subsystems). The task explicitly says no docs change is needed. Let me check ARCHITECTURE.md for a dispatch_near_miss entry, since CLAUDE.md says to read ARCHITECTURE.md's entry for any file I'm about to change.
+
+Let me search for the entry.
+────────────────────────────────────────────────────────────────────────────────
+
+Per CLAUDE.md I should check ARCHITECTURE.md's entry for this file before finishing:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dispatch_near_miss" ARC… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ARCHITECTURE.md entry for dispatch_near_miss says: "**Explicitly still unrouted, and still spending a billed turn in their multi-token form: `tokens`, `cost`, `context`, `provider`, `think`**" — with a superseded note for Day 199 covering four of five. It says `think` did NOT move deliberately.
+
+My change moves `think <level>` — so I should append a superseded-claim note to ARCHITECTURE.md. CLAUDE.md says new history goes in ARCHITECTURE.md, never CLAUDE.md. The task says "No docs change needed" regarding /think discoverability, but ARCHITECTURE.md's entry now contains a claim that's false for `think <level>`.
+
+Let me find the exact end of that entry (line 356-358 area) and append a Day 202 note. Let me look at line 358's end.
+────────────────────────────────────────────────────────────────────────────────
+
+The ARCHITECTURE.md entry contains a now-false clause ("think did NOT move"). CLAUDE.md requires new history there. Let me find the entry's tail:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=356 && NR<=360 {print N… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line 358 is the last paragraph of the dispatch_near_miss entry (a bullet). Line 359 starts a new bullet for help.rs. So I should append my paragraph to the end of line 358.
+
+Let me get the tail of line 358 to have an anchor.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==358' ARCHITECTURE.md | … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (61 lines) ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, the file is 935 lines, not 860. Let me correct that number — I must not paste a wrong number. Also, the task's own claim said the file was 785 lines. Let me get the actual line count and fix it.
+
+Actually, the module size gate counts lines. Let me check what the gate would report. `count_rs_lines` matches Rust's `lines().count()`. `wc -l` gives 935 — but if the file doesn't end with a newline, wc -l undercounts by 1. Let me use a precise count.
+────────────────────────────────────────────────────────────────────────────────
+
+The line count I wrote (860) is wrong — let me measure it properly and correct it:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/ended at \*\*860\*\* l… ✓ (147ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Module size gate passes. Now check the neutered guards test and any source-reading tests that might scan this file (e.g. a test that counts things in dispatch_near_miss.rs).
+
+Let me run the full test suite one more time and then commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "test… ✓ (2m 4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 16 test binaries ok, no markers left. (Exit 1 is from the grep finding nothing, which is what we want.)
+
+Let me do a final review of the diff, then commit.
+────────────────────────────────────────────────────────────────────────────────
+
+All 16 test binaries green, zero sabotage markers. Final diff review before committing:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "=== COD… ✓ (17ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Everything is verified. I just need to commit. Let me do that now.
+────────────────────────────────────────────────────────────────────────────────
+
+All checks are green. Committing now:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (42ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The backticks in the commit message got interpreted by bash. The commit message lost the `yoyo think <level>` part. Let me amend with proper quoting.
+────────────────────────────────────────────────────────────────────────────────
+
+The backticks were eaten by bash — amending with proper quoting:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit --amend -m 'Day 202 (… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed as 20f1c43d. Done.
+
+## What I did
+
+The measured defect (I re-ran it on the built binary to confirm): yoyo think high printed the prompt-mode banner and started a billed LLM turn with write-capable tools attached, while yoyo think correctly exited 2. Same class as #886, one verb short.
+
+The fix, in `src/dispatch_near_miss.rs` only:
+
+1. **New const, arg-gated:**
+   ```rust
+   pub const REPL_ONLY_MULTI_TOKEN_ARG_GATED: &[(&str, &[&str])] =
+       &[("think", crate::commands::THINKING_LEVELS)];
+   ```
+   The vocabulary is derived from the same data the REPL's own completion reads — a level added there is covered the day it's added.
+
+2. **Consumer in the same edit (no dangling definition): after the exact-first-token check fails, the gated list fires only when `args[1]` is the verb and `args[2]` is an exact vocabulary member. `args.len() >= 3` and the `starts_with('-')` clause are untouched. `repl_only_refusal_message` is reused**, not re-stated.
+
+3. **Doc comment corrected, not deleted** — the old paragraph now states the distinction (prose stays a prompt; an exact level word is the command), and says the exclusion predates `THINKING_LEVELS existing as data. The REPL_ONLY_MULTI_TOKEN_VERBS const is unchanged; think` is not in it.
+
+4. **End-to-end, on the built binary:**
+   • `yoyo think` → exit 2, unchanged
+   • `yoyo think high → exit 2, to send this as a prompt: yoyo -p "think high"` (was: billed turn)
+   • `yoyo think about the architecture` → still reaches the prompt path
+
+Positive control (atomic mutate→run→restore): neutering the gated branch to return None reddened arg_gated_think_level_is_refused_before_any_billed_turn by name; restore left 0 markers and the test green.
+
+Gate: cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo build, cargo test — all pass (16/16 test binaries ok). the_two_token_refusal_is_byte_identical_after_the_extraction stayed unmodified and green.
+
+Honest limits, recorded in ARCHITECTURE.md rather than implied: the gates I added for prose are absence assertions — a boundary pin against over-firing, not evidence the gate works; the positive evidence is solely the new test's presence assertions, with the anti-vacuous half asserted first (non-empty vocabulary) plus a counted loop. The change stops one billed turn on one command shape and routes nothing. And the surviving-green reading: the near-miss rows in no_routed_verb_... are None assertions, which a dead branch also produces.
+
+I did not widen the gate to architect/plan/profile/mcp and did not route think as a subcommand — both named out of scope. ARCHITECTURE.md's dispatch_sub.rs entry carried a now-false clause (think did NOT move); I appended the Day-202 supersession there rather than erasing it.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
