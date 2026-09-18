@@ -18,11 +18,11 @@ use yoagent::*;
 use crate::cli;
 use crate::config;
 use crate::format::*;
-use crate::hooks;
+use crate::hooks::{self, maybe_hook};
 use crate::prompt::{run_prompt, run_prompt_with_content, PromptOutcome};
 use crate::prompt_budget::is_audit_enabled;
 use crate::tool_wrappers::{with_session_cap, SESSION_TOOL_CALL_CAP};
-use crate::tools::{build_sub_agent_tool, build_tools};
+use crate::tools::{build_hook_registry, build_sub_agent_tool, build_tools_with_hooks};
 
 /// Return the User-Agent header value for yoyo.
 pub(crate) fn yoyo_user_agent() -> String {
@@ -1095,7 +1095,14 @@ impl AgentConfig {
         // and also avoids the sub_agent/shared_state bypass that disallowed_tools
         // couldn't catch (they were added after filtering via with_sub_agent).
         if !self.no_tools {
-            let mut tools = build_tools(
+            // ONE hook registry for the whole tool set — the one `build_tools`
+            // would otherwise build privately and never let out. It has to be
+            // built here because the RLM pair below is pushed in this function,
+            // not inside `build_tools`, and handing those two a *second*
+            // registry built from the same config would be two registries that
+            // agree today (the "two doors, one policy, one deaf" shape).
+            let hooks = build_hook_registry(is_audit_enabled(), self.shell_hooks.clone());
+            let mut tools = build_tools_with_hooks(
                 self.auto_approve,
                 &self.permissions,
                 &self.dir_restrictions,
@@ -1104,8 +1111,7 @@ impl AgentConfig {
                 } else {
                     TOOL_OUTPUT_MAX_CHARS_PIPED
                 },
-                is_audit_enabled(),
-                self.shell_hooks.clone(),
+                &hooks,
                 self.bash_cwd.clone(),
             );
 
@@ -1138,8 +1144,33 @@ impl AgentConfig {
             // `FallbackSubAgentTool` wrapping the real one, so the session cap
             // must sit OUTSIDE it: one capped slot per delegation, whichever
             // model ends up answering.
-            tools.push(with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP));
-            tools.push(Box::new(SharedStateTool::new(shared_state)));
+            //
+            // Both RLM tools are wrapped with `maybe_hook` against the SAME
+            // registry `build_tools_with_hooks` just used (Day 202). Until then
+            // these two pushes were the only builtins in the process that no
+            // hook could see: a user's `[hooks.*]` config observed nine tools
+            // and silently missed delegation and shared-state traffic — an
+            // event that fires nothing is indistinguishable from a hook with
+            // nothing to say, the same defect class as the missing
+            // `post_failure` fire point. `maybe_hook` returns the tool
+            // UNWRAPPED when the registry is empty, so the whole default
+            // population (no hooks configured) gets a byte-identical tool set.
+            //
+            // Fires ONCE PER DISPATCH at the parent, deliberately. The child's
+            // own tool set is built by `sub_agent_child_tools` and the nested
+            // tool by `build_sub_agent_tool_at_depth`; neither is wrapped, so
+            // a grandchild's tool calls are the CHILD's events, not the
+            // parent's. Wrapping at both levels would report a sub-agent's
+            // internals as the parent's calls, which is a different (and
+            // wrong) population.
+            tools.push(maybe_hook(
+                with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP),
+                &hooks,
+            ));
+            tools.push(maybe_hook(
+                Box::new(SharedStateTool::new(shared_state)),
+                &hooks,
+            ));
 
             // Filter out disallowed tools (--disallowed-tools flag, --lite, or
             // --restricted). ONE statement, covering every tool in the list.
@@ -3671,7 +3702,13 @@ session will fail on the first turn with 'Tool names must be unique'."
         // edit reads as done.
         let src = include_str!("agent_builder.rs");
         // Needles assembled at runtime so this test cannot match its own source.
-        let push = format!("tools.push(with_session_{}", "cap(sub_agent_tool");
+        // Day 202: the push gained a `maybe_hook(...)` wrapper, so the needle
+        // spans the newline rather than being truncated to the old spelling —
+        // the assertions below are unchanged, including "exactly one push site".
+        let push = format!(
+            "tools.push(maybe_hook(\n                with_session_{}",
+            "cap(sub_agent_tool"
+        );
         let retain = format!("tools.retain(|t| !tool_name_{}", "disallowed(t.name()");
         let effective = format!("effective_disallowed_{}", "tools(&self.disallowed_tools)");
 
@@ -3693,6 +3730,67 @@ session will fail on the first turn with 'Tool names must be unique'."
             src.matches(&push).count(),
             1,
             "expected exactly one sub_agent push site"
+        );
+    }
+
+    /// Day 202: the RLM pair (`sub_agent`, `shared_state`) is pushed HERE, not
+    /// inside `build_tools`, so `agent_builder` must own the registry and hand
+    /// it to both halves.
+    ///
+    /// Deliberately WEAK source-level guard, and its limit stated rather than
+    /// implied: it proves the `maybe_hook` wrappers and the single shared
+    /// registry are PRESENT in this file, never that a hook ever fires for a
+    /// real dispatch. The parent tool list is only reachable through
+    /// `configure_agent`, which builds a yoagent `Agent` exposing no tool-name
+    /// accessor, and `sub_agent` cannot be invoked in a test without a
+    /// provider. The behavioural half of the claim lives in `tools.rs`'s
+    /// `hook_seam_tests`, which drives the same `maybe_hook` seam over a real
+    /// `SharedStateTool`.
+    ///
+    /// Needles are assembled at runtime so this test cannot match itself.
+    #[test]
+    fn the_rlm_push_sites_go_through_the_one_shared_registry() {
+        let src = include_str!("agent_builder.rs");
+
+        let sub_agent_wrap = format!(
+            "tools.push(maybe_hook(\n                with_session_{}",
+            "cap(sub_agent_tool"
+        );
+        let shared_state_wrap = format!(
+            "tools.push(maybe_hook(\n                Box::new({}::new(shared_state))",
+            "SharedStateTool"
+        );
+        assert_eq!(
+            src.matches(&sub_agent_wrap).count(),
+            1,
+            "the sub_agent push must be wrapped in `maybe_hook`, exactly once — \
+             an unwrapped push is a tool no hook can see (Day 202)"
+        );
+        assert_eq!(
+            src.matches(&shared_state_wrap).count(),
+            1,
+            "the shared_state push must be wrapped in `maybe_hook`, exactly \
+             once — otherwise a user's [hooks.*] config never observes a \
+             shared-state read/write"
+        );
+
+        // ONE registry, shared, and the tool list built against it. Two
+        // registries built from the same config would agree today and diverge
+        // the first time one construction changed — the "two doors, one
+        // policy, one deaf" shape.
+        let build_registry = format!("build_hook_{}(", "registry");
+        let build_with = format!("build_tools_{}(", "with_hooks");
+        assert_eq!(
+            src.matches(&build_registry).count(),
+            1,
+            "expected exactly one hook-registry construction in \
+             agent_builder.rs — the one registry both halves share"
+        );
+        assert_eq!(
+            src.matches(&build_with).count(),
+            1,
+            "expected exactly one registry-taking tool-list build — the \
+             tool list must be built against that same registry"
         );
     }
 

@@ -140,7 +140,12 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 200 (#929): +191 — the tests `system_prompt_token_budget` was
     // required to have when #926 replaced the hardcoded 4_000 with a
     // measurement. Pasted from what the gate printed, not computed.
-    ("src/agent_builder.rs", 4177),
+    // Day 202: 4275 — the RLM pair (`sub_agent`, `shared_state`) is pushed in
+    // this file, so the ONE hook registry has to be built here and shared
+    // with `build_tools_with_hooks`; +98 is that seam plus the comment that
+    // says why the wrap is not tidiness, and the weak source-level guard
+    // that pins both wrappers. Number pasted from what the gate printed.
+    ("src/agent_builder.rs", 4275),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
@@ -440,7 +445,12 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // sub_agent_tool_for recording, with citations and a yoagent-version-claim
     // marker, that yoagent 0.18.1 has no per-dispatch seam. No production line
     // moved. Number pasted from what the gate itself printed, after cargo fmt.
-    ("src/tools.rs", 4263), // Day 193: +184 for #881 slice 1's read-only child seam + guards.
+    // Day 202: 4525 — `build_hook_registry` + `build_tools_with_hooks` (the
+    // registry seam, so the RLM pushes can share the ONE registry instead of
+    // a second one that agrees today) plus the `hook_seam_tests` module that
+    // drives that seam over a real SharedStateTool. Number pasted from what
+    // the gate itself printed, after cargo fmt.
+    ("src/tools.rs", 4525), // Day 202: +262 for the shared-registry seam.
     // Day 163 (#726): -58 lines — emerging-risk annotation removed from
     // build_watch_fix_prompt, with its own test; see #724.
     ("src/watch.rs", 4418),

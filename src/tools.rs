@@ -1048,6 +1048,28 @@ fn offer_persist_pattern(cmd: &str) {
     }
 }
 
+/// Build the hook registry the tool set wires into every tool.
+///
+/// Extracted from `build_tools`' body (Day 202) so that a *second* caller can
+/// hand the same registry to tools that are pushed outside `build_tools` (the
+/// RLM pair, `sub_agent` / `shared_state`, pushed in `agent_builder.rs`).
+/// Building a second registry there instead would be two registries that agree
+/// today — the "two doors, one policy, one deaf" shape this repo has shipped
+/// more than once. One registry, passed through, is the whole point.
+pub(crate) fn build_hook_registry(
+    audit: bool,
+    shell_hooks: Vec<hooks::ShellHook>,
+) -> Arc<HookRegistry> {
+    let mut registry = HookRegistry::new();
+    if audit {
+        registry.register(Box::new(AuditHook));
+    }
+    for hook in shell_hooks {
+        registry.register(Box::new(hook));
+    }
+    Arc::new(registry)
+}
+
 /// Build the tool set, optionally with a bash confirmation prompt.
 /// When `auto_approve` is false (default), bash commands and file writes require user approval.
 /// The "always" option sets a session-wide flag so subsequent operations are auto-approved.
@@ -1058,6 +1080,16 @@ fn offer_persist_pattern(cmd: &str) {
 /// When `bash_cwd` is `Some(path)`, the bash tool runs every command with that
 /// working directory (used by `/spawn` worktree isolation); `None` keeps the
 /// process cwd — the default for interactive and normal-agent use.
+///
+/// Kept as a thin wrapper over `build_tools_with_hooks` so that this 7-argument
+/// signature — called by `hooks.rs` tests and by several tests in this module —
+/// stays byte-identical. The two halves are a matched pair rather than duplicate
+/// doors: this one owns the registry, `build_tools_with_hooks` takes one, and
+/// only the latter can be shared with tools built outside this function.
+/// Only exercised by tests today (`agent_builder.rs` shares a registry instead);
+/// kept as the no-registry entry point, the same shape `context.rs`'s
+/// `get_project_file_listing` carries.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn build_tools(
     auto_approve: bool,
     permissions: &cli::PermissionConfig,
@@ -1065,6 +1097,34 @@ pub fn build_tools(
     max_tool_output: usize,
     audit: bool,
     shell_hooks: Vec<hooks::ShellHook>,
+    bash_cwd: Option<String>,
+) -> Vec<Box<dyn AgentTool>> {
+    let hooks = build_hook_registry(audit, shell_hooks);
+    build_tools_with_hooks(
+        auto_approve,
+        permissions,
+        dir_restrictions,
+        max_tool_output,
+        &hooks,
+        bash_cwd,
+    )
+}
+
+/// Build the tool set against a caller-owned hook registry.
+///
+/// This is `build_tools`' body with the registry construction lifted out, so a
+/// caller can build the SAME registry once and share it with tools it pushes
+/// itself (`agent_builder.rs` wraps `sub_agent` and `shared_state` with it).
+/// An empty registry is the default population — no `[hooks.*]` configured —
+/// and then every `maybe_hook` returns its tool unwrapped, so the resulting
+/// tool vector is byte-identical to what `build_tools` produced before this
+/// seam existed.
+pub fn build_tools_with_hooks(
+    auto_approve: bool,
+    permissions: &cli::PermissionConfig,
+    dir_restrictions: &cli::DirectoryRestrictions,
+    max_tool_output: usize,
+    hooks: &Arc<HookRegistry>,
     bash_cwd: Option<String>,
 ) -> Vec<Box<dyn AgentTool>> {
     // Shared flag: when any tool gets "always", all tools skip prompts
@@ -1169,25 +1229,13 @@ pub fn build_tools(
     // so hints escalate from diagnostic to alternative suggestions.
     let failure_tracker = ToolFailureTracker::new();
 
-    // Build hook registry — AuditHook when audit mode is on, plus user-configured shell hooks.
-    let hooks = {
-        let mut registry = HookRegistry::new();
-        if audit {
-            registry.register(Box::new(AuditHook));
-        }
-        for hook in shell_hooks {
-            registry.register(Box::new(hook));
-        }
-        Arc::new(registry)
-    };
-
     let mut tools = vec![
         maybe_hook(
             with_recovery_hints(
                 with_truncation(with_read_guard_bash(Box::new(bash)), max_tool_output),
                 &failure_tracker,
             ),
-            &hooks,
+            hooks,
         ),
         maybe_hook(
             with_recovery_hints(
@@ -1197,7 +1245,7 @@ pub fn build_tools(
                 ),
                 &failure_tracker,
             ),
-            &hooks,
+            hooks,
         ),
         maybe_hook(
             with_recovery_hints(
@@ -1207,7 +1255,7 @@ pub fn build_tools(
                 ),
                 &failure_tracker,
             ),
-            &hooks,
+            hooks,
         ),
         maybe_hook(
             with_recovery_hints(
@@ -1217,7 +1265,7 @@ pub fn build_tools(
                 ),
                 &failure_tracker,
             ),
-            &hooks,
+            hooks,
         ),
         maybe_hook(
             with_recovery_hints(
@@ -1227,7 +1275,7 @@ pub fn build_tools(
                 ),
                 &failure_tracker,
             ),
-            &hooks,
+            hooks,
         ),
         maybe_hook(
             with_recovery_hints(
@@ -1237,25 +1285,25 @@ pub fn build_tools(
                 ),
                 &failure_tracker,
             ),
-            &hooks,
+            hooks,
         ),
         maybe_hook(
             with_recovery_hints(
                 with_truncation(with_read_guard(rename_tool), max_tool_output),
                 &failure_tracker,
             ),
-            &hooks,
+            hooks,
         ),
     ];
 
     // Only add ask_user in interactive mode (stdin is a terminal).
     // In piped mode or test environments, this tool isn't available.
     if std::io::stdin().is_terminal() {
-        tools.push(maybe_hook(Box::new(AskUserTool), &hooks));
+        tools.push(maybe_hook(Box::new(AskUserTool), hooks));
     }
 
     // TodoTool is always available — it only modifies in-memory state, not filesystem
-    tools.push(maybe_hook(Box::new(TodoTool), &hooks));
+    tools.push(maybe_hook(Box::new(TodoTool), hooks));
 
     // WebSearchTool — agent-callable web search (always available), with a
     // session-wide call cap as a runaway-loop circuit breaker.
@@ -1267,7 +1315,7 @@ pub fn build_tools(
             ),
             &failure_tracker,
         ),
-        &hooks,
+        hooks,
     ));
 
     // In lite mode (small context window), augment tool descriptions with
@@ -4258,6 +4306,220 @@ mod sub_agent_fallback_gate_tests {
                 sub_agent_fallback_key("anthropic", "sk-primary", "ollama"),
                 Some(String::new())
             );
+        }
+    }
+}
+
+/// Day 202 — the hook seam for the RLM pair.
+///
+/// `build_tools` wraps nine builtins with `maybe_hook`. The two RLM tools are
+/// pushed by `agent_builder.rs` (they need the parent's `SharedState`, which
+/// `build_tools` does not have), and until Day 202 those two pushes were
+/// unwrapped — so a user's `[hooks.*]` config observed every tool except
+/// delegation and shared-state traffic. An event that fires nothing is
+/// indistinguishable from a hook with nothing to say.
+///
+/// These tests drive the SAME `maybe_hook` seam the push sites use, over a
+/// REAL `SharedStateTool` (pure, in-memory, no network) and a REAL tool list
+/// from `build_tools_with_hooks`. What they cannot prove is that
+/// `agent_builder.rs` composes them this way — the parent's tool list is only
+/// reachable through `configure_agent`, which builds a yoagent `Agent`
+/// exposing no tool-name accessor. That half is pinned by the deliberately
+/// weak source-level guard `the_rlm_push_sites_go_through_the_one_shared_registry`
+/// in `agent_builder.rs`; the two together are the claim.
+#[cfg(test)]
+mod hook_seam_tests {
+    use super::*;
+    use crate::hooks::{maybe_hook, Hook, HookRegistry};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use yoagent::tools::SharedStateTool;
+
+    /// Records every tool name it is asked about, so the test can assert on
+    /// WHICH tool fired the hook, not merely that something fired.
+    struct CountingHook {
+        posts: AtomicUsize,
+        names: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl CountingHook {
+        fn new() -> Self {
+            Self {
+                posts: AtomicUsize::new(0),
+                names: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+        fn posts(&self) -> usize {
+            self.posts.load(Ordering::SeqCst)
+        }
+        fn names(&self) -> Vec<String> {
+            self.names.lock().unwrap().clone()
+        }
+    }
+
+    impl Hook for CountingHook {
+        fn name(&self) -> &str {
+            "counting"
+        }
+        fn post_execute(
+            &self,
+            tool_name: &str,
+            _params: &serde_json::Value,
+            output: &str,
+        ) -> Result<crate::hooks::PostHookResult, String> {
+            self.posts.fetch_add(1, Ordering::SeqCst);
+            self.names.lock().unwrap().push(tool_name.to_string());
+            Ok(crate::hooks::PostHookResult::passthrough(output))
+        }
+    }
+
+    fn empty_perms() -> cli::PermissionConfig {
+        cli::PermissionConfig::default()
+    }
+
+    /// The default population: no `[hooks.*]` configured, so the registry is
+    /// empty and every tool comes back UNWRAPPED. Pinned with whole-vector
+    /// `assert_eq!` on names plus the literal list, never a `contains` — this
+    /// is the entire regression surface for the seam, and a name silently
+    /// gained or lost here is every user with no hooks.
+    #[test]
+    fn empty_registry_yields_the_same_tool_vector_as_before() {
+        let perms = empty_perms();
+        let dirs = cli::DirectoryRestrictions::default();
+        let registry = Arc::new(HookRegistry::new());
+
+        let through_seam = build_tools_with_hooks(
+            true,
+            &perms,
+            &dirs,
+            crate::format::TOOL_OUTPUT_MAX_CHARS,
+            &registry,
+            None,
+        );
+        let before = build_tools(
+            true,
+            &perms,
+            &dirs,
+            crate::format::TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
+
+        let names = |tools: &[Box<dyn AgentTool>]| -> Vec<String> {
+            tools.iter().map(|t| t.name().to_string()).collect()
+        };
+        assert_eq!(names(&through_seam), names(&before));
+        // ...and against the literal list, so the equality above cannot be a
+        // tautology: `build_tools` now delegates to the seam, so comparing the
+        // two alone would compare a function with itself.
+        assert_eq!(
+            names(&through_seam),
+            vec![
+                "bash",
+                "read_file",
+                "write_file",
+                "edit_file",
+                "list_files",
+                "search",
+                "rename_symbol",
+                "todo",
+                "web_search",
+            ],
+            "the no-hooks tool vector must be byte-identical to the pre-Date-202 \
+             list (ask_user is absent because stdin is not a terminal in tests)"
+        );
+    }
+
+    /// The behavioural half: a REAL `SharedStateTool` wrapped exactly as
+    /// `agent_builder.rs` wraps it, against a registry holding a real hook.
+    /// `shared_state` is pure and in-memory, so this is an actual call.
+    #[tokio::test]
+    async fn hook_fires_for_a_shared_state_call_and_sees_its_name() {
+        let counter = Arc::new(CountingHook::new());
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(CountingHookProxy(Arc::clone(&counter))));
+        let registry = Arc::new(registry);
+
+        let state = SharedState::new();
+        let tool = maybe_hook(Box::new(SharedStateTool::new(state)), &registry);
+        assert_eq!(tool.name(), "shared_state");
+
+        // Anti-vacuous: nothing has fired yet, so a counter that is never
+        // incremented cannot pass this test by agreeing with itself.
+        assert_eq!(counter.posts(), 0, "no call has happened yet");
+
+        let ctx = yoagent::types::ToolContext::new("call-1", "shared_state");
+        let result = tool
+            .execute(
+                serde_json::json!({"action": "set", "key": "k", "value": "v"}),
+                ctx,
+            )
+            .await;
+        assert!(result.is_ok(), "the set op must succeed: {result:?}");
+
+        assert_eq!(counter.posts(), 1, "the hook must have run exactly once");
+        assert_eq!(
+            counter.names(),
+            vec!["shared_state".to_string()],
+            "the hook must see the tool's real name, not the wrapper's"
+        );
+    }
+
+    /// The same seam over the nine builtins, so the RLM test above is not
+    /// standing in for a regression in the shared wiring: a tool built through
+    /// `build_tools_with_hooks` with a non-empty registry fires too.
+    #[tokio::test]
+    async fn hook_fires_for_a_builtin_built_through_the_new_seam() {
+        let counter = Arc::new(CountingHook::new());
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(CountingHookProxy(Arc::clone(&counter))));
+        let registry = Arc::new(registry);
+
+        let perms = empty_perms();
+        let dirs = cli::DirectoryRestrictions::default();
+        let tools = build_tools_with_hooks(
+            true,
+            &perms,
+            &dirs,
+            crate::format::TOOL_OUTPUT_MAX_CHARS,
+            &registry,
+            None,
+        );
+        let todo = tools
+            .iter()
+            .find(|t| t.name() == "todo")
+            .expect("todo is always in the list");
+        assert_eq!(counter.posts(), 0, "no call has happened yet");
+
+        let ctx = yoagent::types::ToolContext::new("call-1", "todo");
+        let result = todo
+            .execute(serde_json::json!({"action": "list"}), ctx)
+            .await;
+        assert!(result.is_ok(), "the list op must succeed: {result:?}");
+
+        assert_eq!(
+            counter.posts(),
+            1,
+            "a hook registered with the shared registry must see a builtin's call"
+        );
+        assert_eq!(counter.names(), vec!["todo".to_string()]);
+    }
+
+    /// `register` takes `Box<dyn Hook>`; this forwards to a shared counter so
+    /// the test can read the tally after the registry owns the hook.
+    struct CountingHookProxy(Arc<CountingHook>);
+
+    impl Hook for CountingHookProxy {
+        fn name(&self) -> &str {
+            self.0.name()
+        }
+        fn post_execute(
+            &self,
+            tool_name: &str,
+            params: &serde_json::Value,
+            output: &str,
+        ) -> Result<crate::hooks::PostHookResult, String> {
+            self.0.post_execute(tool_name, params, output)
         }
     }
 }
