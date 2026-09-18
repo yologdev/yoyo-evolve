@@ -1,0 +1,722 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the exact code I need to change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 160,235p src/dispatch_nea…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_teach" -A 40 … ✓ (6ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read the full doc comments and the handler for architect, and the test module in dispatch_near_miss.rs.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 155,215p src/dispatch_nea…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_architect" -A… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me read the full doc comments in dispatch_near_miss.rs (why do they get truncated? The "..." lines are odd — maybe the file has some formatting). Let me cat with -A? Actually the "(17 more similar lines)" is the tool's rendering compression. Let me use read_file.
+
+Also check the test module and THINKING_LEVELS precedent.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs:150..270  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "THINKING_LEVELS" -r src… ✓ (1ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the test module in dispatch_near_miss.rs, around line 500-650.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs:500..640 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I understand the test module structure. Let me check whether `teach` and `architect` are in ROUTED_SUBCOMMANDS.
+
+Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/dispatch_near_m…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "teach\|architect" src/d… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — `teach` and `architect` are not routed subcommands. Now, the test `no_routed_verb_is_ever_refused_by_the_multi_token_guard` also iterates ROUTED_SUBCOMMANDS and asserts `repl_only_multi_token_refusal(&["yoyo", verb, "list"])` — wait let me check line 635-650 for what it asserts.
+
+Also note: `architect` second token "on" — but also there might be a REPL bare word `architect`? Let's check dispatch near-miss list of repl_only commands. Anyway.
+
+Now step 1: add consts to commands_config.rs with doc comments and a weak source-level guard test.
+
+Let me look at the end of commands_config.rs tests module to see the style, and check where handle_teach/handle_architect tests live.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 636,660p src/dispatch_nea… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait: handle_architect's `on` arm sets model to None and prints "current model". Handlers use set_architect_mode which is likely global state. Tests probably use a serial guard.
+
+Now let me write the consts. Where to put them in commands_config.rs? Near handle_teach and handle_architect. Task says "Add two module-level consts with doc comments that name the handler as the authority". The exact snippet given.
+
+Let me check where THINKING_LEVELS lives for precedent style.
+
+Now implement:
+
+1. Add `TEACH_ARGS` before `handle_teach` (around line 985) and `ARCHITECT_ARGS` before `handle_architect` (line ~176).
+
+Note ordering/dependencies: handle_architect is at line 178, so ARCHITECT_ARGS goes around line 176.
+
+Let's look at lines 165-180 of commands_config.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs:166..186  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs:975..995 ✓ (0ms)
+ ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+Now let me add the two consts.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (2 → 7 lines)
+  + /// The complete argument vocabulary of `/architect` that is **not** a model name —
+  + /// `handle_architect`'s catch-all arm takes a model id, so only these two tokens are
+  + /// unambiguous. `yoyo architect <model>` still bills; that is a known limit, not a bug.
+  + pub const ARCHITECT_ARGS: &[&str] = &["on", "off"];
+  + 
+    /// Handle the `/architect` command.
+    pub fn handle_architect(input: &str) {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (2 → 7 lines)
+  + /// The complete argument vocabulary of `/teach` — mirrors the `"on"`/`"off"` arms of
+  + /// [`handle_teach`] and nothing else. Read by `dispatch_near_miss` so the multi-token CLI
+  + /// guard refuses `yoyo teach on` for free instead of spending a billed LLM turn (#886).
+  + pub const TEACH_ARGS: &[&str] = &["on", "off"];
+  + 
+    /// Toggle teach mode on/off. When active, yoyo explains its reasoning as it works.
+    pub fn handle_teach(input: &str) {
+ ✓ (17.7s)
+  + /// The complete argument vocabulary of `/architect` that is **not** a model name —
+  + /// `handle_architect`'s catch-all arm takes a model id, so only these two tokens are
+  + /// unambiguous. `yoyo architect <model>` still bills; that is a known limit, not a bug.
+  + pub const ARCHITECT_ARGS: &[&str] = &["on", "off"];
+  + 
+    /// Handle the `/architect` command.
+    pub fn handle_architect(input: &str) {
+ ✓ (35.3s)
+  + /// The complete argument vocabulary of `/teach` — mirrors the `"on"`/`"off"` arms of
+  + /// [`handle_teach`] and nothing else. Read by `dispatch_near_miss` so the multi-token CLI
+  + /// guard refuses `yoyo teach on` for free instead of spending a billed LLM turn (#886).
+  + pub const TEACH_ARGS: &[&str] = &["on", "off"];
+  + 
+    /// Toggle teach mode on/off. When active, yoyo explains its reasoning as it works.
+    pub fn handle_teach(input: &str) {
+
+── Thinking ────────────────────────────────────────────────────────────────
+Expected — the consumer lands next. Now extend the table in dispatch_near_miss.rs and update the doc comment.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 38.8s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (6 → 24 lines)
+  - /// **Do not widen this to other REPL-only verbs with argument vocabularies**
+  - /// (`architect on|off`, `plan`, `profile`, `mcp`, …). Several have plausible prose
+  - /// second tokens even when a vocabulary exists; `think` is the measured one. A
+  - /// second measured verb is its own issue, not a bundle.
+  - pub const REPL_ONLY_MULTI_TOKEN_ARG_GATED: &[(&str, &[&str])] =
+  -     &[("think", crate::commands::THINKING_LEVELS)];
+  + /// **Widening is per-verb and measured, and this is the file that records which
+  + /// verbs cleared the bar (#886).** `think` was the first (Day 202); `teach` and
+  + /// `architect` were added the same day in #886 slice 2, each gated on its own
+  + /// handler's closed vocabulary (`crate::commands_config::TEACH_ARGS` /
+  + /// `ARCHITECT_ARGS`), never on a copy of it.
+  + ///
+  + /// **The other ~48 REPL-only verbs are deliberately absent, and this sentence is
+  + /// the whole reason #886 stays OPEN.** They are excluded per-verb because their
+  + /// second token is NOT a closed vocabulary — several have no argument list at all,
+  + /// and the rest take free-form prose (`plan`, `profile`, `mcp`, `skill`, `model`).
+  + /// A guard on those would refuse ordinary English prompts, and eating a real prompt
+  + /// is the worse error by the rule above. So the residue is real, billed, and
+  + /// waiting on per-verb vocabularies that mostly do not exist yet — not on a sweep.
+  + ///
+  ... (10 more lines)
+ ✓ (15.0s)
+  - /// **Do not widen this to other REPL-only verbs with argument vocabularies**
+  - /// (`architect on|off`, `plan`, `profile`, `mcp`, …). Several have plausible prose
+  - /// second tokens even when a vocabulary exists; `think` is the measured one. A
+  - /// second measured verb is its own issue, not a bundle.
+  - pub const REPL_ONLY_MULTI_TOKEN_ARG_GATED: &[(&str, &[&str])] =
+  -     &[("think", crate::commands::THINKING_LEVELS)];
+  + /// **Widening is per-verb and measured, and this is the file that records which
+  + /// verbs cleared the bar (#886).** `think` was the first (Day 202); `teach` and
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECT_ARGS wasn't added? Let me check line 176 area of commands_config.rs. The first edit said "Replaced 2 lines with 7 lines" — but the auto-check errors referenced TEACH_ARGS never used... maybe the edits were applied in reverse order (both edits ran in parallel on same file). Let me verify.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ARCHITECT_ARGS\|TEACH_A… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The parallel edits raced: the first edit (ARCHITECT_ARGS) was overwritten by the second edit which rewrote the file from a stale snapshot. Actually the second edit "Replaced 2 lines with 7 lines" — TEACH_ARGS edit. The ARCHITECT_ARGS edit reported success but was lost. Lesson: don't run two edits on the same file in parallel. Let me re-apply the ARCHITECT_ARGS edit now.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (2 → 7 lines)
+  + /// The complete argument vocabulary of `/architect` that is **not** a model name —
+  + /// `handle_architect`'s catch-all arm takes a model id, so only these two tokens are
+  + /// unambiguous. `yoyo architect <model>` still bills; that is a known limit, not a bug.
+  + pub const ARCHITECT_ARGS: &[&str] = &["on", "off"];
+  + 
+    /// Handle the `/architect` command.
+    pub fn handle_architect(input: &str) {
+ ✓ (2m 25s)
+  + /// The complete argument vocabulary of `/architect` that is **not** a model name —
+  + /// `handle_architect`'s catch-all arm takes a model id, so only these two tokens are
+  + /// unambiguous. `yoyo architect <model>` still bills; that is a known limit, not a bug.
+  + pub const ARCHITECT_ARGS: &[&str] = &["on", "off"];
+  + 
+    /// Handle the `/architect` command.
+    pub fn handle_architect(input: &str) {
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — the "Replaced 2 lines with 7 lines" for TEACH_ARGS edit. Hmm, the second edit's old_text had 2 lines ("/// Toggle teach mode..." + "pub fn handle_teach...") and new text 7 lines. That matches what I see now? Let me verify both consts now present and check the file compiles.
+
+Actually careful: the "Toggle teach mode" doc comment — was it preserved? Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 986,1000p src/commands_co… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both consts are in place. Now the weak source-level guard test in commands_config.rs, then the dispatch tests.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1187,1215p src/commands_c… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now write the weak source-level guard test. It needs to read the source file (include_str!) and slice the function body.
+
+How do other tests in this repo read their own source? `include_str!` is common. Let me check for precedent in dispatch_near_miss.rs tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "include_str!" src/*.rs … ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:3205..3255 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good precedent. Now write the test in commands_config.rs tests module. It should slice the function body by its `fn handle_teach(` marker and assert each const member appears as a quoted match arm `"on"` inside.
+
+Approach: find the index of `fn handle_teach(` in src, take the slice until the next `\npub fn ` or `\n}` at column 0... Simpler: find the start, then find the next occurrence of "\n}\n" after it. Let's do: slice from marker to the next "\n}\n".
+
+Then assert `body.contains(&format!("\"{arg}\""))`.
+
+Let me write it carefully with needles assembled at runtime so the test cannot match its own source. But careful: the consts "on"/"off" appear in the handler body. Also `input.strip_prefix("/teach")` contains `/teach` quoted. Assert `"on"` and `"off"` quoted within the body.
+
+However needle assembly: format!("\"{}\"", arg) — with arg from the const. That's runtime. The test's own source contains `"on"`? Not necessarily as `"on"` literal... we don't write it. Good.
+
+Also need anti-vacuous: assert slice non-empty and shorter than whole file, and that it doesn't contain the *other* handler marker (so slicing actually found the function, not the whole file).
+
+Let me write:
+
+```rust
+    /// Deliberately **weak** source-level guard, and its limit is stated rather than
+    /// implied: this proves each member of the two vocabulary consts still appears as
+    /// a quoted `match` arm inside the handler it claims to mirror. It does NOT prove
+    /// the CLI guard fires, and it does not prove the const is COMPLETE — a new arm
+    /// whose word was never added would keep this test green.
+    #[test]
+    fn arg_vocabulary_consts_name_real_match_arms() {
+        for (const_name, marker, vocabulary) in [
+            ("TEACH_ARGS", "fn handle_teach(", TEACH_ARGS),
+            ("ARCHITECT_ARGS", "fn handle_architect(", ARCHITECT_ARGS),
+        ] {
+            // Anti-vacuous first: an empty const would make the loop below a
+            // silent pass, which is exactly the failure this test exists to catch.
+            assert!(
+                !vocabulary.is_empty(),
+                "{const_name} is empty — it would gate nothing and the loop below \
+                 would be vacuous"
+            );
+            let body = slice_fn_body(include_str!("commands_config.rs"), marker);
+            for arg in vocabulary {
+                // Assembled at runtime so this test cannot satisfy itself by
+                // matching its own source text.
+                let needle = format!("\"{arg}\"");
+                assert!(
+                    body.contains(&needle),
+                    "{const_name} names {needle}, which is not a match arm of {marker} — \
+                     the const has drifted from the handler it mirrors"
+                );
+            }
+        }
+    }
+```
+
+Need a helper `slice_fn_body`. Keep it simple, defined in the test module.
+
+```rust
+    /// Slice one function body out of this module's own source, from its `fn`
+    /// marker to the first closing brace at column zero.
+    fn slice_fn_body(src: &str, marker: &str) -> &str {
+        let start = src
+            .find(marker)
+            .unwrap_or_else(|| panic!("{marker} not found in this file"));
+        let rest = &src[start..];
+        let end = rest.find("\n}\n").expect("unterminated function body");
+        let body = &rest[..end];
+        assert!(
+            body.len() < src.len() / 4,
+            "the slice from {marker} swallowed too much of the file — the marker \
+             matched something other than the function"
+        );
+        body
+    }
+```
+
+Hmm, `\n}\n` — but the ARCHITECT_PROMPT const string contains lines. Fine. The handler body's closing brace is at column 0: `}`. And the body will contain nested `    }` at indent. `\n}\n` matches only column-zero. Good.
+
+Wait: for `handle_architect`, is there a `\n}\n` before the function ends? The function has nested blocks all indented. So the first `\n}\n` is the function's end. Good.
+
+But careful with `include_str!("commands_config.rs")` and the test's own source containing the marker string "fn handle_teach(" — no, we assemble? The marker literal "fn handle_teach(" appears in the test itself! `src.find(marker)` would find... the test module comes AFTER the functions in the file, so find() returns the earliest occurrence which is the actual function (line 990 area) — no wait, the test is at line 1187+, and handle_teach def is at 990. So find returns 990's. Good for both.
+
+But the `assert!(body.len() < src.len() / 4)` guard is the safety.
+
+Actually should I also make markers runtime-assembled? Task says "build needles at runtime so the test cannot match its own source". For markers, the risk is find() landing on the test's own literal — but since the real function appears earlier in the file, that can't happen. Still, be safe: the guard catches it. I'll keep it simple, and note it.
+
+Hmm, actually there's another risk: `handle_architect` also appears in the test module (tests call `handle_architect("/architect ...")` — that's a call, not `fn handle_architect(`). And the marker is `fn handle_architect(` which appears once. Good.
+
+Now for the "quoted match arm" check: does `"on"` appear in handle_architect body? Yes: `"on" => {`, `"off" => {`. In handle_teach: `"on" =>`, `"off" =>`. Good.
+
+But wait — the body slice from `fn handle_architect(` to first `\n}\n`. Yes contains those.
+
+Now the dispatch_near_miss tests. Add rows to existing tests plus a new test for the two verbs.
+
+Existing tests:
+- `arg_gated_think_level_is_refused_before_any_billed_turn` — keep untouched.
+- `arg_gated_guard_leaves_think_prose_untouched` — add near-miss rows? Task says add rows, don't rewrite. Near-miss rows: `["yoyo","teach","me","rust"]` and `["yoyo","architect","the","streaming","layer"]` must return None. I can add these to that test's prompts array, or add a new test. The test is named `..._leaves_think_prose_untouched`. Adding teach/architect rows there would make the name slightly off. I'll add a new test for the new verbs covering fires + near-miss + the standing regression rows (#886 re-asserted: `["yoyo","do","the","thing"]`, `["yoyo","fix","the","flaky","test"]`).
+
+Wait — the standing regression guard: is there already a test somewhere asserting those? Let me check. grep "do the thing".
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 380,500p src/dispatch_nea… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I'll add the new test after `arg_gated_guard_leaves_think_prose_untouched` (before `no_routed_verb_is_ever_refused...`). Let me write the test.
+
+Also the anti-vacuous test: assert REPL_ONLY_MULTI_TOKEN_ARG_GATED is non-empty and every vocabulary non-empty. I'll include it in the new test (or a separate one). Task lists it as part of the tests. I'll include in the new test for the verbs, plus a dedicated one? Keep it in the new test — task said "Anti-vacuous: assert REPL_ONLY_MULTI_TOKEN_ARG_GATED is non-empty and that every vocabulary in it is non-empty". I'll put that at the top of the new test.
+
+Actually it's cleaner to have that loop in the new test. Let me write.
+
+Test name: `arg_gated_teach_and_architect_stop_billing_at_the_shell`.
+
+```rust
+    /// #886 slice 2 — the SECOND and THIRD arg-gated verbs. `yoyo teach on` and
+    /// `yoyo architect off` are command shapes that used to start a **billed LLM
+    /// turn with write-capable tools attached** to answer something a deterministic
+    /// handler does for free, while `yoyo teach me rust` must keep reaching the
+    /// model.
+    ///
+    /// ANTI-VACUOUS, in two places, and the first one is over the WHOLE table
+    /// rather than the two rows this test is named for: a row whose vocabulary was
+    /// emptied would make the second loop a silent pass.
+    #[test]
+    fn arg_gated_teach_and_architect_stop_billing_at_the_shell() {
+        assert!(
+            !REPL_ONLY_MULTI_TOKEN_ARG_GATED.is_empty(),
+            "the arg-gated table is empty — every gated verb silently bills again"
+        );
+        for (verb, vocabulary) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
+            assert!(
+                !vocabulary.is_empty(),
+                "the vocabulary for {verb} is empty — the gate can never fire and \
+                 `yoyo {verb} <arg>` still bills"
+            );
+        }
+
+        // FIRES, and names where the command actually lives.
+        for (verb, arg) in [("teach", "on"), ("architect", "off")] {
+            let msg = repl_only_multi_token_refusal(&argv(&["yoyo", verb, arg]))
+                .unwrap_or_else(|| panic!("`yoyo {verb} {arg}` used to bill and must be refused"));
+            assert!(
+                msg.contains(&format!("/{verb}")),
+                "the refusal must say where the command lives: {msg}"
+            );
+            assert!(
+                msg.contains(&format!("yoyo -p \"{verb} {arg}\"")),
+                "the -p hatch must name the whole invocation, not just the verb: {msg}"
+            );
+        }
+
+        // NEAR MISS, one row per added verb: a prose second token is a prompt.
+        // These are pins against an over-firing gate, and each is byte-identical
+        // to today's behaviour — the prompt still runs.
+        let prompts = [
+            &["yoyo", "teach", "me", "rust"][..],
+            &["yoyo", "architect", "the", "streaming", "layer"][..],
+            // The standing #886 regression guard, re-asserted here: an ordinary
+            // imperative is a prompt and nothing may change that.
+            &["yoyo", "do", "the", "thing"][..],
+            &["yoyo", "fix", "the", "flaky", "test"][..],
+            // `architect`'s documented limit, pinned in the direction it lands:
+            // the catch-all arm takes a MODEL NAME, so this shape still bills.
+            &["yoyo", "architect", "claude-opus-4-6"][..],
+            // The hatch the refusal message itself names must reach the model.
+            &["yoyo", "-p", "teach on"][..],
+        ];
+        for parts in prompts {
+            assert_eq!(
+                repl_only_multi_token_refusal(&argv(parts)),
+                None,
+                "{parts:?} must reach the prompt path unchanged"
+            );
+        }
+    }
+```
+
+Wait — `yoyo architect claude-opus-4-6`: args.len()==3, verb "architect", args[2]="claude-opus-4-6" not in {on,off} → None. Good.
+
+Note: `yoyo teach me rust` — args[2]="me" not in vocabulary → None. Good.
+
+Careful: `msg.contains(&format!("/{verb}"))` — for teach, msg contains "/teach is a REPL command". Good.
+
+Now also: does the fires test conflict with `no_routed_verb_is_ever_refused_by_the_multi_token_guard`'s second loop? It iterates ROUTED_SUBCOMMANDS × vocabularies asserting None for `["yoyo", verb, word]`. teach/architect aren't routed, so fine.
+
+Let me insert.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (1 → 62 lines)
+  +     /// #886 slice 2 — the SECOND and THIRD arg-gated verbs. `yoyo teach on` and
+  +     /// `yoyo architect off` are command shapes that used to start a **billed LLM
+  +     /// turn with write-capable tools attached** to answer something a deterministic
+  +     /// handler does for free, while `yoyo teach me rust` must keep reaching the model.
+  +     ///
+  +     /// ANTI-VACUOUS, and the first check is over the WHOLE table rather than the two
+  +     /// rows this test is named for: a row whose vocabulary had been emptied would
+  +     /// make every loop below a silent pass.
+  +     #[test]
+  +     fn arg_gated_teach_and_architect_stop_billing_at_the_shell() {
+  +         assert!(
+  +             !REPL_ONLY_MULTI_TOKEN_ARG_GATED.is_empty(),
+  +             "the arg-gated table is empty — every gated verb silently bills again"
+  +         );
+  +         for (verb, vocabulary) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
+  +             assert!(
+  +                 !vocabulary.is_empty(),
+  +                 "the vocabulary for {verb} is empty — the gate can never fire and \
+  +                  `yoyo {verb} <arg>` still bills"
+  +             );
+  ... (42 more lines)
+ ✓ (2m 20s)
+  +     /// #886 slice 2 — the SECOND and THIRD arg-gated verbs. `yoyo teach on` and
+  +     /// `yoyo architect off` are command shapes that used to start a **billed LLM
+  +     /// turn with write-capable tools attached** to answer something a deterministic
+  +     /// handler does for free, while `yoyo teach me rust` must keep reaching the model.
+  +     ///
+  +     /// ANTI-VACUOUS, and the first check is over the WHOLE table rather than the two
+  +     /// rows this test is named for: a row whose vocabulary had been emptied would
+  +     /// make every loop below a silent pass.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the weak source-level guard in commands_config.rs:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1193,1205p src/commands_c… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (3 → 3 lines) ✓ (2m 21s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I was in the middle of adding a weak source-level guard test in `src/commands_config.rs`'s test module. Let me check the current state of the repo first.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n "T… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both consts are in place and the table references both. The dispatch tests were added. Now I need to add the weak source-level guard test in commands_config.rs's test module (step 1's second half).
+
+Let me check the test module area and add the test.
+────────────────────────────────────────────────────────────────────────────────
+
+Consts and dispatch tests are in place. Now the weak source-level guard in commands_config.rs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1199,1212p src/commands_c… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (4 → 57 lines)
+        use std::path::PathBuf;
+  + 
+  +     /// Deliberately **weak** source-level guard for the two vocabularies #886
+  +     /// slice 2 reads from `dispatch_near_miss`. It proves only that each const
+  +     /// still *names* a quoted `match` arm inside the handler it claims to mirror
+  +     /// — never that the multi-token guard fires, which is the dispatch module's
+  +     /// own test's job.
+  +     ///
+  +     /// Needles are assembled at runtime so this test cannot match its own source.
+  +     #[test]
+  +     fn arg_vocabularies_name_real_match_arms_in_their_handlers() {
+  +         let src = include_str!("commands_config.rs");
+  + 
+  +         let slice_from = |marker: &str| -> &str {
+  +             let start = src
+  +                 .find(marker)
+  +                 .unwrap_or_else(|| panic!("{marker} is gone — the vocabularies' authority moved"));
+  +             // The handler ends at the next top-level `\n}` — good enough for a
+  +             // body that contains no nested close at column 0.
+  +             let end = src[start..]
+  ... (37 more lines)
+ ✓ (2m 22s)
+        use std::path::PathBuf;
+  + 
+  +     /// Deliberately **weak** source-level guard for the two vocabularies #886
+  +     /// slice 2 reads from `dispatch_near_miss`. It proves only that each const
+  +     /// still *names* a quoted `match` arm inside the handler it claims to mirror
+  +     /// — never that the multi-token guard fires, which is the dispatch module's
+  +     /// own test's job.
+  +     ///
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib 2>&1 | tail -40 ✓ (159ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -60 ✓ (1m 21s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The module size gate: src/commands_config.rs is 2051 lines, 51 past the cap. The grace band allows up to 2050 apparently (2000 + 50). I'm 51 past. I need to reduce the file by at least 1 line, or shrink my additions.
+
+Let me check what the test expects — maybe there's a GRANDFATHERED_OVERSIZED_MODULES list. But better: reduce my added lines. I added ~57 test lines and 7 const lines. Total 2051, so before my changes it was ~1987 (2051 - 64ish). Let me check the register.
+
+Actually, let me first look at the gate to understand the grace band.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GRACE\|GRANDFATHERED_OV… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The file is 2051 lines, 51 past the 2000 cap = 1 line past the 50-line grace band. So the gate is fatal. Options:
+1. Shrink my test by a couple lines (need to drop to ≤2050).
+2. Split the file.
+
+Best: trim my additions so we land within the grace band. Actually the safest and cleanest: keep the file at ≤2050 (within grace = warning). But better still is to avoid push toward the cap. Let me see the file's original line count before my edits.
+
+Let me check git stash diff stat.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash && wc -l src/commands_… ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Original was 1988; I added 63 lines. File is at 2051, 51 past cap. I need to get to ≤2050 to stay in the grace band (warning only, not fatal). That's just 1 line — but honestly, sitting right at the edge of a fatal gate is bad. Options:
+
+Better: move my test to a place with more headroom? No — comments say the tests belong beside the handler authority.
+
+Actually, the cleanest thing: reduce my test's size. But 1 line only gets me to warning, still 50 past the cap. Hmm, the gate warns at ≤2050. Being at 2050 means warning, which passes.
+
+Alternatively I could split some pre-existing content out of commands_config.rs — but that's a big risky refactor in a slice task.
+
+Let me think about the honest move. The task says nothing about module size. The file is grandfathered-ish? No, it's not in GRANDFATHERED_OVERSIZED_MODULES (it's the fatal path for a non-registered module over cap by >50).
+
+Hmm — wait. Let's check: is there a register entry for commands_config.rs? The error said "if growth is genuinely intended, add ("src/commands_config.rs", 2051) to GRANDFATHERED_OVERSIZED_MODULES with a reason in the commit message."
+
+Adding a register entry would grandfather a file at 2051 — that's a lasting debt and the drift band is 100 lines, so it'd take 100 more lines to become fatal again. That's the repo's sanctioned mechanism but it's the "absorb growth" path the gate warns against.
+
+The leaner move: shrink my own addition so the file fits within the grace band, and better — keep my test compact. My test is 57 lines for what's essentially a small source-level guard. I can compress it meaningfully.
+
+Actually hold on. Even at 2050 the file is 50 past cap and each future session adding a line takes it fatal. The task-scoped fix is to make my addition as small as possible. Let me trim the test to be much tighter — that also matches "weak guard" intent.
+
+Let me rewrite the test compactly, targeting ~30 lines instead of 57. That leaves the file at ~2024 — 24 past the cap, inside the grace band with room.
+
+Actually, hmm, better idea: is the file's growth legitimately part of this change? The consts are 10 lines. The test is 57. Let me compact.
+
+Let me write a tight version.
+────────────────────────────────────────────────────────────────────────────────
+
+The file is 51 past the cap — one line outside the grace band. Let me compact my test rather than absorb growth:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1199,1258p src/commands_c… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (34 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now 2021 lines, 21 past cap — inside the grace band (warning, not fatal). Let me run fmt and test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (12.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (18.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (2m 7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All tests pass (5666). Now let me verify with the live binary and run the positive control.
+
+First check the binary behaviour.
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now the live-binary check and the positive control:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo teach on; ec… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both refuse for free with exit 2. Now the positive control as one atomic command:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (13 lines) ✓ (1m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `--exact` filter needs the full path. Let me redo the positive control with the right test name filter (without --exact), and make it a proper atomic command.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (12 lines) ✓ (58.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Positive control: mutated → the new test fails by name; restored → passes. 
+
+Now also verify the near-miss prose paths reach the prompt path (no billed turn in test, but let's verify the pure function returns None — covered by the test). Let me confirm the final full check suite passes, then commit.
+
+Let me run the whole check chain once more to be safe (build/test/clippy/fmt already done, but after the restore the file should be identical to what I tested). Let me verify with git diff that the file matches the state I tested.
+
+Actually the restore was from a copy made at that state, so it's fine. But let me run the full suite one final time quickly — test takes ~90s. Let's do build+clippy+fmt+test.
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control: mutated → fails by name; restored → passes. Final full verification:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && cargo build 2… ✓ (1m 56s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+All checks pass. Now I need to commit. Let me check git status and whether the neutered marker is gone (yes, restored). Then commit.
+
+Also consider docs: the refusal text unchanged; doc comment updated. CLAUDE.md — no update needed since this is a small product change; nothing in CLAUDE.md describes the arg-gated table. Let's just commit.
+
+Wait, also should I check whether `git status` shows other changes (module_size register etc.). Let me commit.
+
+Actually, one thing: the task said module size gate — file is 2021 lines, which is 21 over cap but within 50-line grace band → warning, not fatal. Test passed. Good.
+
+Let me commit.
+────────────────────────────────────────────────────────────────────────────────
+
+All checks green. Committing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -rn "… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done and committed. Here's what landed:
+
+## Changes
+
+`src/commands_config.rs` — two module-level vocabs next to the handlers they mirror, each doc comment naming its handler as the authority:
+• `TEACH_ARGS = &["on", "off"]`
+• `ARCHITECT_ARGS = &["on", "off"] — with the honest limit written in: handle_architect's catch-all arm takes a model id, so yoyo architect <model>` still bills.
+
+Plus a deliberately weak source-level guard (arg_vocabularies_name_real_match_arms_in_their_handlers) that slices each handler body by its fn handle_teach( / fn handle_architect( marker and asserts every const member appears as a quoted "on" => arm — needles built at runtime so it can't match itself. Its doc comment says plainly it proves the consts still name real arms, never that the guard fires.
+
+`src/dispatch_near_miss.rs` — extended the existing REPL_ONLY_MULTI_TOKEN_ARG_GATED table (no second table), reading each vocab from its one authority. The doc comment now records think as first and teach/architect as #886 slice 2, and states why the other ~48 verbs are deliberately absent — their second token isn't a closed vocabulary, so gating them would eat real prose prompts — which is the reason #886 stays open.
+
+Tests added (rows, not rewrites): fires on teach on / architect off naming /teach / /architect and the -p hatch; near-miss rows teach me rust and architect the streaming layer return None; re-asserted the standing do the thing / fix the flaky test guard; pinned the architect <model> limit in the direction it lands; anti-vacuous over the whole table (non-empty table, non-empty every vocabulary). The think rows are untouched.
+
+## Verification
+• `cargo build, cargo clippy --all-targets -- -D warnings, cargo fmt -- --check, cargo test` — all green.
+• Live binary: yoyo teach on and yoyo architect on each print the free refusal naming the verb and exit 2.
+• Positive control (serial, atomic): emptying ARCHITECT_ARGS failed arg_gated_teach_and_architect_stop_billing_at_the_shell by name at dispatch_near_miss.rs:649; restore in the same command returned it green, and no marker remains in the tree.
+
+One thing worth flagging rather than hiding: src/commands_config.rs came in at 2021 lines — 21 past the 2000-line module cap, inside the 50-line grace band, so tests/module_size.rs warns rather than fails. I compacted my test from 57 to 41 lines to get it there, but the file is genuinely near its cap now. REPL_ONLY_MULTI_TOKEN_VERBS was not touched, and no scripts/ file or harness code changed.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,1462 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the relevant code sections.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1140,1290p src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1080,1175p src/agent_buil… ✓ (6ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the exact build_tools signature and start of the function.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn build_tools" src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "maybe_hook" src/tools.r… ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`maybe_hook` is already imported in agent_builder.rs (line 20). Good.
+
+Now let's look at the tools.rs imports (HookRegistry, AuditHook) and the `hooks` module usage.
+
+Let me do step 1: extract registry construction into `build_hook_registry`, and add `build_tools_with_hooks`.
+
+Let me view lines 1061-1061 exactly and the body end.
+
+Plan:
+- Rename `build_tools(...)` body into `build_tools_with_hooks(auto_approve, permissions, dir_restrictions, max_tool_output, hooks: &Arc<HookRegistry>, bash_cwd) -> Vec<Box<dyn AgentTool>>`, deleting the registry construction.
+- Keep doc comment.
+- Add new `build_tools` wrapper with the original 7-arg signature building the registry and delegating.
+
+Note: in the body, `hooks` is used as `&hooks`. With `hooks: &Arc<HookRegistry>`, calls `maybe_hook(..., &hooks)` would be `&&Arc<...>`. Need to check maybe_hook's signature.
+
+Let me check `maybe_hook`.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn maybe_hook" -A 2…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1050,1075p src/tools.rs &… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+If `hooks: &Arc<HookRegistry>`, then `maybe_hook(x, &hooks)` would be `&&Arc<HookRegistry>` — type error. I could make the parameter `hooks: &Arc<HookRegistry>` and change all call sites to `hooks` instead of `&hooks`. But step 1 says "containing the current body of `build_tools` verbatim, minus the registry construction (it now uses the passed `hooks` for every `maybe_hook` call)". The task says signature: `hooks: &Arc<HookRegistry>`. Hmm, `maybe_hook(tool, hooks)` where hooks: &Arc<...> — that works directly. So I'd change `&hooks` → `hooks` in the body. That's 10 sites. Or I could keep `&hooks` working by... no.
+
+Alternative: keep the body verbatim by naming the parameter `hooks` and doing `let hooks = Arc::clone(hooks);`? That would be a change too and clippy fine. Actually simplest: replace `&hooks` with `hooks` in the moved body. Let's do that with sed within the function range.
+
+Actually careful: `hooks` appears in the body only in maybe_hook calls? Let's check within lines 1061-1280 for `hooks`.
+
+Let me check. Note `shell_hooks` param is being removed in the new fn, so `hooks` name is free.
+
+Now, in agent_builder, build the registry: `let hooks = crate::tools::build_hook_registry(is_audit_enabled(), self.shell_hooks.clone());` then `build_tools_with_hooks(..., &hooks, ...)`.
+
+Now let's write the edits. First the tools.rs.
+
+The doc comment for build_tools: the new pub fn build_tools wrapper keeps the original doc. The extracted one needs its own doc.
+
+Let me get the exact doc comment text lines 1050-1061.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1050,1062p src/tools.rs |… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The tool output collapses lines ("... (8 more similar lines)"). I need the full text. Let me read with read_file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:1050..1070 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me make the edits. First insert `build_hook_registry` before the doc comment, then restructure.
+
+Edit 1: replace the doc comment + signature block with new content.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (19 → 74 lines)
+  + /// Build the hook registry the tool set wires into every tool.
+  + ///
+  + /// Extracted from `build_tools`' body (Day 202) so that a *second* caller can
+  + /// hand the same registry to tools that are pushed outside `build_tools` (the
+  + /// RLM pair, `sub_agent` / `shared_state`, pushed in `agent_builder.rs`).
+  + /// Building a second registry there instead would be two registries that agree
+  + /// today — the "two doors, one policy, one deaf" shape this repo has shipped
+  + /// more than once. One registry, passed through, is the whole point.
+  + pub(crate) fn build_hook_registry(
+  +     audit: bool,
+  +     shell_hooks: Vec<hooks::ShellHook>,
+  + ) -> Arc<HookRegistry> {
+  +     let mut registry = HookRegistry::new();
+  +     if audit {
+  +         registry.register(Box::new(AuditHook));
+  +     }
+  +     for hook in shell_hooks {
+  +         registry.register(Box::new(hook));
+  +     }
+  +     Arc::new(registry)
+  ... (51 more lines)
+ ✓ (14.5s)
+  + /// Build the hook registry the tool set wires into every tool.
+  + ///
+  + /// Extracted from `build_tools`' body (Day 202) so that a *second* caller can
+  + /// hand the same registry to tools that are pushed outside `build_tools` (the
+  + /// RLM pair, `sub_agent` / `shared_state`, pushed in `agent_builder.rs`).
+  + /// Building a second registry there instead would be two registries that agree
+  + /// today — the "two doors, one policy, one deaf" shape this repo has shipped
+  + /// more than once. One registry, passed through, is the whole point.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now remove the old inline registry construction from the new function's body and fix &hooks → hooks.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:1222..1252 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (15 → 3 lines)
+        let failure_tracker = ToolFailureTracker::new();
+  - 
+  -     // Build hook registry — AuditHook when audit mode is on, plus user-configured shell hooks.
+  -     let hooks = {
+  -         let mut registry = HookRegistry::new();
+  -         if audit {
+  -             registry.register(Box::new(AuditHook));
+  -         }
+  -         for hook in shell_hooks {
+  -             registry.register(Box::new(hook));
+  -         }
+  -         Arc::new(registry)
+  -     };
+    
+        let mut tools = vec![
+ ✓ (16.6s)
+        let failure_tracker = ToolFailureTracker::new();
+  - 
+  -     // Build hook registry — AuditHook when audit mode is on, plus user-configured shell hooks.
+  -     let hooks = {
+  -         let mut registry = HookRegistry::new();
+  -         if audit {
+  -             registry.register(Box::new(AuditHook));
+  -         }
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Replace `&hooks,` with `hooks,` only within the build_tools_with_hooks body (lines ~1233 to ~1300). Let me find the range boundaries: the function ends at "tools\n}" before "/// Build a SubAgentTool". Let's use sed on line range.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^}" src/tools.rs | awk … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1295,1325p src/tools.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '1230,1323s/&hooks))/hook… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now check that `hooks::ShellHook` import still used in tools.rs (yes, in build_hook_registry). Now agent_builder.rs.
+
+Let me read the agent_builder section precisely.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:1096..1166 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (14 → 23 lines)
+            if !self.no_tools {
+  -             let mut tools = build_tools(
+  +             // ONE hook registry for the whole tool set — the one `build_tools`
+  +             // would otherwise build privately and never let out. It has to be
+  +             // built here because the RLM pair below is pushed in this function,
+  +             // not inside `build_tools`, and handing those two a *second*
+  +             // registry built from the same config would be two registries that
+  +             // agree today (the "two doors, one policy, one deaf" shape).
+  +             let hooks = crate::tools::build_hook_registry(
+  +                 is_audit_enabled(),
+  +                 self.shell_hooks.clone(),
+  +             );
+  +             let mut tools = crate::tools::build_tools_with_hooks(
+                    self.auto_approve,
+                    &self.permissions,
+                    &self.dir_restrictions,
+  ···
+                    } else {
+                        TOOL_OUTPUT_MAX_CHARS_PIPED
+                    },
+  ... (5 more lines)
+ ✓ (17.0s)
+            if !self.no_tools {
+  -             let mut tools = build_tools(
+  +             // ONE hook registry for the whole tool set — the one `build_tools`
+  +             // would otherwise build privately and never let out. It has to be
+  +             // built here because the RLM pair below is pushed in this function,
+  +             // not inside `build_tools`, and handing those two a *second*
+  +             // registry built from the same config would be two registries that
+  +             // agree today (the "two doors, one policy, one deaf" shape).
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`build_tools` is never used in the bin (only tests). Previously it was used by agent_builder. Now the bin has no caller — dead code in the bin target but used in tests. Hmm. The task says keep the 7-arg signature because hooks.rs tests and tools.rs tests call it. But `pub fn` in a binary crate: if only used by tests, dead_code fires.
+
+Wait — the error says `function build_tools is never used` for the bin target. Previously it was used by agent_builder.rs. So now I need another consumer, or keep the bin calling build_tools somewhere.
+
+Options:
+1. Keep agent_builder calling `build_tools` for the base list and... no, we need the shared registry.
+2. Have `build_tools_with_hooks` be a private/internal and keep `build_tools` public. But dead-code still.
+
+Hmm, what about the `--no-tools` path or other places? Let me grep for build_tools usages in src (non-test).
+
+Actually maybe `pub` in a bin crate doesn't suppress dead_code (it doesn't, since bin crate has no external consumers).
+
+So what's the cleanest? Make `build_tools` used by the bin: e.g., `build_tools` is called from somewhere. Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "build_tools" src/ test… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Only tests call build_tools now. dead_code in the bin. Options that keep the 7-arg signature and avoid dead code:
+
+Option A: Make `build_tools` the one agent_builder calls, and give `build_tools_with_hooks` pub too... but then build_tools_with_hooks would be used by agent_builder (yes it is), and build_tools unused in bin → dead code.
+
+Option B: Change agent_builder's build to call `build_tools`... but then can't share registry. Unless the registry is created in agent_builder and passed... 
+
+Hmm, the task explicitly wants both. But dead_code. Maybe `#[cfg_attr(not(test), expect(dead_code))]`? No — task says don't add knobs. Hmm, but the simplest legitimate way: since the tests use it, could we mark it? Clippy `dead_code` is a rustc lint. 
+
+Wait — is `src/tools.rs` part of the binary crate (main.rs mod tools) — yes. Is there a lib target? Cargo.toml check: package has [[bin]] yoyo. If there's a lib target, `pub` would count as reachable. Let me check Cargo.toml.
+
+Alternative approach: keep `build_tools` as the public entry that agent_builder calls, but have it take an optional registry... no, signature must be byte-identical.
+
+Alternative: agent_builder could call `crate::tools::build_tools(...)` for the base tools AND then wrap RLM tools with a registry built by build_hook_registry — but that's two registries (the thing we must avoid). Unless... the registry built in agent_builder is the only one and build_tools takes it — that's build_tools_with_hooks.
+
+Hmm. What about making build_tools_with_hooks a private fn and build_tools delegating... no, need the pub for agent_builder.
+
+Cleanest fix respecting "no new knobs": have `build_tools` be the single public seam and `build_tools_with_hooks` private? Then agent_builder can't pass a registry.
+
+OK let me reconsider: maybe the real answer is that the registry should be built in agent_builder and *also* used by `build_tools` — i.e. make build_tools_with_hooks the only function, and keep a `build_tools` wrapper that is used somewhere real. Is there another caller that could use build_tools? E.g. `commands_*`? No.
+
+Actually: add `#[cfg(test)]`? No — hooks.rs tests are integration within the crate's test cfg, so cfg(test) still works. But that's a knob.
+
+Hmm, wait. Does the repo have a lib.rs? Let me check Cargo.toml and whether there's a lib target. If there's no lib, `pub fn` unused = dead code. But note this repo's `tests/module_size.rs` etc. are integration tests using only the binary presumably.
+
+Let me check if `cargo build` (non-test) flags it: yes, error says bin "yoyo". So build fails? Actually the auto-check ran clippy --all-targets which includes bin. With `cargo build` alone, `pub fn` unused in a bin crate → dead_code warning → with -D warnings, error. So `cargo build` alone would warn but not error unless RUSTFLAGS. Anyway CI clippy -D warnings fails.
+
+So I need build_tools to be used in non-test code. 
+
+Idea: make `build_tools` the function that agent_builder calls (7 args), and have the RLM tools wrapped using a registry... hmm, we can't get the registry out of build_tools.
+
+Alternative idea that keeps ONE registry and no dead code: change the design slightly — `build_hook_registry` is called in agent_builder; `build_tools_with_hooks` is called by agent_builder AND by `build_tools`. Then `build_tools` itself unused in bin. 
+
+Unless... we make build_tools used by another bin-path consumer: e.g. `commands_dev.rs` or `commands_run.rs` builds tools? grep showed none.
+
+So make `build_tools` `#[cfg(test)]`-only? Hmm, hooks.rs's test module is in the same crate compiled under cfg(test), so `pub fn build_tools` under `#[cfg(test)]` would be available. But that's a weird shape and arguably a knob...
+
+Actually wait. Maybe the simpler resolution: don't add a new public function at all. Instead change `build_tools`'s signature? No — task requires byte-identical 7-arg callers.
+
+Hmm, let me reconsider the dead-code rule: rustc's dead_code lint for `pub` items in a *binary* crate does fire (no external reachability). Confirmed by the error.
+
+Another approach: keep `build_tools` as the real body owner and have it accept the registry via a *different* mechanism... no.
+
+What about: `build_tools_with_hooks` takes `hooks: &Arc<HookRegistry>` and `build_tools` delegates. Then to give build_tools a non-test caller: agent_builder can call `build_tools` for the base set when... no, the registry must be shared.
+
+OK, alternative: invert — make the shared-registry entry point primary and have `build_tools` be called BY `build_tools_with_hooks`? impossible.
+
+Practical resolution used widely: `#[allow(dead_code)]` on build_tools with a comment? That's a knob but a small one. Actually, hmm — is there prior art in this repo? Let me grep for `dead_code` in src.
+
+Actually better idea: recognize that `build_tools`'s only non-test consumers were agent_builder — and the *task's* step 1 says "`build_tools` keeps its exact 7-argument signature and becomes a thin wrapper ... and those call sites must stay byte-identical." The task assumed build_tools stays used. The dead-code lint is a real consequence the task didn't anticipate (typical). 
+
+Options to satisfy both: have agent_builder use `build_tools` in a real path AND share the registry. What if `build_hook_registry` is what agent_builder calls, then it calls `build_tools_with_hooks` — and elsewhere in the crate, `build_tools` is genuinely used? Let me search for other places that build tool sets, e.g. `--no-tools` or sub-agent child tools or `commands_run.rs`.
+
+Let me grep for `with_tools(` and `build_sub_agent_tool`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "with_tools(\|build_sub… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No lib target. So `build_tools` must have a non-test caller in the bin.
+
+Cleanest minimal-deviation option: keep the registry construction inside `build_tools` (as before) and have `build_tools` be the public 7-arg fn that agent_builder calls for the base list — but then how does agent_builder get the registry to wrap RLM tools?
+
+Alternative design that keeps build_tools used: agent_builder could call `build_tools(...)` for the base list, and separately build hooks... no, two registries.
+
+Hmm, what if instead the RLM wrapping moves INTO build_tools? No — sub_agent/shared_state are built in agent_builder from `self`.
+
+What if `build_sub_agent_tool(self)` is passed into build_tools? Too invasive.
+
+Alternative: `build_tools` is called by `build_tools_with_hooks`?? Circular.
+
+OK — how about this: make `build_tools_with_hooks` pub and have `build_tools` be called by... Actually, what about the ordering: agent_builder calls `build_tools` normally for everything, and for the RLM pair it uses the registry — which we can build in agent_builder... but then there are two registries, both wrapping the same config. The task explicitly forbids that.
+
+Hmm, wait. Is there another option: make `build_tools` take the hooks registry but with a *default* argument? Rust has no default args.
+
+What about making the registry a global? No.
+
+Practical: add `#[allow(dead_code)]`? Hmm. Or better: is `build_tools` reachable if we make it `pub(crate)` and used in tests... no, dead_code still fires on pub(crate) unused.
+
+Wait, actually — does dead_code fire for a `pub fn` in a bin crate if it's `pub` and `#[used]`? No.
+
+Alright, different approach that's actually cleaner and used elsewhere in this repo: make the tool-building a two-part API where `build_tools` remains the only public entry, and the RLM tools are wrapped by the registry that `build_tools` builds — by passing the RLM tools *into* build_tools? That changes signature.
+
+Hmm, let me reconsider — maybe dead_code won't fire if `build_tools` is called from another module in the bin... it isn't.
+
+Let me look at how the repo handled similar cases. Search for `dead_code` in src.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "dead_code\|cfg(test)]\… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There IS precedent: `#[cfg_attr(not(test), allow(dead_code))]` — used in commands_spawn.rs, context.rs, gasp_cli.rs. That's the established idiom in this repo for "used only by tests in the bin target".
+
+So I can annotate `build_tools` with `#[cfg_attr(not(test), allow(dead_code))]` and document why (it exists for its callers' byte-identical signature; the bin now goes through build_tools_with_hooks). Hmm, but is that acceptable? It's the repo's own idiom. But wait — would that be a "knob"? It's a standard idiom here with 5+ precedents.
+
+Alternatively: have agent_builder call `build_tools` and... no.
+
+Hmm, actually hold on. Let me reconsider: maybe simpler and better — agent_builder keeps calling `build_tools` (7 args, unchanged!) which builds the registry internally and returns the tool list... and then we need the registry for RLM. What if we wrap the RLM tools INSIDE tools.rs? i.e. add params to build_tools? No.
+
+Alright, another thought: what if `build_tools_with_hooks` is private-ish and `build_tools` stays as the only public, with agent_builder calling `build_tools_with_hooks`? Same problem, just mirrored. Currently build_tools is unused → annotate.
+
+Actually, wait! Better idea: make the agent_builder path use BOTH — i.e., `build_tools` stays the wrapper used by tests, and agent_builder uses `build_tools_with_hooks`. To avoid dead_code we can use the `cfg_attr` idiom. I'll do that, documented.
+
+Hmm, but there's another risk: the repo has `tests/module_size.rs` gate, and `tests/doc_symbols.rs` which greps CLAUDE.md backticked symbols in src/. Fine.
+
+Also `tests/neutered_guards.rs`, `scripts/check_assertion_weakening.py` — I'm modifying a test (needle change), so the assertion-weakening CI script may flag it. Hmm — the pre-push hook/CI check `check_assertion_weakening.py` runs on the diff of pushed commits? Let me check whether CI runs it on PRs. It's a script that scans commit diffs; a needle change in a test could be classified as `S_NEEDLE_SHRANK`/`M_NEEDLE_GREW`. I'm changing the needle from `tools.push(with_session_cap(sub_agent_tool` to `tools.push(maybe_hook(with_session_` + `cap(sub_agent_tool`. That's splitting the string, which the script's `REGISTER_LITERAL_JOINED_RE` handles... it's a scanner, not a gate that fails CI necessarily. Let me check ci.yml to see if the script runs and whether it can fail the build.
+
+Let me focus: first make it compile.
+
+Decision: use `#[cfg_attr(not(test), allow(dead_code))]` on build_tools, since the repo idiom exists. But wait — maybe better: avoid dead code entirely by making agent_builder's call path go through `build_tools` for the *base* list? No, registry.
+
+Hmm, hold on. Actually there's yet another approach that avoids both dead code and the second registry: **move the registry into the AgentConfigBuilder's field**? Too invasive.
+
+Or: `build_tools` calls `build_tools_with_hooks` (keeps existing callers working) and agent_builder calls... `build_tools`? Then how does agent_builder wrap RLM? It could call `crate::tools::build_hook_registry(...)` — a second registry. No.
+
+OK go with cfg_attr(not(test), allow(dead_code)). Document it clearly: `build_tools` is retained for its existing 7-arg callers (tests in hooks.rs and tools.rs) and as the product-facing entry point for building the full tool set with no externally-shared registry; the bin itself reaches the tools through `build_tools_with_hooks`.
+
+Hmm, but is that honest? It says "the bin goes through build_tools_with_hooks". Fine.
+
+Actually wait. Let me reconsider one more design that would keep build_tools genuinely used in the bin and share one registry — pass the registry *into* build_tools is the only way. Unless... agent_builder calls `build_tools` and then re-wraps? Like: build_tools builds registry internally and wraps all builtins. The RLM pair pushed after would need the same registry. What if `HookedTool`'s registry is accessible... no.
+
+Alternatively: what if `build_tools` returns `(Vec<Box<dyn AgentTool>>, Arc<HookRegistry>)`? That changes the 7-arg callers' expectations (they'd need `.0`). Task says those call sites must stay byte-identical. So no.
+
+Given the constraint, cfg_attr is the pragmatic answer. Let me check how commands_spawn.rs documents it, to match the idiom's comment style.
+
+Actually — hmm, one more! What if instead of `build_tools` being a wrapper, I keep `build_tools` as the real body-with-registry-construction and agent_builder calls `build_tools_with_hooks`... same thing.
+
+Or invert: keep the body in `build_tools` (7 args, builds registry internally) — and give it an internal-only variant via a private helper that takes the registry. Then `build_tools` IS used by tests only... same.
+
+Alright: is `build_tools` maybe used in a *doc test* or by `scripts`? No.
+
+Go with cfg_attr(not(test), allow(dead_code)) whose reason is written in the doc comment. Let me check the existing precedent's comment for style.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 128,145p src/commands_spa… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The idiom is exactly "kept as the convenience entry point, only exercised by tests today". I'll use it with an honest one-liner.
+
+Add to the doc comment of build_tools and the attribute.
+
+Then fix agent_builder's import: remove `build_tools` from the use line (keep build_sub_agent_tool) and use full paths for build_tools_with_hooks... actually I used `crate::tools::build_tools_with_hooks` inline. Better to import it. Let me import: `use crate::tools::{build_sub_agent_tool, build_tools_with_hooks};` and call `build_tools_with_hooks(`. And `build_hook_registry` — I could import too. Keep concise: `use crate::tools::{build_hook_registry, build_sub_agent_tool, build_tools_with_hooks};`.
+
+Then change the RLM pushes.
+
+Also `is_audit_enabled` — confirm it exists in agent_builder.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (5 → 10 lines)
+    /// Kept as a thin wrapper over `build_tools_with_hooks` so that this 7-argument
+    /// signature — called by `hooks.rs` tests and by several tests in this module —
+  - /// stays byte-identical. Callers that already own a registry (or must share one
+  - /// with tools built elsewhere) call `build_tools_with_hooks` directly.
+  + /// stays byte-identical. The two halves are a matched pair rather than duplicate
+  + /// doors: this one owns the registry, `build_tools_with_hooks` takes one, and
+  + /// only the latter can be shared with tools built outside this function.
+  + /// Only exercised by tests today (`agent_builder.rs` shares a registry instead);
+  + /// kept as the no-registry entry point, the same shape `context.rs`'s
+  + /// `get_project_file_listing` carries.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn build_tools(
+ ✓ (16.6s)
+    /// Kept as a thin wrapper over `build_tools_with_hooks` so that this 7-argument
+    /// signature — called by `hooks.rs` tests and by several tests in this module —
+  - /// stays byte-identical. Callers that already own a registry (or must share one
+  - /// with tools built elsewhere) call `build_tools_with_hooks` directly.
+  + /// stays byte-identical. The two halves are a matched pair rather than duplicate
+  + /// doors: this one owns the registry, `build_tools_with_hooks` takes one, and
+  + /// only the latter can be shared with tools built outside this function.
+  + /// Only exercised by tests today (`agent_builder.rs` shares a registry instead);
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now agent_builder: fix imports and wrap the RLM pushes.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (1 → 1 lines)
+  - use crate::tools::{build_sub_agent_tool, build_tools};
+  + use crate::tools::{build_hook_registry, build_sub_agent_tool, build_tools_with_hooks};
+ ✓ (16.6s)
+  - use crate::tools::{build_sub_agent_tool, build_tools};
+  + use crate::tools::{build_hook_registry, build_sub_agent_tool, build_tools_with_hooks};
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (5 → 2 lines)
+  -             let hooks = crate::tools::build_hook_registry(
+  -                 is_audit_enabled(),
+  -                 self.shell_hooks.clone(),
+  -             );
+  -             let mut tools = crate::tools::build_tools_with_hooks(
+  +             let hooks = build_hook_registry(is_audit_enabled(), self.shell_hooks.clone());
+  +             let mut tools = build_tools_with_hooks(
+ ✓ (2m 22s)
+  -             let hooks = crate::tools::build_hook_registry(
+  -                 is_audit_enabled(),
+  -                 self.shell_hooks.clone(),
+  -             );
+  -             let mut tools = crate::tools::build_tools_with_hooks(
+  +             let hooks = build_hook_registry(is_audit_enabled(), self.shell_hooks.clone());
+  +             let mut tools = build_tools_with_hooks(
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check the current state of the files and continue.
+
+I need to:
+1. Wrap the RLM pushes with maybe_hook in agent_builder.rs
+2. Import maybe_hook
+3. Update the source-level guard test
+4. Add tests
+5. Run checks, commit
+
+Let me check state first.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git diff -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1095,1125p src/agent_buil… ✓ (5ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now wrap the two pushes with maybe_hook and add the import. Let me check the current imports of agent_builder.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use crate::hooks" src/… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 18,30p src/agent_builder.… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 18,24p src/agent_builder.… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (1 → 1 lines)
+  - use crate::hooks;
+  + use crate::hooks::{self, maybe_hook};
+ ✓ (16.8s)
+  - use crate::hooks;
+  + use crate::hooks::{self, maybe_hook};
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the two pushes plus the comment explaining why the child is untouched:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (6 → 31 lines)
+                // `FallbackSubAgentTool` wrapping the real one, so the session cap
+                // must sit OUTSIDE it: one capped slot per delegation, whichever
+                // model ends up answering.
+  -             tools.push(with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP));
+  -             tools.push(Box::new(SharedStateTool::new(shared_state)));
+  +             //
+  +             // Both RLM tools are wrapped with `maybe_hook` against the SAME
+  +             // registry `build_tools_with_hooks` just used (Day 202). Until then
+  +             // these two pushes were the only builtins in the process that no
+  +             // hook could see: a user's `[hooks.*]` config observed nine tools
+  +             // and silently missed delegation and shared-state traffic — an
+  +             // event that fires nothing is indistinguishable from a hook with
+  +             // nothing to say, the same defect class as the missing
+  +             // `post_failure` fire point. `maybe_hook` returns the tool
+  +             // UNWRAPPED when the registry is empty, so the whole default
+  +             // population (no hooks configured) gets a byte-identical tool set.
+  +             //
+  +             // Fires ONCE PER DISPATCH at the parent, deliberately. The child's
+  +             // own tool set is built by `sub_agent_child_tools` and the nested
+  +             // tool by `build_sub_agent_tool_at_depth`; neither is wrapped, so
+  ... (12 more lines)
+ ✓ (2m 11s)
+                // `FallbackSubAgentTool` wrapping the real one, so the session cap
+                // must sit OUTSIDE it: one capped slot per delegation, whichever
+                // model ends up answering.
+  -             tools.push(with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP));
+  -             tools.push(Box::new(SharedStateTool::new(shared_state)));
+  +             //
+  +             // Both RLM tools are wrapped with `maybe_hook` against the SAME
+  +             // registry `build_tools_with_hooks` just used (Day 202). Until then
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let's see the actual test failure. Let me run the test for the guard.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo agent_buil… ✓ (179ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3670,3760p src/agent_buil… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3691,3702p src/agent_buil… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:3691..3705 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now update the needle. The task says: change the needle to `"tools.push(maybe_hook(with_session_"` + `"cap(sub_agent_tool"`. But my formatting puts a newline between `maybe_hook(` and `with_session_cap(`:
+
+```
+            tools.push(maybe_hook(
+                with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP),
+                &hooks,
+            ));
+```
+
+So `tools.push(maybe_hook(with_session_cap(sub_agent_tool` is not contiguous. Hmm. The task spec assumed:
+```rust
+tools.push(maybe_hook(
+    with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP),
+    &hooks,
+));
+```
+which has the same line break issue: `"tools.push(maybe_hook(with_session_"` + `"cap(sub_agent_tool"` = `tools.push(maybe_hook(with_session_cap(sub_agent_tool` — that doesn't appear. Unless formatted as one line.
+
+Hmm, so the task's suggested needle wouldn't work unless the push is on one line. Let me consider: maybe I should keep the needle searchable by picking different needles. But the task says keep every existing assertion and change the needle to the new spelling. I have latitude on the exact needle as long as it's assembled at runtime and asserts the same things.
+
+Better: use needle `"tools.push(maybe_hook("` preceded... hmm, need to nail the sub_agent push specifically since count must be exactly 1. `tools.push(` count would be many. Let me use a two-part anchored search: find the push site of maybe_hook followed by with_session_cap in the source. Simplest robust approach: build the needle as `"tools.push(maybe_hook("` and separately check that the source after that point within a small window contains `with_session_cap(sub_agent_tool`. Hmm, getting complex.
+
+Alternative: relax formatting so the push is a single line? Rustfmt would reformat it. Let's check what rustfmt does — my current multi-line write is likely what rustfmt produces. Actually let me test: write it as one line and see if rustfmt keeps. Unlikely — too long (over 100 chars? `            tools.push(maybe_hook(with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP), &hooks));` = about 100 chars; count: 12 spaces + "tools.push(maybe_hook(with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP), &hooks));" = 12+ 90 = 102. rustfmt would split.
+
+So safest: search for a needle spanning newline-free segments. Use two `find`s:
+
+```rust
+let push_marker = format!("tools.push(maybe_hook({}", "");
+```
+Hmm that's just "tools.push(maybe_hook(" — count of that in source: 1 (only the sub_agent push uses multi-line maybe_hook with newline right after `(`? let me check other pushes: `tools.push(maybe_hook(Box::new(AskUserTool), hooks));` — that contains "tools.push(maybe_hook(" too and it's on one line! So count would be 2+. 
+
+Better approach: anchor the needle on the inner text that is unique: `"with_session_cap(sub_agent_tool"` — that's unique (only one site). And then check that the push line contains maybe_hook. Let me construct:
+
+```rust
+let cap = format!("with_session_{}", "cap(sub_agent_tool, SESSION_TOOL_CALL_CAP)");
+let push_at = src.find(&cap).expect("sub_agent push must exist");
+// The push must be routed through `maybe_hook` — the hook fire point.
+let line_start = src[..push_at].rfind('\n').map(|i| i + 1).unwrap_or(0);
+```
+Hmm, but `maybe_hook(` is on the previous line by rustfmt, so checking the same line fails.
+
+Cleaner: search for the wrapped push as a whole with the line break accounted for. Since needles must be assembled at runtime, I can define:
+
+```rust
+let push = format!("tools.push(maybe_hook(\n                with_session_{}", "cap(sub_agent_tool");
+```
+That embeds exact indentation which is brittle but this is a source-level guard that already asserts on exact source text. Hmm, brittleness though: if the line moves indentation it fails spuriously.
+
+Alternative robust approach that keeps assertions: search for `"cap(sub_agent_tool, SESSION_TOOL_CALL_CAP)"` position, then assert that the text *before* it since the last `tools.push(` contains `maybe_hook(`. That is: 
+
+```rust
+let anchor = format!("cap(sub_agent_tool, SESSION_TOOL_{}", "CALL_CAP)");
+let at = src.find(&anchor).expect("sub_agent push must exist");
+let push_start = src[..at].rfind("tools.push(").expect("push site");
+let push_expr = &src[push_start..at];
+assert!(push_expr.contains("maybe_hook("), "...");
+```
+
+Wait but `push_expr` contains `tools.push(maybe_hook(\n with_session_cap(sub_agent_tool, SESSION_TOOL_` — yes contains "maybe_hook(". Good, and count assertions:
+
+- exactly one `tools.push(` whose expression contains maybe_hook and sub_agent... Let me keep it simple and faithful:
+  - `push_at` = index of the `tools.push(` that immediately precedes the `with_session_cap(sub_agent_tool` anchor.
+  - assert push_at < retain_at.
+  - assert `src.contains(&effective)`.
+  - assert exactly one occurrence of the anchored push expression: count occurrences of the full expression? Let's count `src.matches(&anchor).count() == 1` — the anchor is `cap(sub_agent_tool, SESSION_TOOL_CALL_CAP)`, which appears once. Hmm but the old test asserted "exactly one sub_agent push site" via the push needle count. Equivalent: count of `tools.push(` occurrences that are followed within ~200 chars by `sub_agent_tool`? Simpler: count occurrences of the anchor (which includes sub_agent_tool) == 1, plus assert the push expression contains maybe_hook. That keeps the essential claims: push exists, routed through maybe_hook, sits above retain, exactly one push site, retain consults effective.
+
+Actually wait: the task explicitly wants the needle changed to `"tools.push(maybe_hook(with_session_"` + `"cap(sub_agent_tool"`. That means the intended source layout assumes `tools.push(maybe_hook(with_session_cap(...)` textual adjacency, which isn't what rustfmt will produce with my wrapping. Unless... the intended code is:
+
+```rust
+            tools.push(maybe_hook(
+                with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP),
+                &hooks,
+            ));
+```
+Needle `tools.push(maybe_hook(with_session_` clearly doesn't match. So the task's own suggested needle is wrong for its own suggested code. I'll use the robust approach and document it. Fine — the task says "Change the needle (assembled at runtime, as the test already does) to the new spelling ... and keep every existing assertion".
+
+I'll implement with runtime-assembled needles that still verify the same properties, and note in a comment why.
+
+Also need to add: "assert both pushes go through maybe_hook and that exactly one `build_hook_registry(` / one `build_tools_with_hooks(` call exists" — that's a new weak source-level guard test.
+
+And in tools.rs: behavioural tests with CountingHook.
+
+Let me look at existing agent_builder test mod structure and hooks.rs public API (Hook trait, register) to write the tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub trait Hook" -A 60 s… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at how HookedTool executes, and how a tool's `execute` signature is (AgentTool trait from yoagent). Let me check existing tests in tools.rs that call execute on a tool from build_tools.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn execute" src/tools.… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,80p src/hooks.rs | head… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1830,1900p src/hooks.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. `tempfile` is available. Now let me write the tools.rs tests. I need:
+1. A test-local counting hook implementing `Hook` with AtomicUsize recording (count + tool_names seen).
+2. Build tools with `build_tools_with_hooks` with a registry containing the counting hook, find the `shared_state` tool, call execute with a set op.
+3. Assert count incremented and tool_name == "shared_state".
+4. Anti-vacuous: count is 0 before.
+5. Near-miss: empty registry → names identical to build_tools output.
+
+Note: build_tools_with_hooks requires `&cli::PermissionConfig` and `&cli::DirectoryRestrictions`. Let me check how existing tools.rs tests build these. Look at tools.rs test module around 4197 and how hooks.rs:2359 calls build_tools.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2340,2420p src/hooks.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now write the tools.rs tests. Let me find a good place — near existing tests in tools.rs that relate to hooks/tool building. Let me look at the tools.rs test module(s).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4197,4240p src/tools.rs &… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4190,4203p src/tools.rs; … ✓ (7ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me continue. I need to:
+1. Update the source-level guard in agent_builder.rs.
+2. Add tests in tools.rs.
+3. Add source-level guard in agent_builder for the two maybe_hook wrappers.
+4. Run checks, positive control, commit.
+
+Let me first update the guard needle.
+
+But wait, the guard needs the registry to be non-empty for the wrapper to actually fire. Hmm — the behavioural test builds with `build_tools_with_hooks` with a counting hook registered. But an empty registry means unwrapped. That's the near-miss test.
+
+For the shared_state tool test: build the tool list with build_tools_with_hooks and find the shared_state tool... but wait, `build_tools_with_hooks` doesn't add shared_state; that's added in agent_builder. Hmm. The task says: "build the tool list with `build_tools_with_hooks`, then find the `shared_state` tool in the returned list and call its `execute`".
+
+But build_tools doesn't include shared_state! Let me check... In tools.rs build_tools, the tools are bash, read_file, write_file, edit_file, list_files, search, rename_symbol, ask_user, todo, web_search. No shared_state, no sub_agent. So the task's test spec is slightly off — the RLM tools are pushed in agent_builder.
+
+So the behavioural test needs to emulate what agent_builder does: build tools with hooks + push maybe_hook(SharedStateTool::new(shared_state)). Hmm, but that's basically testing maybe_hook itself, which is trivially exercised.
+
+Better: write the test in tools.rs that constructs a registry with a counting hook, builds tools via build_tools_with_hooks, then wraps a `SharedStateTool` with `maybe_hook` exactly as agent_builder does, and executes it. That tests the seam behaviour: hook fires with tool_name "shared_state".
+
+Actually the honest thing: the wrapping in agent_builder is the thing under test, and it can't be invoked without a full AgentConfig + provider. Let me check whether `build_sub_agent_tool` works in tests — the test_agent_config helper exists, so maybe. But calling sub_agent would invoke a provider.
+
+Let me check if there's an existing test that builds an agent and checks tool names... `configure_agent` maybe. Let me look for how tests assert on the parent tool list.
+
+Actually, the task explicitly says: don't invoke a real sub_agent in a test. And the source-level guard covers the presence.
+
+For the shared_state behavioural test: I can construct the same composition in tools.rs tests: call build_tools_with_hooks with a counting hook (proving the existing wiring is unchanged), then also push maybe_hook(SharedStateTool::new(state)) like agent_builder does and execute it. That's a real behavioural assertion on the wrapper at the seam.
+
+Hmm, but that duplicates the push logic in the test rather than testing agent_builder's code. Still, it's what the task asks (the seam).
+
+Alternatively — better — I could extract the RLM push into a helper function in tools.rs, e.g. `push_rlm_tools(tools, sub_agent_tool, shared_state, &hooks)` and have agent_builder call it. Then the test can call the helper directly with a real SharedStateTool and a counting hook. That's much stronger: it tests the actual production function. But it adds a function definition + consumer in the same edit — fine.
+
+Hmm, but the task didn't ask for that; it asked for wrapping at the push site. However a helper makes the test genuinely behavioural. But risk: the source-level guard in the task expects exactly one `build_hook_registry(` and one `build_tools_with_hooks(` and both pushes going through maybe_hook — a helper would still satisfy "both pushes go through maybe_hook" if the helper's text is in the same file... but the guard slices agent_builder.rs only. Hmm.
+
+Let's keep it simpler and closer to the task: wrap at the push site in agent_builder.rs. And in tools.rs tests, test maybe_hook's behaviour with SharedStateTool — but to make it meaningful, use the real production path as far as possible.
+
+Hmm, actually wait. Let me reconsider: is there a way to get the parent tool list from `configure_agent`? Let's check if the built Agent exposes tools. Earlier comment says yoagent Agent exposes no tool-name accessor. So no.
+
+OK. Decision: keep the push-site wrapping as specified. Tests:
+
+1. In tools.rs tests (mod tests), add:
+   - `counting_hook_fires_for_shared_state_at_the_hook_seam`: build a registry with a CountingHook, call `build_tools_with_hooks(...)`, assert the counter is 0 (anti-vacuous). Then compose the RLM push the way `agent_builder` does — actually, to avoid duplicating, I'll wrap `SharedStateTool` with `maybe_hook` and assert firing with tool_name "shared_state". Document that the push site is in agent_builder and the source-level guard there proves the composition matches.
+
+Hmm — that test is weak-ish but real at the seam as the task specified.
+
+Actually, I could make it stronger and still simple: add a `pub(crate) fn push_rlm_tools` in tools.rs and use it in agent_builder. Let me weigh cost. The `sub_agent` push site's position above the retain matters (guard #887). A helper called once right before the retain keeps the position trivially. And the source guard's needle would need to change to the helper call... which the task explicitly said to change to `"tools.push(maybe_hook(with_session_"` + `"cap(sub_agent_tool"`. If I introduce a helper, that needle must point inside the helper, and the "sits above the retain" claim becomes about the call to the helper. That's a real weakening of guard #887's meaning (the retain position). Risky.
+
+So: do NOT extract a helper. Keep the literal push with maybe_hook at the site, as the task specifies. Test the seam in tools.rs as specified, with a doc comment stating its exact limit (the composition in agent_builder is pinned by the source-level guard there, not by this test).
+
+Also add the weak source-level guard test in agent_builder.rs: both pushes go through maybe_hook; exactly one `build_hook_registry(` and one `build_tools_with_hooks(` call site in the file.
+
+And the near-miss test: empty registry yields a tool vector with names exactly equal to what build_tools produces. `assert_eq!` on whole vectors. Note build_tools now delegates to build_tools_with_hooks, so comparing them is somewhat circular... but the meaningful comparison is: names from build_tools_with_hooks(empty registry) == names from build_tools(). Since build_tools delegates, that's tautological. Better: assert against the literal expected list of names ["bash","read_file","write_file","edit_file","list_files","search","rename_symbol","todo","web_search"] — wait, ask_user only if stdin is terminal. In tests stdin is not a terminal, so no ask_user. hooks.rs test asserts 9 tools. Let's check: bash, read_file, write_file, edit_file, list_files, search, rename_symbol, todo, web_search = 9. Yes, matches hooks.rs's `assert_eq!(tools.len(), 9)`.
+
+So the near-miss: `build_tools_with_hooks(...&empty registry...)` names == the same names produced by `build_tools(...)` — but to avoid tautology, assert the vector equals the expected literal names AND equals build_tools' output. Hmm, the task says "an empty registry must yield a tool vector whose name()s are exactly what build_tools produced before — whole-vector assert_eq!, never a contains."
+
+Since build_tools delegates to build_tools_with_hooks, an assert_eq between them proves nothing. The stronger pin is the literal list, which is exactly "what build_tools produced before". Plus, with a registry containing a hook, the names must be identical too (wrapping doesn't rename) — and the count identical.
+
+Also good: the existing hooks.rs test with 9 tools covers part of this.
+
+Let me now write the code.
+
+First, update the guard needle in agent_builder.rs.
+
+The push code is now:
+```rust
+            tools.push(maybe_hook(
+                with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP),
+                &hooks,
+            ));
+```
+So the needle `tools.push(with_session_cap(sub_agent_tool` becomes `tools.push(maybe_hook(\n                with_session_cap(sub_agent_tool`. Must be a contiguous substring. The task suggests: `"tools.push(maybe_hook(with_session_"` + `"cap(sub_agent_tool"`. But that substring requires them adjacent with no newline — with line break they're not adjacent.
+
+Options: format the source so the needle works, or use a needle spanning the newline: `format!("tools.push(maybe_hook(\n                with_session_{}", "cap(sub_agent_tool")`. That's fine — needle assembled at runtime.
+
+I'll use that.
+
+Also "exactly one push site" — `src.matches(&push).count() == 1`. Good.
+
+Now also add the new weak guard for the wrappers. The task says: "assert both pushes go through maybe_hook and that exactly one build_hook_registry( / one build_tools_with_hooks( call exists".
+
+Careful: `build_hook_registry(` appears in tools.rs definition too but we slice agent_builder.rs. In agent_builder.rs it appears once (call) — let me verify. And `build_tools_with_hooks(` once.
+
+Wait — is `include_str!("agent_builder.rs")` including the test code itself? Yes — the test's own needles are assembled at runtime so they don't self-match. But for `build_hook_registry(` and `build_tools_with_hooks(`, the test will assert exactly one occurrence... if the test file contains the literal `build_hook_registry(` in an assert message string, that would self-match. I'll assemble those needles at runtime too.
+
+Let me now write the edits.
+
+Let me write the test in tools.rs. Where to put it? There's `mod tests` at 1764 (large). And `mod sub_agent_fallback_gate_tests` at 4202. I'll add to a new small test module near the end, or inside `mod tests`. Let me add a new `#[cfg(test)] mod hook_seam_tests` at the end of tools.rs to keep it isolated... but it needs `use super::*` and access to CountingHook implemented locally.
+
+Let me write it.
+
+For SharedStateTool: `yoagent::tools::SharedStateTool::new(shared_state)`. What is SharedState? `yoagent::SharedState`. Need to check how build_sub_agent_tool creates it. Let's check the signature.
+
+Let me look at build_sub_agent_tool and sub_agent_child_tools quickly for SharedState usage.
+
+Let me just grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SharedState" src/tools.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "SharedStateTool" ~/.ca… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/ | gr… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — `SharedState::new()` is available. Now let's write the tests.
+
+First, update the source-level guard needle in agent_builder.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+Now update the invalidated source-level guard:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (5 → 11 lines)
+            let src = include_str!("agent_builder.rs");
+            // Needles assembled at runtime so this test cannot match its own source.
+  -         let push = format!("tools.push(with_session_{}", "cap(sub_agent_tool");
+  +         // Day 202: the push gained a `maybe_hook(...)` wrapper, so the needle
+  +         // spans the newline rather than being truncated to the old spelling —
+  +         // the assertions below are unchanged, including "exactly one push site".
+  +         let push = format!(
+  +             "tools.push(maybe_hook(\n                with_session_{}",
+  +             "cap(sub_agent_tool"
+  +         );
+            let retain = format!("tools.retain(|t| !tool_name_{}", "disallowed(t.name()");
+            let effective = format!("effective_disallowed_{}", "tools(&self.disallowed_tools)");
+ ✓ (2m 23s)
+            let src = include_str!("agent_builder.rs");
+            // Needles assembled at runtime so this test cannot match its own source.
+  -         let push = format!("tools.push(with_session_{}", "cap(sub_agent_tool");
+  +         // Day 202: the push gained a `maybe_hook(...)` wrapper, so the needle
+  +         // spans the newline rather than being truncated to the old spelling —
+  +         // the assertions below are unchanged, including "exactly one push site".
+  +         let push = format!(
+  +             "tools.push(maybe_hook(\n                with_session_{}",
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now add a new weak source-level guard test in agent_builder.rs for the RLM hook wrapping. Let me insert it after `the_sub_agent_push_sits_above_the_disallow_retain`.
+
+Let me find the end of that test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "expected exactly one su… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (3 → 61 lines)
+                "expected exactly one sub_agent push site"
+  +         );
+  +     }
+  + 
+  +     /// Day 202: the RLM pair (`sub_agent`, `shared_state`) is pushed HERE, not
+  +     /// inside `build_tools`, so `agent_builder` must own the registry and hand
+  +     /// it to both halves.
+  +     ///
+  +     /// Deliberately WEAK source-level guard, and its limit stated rather than
+  +     /// implied: it proves the `maybe_hook` wrappers and the single shared
+  +     /// registry are PRESENT in this file, never that a hook ever fires for a
+  +     /// real dispatch. The parent tool list is only reachable through
+  +     /// `configure_agent`, which builds a yoagent `Agent` exposing no tool-name
+  +     /// accessor, and `sub_agent` cannot be invoked in a test without a
+  +     /// provider. The behavioural half of the claim lives in `tools.rs`'s
+  +     /// `hook_seam_tests`, which drives the same `maybe_hook` seam over a real
+  +     /// `SharedStateTool`.
+  +     ///
+  +     /// Needles are assembled at runtime so this test cannot match itself.
+  +     #[test]
+  ... (41 more lines)
+ ✓ (2m 9s)
+                "expected exactly one sub_agent push site"
+  +         );
+  +     }
+  + 
+  +     /// Day 202: the RLM pair (`sub_agent`, `shared_state`) is pushed HERE, not
+  +     /// inside `build_tools`, so `agent_builder` must own the registry and hand
+  +     /// it to both halves.
+  +     ///
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo the_sub_ag… ✓ (336ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Two occurrences — probably `build_hook_registry` appears in the `use` line too: `use crate::tools::{build_hook_registry, build_sub_agent_tool, build_tools_with_hooks};`. Yes! `build_hook_registry` followed by `,` not `(`. But my needle is `build_hook_registry(` with paren. Hmm. In the use statement it's `build_hook_registry,` — no paren. So where's the second?
+
+Ah — the test's own assert message? No, needle assembled at runtime. Hmm, maybe another call exists. Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_hook_registry" sr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line 3783 is in the test's assert message: "expected exactly one `build_hook_registry(` call in \". That literal contains `build_hook_registry(`. I need to avoid that. Change the message wording to break the token, e.g. "expected exactly one hook-registry construction". Let me rewrite the messages to avoid the literal needle.
+
+Similarly for `build_tools_with_hooks(` — check messages.
+
+I'll reword messages.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (30ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo the_rlm_pu… ✓ (28.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the behavioural tests at the maybe_hook seam in src/tools.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/tools.rs && wc -l sr… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/t… (218 lines) ✓ (10.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo hook_seam_… ✓ (15.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (27.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good progress — the near-miss passed. Now:
+
+1. shared_state params: needs `action`. Use `{"action":"set","key":"k","value":"v"}`.
+2. todo tool: the hook didn't fire → likely the todo call failed (InvalidArgs) and post_failure fires instead of post_execute. Let me check TodoTool params schema.
+
+Let me check both.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct TodoTool" -A 60 … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both need `action`. Fix both params: shared_state `{"action":"set","key":"k","value":"v"}` and todo `{"action":"add","description":"x"}`.
+
+Also need to verify SharedState tool's param key names (key/value). Let's check the yoagent SharedStateTool schema.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "action" ~/.cargo/regis… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me find the yoagent source for SharedStateTool.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "SharedStateTool" ~/.c… ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "SharedStateTool" -A 60… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Fix the shared_state params: `{"action": "set", "key": "k", "value": "v"}`.
+
+Also the todo tool: hook didn't fire — count 0. Let me check why. Maybe the tools list `find(t.name()=="todo")` returned the HookedTool whose name delegates... it should. Hmm, `posts()` was 0 after executing. Possibly because the execute returned an Err? We ignore with `let _`. Actually `todo` with action invalid → error → post_failure_execute fires, not post_execute! Right: my params `{"todos": [...]}` lacked "action", so it errored → post_failure path. Let me use `{"action": "list"}`.
+
+Wait but the tool in the list is not wrapped by with_recovery_hints etc. Post-failure fires. Use valid args.
+
+Also commands_todo::todo_list() — in tests it's fine.
+
+Also note: todo's execute with "list" — fine.
+
+Let me also double check `list` might touch global state; safer to use "list".
+
+Actually "add" modifies in-memory global state; "list" is read-only. Use "list".
+
+Let me fix both.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4490,4520p src/tools.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo hook_seam_… ✓ (27.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Fix the unused variable warning (clippy -D warnings). Assert the result is ok.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (19 lines) ✓ (19.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo bu… ✗ (2m 0s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (1m 27s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The size gate. Need to paste ("src/tools.rs", 4525) and ("src/agent_builder.rs", 4275) into GRANDFATHERED_OVERSIZED_MODULES. But wait — adding ~262 lines to tools.rs is a lot. The task said to add tests to tools.rs. Better: move the test module to a smaller module? The task explicitly says tests in src/tools.rs. But the size gate is fatal for tools.rs (over 100-line grace band). Options: keep the tests but trim them (they're ~140 lines) — that doesn't help, the module grew by 262 lines total (92 from refactor + ~170 tests).
+
+Alternatively, paste the register entries. The gate says: "Fix: paste ... over its entry (and say why in the commit message), or move the new code to a smaller module."
+
+Hmm. Precedent in this repo: they paste the numbers. Let me check the register file.
+
+Let me look at tests/module_size.rs GRANDFATHERED_OVERSIZED_MODULES.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/tools.rs\|src/agent… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The task says tests go in src/tools.rs. But growth > 100-line grace band is fatal. Two options: (a) paste register numbers, (b) move tests to a smaller module. The repo convention allows pasting with a reason in the commit message. But adding 262 lines to tools.rs when it's already 4263 is significant. The tests are ~140 lines. Could I shrink the refactor? The refactor in tools.rs added ~92 lines (doc comments + wrapper). Tests added ~170.
+
+Alternative: keep the behavioural tests in hooks.rs? The task says "in `src/tools.rs` tests". Hmm, but moving to a new test file (tests/) is also valid: an integration test file can call `pub fn build_tools_with_hooks` and `build_hook_registry`, and `Hook`/`HookRegistry` are public. But `SharedStateTool` from yoagent is accessible in integration tests too since yoagent is a dependency? Integration tests can use the crate's public API but yoyo is a binary crate — no lib target! So integration tests can't import the crate. So src/tools.rs it is.
+
+Given precedent (day 193 paste), pasting the register line is the sanctioned move. But it says the grace band is 100 lines — pasting is allowed per the message: "paste ("src/tools.rs", 4525) over its entry in GRANDFATHERED_OVERSIZED_MODULES (and say why in the commit message), or move the new code to a smaller module."
+
+Hmm, but is that a good idea — growing an already-grandfathered oversized module? The gate says growth has to be acknowledged. I could reduce the test code size somewhat. Honestly the cleanest is to reduce bloat: my doc comments in the test module are long (~30 lines) and there's a `CountingHookProxy` wrapper. I can simplify by using an `AtomicUsize` + `Mutex<Vec<String>>` directly in a `Hook` impl registered... but register takes Box<dyn Hook>, and I need to read the counter afterwards. Options: use a shared `Arc<CountingHook>` — need to register a Box<dyn Hook> that references the same counter → hence the proxy. Alternative: make CountingHook hold Arc-counter internally and implement Hook for `Arc<CountingHook>`? `impl Hook for CountingHook` where the fields are Arc-based, and register a clone... can't clone Box<dyn Hook>.
+
+Simpler: use a static/global? No, tests run in parallel.
+
+Alternative approach: write the counter to a temp file like hooks.rs does with ShellHook. That's simpler in code: register a real ShellHook that appends to a file, then read the file. But ShellHook runs a subprocess — actual behavior, works fine, and hooks.rs already does this. That's less code: build a ShellHook with counting_command, register, execute, read file lines. But it requires writing to temp dir; tempfile is a dev-dependency? hooks.rs tests use tempfile. Let me check dev-dependencies.
+
+Actually simpler and shorter: keep proxy but trim doc comments. Let's estimate: how much do I need to cut? tools.rs grew by 262 to be under 100 → need to cut ~163 lines, or paste the register. Cutting 163 lines of test code while keeping the three tests is hard.
+
+Honestly, the register paste is the designed remedy and is precedented (Day 193 entry itself). But it's a "fatal" gate meant to force a decision. The task instructions say to run the checks and fix failures. I think pasting the register with justification is acceptable and the least risky. Yet my memories warn: `src_modules_respect_the_size_gate` panics appear often in memory (multiple times), meaning pasting happens routinely.
+
+Hmm, but can I avoid growing tools.rs so much? Alternative placement for the behavioural test: `src/hooks.rs` tests could exercise the seam by building the tools via `crate::tools::build_tools_with_hooks` — that's inside the same crate, so allowed! hooks.rs already imports `crate::tools::build_tools`. So I could put the behavioural tests in hooks.rs (the hook test module), which is where the seam conceptually belongs, and where MockTool/ctx helpers already exist. But hooks.rs is how big? Check its register: not in the oversized list probably. If hooks.rs is under cap and reasonable, moving the tests there avoids the fatal gate.
+
+Task says tests in src/tools.rs though. But it also says "Files: src/tools.rs, src/agent_builder.rs". Deviating slightly to hooks.rs is fine if justified, but the task explicitly says "Behavioural, at the `maybe_hook` seam, in `src/tools.rs` tests". Hmm.
+
+Let me reconsider: maybe I can shrink the refactor's doc comment bloat in tools.rs (~90 lines added). The build_hook_registry doc is 12 lines, build_tools doc + wrapper ~20, build_tools_with_hooks doc 10. That's ~40 lines of comments. Tests ~170.
+
+Actually the real growth: 4525 - 4263 = 262. My test module is about 170 lines, registry extraction ~90.
+
+If I trim comments to minimal and rewrite tests compactly, maybe ~140 total → still over 100 by 40.
+
+Simplest defensible path: paste the register line for tools.rs and agent_builder.rs with a reason. That's what the gate asks for. Actually wait: agent_builder grew 98 lines and the register says 4177 — 98 is within the 100-line grace band (non-fatal warning). But better to paste both to keep the register accurate? The gate prints a warning for agent_builder; warnings are non-fatal. Pasting both keeps it quiet and accurate.
+
+Hmm, the module_size test also has a "grandfathered_module_may_shrink_while_still_over_cap" test that appeared in memory failures. Let me read the register guidance in tests/module_size.rs around line 143 to see if there's a cap on grandfathered entries or a note about what to say.
+
+Let me look at the file structure.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,160p tests/module_siz… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The register paste is the sanctioned remedy. Precedent: the file's own comment "Pasted from what the gate printed, not computed."
+
+But before pasting, consider trimming. The task's tests are essential. Let me measure how much I can trim cheaply: my test module comment block is long. Let me count lines of the added test module and see.
+
+Actually, let me reconsider whether to move the behavioural tests to hooks.rs. hooks.rs size: let me check if it's grandfathered.
+
+Let me check line counts and whether hooks.rs is under cap.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MAX_MODULE_LINES: usize… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+hooks.rs is 3387 — is it grandfathered? Let me check line 163 area entries.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^    ("src/' tests/modu… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both hooks.rs and tools.rs are grandfathered. Both are over cap. So moving tests to hooks.rs doesn't avoid the register paste — it just moves the growth to a different grandfathered entry. The gate's remedy is the paste.
+
+Wait — is there a rule about grandfathered modules shrinking? "grandfathered_module_may_shrink_while_still_over_cap" — an entry may shrink (i.e., pasting a smaller number is allowed if the file shrank). So pasting 4525 for tools.rs is the standard move.
+
+Per the task instruction: "Docs: No user-visible behaviour changes ... CLAUDE.md/README need no edit." Nothing about module size. The module_size test is part of `cargo test`, so I must handle it.
+
+Decision: paste both numbers with the reason. Actually agent_builder is only a warning (98 < 100). Pastings should reflect reality; pasting agent_builder's 4275 makes the register accurate and silences the warning. But is pasting for a sub-grace-band growth appropriate? The register comment says to paste what the gate printed. I'll paste both, with clear commit-message reasons.
+
+Hmm — but I want to minimize risk: if I trim the tools.rs additions such that the total growth ≤ 100, no paste needed for tools.rs... but growth is 262. Can't trim to 100 while keeping tests. So paste.
+
+Actually wait. Better idea to reduce risk AND respect the gate: move the ~170-line test module out of src/tools.rs into a new small module file, e.g. `src/hook_seam_tests.rs`, included as a `#[cfg(test)] mod` from tools.rs. Then tools.rs growth is ~90 lines (not fatal, since it's a register-drift... no wait, 90 < 100 grace band → warning only). And the new file is small and under the cap, so no register entry needed. That satisfies "growth has to be acknowledged" minimally and avoids growing the already-oversized tools.rs by 262 lines — a much better outcome by the gate's own intent ("move the new code to a smaller module" is explicitly offered as the alternative fix!).
+
+The task listed `Files: src/tools.rs, src/agent_builder.rs` but the gate explicitly offers moving new code to a smaller module. However, the assessment/task says tests "in `src/tools.rs` tests". A new test-only module file is still part of the tools test suite conceptually but not literally in tools.rs.
+
+Hmm. Which is better for the mission? The gate exists to force acknowledgement. Precedent in the repo: they paste numbers routinely (Day 193 pasted +184 for slice 1). Growth of 262 in tools.rs with a clear reason (registry seam + hook-seam behavioural tests) is exactly the acknowledged-growth case.
+
+But there's a real cleanliness argument: tools.rs at 4525 is huge. Moving tests to a small module is better. Yet it adds a new file + module declaration, plus module_size test counts all *.rs files? Let me check: does the gate scan all src/*.rs and require them listed if > 2000 lines? A small new file is fine unlisted (under cap).
+
+Risk: `tests/doc_symbols.rs` or other gates might require new module docs. Also `src/main.rs` module list must include it. Let me check how modules are declared: `mod tools;` in main.rs. Adding `#[cfg(test)] mod hook_seam_tests;` in tools.rs works if the file is src/hook_seam_tests.rs — module path resolution: a `mod x;` inside src/tools.rs looks for src/tools/x.rs or src/tools/x/mod.rs. So the file would be src/tools/hook_seam_tests.rs — but src/tools.rs exists as a file, so submodule files go in src/tools/ dir. That's allowed in Rust (src/tools.rs + src/tools/hook_seam_tests.rs). Does any gate scan directory structure? module_size counts "*.rs" under src presumably recursively. Fine.
+
+Hmm, but is there a gate that all src/*.rs files must be registered in some list (e.g., doc_symbols.rs or a file inventory)? Let me just decide: the simplest, lowest-risk path that also follows the gate's explicit alternative is to move the tests into a new file. But there's a memory: "The exemption clause in my own issue is the one thing nothing downstream can falsify" and rules about registered lists.
+
+Let me check if there's a test enumerating src module files.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls src/tools* 2>/dev/null; grep … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "read_dir\|fn collect\|\… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Fine. Let's decide: split tools.rs's new test module into a smaller module? The module-size gate counts files probably. Let me check how it counts (line ~727).
+
+Actually the simplest defensible path: paste the new numbers into the register with a comment explaining why (as the gate's own remedy says: "paste (...) over its entry ... and say why in the commit message"). Both files grew: tools.rs to 4525 (+262 over 4263) and agent_builder.rs to 4275 (+98, warning only).
+
+But wait — better engineering: my task instructions said don't create new modules beyond the two files listed. But the gate's own suggested remedy is pasting. However, growing an already-oversized module by 262 lines when I could put the test module in a separate file is the thing the gate exists to discourage. Hmm, but the gate's remedy explicitly permits pasting with a why.
+
+Actually — could I reduce growth? The tests in tools.rs hook_seam_tests are ~180 lines. The registry extraction is ~60 lines (comments). Hmm.
+
+I think the cleanest: move the new test module into its own file? Doing so requires `mod hook_seam_tests;` declaration in tools.rs (a 1-line addition) and a new file src/tools_hook_seam_tests.rs, plus making needed items pub(crate)-visible (build_tools_with_hooks is pub already; build_tools pub; cli types...). The test uses `super::*` — in a separate module it'd need crate paths. That's a bigger refactor with more risk and the task said Files: src/tools.rs, src/agent_builder.rs.
+
+Given the task explicitly lists only these two files and the gate's documented remedy is to paste the new number with a why, I'll paste both numbers with comments. That's the sanctioned path for an oversized module.
+
+Let me check the module_size register comment format and the "high-water mark" doc for grandfathered modules (line 689). Let me read around 680-700.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs:676..706 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now paste updated numbers. tools.rs 4525, agent_builder.rs 4275. Wait — careful with the shrink ratchet: if I paste 4525 and later edits shrink it (e.g., if I reduce), that's fatal within grace 100. Fine.
+
+Let me check the tests at line ~459 for the sizes used in tests (fixed fixture numbers, no impact).
+
+Update the register entries with a comment explaining why.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 138,148p tests/module_siz… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (24 lines) ✓ (526ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (1m 21s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "^tes… ✓ (2m 41s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+17 "test result: ok" lines, no FAILED. Wait — grep -c returned 1 exit because second grep found nothing. Good: all test binaries pass.
+
+Now clippy + fmt check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (18.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green. Now the positive control — serially, as one atomic command: neuter one of the two `maybe_hook(` wrappers in agent_builder.rs to bare `Box::new(...)`, watch the source-level guard fail by name, restore in same command and watch it pass.
+
+Marker line must include "NEUTERED POSITIVE CONTROL — DO NOT COMMIT". Let me write an atomic bash command that:
+1. replaces the sub_agent push wrapper with bare version + marker comment
+2. runs `cargo test --bin yoyo the_rlm_push_sites 2>&1 | tail`
+3. restores via python (revert text)
+4. runs test again
+
+Careful: the source-level guard `the_sub_agent_push_sits_above_the_disallow_retain` would also fail. That's fine.
+
+Let me build the command carefully with python for the mutation and restoration (using a backup copy to guarantee restore).
+────────────────────────────────────────────────────────────────────────────────
+
+All checks pass. Now the positive control — mutate, watch it fail by name, restore, watch it pass — as one atomic command:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent… (18 lines) ✓ (28.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The python mutation didn't apply (count 0) — because after `cargo fmt` the text differs. Let me check the actual formatted text at the push sites.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tools.push(maybe_hook" … ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The text uses `SESSION_TOOL_CALL_CAP`, not `SESSION_TOOL_CAP`. My mutation string was wrong. Redo.
+
+Also caution: `tests/neutered_guards.rs` — marker must be caught/absent. Let me redo the atomic control properly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent… (18 lines) ✓ (42.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The mutated run printed nothing — probably a compile error (Box::new with a comment inside is fine... but `tools.push(Box::new(with_session_cap(...)))` should compile: with_session_cap returns Box<dyn AgentTool>, Box::new(Box<dyn>) is Box<Box<dyn>> which doesn't implement AgentTool → compile error. Let me capture full output to see. Also note "5664 filtered out" vs earlier 5662 — suspicious, maybe a stale binary? Let me re-run the mutation showing full output.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent… (15 lines) ✓ (27.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The guard fails by name when neutered. (The earlier `Box::new(...)` version failed to compile — no signal, so the honest control is the `tools.push(` mutation, matching the previous run where the mutated test output was empty. Note: the earlier run's empty output was a compile failure — worth mentioning.)
+
+Now restore and confirm pass, in the same command.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/ab.bak src/agent_builder… ✓ (27.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Restored and green, no markers.
+
+Hmm, "5664 filtered out" vs 5662 earlier — the earlier runs said 5662 then 5664. That's just because of other tests being added? No... `--bin yoyo` test count shouldn't change. Earlier: "5661 filtered out" then "5662" then "5664". Hmm, maybe I ran with different filters. Not important. Actually the count grew by 2 exactly matching the 2 tests I added? I added 3 in tools + 1 in agent_builder. Let me not worry.
+
+Now, one more part of the task: "If, and only if, you can confirm from yoagent's source that a `sub_agent` call with a missing `task` param errors before any provider request, you may add a failure-path behavioural test". Let me check yoagent source quickly. Actually let me weigh: budget is nearly exhausted (I've used ~1M tokens). I should wrap up. I'll skip that optional test and say so in the commit message.
+
+Let me do a final full verification: fmt check, clippy, build, test. Then commit.
+
+Also should I check docs? The task says docs need no edit (no user-visible behavior change for default). CLAUDE.md mentions hooks? Let me grep for a statement that might now be stale, e.g. "hooks" in CLAUDE.md. CLAUDE.md is large; the hooks section lives in ARCHITECTURE.md now. The wrap adds behavior for hook users — that's arguably a user-visible behavior change (hooks now fire for sub_agent/shared_state). The task says no docs edit needed. But maybe docs/src/configuration/permissions.md documents hooks? Let me check quickly for hook docs listing which tools fire.
+
+Let me run a quick grep for "hooks" in docs/ and README.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "hooks" docs/src READM… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check whether any docs describe which tools hooks observe. Let me grep for hook phases user docs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "hooks\." README.md doc… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Docs don't itemize which tools hooks fire for, so no doc edit is needed (the task says so too). CLAUDE.md — the task said no edit needed. But note: CLAUDE.md's "New history goes in ARCHITECTURE.md". Let me check whether ARCHITECTURE.md has an entry for src/tools.rs that needs the gate note. The instructions say "Read ARCHITECTURE.md's entry for any file you are about to change" — I should check for gate rules relevant to tools.rs/agent_builder.rs. Let me check quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^### src/tools.rs\|^###… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/tools.rs\|src/agent… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md has per-file notes. The instructions in CLAUDE.md say new history goes in ARCHITECTURE.md. The task's Docs section says "No user-visible behaviour changes for the default (no-hooks) case, so CLAUDE.md/README need no edit. Add the reason in code comments at both sites". So docs edits aren't strictly required. But ARCHITECTURE.md entry for tools.rs/agent_builder.rs might name gate rules I should honor. Let me check the specific entries for gate rules relevant to tools.rs and agent_builder.rs — particularly the module size gate & the "every new function needs a consumer" etc. Let me search ARCHITECTURE.md for the tools.rs bullet and see if there's anything about hook wrapping assertions that I invalidated.
+
+Let me grep for "maybe_hook" in ARCHITECTURE.md and CLAUDE.md.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "maybe_hook" ARCHITECTUR… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Very long. The key thing: ARCHITECTURE.md's hooks.rs bullet is long. There's also the `unknown_hook_tool_warning` note. My change makes hooks fire for sub_agent/shared_state which are already in BUILTIN_TOOL_NAMES — good.
+
+Now, per repo convention, new history should be appended to ARCHITECTURE.md. The task's Docs section says CLAUDE.md/README need no edit (no user-visible change). Whether ARCHITECTURE.md needs an entry: CLAUDE.md says "New history goes in ARCHITECTURE.md, never here." So I should add a brief entry to ARCHITECTURE.md under the tools.rs/agent_builder.rs entry. But ARCHITECTURE.md's entries are enormous paragraphs. Adding a concise note is reasonable and consistent with the repo's rule.
+
+Let me check whether there's a `src/tools.rs` bullet in ARCHITECTURE.md and where the agent_builder bullet is, and append a short Day-202 note to the relevant bullet(s). Given budget constraints (I've used a lot), let me keep it focused: add a short paragraph to the `hooks.rs` bullet or the `tools.rs` bullet.
+
+Let me find the tools.rs bullet.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`src/tools.rs\`\|^-… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^\- \`" ARCHITECTURE.md… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==258' ARCHITECTURE.md | … ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The tools.rs entry is a single 23K-char line. I'll append a Day 202 paragraph to the end of that line (line 258) for tools.rs, and to the agent_builder.rs line (255) for the RLM wrap. Adding a concise note. Let me do it with python appending to end of those lines.
+
+Given the enormous length, keep the note tight but complete: the defect, the fix, the reason for one registry, the tests, the limits, the positive control.
+
+Actually, CLAUDE.md says "Read ARCHITECTURE.md's entry for any file you are about to change" — I've read the relevant bullets partially (hooks.rs and tools.rs). The task didn't require ARCHITECTURE.md edits, but repo convention says new history goes there. I'll add a compact entry to both lines: tools.rs and agent_builder.rs.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (54 lines) ✓ (35ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Oops, I wrote "the_sub_agent_push_sites_sits_above_the_disallow_retain" (typo) — should be "the_sub_agent_push_sits_above_the_disallow_retain". Let me fix.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (33ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (30.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test…

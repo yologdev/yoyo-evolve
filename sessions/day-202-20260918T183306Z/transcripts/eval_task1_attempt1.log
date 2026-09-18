@@ -1,0 +1,120 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the key claims in the diff. The main thing: build_hook_registry, build_tools_with_hooks, wrapping RLM pushes, tests, and module_size register updates.
+
+Let me check the actual files briefly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && sed -n '…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1090,1185p' src/agent_bu… ✓ (4ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The changes look real. Now let's check whether `maybe_hook` on the sub_agent tool interacts with tool_name_disallowed — wait, an important detail: the wrapper's `name()`. Does HookedTool preserve name? Let me check hooks.rs maybe_hook and HookedTool name delegation. If HookedTool::name() returns the inner tool's name, then the disallow retain still works. Important: a wrapped tool must have same name so `--disallowed-tools sub_agent` still filters it.
+
+Let me check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn maybe_hook" -A 25 sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "HookedTool" -A 60 src/h… ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The wrapper preserves name, label, description, parameters_schema. So `--disallowed-tools sub_agent` and tool_name_disallowed still work. Also the session cap sits inside the hook wrapper — order: maybe_hook(with_session_cap(sub_agent_tool, CAP)). That means the hook's pre_execute runs before the cap check. Hmm — this changes semantics slightly: previously `SessionCapTool` was outermost; now a pre-hook could block before the cap, and a post-hook sees the cap refusal as an "Ok" result with error text? Let's check: with_session_cap returns what on cap exceeded? Probably Ok with error content, or Err? The task explicitly specified this wrapping order (`maybe_hook(with_session_cap(...))`), so it matches the task description. Fine.
+
+Also note: hooks.rs line 1194 mentions "post_failure fire point" — Day 202's earlier task. Good.
+
+Now check tests exist and ran. Build/tests pass per harness. Let me check that the module_size register numbers are correct (they claim pasted). Let's run the module_size test only? That's quick maybe. Actually tests passed per harness, so fine.
+
+But one thing to verify: the test `empty_registry_yields_the_same_tool_vector_as_before` asserts the literal list of 9 names — passed presumably.
+
+Another check: does `build_tools` still get called anywhere in non-test code? Adding `#[cfg_attr(not(test), allow(dead_code))]` — fine.
+
+Let me quickly confirm the diff was actually committed and check for any neutered markers.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.6s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "NEUTERED\|SABOTAGE\|DO…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo hook_seam_… ✓ (13ms)
+ ✓ (191ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The hook_seam_tests pass and the behavioural test genuinely drives a SharedStateTool through maybe_hook. Let me also verify the source-level guard test passes (it's part of agent_builder tests). Let me run the two named tests quickly.
+
+Also verify the behavioural claim end-to-end at a deeper level: is the parent's tool list actually hook-wrapped in build_agent? The diff shows it. Could I verify with a real binary run? That would require a hooks config and running a sub_agent — too heavy. The source-level guard plus code reading suffices.
+
+Let me run the agent_builder guard test.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo the_rlm_pu… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo -- the_rlm… ✓ (154ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both guards pass. Now verify the module_size register entry is fresh (cargo test --test module_size passed per harness). Since the harness said Tests: PASS, that covers it. Let me quickly confirm the numbers match to be safe? It would be quick-ish; module_size test is fast.
+
+Actually let me just check line counts to verify the register isn't stale-high/low.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tools.rs src/agent_bui… ✓ (175ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Register numbers match actual line counts exactly.
+
+Now check the task's step 4 about the child — confirmed by reading the comment. Also the task said "Update the one existing source-level guard" — done, and the assertion kept.
+
+Doc checks: task says no user-visible behavior change for the default case → CLAUDE.md/README need no edit; ARCHITECTURE.md updated (repo convention: per-file history goes in ARCHITECTURE.md). That's done appropriately.
+
+Product surface: this is a product-kind task; behavior change for users with hooks configured (now hooks fire for RLM tools) — this is the intended feature, additive, opt-in by virtue of having hooks configured. No config defaults/CLI flags/wizard/startup change. Default no-hooks path is byte-identical (pinned by a whole-vector assert). So product_surface: PASS.
+
+One potential concern: the hook wrapper now sits outside the session cap, meaning a hook's `post_failure`/block behavior applies to the wrapped stack; and previously `with_session_cap` outermost meant the disallow retain saw the name — still true. Another: `maybe_hook`'s pre-hook could now refuse a `sub_agent` dispatch — that is new behavior but intended (hooks fire for sub_agent).
+
+Also there's a subtlety: pre-hook could block sub_agent — task intent, fine.
+
+Anything about hooks.rs test `unknown_hook_tool_warning` near-miss? Not affected.
+
+Prompt: prompt.rs's failure note? Not affected.
+
+Now verdict PASS. Write eval file. Also mention ARCHITECTURE.md / assessment.md changes are fine (assessment.md updated as part of the session, expected).
+
+Check the doc_sync: ARCHITECTURE.md updated for both files. PASS.
+
+Write file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (1m 39s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS
+
+Evidence I gathered (not just the diff):
+• `src/tools.rs now has build_hook_registry (extracted verbatim), build_tools as a 7-arg thin wrapper, and build_tools_with_hooks taking &Arc<HookRegistry>`.
+• `src/agent_builder.rs builds one registry via is_audit_enabled() + self.shell_hooks, passes it to build_tools_with_hooks, and wraps both RLM pushes in maybe_hook` — with the "fires once per dispatch, child not wrapped" comment the task required.
+• Ran the new tests: tools::hook_seam_tests 3/3 pass, including the behavioural one that actually executes a SharedStateTool through the seam (0 → 1 hook fires, tool_name == "shared_state"); both agent_builder source-level guards pass; tests/module_size passes with register entries 4525/4275 matching wc -l exactly.
+• No NEUTERED/SABOTAGE markers left; HookedTool delegates name()/label()/description()/parameters_schema(), so --disallowed-tools sub_agent retention logic is unaffected.
+
+Verdict written to session_plan/eval_task_1.md.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

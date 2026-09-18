@@ -1,0 +1,194 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me judge the diff. Let me check key things:
+
+1. The task asked for the consts named TEACH_ARGS and ARCHITECT_ARGS. But wait — the repository structure listing shows `const TEACH_ARGS` and `const ARCHITECT_ARGS` already existing in src/commands_config.rs (in the structure at the top: "const TEACH_ARGS" and "const ARCHITECT_ARGS"). Hmm, the structure listing shows them. That might be from the current state (after diff). Actually the structure listing is generated from current repo state, so it includes new consts.
+
+Wait, but there's also `const ARCHITECT_ARGS` listed. And `fn handle_architect`, `fn architect_status`... The listing at top shows:
+```
+  fn set_editor_model
+  fn editor_model
+  fn default_editor_model
+  const ARCHITECT_PROMPT
+  const ARCHITECT_ARGS
+  fn handle_architect
+```
+Hmm, ARCHITECT_ARGS appears before handle_architect, consistent with diff.
+
+But wait — the diff shows the consts have doc comments and are `pub const`. The structure listing also shows `const TEACH_ARGS` after `fn handle_permissions`... consistent.
+
+2. The task says tests in dispatch_near_miss.rs's existing test module, adding rows. The diff adds a new test function `arg_gated_teach_and_architect_stop_billing_at_the_shell`. That's acceptable ("add rows, do not rewrite").
+
+3. Check test correctness: `repl_only_multi_token_refusal(&argv(&["yoyo", verb, arg]))`. Does `argv` exist? Presumably. Does the refusal message contain `yoyo -p "teach on"`? The task says the refusal names `/teach` plus the `yoyo -p "…"` escape hatch. Need to check actual refusal text format. Let me look at the source.
+
+Also potential issue: in the near-miss prompts, `&["yoyo", "-p", "teach on"]` — the guard might not fire for "-p" start anyway. Fine.
+
+A key concern: does the guard `repl_only_multi_token_verb` actually check the second token against the vocabulary? Let's read the file.
+
+Also the test asserts `msg.contains(&format!("yoyo -p \"{verb} {arg}\""))` — i.e., `yoyo -p "teach on"`. If the actual refusal message says `yoyo -p "your prompt"` then the test would fail... but tests pass, so presumably the refusal includes the original command. Let me verify by reading the code.
+
+Let me look at src/dispatch_near_miss.rs.
+
+Also important: does the actual dispatch route the first token before reaching the guard? The feature: `yoyo teach on` should be refused at shell. Test uses `repl_only_multi_token_refusal` directly. Need to verify the firing path — but the guard function is presumably used in dispatch. The task says "with a live binary... expect the free refusal naming /teach, exit 2". Let me actually run the binary if available (build passed). That's a good check but takes time; the task says to try the feature if user-facing. It's ~fast.
+
+Also check that there's no existing duplicate TEACH_ARGS const causing collision. The structure listing shows `const TEACH_ARGS` and `const ARCHITECT_ARGS` — one each.
+
+Let me read files and run the binary.
+
+Also check: the source-level guard test in commands_config.rs — `let body = &src[start..start + src[start..].find("\n}\n").unwrap_or(0)];`. Hmm, `src[start..].find("\n}\n")` — for handle_teach body, does it contain "\n}\n"? The handler is a function ending with `}\n` at column 0, so the pattern "\n}\n" appears at the end. But could it appear earlier? Inside the function body, a nested block closing would be indented, so "\n}" at start of line only at function end. OK. But careful: `unwrap_or(0)` if not found gives empty body, then assertion fails. Tests pass, so fine.
+
+Wait — one thing: `src[start..].find(marker)` no; `src.find(marker)` finds `fn handle_teach(` — but is there a doc comment before? Yes, `/// Toggle teach mode...` then `pub fn handle_teach(`. The marker "fn handle_teach(" matches. Good.
+
+But does handle_teach body contain `"on" =>` and `"off" =>`? Yes per task description matching `"on" | "off" | "" | _`? Actually the task says handle_teach matches exactly `"on" | "off" | "" | _`. Hmm — if the match is written as `"on" | "off" | "" => ...`, then the source contains `"on"` and `"off"` but NOT `"on" =>`. Then the test needle `"\"on\" =>"` would fail! But tests pass... so the match must be separate arms. Let me check the actual source.
+
+Hmm, the task description says handle_teach matches exactly `"on" | "off" | "" | _`. But maybe the actual code is `match arg { "on" => ..., "off" => ..., "" => ..., _ => ... }`. Let me read.
+
+Actually the diff for commands_config.rs shows the test as written, and tests pass — so the arms are separate. Unless the test's `find("\n}\n")` slicing includes... no, body is limited to the handler. Hmm, but wait: the test slices from `fn handle_teach(` to the first `\n}\n` after it. If handle_teach is followed by... it's the function itself. Fine.
+
+Let me just read the code to be sure.
+
+Let me run commands.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,250p src/dispatch_nea…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 990,1030p src/commands_co… ✓ (6ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, separate arms, so the source-level guard test works.
+
+Now check the guard function `repl_only_multi_token_verb` and the refusal prompt_text. The test asserts msg contains `yoyo -p "teach on"` — so prompt_text = "teach on" (the verb + arg joined). Let me look.
+
+Also, need to verify `argv` helper exists in tests.
+
+Let's see the rest of the guard function.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=225 && NR<=330' src/dis…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn argv" -A5 src/dispat… ✓ (5ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line 759 in tests: a pre-existing test loops over REPL_ONLY_MULTI_TOKEN_ARG_GATED with `for (verb, _)` — good, it may check routed verbs don't collide.
+
+Now, one concern: the existing test at 759 probably asserts each arg-gated verb's vocabulary... Let me look at it to see if it uses `crate::commands` only. Not critical.
+
+Also important: is `repl_only_multi_token_verb` reached for real invocations? In main.rs:969 it's checked. But does the dispatcher route `teach` before? `teach` is not a routed subcommand presumably. Let's test the live binary.
+
+Let's build? Build already passed per harness. Check target/debug/yoyo exists.
+
+Also verify: the task says the refusal names `/teach`. The message format includes `/{verb}` → `/teach`. Good. And `yoyo -p "teach on"` → prompt_text = args[1..].join(" ") = "teach on". Good.
+
+One subtlety: test asserts refusal for `["yoyo","architect","off"]` but prompt hatch check uses `format!("yoyo -p \"{verb} {arg}\"")` → `yoyo -p "architect off"` which is typed = args[1..].join(" ") = "architect off". Good.
+
+Now run the binary.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 740,800p src/dispatch_nea… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The live binary works: teach on and architect on both refused with the message naming /teach, /architect, exit 2.
+
+Now check the near-miss for `architect claude-opus-4-6`: it printed --version. Fine.
+
+Now: does `repl_only_commands()` include `teach` and `architect`? The existing test `every_multi_token_verb_is_really_a_repl_command` loops over the arg-gated table and asserts `repl_only.contains(verb)`. That test passes (harness said tests pass). Good.
+
+Now doc_sync: task says update the doc comment above the table — done in the diff. Docs/src not required. The task explicitly said no docs/src edit required. Is this a user-facing behavior change that requires docs? The refusal is documented behavior; task says no. I'd mark doc_sync PASS (comment updated as the task's docs step) or N/A. I'll say PASS with reason: doc comment updated in same diff; task explicitly waived docs/src.
+
+Now let's double check the diff didn't do anything forbidden: no scripts changes, no harness. The diff touches only two files as allowed.
+
+Check step 4: "No change to REPL_ONLY_MULTI_TOKEN_VERBS" — the diff doesn't change it. Good.
+
+Check the positive control requirement — that's the implementer's job, not the evaluator's; can't verify now. Not a fail criterion for us (but if the marker were left in, tests/neutered_guards.rs would fail — tests pass).
+
+forgotten_touchpoints: new pub consts TEACH_ARGS / ARCHITECT_ARGS each have consumers in the same diff (dispatch_near_miss table) and tests. New test functions. No new enum variants. Good.
+
+Wait — is there a potential clippy/doc issue with `[`handle_teach`]` intra-doc link? Fine, tests+clippy pass per harness.
+
+One more: is the const placement/file-scope fine? `pub const` at module level in commands_config.rs; used as `crate::commands_config::TEACH_ARGS`. Good.
+
+Any risk that the new guard breaks `yoyo teach` (single token)? Single token: args.len() < 3 → None; also bare_word_near_miss handles. Not affected.
+
+Is `yoyo teach me` (3 tokens but not vocabulary) → None → prompt. Good (test covers 4 tokens).
+
+Hmm, one potential concern: does `yoyo architect on` previously do something else in the dispatcher, e.g. routed subcommand? No—it billed.
+
+But: could this break intended behavior where users wanted the model to answer "teach on"? Task explicitly designates this as desired.
+
+Another check: the test near-miss includes `&["yoyo", "-p", "teach on"]` — verb starts with '-' → None. Fine.
+
+Let me quickly verify the diff is committed (git status clean?) and check the ARCHITECTURE.md requirement — CLAUDE.md says "New history goes in ARCHITECTURE.md". The task's Docs section says no docs/src edit required, but didn't mention ARCHITECTURE.md. Should I fail for that? The CLAUDE.md says read ARCHITECTURE.md's entry for any file you change, and new history goes there. Hmm, this is a house convention. The task description explicitly listed docs requirements and didn't require ARCHITECTURE.md. I could mention it as minor feedback. Let me check whether ARCHITECTURE.md has entries for dispatch_near_miss.rs and whether the diff updated it. The diff didn't touch ARCHITECTURE.md.
+
+Is that a FAIL? The evaluator criteria: fail if implementation doesn't match task. The task's docs step is satisfied (doc comment updated). ARCHITECTURE.md convention is a repo convention... Being strict but fair: I'd mention as feedback, not fail. Let me check what ARCHITECTURE.md says about dispatch_near_miss — if there's an explicit "every commit touching this file must add a history line" gate, then it's a real convention violation. Let me check quickly.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.8s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dispatch_near_miss" ARC… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ARCHITECTURE.md carries per-file history; the convention says new history goes there. But the task's docs section explicitly said doc comment update is the docs work. The evaluator harness's criteria: doc_sync = behavior change reflected in CLAUDE.md/README/docs. ARCHITECTURE.md is arguably part of that. Hmm. Being strict but fair, the task's own Docs section said only the doc comment needed updating. I'll mark doc_sync PASS and mention ARCHITECTURE.md history line as optional feedback.
+
+Hmm, but wait: the ARCHITECTURE.md entry in the git status... git status was truncated by the grep output? Actually the second command output was truncated at 15000 chars — the git log/status output got cut. Let me re-run git status and check whether ARCHITECTURE.md was modified in this commit (diff shown to me only contains two files, so no).
+
+Let me check git log for the commit and whether ARCHITECTURE.md was updated.
+
+Actually more important: check whether the ARCHITECTURE.md history step is a hard requirement enforced by any test. There's an "infinite cross-check" about ARCHITECTURE.md? Let me quickly grep tests for ARCHITECTURE requirement. There's tests/doc_symbols.rs recently changed. Let me check if there's a test requiring ARCHITECTURE.md updates.
+
+Quick check: grep -rn "ARCHITECTURE.md" tests/ src/ | head.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain; echo "==… ✓ (34ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — clean tree, commit contains exactly the two files. No test enforces ARCHITECTURE.md update (only two files reference it, unrelated).
+
+Now check tests/doc_symbols.rs — recently changed; does it verify that `pub const` symbols are documented? Not needed.
+
+Let me verify the near-miss guard truly doesn't fire on `yoyo teach me rust` at the binary level — but running would start a billed LLM turn. Instead, the unit test covers it. Actually, running `yoyo teach me rust` would attempt a real API call — avoid. Could run with an invalid provider quickly? Not necessary; the unit test on the pure function plus the guard function's structure is sufficient evidence.
+
+One more: does the guard also affect `yoyo -p` etc.? Verb starts with '-' → None. Fine.
+
+Also consider: `repl_only_multi_token_verb` only reaches when args.len()>=3; `yoyo teach` (2 tokens) is handled by bare_word_near_miss — already covered before.
+
+Potential over-firing risk: are there any legit uses of `yoyo teach on` as a prompt? Task accepts this.
+
+One more possible check: are the consts `pub` and reachable? Yes, compiled and used.
+
+Everything looks good. Verdict: PASS.
+
+Let me write the file.
+────────────────────────────────────────────────────────────────────────────────
+
+Verified against the live binary and source. Writing the verdict.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 38s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+Evidence gathered (not just the diff):
+• Live binary: ./target/debug/yoyo teach on and ./target/debug/yoyo architect on both emit the free refusal naming /teach//architect with the yoyo -p "…" hatch and exit 2 — the denied-arg shapes no longer reach a billed turn.
+• `repl_only_multi_token_verb gates strictly on vocabulary.contains(&args[2]), so yoyo teach me rust / yoyo architect the streaming layer stay None; yoyo architect <model>` is deliberately still billing, as documented.
+• Both new pub consts have their consumer in the same diff; the retained every_multi_token_verb_is_really_a_repl_command test also exercises the new rows and stayed green.
+• Clean tree; commit touches only the two permitted files. REPL_ONLY_MULTI_TOKEN_VERBS, repl_only_commands(), and the harness are untouched.
+• Doc comment above the table was rewritten as the task required (docs/src explicitly waived).
+
+Non-blocking note: ARCHITECTURE.md's per-file-history convention wasn't honored in this commit — worth a line next time those files change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
