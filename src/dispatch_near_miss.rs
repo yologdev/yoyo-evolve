@@ -178,6 +178,32 @@ pub fn bare_word_near_miss(arg: &str) -> Option<String> {
 /// opposite error is money spent on a wrong answer.
 pub const REPL_ONLY_MULTI_TOKEN_VERBS: &[&str] = &["context", "cost", "provider", "tokens"];
 
+/// REPL-only verbs refused in their multi-token form **only when the second token
+/// is an exact member of a closed argument vocabulary** — the verbs whose prose
+/// second token is too plausible to refuse outright.
+///
+/// The discrimination is literal rather than probabilistic: `yoyo think high` is
+/// the command, `yoyo think about the architecture` is a prompt, and the argument
+/// set is a **closed vocabulary of non-prose words** (`off`, `minimal`, `low`,
+/// `medium`, `high`) drawn from the same data the REPL's own completion uses —
+/// `crate::commands::THINKING_LEVELS`. Derived, never re-typed here: a level added
+/// to that list is covered the day it is added, and one removed cannot leave a
+/// stale word firing the guard.
+///
+/// **Why a gate and not a list entry.** Adding `think` to
+/// `REPL_ONLY_MULTI_TOKEN_VERBS` would contradict a written decision *and* eat real
+/// prompts (`yoyo think harder` is refused either way, but
+/// `yoyo think about the architecture` would be too). The gate refuses the exact
+/// command shape and leaves every prose shape a prompt — one billed turn saved on a
+/// mistyped command, zero prompts eaten.
+///
+/// **Do not widen this to other REPL-only verbs with argument vocabularies**
+/// (`architect on|off`, `plan`, `profile`, `mcp`, …). Several have plausible prose
+/// second tokens even when a vocabulary exists; `think` is the measured one. A
+/// second measured verb is its own issue, not a bundle.
+pub const REPL_ONLY_MULTI_TOKEN_ARG_GATED: &[(&str, &[&str])] =
+    &[("think", crate::commands::THINKING_LEVELS)];
+
 /// Compose the "that command lives in the REPL" refusal.
 ///
 /// **One statement, two callers.** The bare-word path passes the word as both the
@@ -201,7 +227,14 @@ fn repl_only_refusal_message(verb: &str, prompt_text: &str) -> String {
 ///   left byte-identical, so the two guards can never both claim one invocation.
 /// - `args[1]` must not start with `-` — `yoyo -p "tokens today"` is the very hatch
 ///   this guard's own message names, and it must reach the prompt path.
-/// - `args[1]` must be an **exact** member of `REPL_ONLY_MULTI_TOKEN_VERBS`.
+/// - `args[1]` must be an **exact** member of `REPL_ONLY_MULTI_TOKEN_VERBS`, **or**
+///   an **exact** member of `REPL_ONLY_MULTI_TOKEN_ARG_GATED` whose `args[2]` is in
+///   turn an **exact** member of that verb's closed argument vocabulary.
+///
+/// The gated branch reads `args[2]` and deliberately **nothing beyond it**: extra
+/// tokens after a valid level (`yoyo think high --json`) do not make `think high`
+/// prose again, which is the same reading the listed verbs already get
+/// (`yoyo tokens today so far`). Pinned by test in that direction.
 ///
 /// Everything else returns `None` and keeps today's behaviour byte-for-byte.
 /// `args[0]` is the binary path.
@@ -213,10 +246,15 @@ pub fn repl_only_multi_token_verb(args: &[String]) -> Option<&str> {
     if verb.starts_with('-') {
         return None;
     }
-    if !REPL_ONLY_MULTI_TOKEN_VERBS.contains(&verb) {
-        return None;
+    if REPL_ONLY_MULTI_TOKEN_VERBS.contains(&verb) {
+        return Some(verb);
     }
-    Some(verb)
+    for (gated_verb, vocabulary) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
+        if *gated_verb == verb && vocabulary.contains(&args[2].as_str()) {
+            return Some(verb);
+        }
+    }
+    None
 }
 
 /// The whole multi-token guard: the message to print, or `None` meaning "keep
@@ -495,6 +533,86 @@ mod tests {
         );
     }
 
+    /// The FIFTH verb of #886's class (Day 202), and the one that needed an ARG
+    /// GATE rather than a list entry: `yoyo think high` is the command shape that
+    /// used to start a **billed LLM turn with write tools attached**, while
+    /// `yoyo think about the architecture` is a plausible prompt that must keep
+    /// reaching the model.
+    ///
+    /// ANTI-VACUOUS, in two places: the vocabulary must be non-empty FIRST (an
+    /// empty one would make the loop below a silent pass), and the loop must
+    /// actually be iterating it.
+    #[test]
+    fn arg_gated_think_level_is_refused_before_any_billed_turn() {
+        assert!(
+            !crate::commands::THINKING_LEVELS.is_empty(),
+            "the thinking-level vocabulary is empty — this is a REFUSAL, not a clean \
+             scan: the gate could never fire and `yoyo think <level>` would still bill"
+        );
+
+        let msg = repl_only_multi_token_refusal(&argv(&["yoyo", "think", "high"]))
+            .expect("`yoyo think high` is the command shape that used to bill");
+        assert!(
+            msg.contains("/think"),
+            "the refusal must say where the command actually lives: {msg}"
+        );
+        // Same standard as the listed verbs: the hatch quotes what the user TYPED.
+        assert!(
+            msg.contains("yoyo -p \"think high\""),
+            "the -p hatch must name the whole invocation, not just the verb: {msg}"
+        );
+
+        let mut fired = 0usize;
+        for &level in crate::commands::THINKING_LEVELS {
+            assert!(
+                repl_only_multi_token_refusal(&argv(&["yoyo", "think", level])).is_some(),
+                "`yoyo think {level}` is a real command shape but still reaches the model"
+            );
+            fired += 1;
+        }
+        assert_eq!(
+            fired,
+            crate::commands::THINKING_LEVELS.len(),
+            "the loop did not iterate the vocabulary — the assertion above is vacuous"
+        );
+
+        // PINNED IN THE DIRECTION IT LANDS: the predicate reads `args[2]` and
+        // nothing beyond it, so trailing tokens after a valid level still fire —
+        // exactly as `yoyo tokens today so far` does on the listed path.
+        assert!(
+            repl_only_multi_token_refusal(&argv(&["yoyo", "think", "high", "--json"])).is_some(),
+            "the gate reads args[2] only; a trailing flag does not make this prose"
+        );
+    }
+
+    /// THE REGRESSION SURFACE for the arg gate: prose stays a prompt, and every
+    /// ordinary imperative keeps reaching the model. These rows are pins against
+    /// an over-firing gate, not evidence the gate works — that evidence is the
+    /// anti-vacuous test above.
+    #[test]
+    fn arg_gated_guard_leaves_think_prose_untouched() {
+        let prompts = [
+            // The prompt the old blanket exclusion existed to protect.
+            &["yoyo", "think", "about", "the", "architecture"][..],
+            // An adverb, not a level word: the vocabulary is closed and exact.
+            &["yoyo", "think", "harder"][..],
+            // Two tokens is the other guard's business, not this one's.
+            &["yoyo", "think"][..],
+            // Unrelated imperatives — nothing here may change.
+            &["yoyo", "do", "the", "thing"][..],
+            &["yoyo", "explain this repo"][..],
+            // The hatch the refusal message itself names must reach the model.
+            &["yoyo", "-p", "think high"][..],
+        ];
+        for parts in prompts {
+            assert_eq!(
+                repl_only_multi_token_refusal(&argv(parts)),
+                None,
+                "{parts:?} must reach the prompt path unchanged"
+            );
+        }
+    }
+
     /// A routed verb and a refused verb must never claim the same token — one
     /// would shadow the other and the loser becomes either a dead route or a
     /// refusal on a verb that actually works.
@@ -506,13 +624,36 @@ mod tests {
                 "{verb} is BOTH routed and refused — the dispatcher would never be reached"
             );
         }
-        // And from the other direction, at the emission point.
+        // The arg-gated verbs carry the same obligation, and a shadowed route is
+        // exactly how the gate would break a verb that works.
+        for (verb, _) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
+            assert!(
+                !ROUTED_SUBCOMMANDS.contains(verb),
+                "{verb} is BOTH routed and refused — the dispatcher would never be reached"
+            );
+        }
+        // And from the other direction, at the emission point: a routed verb keeps
+        // its multi-token form even when another list names it.
         for verb in ROUTED_SUBCOMMANDS {
             assert_eq!(
                 repl_only_multi_token_refusal(&argv(&["yoyo", verb, "list"])),
                 None,
                 "{verb} is routed — refusing its multi-token form would break a working verb"
             );
+        }
+        // And the gated path's own second direction: no invocation of a routed verb
+        // is claimable by the gate, whatever the second token is — the gate keys on
+        // `args[1]` exactly, never on the vocabulary word alone.
+        for verb in ROUTED_SUBCOMMANDS {
+            for (_, vocabulary) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
+                for &word in *vocabulary {
+                    assert_eq!(
+                        repl_only_multi_token_refusal(&argv(&["yoyo", verb, word])),
+                        None,
+                        "`{verb}` is routed — `yoyo {verb} {word}` must reach the dispatcher"
+                    );
+                }
+            }
         }
     }
 
@@ -528,6 +669,15 @@ mod tests {
             "repl_only_commands() came back empty — this is a REFUSAL, not a clean scan"
         );
         for verb in REPL_ONLY_MULTI_TOKEN_VERBS {
+            assert!(
+                repl_only.contains(verb),
+                "{verb} is refused with a message pointing at /{verb}, but no such \
+                 REPL command exists — the refusal would be a lie"
+            );
+        }
+        // The arg-gated verbs compose the SAME message through the same builder, so
+        // they inherit the same obligation: `/think` must really exist.
+        for (verb, _) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
             assert!(
                 repl_only.contains(verb),
                 "{verb} is refused with a message pointing at /{verb}, but no such \
