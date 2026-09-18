@@ -197,12 +197,30 @@ pub const REPL_ONLY_MULTI_TOKEN_VERBS: &[&str] = &["context", "cost", "provider"
 /// command shape and leaves every prose shape a prompt — one billed turn saved on a
 /// mistyped command, zero prompts eaten.
 ///
-/// **Do not widen this to other REPL-only verbs with argument vocabularies**
-/// (`architect on|off`, `plan`, `profile`, `mcp`, …). Several have plausible prose
-/// second tokens even when a vocabulary exists; `think` is the measured one. A
-/// second measured verb is its own issue, not a bundle.
-pub const REPL_ONLY_MULTI_TOKEN_ARG_GATED: &[(&str, &[&str])] =
-    &[("think", crate::commands::THINKING_LEVELS)];
+/// **Widening is per-verb and measured, and this is the file that records which
+/// verbs cleared the bar (#886).** `think` was the first (Day 202); `teach` and
+/// `architect` were added the same day in #886 slice 2, each gated on its own
+/// handler's closed vocabulary (`crate::commands_config::TEACH_ARGS` /
+/// `ARCHITECT_ARGS`), never on a copy of it.
+///
+/// **The other ~48 REPL-only verbs are deliberately absent, and this sentence is
+/// the whole reason #886 stays OPEN.** They are excluded per-verb because their
+/// second token is NOT a closed vocabulary — several have no argument list at all,
+/// and the rest take free-form prose (`plan`, `profile`, `mcp`, `skill`, `model`).
+/// A guard on those would refuse ordinary English prompts, and eating a real prompt
+/// is the worse error by the rule above. So the residue is real, billed, and
+/// waiting on per-verb vocabularies that mostly do not exist yet — not on a sweep.
+///
+/// **`architect` is a PARTIAL gate, stated rather than implied.** `handle_architect`'s
+/// catch-all arm treats its argument as a model name (`/architect <arch-model>
+/// [editor-model]`, #542), so only `yoyo architect on|off` is unambiguously not a
+/// prompt; `yoyo architect <model>` still bills. Partial coverage is acceptable
+/// here; a false refusal is not.
+pub const REPL_ONLY_MULTI_TOKEN_ARG_GATED: &[(&str, &[&str])] = &[
+    ("think", crate::commands::THINKING_LEVELS),
+    ("teach", crate::commands_config::TEACH_ARGS),
+    ("architect", crate::commands_config::ARCHITECT_ARGS),
+];
 
 /// Compose the "that command lives in the REPL" refusal.
 ///
@@ -603,6 +621,67 @@ mod tests {
             &["yoyo", "explain this repo"][..],
             // The hatch the refusal message itself names must reach the model.
             &["yoyo", "-p", "think high"][..],
+        ];
+        for parts in prompts {
+            assert_eq!(
+                repl_only_multi_token_refusal(&argv(parts)),
+                None,
+                "{parts:?} must reach the prompt path unchanged"
+            );
+        }
+    }
+
+    /// #886 slice 2 — the SECOND and THIRD arg-gated verbs. `yoyo teach on` and
+    /// `yoyo architect off` are command shapes that used to start a **billed LLM
+    /// turn with write-capable tools attached** to answer something a deterministic
+    /// handler does for free, while `yoyo teach me rust` must keep reaching the model.
+    ///
+    /// ANTI-VACUOUS, and the first check is over the WHOLE table rather than the two
+    /// rows this test is named for: a row whose vocabulary had been emptied would
+    /// make every loop below a silent pass.
+    #[test]
+    fn arg_gated_teach_and_architect_stop_billing_at_the_shell() {
+        assert!(
+            !REPL_ONLY_MULTI_TOKEN_ARG_GATED.is_empty(),
+            "the arg-gated table is empty — every gated verb silently bills again"
+        );
+        for (verb, vocabulary) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
+            assert!(
+                !vocabulary.is_empty(),
+                "the vocabulary for {verb} is empty — the gate can never fire and \
+                 `yoyo {verb} <arg>` still bills"
+            );
+        }
+
+        // FIRES, and names where the command actually lives.
+        for (verb, arg) in [("teach", "on"), ("architect", "off")] {
+            let msg = repl_only_multi_token_refusal(&argv(&["yoyo", verb, arg]))
+                .unwrap_or_else(|| panic!("`yoyo {verb} {arg}` used to bill and must be refused"));
+            assert!(
+                msg.contains(&format!("/{verb}")),
+                "the refusal must say where the command actually lives: {msg}"
+            );
+            assert!(
+                msg.contains(&format!("yoyo -p \"{verb} {arg}\"")),
+                "the -p hatch must name the whole invocation, not just the verb: {msg}"
+            );
+        }
+
+        // NEAR MISS, one row per added verb: a prose second token is a prompt.
+        // These are pins against an over-firing gate, and each stays byte-identical
+        // to today's behaviour — the user's prompt still runs.
+        let prompts = [
+            &["yoyo", "teach", "me", "rust"][..],
+            &["yoyo", "architect", "the", "streaming", "layer"][..],
+            // The standing #886 regression guard, re-asserted here: an ordinary
+            // imperative is a prompt and nothing may change that.
+            &["yoyo", "do", "the", "thing"][..],
+            &["yoyo", "fix", "the", "flaky", "test"][..],
+            // `architect`'s documented limit, pinned in the direction it lands:
+            // its catch-all arm takes a MODEL NAME (#542), so this still bills.
+            &["yoyo", "architect", "claude-opus-4-6"][..],
+            // The hatch the refusal message itself names must reach the model.
+            &["yoyo", "-p", "teach on"][..],
         ];
         for parts in prompts {
             assert_eq!(

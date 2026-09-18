@@ -174,6 +174,11 @@ Describe exactly what changes to make:
 Be specific and precise. Reference line numbers when helpful.
 Do NOT use any tools. Do NOT write code to files. Just describe the plan.";
 
+/// The complete argument vocabulary of `/architect` that is **not** a model name —
+/// `handle_architect`'s catch-all arm takes a model id, so only these two tokens are
+/// unambiguous. `yoyo architect <model>` still bills; that is a known limit, not a bug.
+pub const ARCHITECT_ARGS: &[&str] = &["on", "off"];
+
 /// Handle the `/architect` command.
 pub fn handle_architect(input: &str) {
     let arg = input.strip_prefix("/architect").unwrap_or("").trim();
@@ -986,6 +991,11 @@ pub fn handle_permissions(
     println!("    Or in .yoyo.toml: allow = [...], deny = [...]{RESET}\n");
 }
 
+/// The complete argument vocabulary of `/teach` — mirrors the `"on"`/`"off"` arms of
+/// [`handle_teach`] and nothing else. Read by `dispatch_near_miss` so the multi-token CLI
+/// guard refuses `yoyo teach on` for free instead of spending a billed LLM turn (#886).
+pub const TEACH_ARGS: &[&str] = &["on", "off"];
+
 /// Toggle teach mode on/off. When active, yoyo explains its reasoning as it works.
 pub fn handle_teach(input: &str) {
     let arg = input.strip_prefix("/teach").unwrap_or("").trim();
@@ -1190,6 +1200,37 @@ mod tests {
     use serial_test::serial;
     use std::collections::HashMap;
     use std::path::PathBuf;
+
+    /// Deliberately **weak** source-level guard for the two vocabularies #886
+    /// slice 2 reads from `dispatch_near_miss`. It proves only that each const
+    /// still *names* a quoted `match` arm inside the handler it claims to mirror
+    /// — never that the multi-token guard fires, which the dispatch module's own
+    /// test owns. Needles are built at runtime so it cannot match itself.
+    #[test]
+    fn arg_vocabularies_name_real_match_arms_in_their_handlers() {
+        let src = include_str!("commands_config.rs");
+        for (const_name, marker, vocabulary) in [
+            ("TEACH_ARGS", "fn handle_teach(", TEACH_ARGS),
+            ("ARCHITECT_ARGS", "fn handle_architect(", ARCHITECT_ARGS),
+        ] {
+            assert!(
+                !vocabulary.is_empty(),
+                "{const_name} is empty — its gate can never fire"
+            );
+            let start = src
+                .find(marker)
+                .unwrap_or_else(|| panic!("{marker} is gone"));
+            // The handler body ends at the next top-level close.
+            let body = &src[start..start + src[start..].find("\n}\n").unwrap_or(0)];
+            for &word in vocabulary {
+                let arm = format!("\"{word}\" =>"); // the literal arm, not this source
+                assert!(
+                    body.contains(&arm),
+                    "{const_name} names {word:?} but {marker} has no {arm} arm"
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_format_config_masks_secret_values() {
