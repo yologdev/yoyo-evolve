@@ -176,6 +176,27 @@ fn run_task_result(verdict: &str, run_id: &str) -> tempfile::TempDir {
 /// choose that string. `run_task_result` delegates here with the reason it
 /// always used, so every pre-existing call site is byte-identical.
 fn run_task_result_with_reason(verdict: &str, run_id: &str, reason: &str) -> tempfile::TempDir {
+    run_task_result_full(verdict, run_id, reason, PRE_SHA, POST_SHA, false)
+}
+
+/// The one implementation. Every test in this file drives the **real** binary
+/// through it, so a behavioural assertion is about the event log the CLI
+/// actually wrote rather than about a function signature.
+///
+/// `pre_sha`/`post_sha` are parameters because they are the *subject* of the
+/// #915 slice 2 pair below, not decoration: the no-op shape is keyed on the two
+/// being equal. `plan_task` controls whether a `task` call runs first — the
+/// no-op tests need the planned task node to exist, because the node whose
+/// status they assert on is that node, and a run that never planned one would
+/// make the assertion vacuous.
+fn run_task_result_full(
+    verdict: &str,
+    run_id: &str,
+    reason: &str,
+    pre_sha: &str,
+    post_sha: &str,
+    plan_task: bool,
+) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = tmp.path();
     scratch_repo(dir);
@@ -198,6 +219,26 @@ fn run_task_result_with_reason(verdict: &str, run_id: &str, reason: &str) -> tem
         String::from_utf8_lossy(&start.stderr)
     );
 
+    if plan_task {
+        let planned = gasp_call(
+            dir,
+            &[
+                "task",
+                "--run-id",
+                run_id,
+                "--num",
+                "1",
+                "--title",
+                "artifact verdict task",
+            ],
+        );
+        assert!(
+            planned.status.success(),
+            "task failed: {}",
+            String::from_utf8_lossy(&planned.stderr)
+        );
+    }
+
     // `task-result` resumes the open run, so `session-start` above is required.
     let result = gasp_call(
         dir,
@@ -212,9 +253,9 @@ fn run_task_result_with_reason(verdict: &str, run_id: &str, reason: &str) -> tem
             "--verdict",
             verdict,
             "--pre-sha",
-            PRE_SHA,
+            pre_sha,
             "--post-sha",
-            POST_SHA,
+            post_sha,
             "--repo",
             "yologdev/yoyo-evolve",
             "--reason",
@@ -724,5 +765,208 @@ fn four_call_session_finishes_its_own_run_last() {
     assert!(
         status_changed < finished,
         "the session node must be closed before the run is: {kinds:?}"
+    );
+}
+
+/// The payload of every `task.status_changed` event, in file order.
+///
+/// Read from the event log rather than from a projected node: the projector's
+/// `state.ops_applied` lines are filtered out by [`domain_events`], so the event
+/// *is* the record a consumer of this stream sees. Asserting on it is asserting
+/// on what the CLI emitted.
+fn task_status_changes(state_dir: &Path) -> Vec<serde_json::Value> {
+    domain_events(state_dir)
+        .into_iter()
+        .filter(|(k, _)| k == "task.status_changed")
+        .map(|(_, p)| p)
+        .collect()
+}
+
+/// The status recorded for the task node `task_<run_id>_<num>`.
+///
+/// Takes the node id rather than assuming a single change exists: on this path,
+/// `session-end` never ran, so the only status change in the log is the one
+/// under test — but a helper that silently picked `changes[0]` would keep
+/// passing if a second node's close appeared beside it, and would then be
+/// asserting about a different node than the call site names.
+fn task_status_of(state_dir: &Path, task_id: &str) -> String {
+    let changes = task_status_changes(state_dir);
+    let ours: Vec<&serde_json::Value> = changes
+        .iter()
+        .filter(|c| c.get("task_id").and_then(|t| t.as_str()) == Some(task_id))
+        .collect();
+    assert_eq!(
+        ours.len(),
+        1,
+        "expected exactly one `task.status_changed` for `{task_id}` — zero makes every \
+         assertion below vacuous, more than one means the node was closed twice: {changes:?}"
+    );
+    ours[0]
+        .get("status")
+        .and_then(|s| s.as_str())
+        .unwrap_or_else(|| panic!("task.status_changed has no string status: {}", ours[0]))
+        .to_string()
+}
+
+/// The `reason` on the one `task.status_changed` for `task_id`.
+fn task_status_reason(state_dir: &Path, task_id: &str) -> Option<String> {
+    task_status_changes(state_dir)
+        .into_iter()
+        .find(|c| c.get("task_id").and_then(|t| t.as_str()) == Some(task_id))
+        .and_then(|c| c.get("reason").and_then(|r| r.as_str()).map(str::to_string))
+}
+
+/// The fragment `scripts/evolve.sh:2553` puts at the head of the reason it
+/// passes on the empty-diff path, near enough to the harness's sentence to be
+/// the same claim.
+///
+/// A **fragment**, deliberately, and not a verbatim copy of the whole sentence:
+/// the assertion below is that the *caller's* wording survives into the record,
+/// and a copied string from a protected file would drift silently while the test
+/// kept passing — a copy that agrees with itself. The harness's own wording is
+/// checked where it lives, not here.
+const HARNESS_NO_CHANGES_REASON: &str = "No changes landed: the committed diff aaaaaaa1..HEAD \
+     is empty after the implementation and any build-fix agents. An empty diff is not a \
+     promotion: there is nothing to evaluate, so the evaluator was not run.";
+
+/// #915 slice 2 — a task over an EMPTY commit range is `Abandoned`, and no patch
+/// node is written at all.
+///
+/// The defect: on this path the harness passes `pre_sha == post_sha` (it reset
+/// nothing, because there was nothing to reset — `scripts/evolve.sh:3018`), and
+/// `task_result` wrote a `patch.proposed` over `commits X..X`. A patch over an
+/// empty range is a patch that does not exist: there is no diff for an oracle to
+/// have judged and nothing for a revert to have undone. The honest record is the
+/// task node carrying the harness's own reason and nothing else.
+#[test]
+fn no_op_task_result_abandons_the_task_and_proposes_no_patch() {
+    let run_id = "run_gasp_noop";
+    let tmp = run_task_result_full(
+        "rejected",
+        run_id,
+        HARNESS_NO_CHANGES_REASON,
+        PRE_SHA,
+        PRE_SHA,
+        true,
+    );
+
+    // Anti-vacuous first: the planned task node must really exist, or the status
+    // assertion below is about a row that was never written.
+    let planned = format!("task_{run_id}_1");
+    let task_ids = task_created_ids(tmp.path());
+    assert!(
+        task_ids.contains(&planned),
+        "the planned task node `{planned}` is missing, so the status assertion below \
+         would be vacuous: {task_ids:?}"
+    );
+
+    assert_eq!(
+        task_status_of(tmp.path(), &planned),
+        "Abandoned",
+        "a task whose commit range is empty was abandoned, not rejected — there is no \
+         patch to reject (TaskStatus has carried `Abandoned` since yoagent-state 0.4.1)"
+    );
+
+    // The reason is the ONLY evidence of the cause, so it must arrive verbatim
+    // and never be re-worded: "could not check" must not read as "checked;
+    // clean" (`gasp_cli.rs`'s `TaskVerdict` split states the same rule one arm
+    // over). Case-insensitive on the fragment on purpose — the property is that
+    // the harness's sentence survives, not its capitalisation.
+    let reason = task_status_reason(tmp.path(), &planned)
+        .unwrap_or_else(|| panic!("the abandoned task carries no reason — the cause is lost"));
+    assert!(
+        reason.to_ascii_lowercase().contains("no changes landed"),
+        "the task reason must carry the harness's sentence, got {reason:?}"
+    );
+
+    // No patch node, either half. `patch.proposed` is the phantom itself;
+    // `patch.status_changed` would be a status for a patch that was never
+    // proposed.
+    let patches = proposed_patches(tmp.path());
+    assert!(
+        patches.is_empty(),
+        "an empty commit range proposes no patch: {patches:?}"
+    );
+    let kinds = domain_event_kinds(tmp.path());
+    assert!(
+        !kinds.iter().any(|k| k == "patch.status_changed"),
+        "no patch was proposed, so none can change status: {kinds:?}"
+    );
+
+    // The nodes that only exist to describe that phantom patch. Asserted
+    // explicitly rather than left implied by the `is_empty` above: an early
+    // return that skipped only the patch would still hand downstream consumers
+    // an `eval.finished` over a nonexistent range, which is the same lie one
+    // node over.
+    for absent in ["eval.finished", "decision.created", "failure.observed"] {
+        assert!(
+            !kinds.iter().any(|k| k == absent),
+            "a task that landed nothing has no `{absent}` — nothing was evaluated, no \
+             decision was taken, and there is no failure to blame: {kinds:?}"
+        );
+    }
+}
+
+/// The near-miss guard, and it is the whole regression surface of the pair.
+///
+/// The same `rejected` verdict over a NON-empty range must be byte-identical to
+/// before: one `patch.proposed`, its status flipped to `Rejected`, and **no**
+/// task status change at all. A guard tested only on the side that fires is
+/// vacuous green — the equal-sha branch is new, so the unequal-sha branch is
+/// what has to be pinned as unchanged.
+#[test]
+fn rejected_verdict_over_a_non_empty_range_still_proposes_one_rejected_patch() {
+    let run_id = "run_gasp_reverted_nonempty";
+    let tmp = run_task_result_full(
+        "rejected",
+        run_id,
+        "build failed: 2 tests red",
+        PRE_SHA,
+        POST_SHA,
+        true,
+    );
+
+    // Anti-vacuous: one patch exists to judge, and it is this task's.
+    let patches = proposed_patches(tmp.path());
+    assert_eq!(
+        patches.len(),
+        1,
+        "a rejected task over a real range still proposes exactly one patch — zero \
+         would make the status assertion below vacuous, two would mean a duplicate: \
+         {patches:?}"
+    );
+
+    // `PatchStatus::Rejected`, spelled by the enum. NOT the plain word
+    // "Reverted": no such variant or string exists anywhere in this repo
+    // (`grep -rn "Reverted" src/` finds only git-command output), and the #915
+    // task file's "status `Reverted`" is a mis-remembering of the vocabulary.
+    // Asserting the task file's word would have pinned a status the code has
+    // never emitted.
+    assert_eq!(
+        sole_patch_status(tmp.path()),
+        "Rejected",
+        "the rejected path's patch status is unchanged by #915 slice 2"
+    );
+
+    // The guard fires on the equal-sha side ONLY, so the task node keeps the
+    // status `task` gave it (`Open`) and nothing rewrites it here.
+    let planned = format!("task_{run_id}_1");
+    assert!(
+        task_created_ids(tmp.path()).contains(&planned),
+        "the planned task node must exist for the assertion below to be about it"
+    );
+    assert!(
+        task_status_changes(tmp.path()).is_empty(),
+        "a rejected task over a real range is NOT abandoned — the no-op branch must not \
+         reach it: {:?}",
+        task_status_changes(tmp.path())
+    );
+
+    // And the pair's real edge: this is the same verdict, same reason, same num
+    // as the test above, differing only in whether the two shas are equal. If
+    // the two tests ever agree, the key is not the range.
+    assert_ne!(
+        PRE_SHA, POST_SHA,
+        "the near-miss is only a near-miss if the range is non-empty"
     );
 }

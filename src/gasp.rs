@@ -1015,6 +1015,11 @@ pub(crate) async fn session_end(
 /// `verdict` is compared against `"promoted"` exactly as the sidecar does —
 /// the two graphs must agree on what a promotion is, so this is deliberately a
 /// byte-identical comparison and not a looser parse.
+///
+/// #915 slice 2: an **empty commit range** (`pre_sha == post_sha`) is its own
+/// shape — the task node becomes `Abandoned` carrying the reason and **no patch
+/// node is written at all**. See [`task_result_in`]'s `no_op` derivation and
+/// [`abandon_task`] for why the range, and not a verdict word, is the key.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn task_result(
     session: &GraphSession,
@@ -1094,6 +1099,26 @@ async fn task_result_in<S: EventStore>(
     // Did an oracle look at it? `true` for `Promoted` alone. This is the half
     // #915 changed.
     let oracle_ran = verdict_oracle_ran(verdict);
+    // #915 slice 2 — "nothing landed" is not a rejected patch, and the commit
+    // RANGE is what says so. The harness's empty-diff gate
+    // (`scripts/evolve.sh:3018`) calls
+    // `task_result … rejected "$PRE_TASK_SHA" "$(git rev-parse HEAD)"`; when no
+    // changes landed it has reset nothing (there is nothing to reset), so the
+    // two shas arrive EQUAL.
+    //
+    // Keying on the range rather than on a fourth verdict word is deliberate,
+    // not merely convenient. A new spelling would have to be *emitted* by
+    // `scripts/evolve.sh`, a protected file this loop cannot edit; and the
+    // range is a property of the caller's own argument, so the shape holds for
+    // every future caller instead of only the one that learned the new word.
+    // It also covers an accepted task over an empty range, which the harness
+    // gate now blocks — but a record's shape must not depend on a gate in
+    // another file continuing to hold. A reader who "simplifies" this back to a
+    // verdict string re-opens the hole.
+    let no_op = pre_sha == post_sha;
+    if no_op {
+        return abandon_task(state, run_id, num, reason).await;
+    }
     let suffix = format!("{run_id}_{num}");
     ensure_goal(state, goal, actor).await?;
 
@@ -1247,6 +1272,55 @@ async fn task_result_in<S: EventStore>(
             )
             .await?;
     }
+    Ok(())
+}
+
+/// #915 slice 2 — the record for a task whose commit range is EMPTY.
+///
+/// A task that landed nothing is not a rejected patch: there is no patch to
+/// reject, no oracle that could have passed or failed, and nothing to revert.
+/// So the honest record is the task node moved to [`TaskStatus::Abandoned`]
+/// carrying the caller's reason, and **no** patch, eval, decision or failure
+/// node at all — every one of those would describe work that was never
+/// attempted. The call site is [`task_result_in`], which reaches here only when
+/// `pre_sha == post_sha`.
+///
+/// The existence check comes first for the reason #849 gives: in
+/// `yoagent-state` 0.5.2 `update_task_status` (`state.rs:483`) appends the
+/// `task.status_changed` event **before** it can return an error, so an
+/// `if let Err(..)` around the call cannot protect against a missing node — the
+/// check has to be on the call. A missing node is a stderr note rather than an
+/// error: the run is still open and must close normally, and the reason this
+/// path may legitimately find no node is that `task` never ran for this `num`.
+async fn abandon_task<S: EventStore>(
+    state: &YoAgentState<S>,
+    run_id: &str,
+    num: &str,
+    reason: &str,
+) -> Result<(), StateError> {
+    let task_id = task_node_id(run_id, num);
+    if state
+        .get_node(NodeId::new(task_id.as_str()))
+        .await
+        .is_none()
+    {
+        eprintln!(
+            "gasp: task node {task_id} does not exist — the no-op task cannot be marked \
+             abandoned (the run is unaffected). Expected when `task` never ran for num {num}."
+        );
+        return Ok(());
+    }
+    state
+        .update_task_status(
+            TaskId::new(task_id),
+            TaskStatus::Abandoned,
+            // Absence gets its own name (Day 144): an empty reason is `None`,
+            // never `Some("")` — the same idiom the patch-status update below
+            // uses. The harness always sends one on this path, so the reason
+            // arrives verbatim.
+            (!reason.is_empty()).then(|| reason.to_string()),
+        )
+        .await?;
     Ok(())
 }
 
