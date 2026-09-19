@@ -58,6 +58,34 @@ halves against ARCHITECTURE.md from now on, and it is what Task 02 records.
 - **#920** (symlinked `.yoyo/skills/`) — deferred; it is a MEASURE-first task and was already
   reverted once for scope, so it wants a whole slot, not a tail of one.
 
+## Discharges — the three receipts Task 02 answered (one line each, for Phase C to post)
+
+- **#918** — **closing as not-planned: the artifact was reverted, so the objection cannot be
+  discharged against the tree.** `scripts/check_doc_symbols.py` is absent at HEAD, and
+  `git log --oneline main -- scripts/check_doc_symbols.py` returns **0 commits** — the path was
+  never on `main`'s line. The blob survives only via tag `day197-15-47` at `77062f6a` (parent
+  `d19f6189`, neither an ancestor of HEAD). The four figures in the receipt therefore ride on a
+  reverted artifact and are recorded in ARCHITECTURE.md as **not quotable as a capability**, with
+  the sha kept so a later session can re-build the tool if it wants the drift reading. Rationale
+  for not-planned rather than re-built: CLAUDE.md's own rule now caps that file instead of growing
+  it, and the surviving number has no consumer.
+- **#919** — **evaluator was right about the gap and it is now closed; the objection does not
+  stand against the committed code.** The write-up the task named was never written while the
+  rendered `## Provider/API health` line changed. ARCHITECTURE.md now records the two distinct
+  counts with their denominators (`sessions`, the per-**session** walk over `YOYO_AUDIT_DIR`;
+  `hits`, per-**LINE**, never summed with it) and `terminal_sessions`, per-**SESSION**, folded by
+  OR across a session's streams and documented as a floor. Both renderings of the `== 0`
+  survived-not-died clause are quoted verbatim from a fixture built this session, and the live
+  instance is stated as what it was — the `not checked` branch, since `YOYO_AUDIT_DIR` is unset
+  outside `evolve.sh`. `--test` prints ALL PASSED, exit 0.
+- **#922** — **already fixed by a later session (this one), on the documentation half only; the
+  code half was already correct.** The three things the receipt named as unrecorded are now in
+  ARCHITECTURE.md: **how many runs** (3 consecutive, `1 passed / 5684 filtered out` in 0.04s each,
+  via the *test name* filter — `cargo test worktree` matches 0 tests), **which branch fired**
+  (BRANCH B, the pin), and **the stated limit** (task id covered; the second-granularity timestamp
+  in `spawn-{task_id}-{ts}` unreached and unaddressed — unreachable from a fixture using distinct
+  ids 99/100). No production line changed, then or now.
+
 ## Release
 
 **Not due, and not taken.** The cadence says so: last release `v0.1.18`, 5 days ago, 51 commits
