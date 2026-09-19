@@ -591,6 +591,33 @@ impl HookPhase {
         }
     }
 
+    /// The `.yoyo.toml` line a user would add to use this phase — the accepted
+    /// spelling, stated **once** so the `/hooks` empty state and the `/help`
+    /// text cannot drift apart.
+    ///
+    /// Exhaustive `match` on `self`: a new variant is a compile error (E0004)
+    /// rather than a phase that silently ships untaught.
+    pub fn usage_example(self) -> &'static str {
+        match self {
+            HookPhase::Pre => "    hooks.pre.bash = \"echo 'About to run bash'\"",
+            HookPhase::Post => "    hooks.post.* = \"echo 'Tool finished'\"",
+            HookPhase::PostFailure => "    hooks.post_failure.* = \"echo \\\"$TOOL_ERROR\\\" >&2\"",
+        }
+    }
+
+    /// One sentence saying what this phase *does* — the facts stated rather than
+    /// the mechanism assumed. Exhaustive `match`, same reason as
+    /// [`HookPhase::usage_example`].
+    pub fn what_it_does(self) -> &'static str {
+        match self {
+            HookPhase::Pre => "Runs before the tool call; a non-zero exit blocks the tool.",
+            HookPhase::Post => "Runs after a tool call that ran, whether it succeeded or failed.",
+            HookPhase::PostFailure => {
+                "Runs only when the tool itself returned an error, and can only add feedback to it."
+            }
+        }
+    }
+
     /// Parse a `hooks.<phase>.<tool>` key segment. `None` for anything not in
     /// [`HookPhase::ALL`].
     pub fn parse(segment: &str) -> Option<HookPhase> {
@@ -599,6 +626,46 @@ impl HookPhase {
             .copied()
             .find(|p| p.as_str() == segment)
     }
+}
+
+/// The teaching block `/hooks` prints when **nothing is configured** — the one
+/// user who cannot learn the surface by reading their own config.
+///
+/// Built by iterating [`HookPhase::ALL`] with `usage_example` /`what_it_does`,
+/// never from a literal list, because the two **teaching** doors were the only
+/// readers of this vocabulary that did not read through the set: the empty
+/// state hand-wrote a `pre` + `post` pair and told a user with no hooks that
+/// the surface was two phases wide, while `help_data::command_help("hooks")`
+/// named all three. That is the "two doors, one policy, one deaf" shape
+/// recorded six times in this repo, and here it was caused by exactly the
+/// thing an authority set prevents: a second copy of the accepted values.
+///
+/// Each line carries its own leading indentation, so the caller is a loop.
+pub fn hook_phase_teaching_lines() -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for phase in HookPhase::ALL {
+        lines.push(format!(
+            "    # {}: {}",
+            phase.as_str(),
+            phase.what_it_does()
+        ));
+        lines.push(phase.usage_example().to_string());
+        lines.push(String::new());
+    }
+
+    // The facts that hold for every phase, then the one note about the
+    // `post_failure` payload. The three shared sentences are deliberately
+    // carried here rather than derived: they are not per-phase facts, and
+    // dropping them while adding the phase rows is the near-miss this keeps in
+    // one place where a test can see them.
+    lines.push("  Pre-hooks that exit non-zero block the tool.".to_string());
+    lines.push("  Post-hooks always pass through the tool output.".to_string());
+    lines.push("  All hooks have a 5-second timeout.".to_string());
+    lines.push(format!(
+        "  A {} hook can read the tool's error from $TOOL_ERROR.",
+        HookPhase::PostFailure.as_str()
+    ));
+    lines
 }
 
 /// A user-configurable shell command hook loaded from `.yoyo.toml`.
@@ -1644,6 +1711,97 @@ mod tests {
             // The name carries the same spelling, so `/hooks` and the refusal
             // message cannot show a phase the parser never accepted.
             assert_eq!(hooks[0].name, format!("{}:bash", phase.as_str()));
+        }
+    }
+
+    /// DERIVATION GUARD — the block `/hooks` prints when nothing is configured
+    /// is built by iterating `HookPhase::ALL`, so a fourth phase is taught the
+    /// day it joins the enum. This is the test that reddens when it is not, and
+    /// the state it guards against is one this repo actually shipped: from Day
+    /// 202 until Day 203 the empty state hand-wrote a `pre`/`post` pair, so the
+    /// one user who needs the teaching text was told the surface was two phases
+    /// wide while `help_data`'s `/hooks` door named all three.
+    #[test]
+    fn hook_phase_teaching_lines_teach_every_accepted_phase() {
+        let text = hook_phase_teaching_lines().join("\n");
+        for phase in HookPhase::ALL {
+            assert!(
+                text.contains(&format!("hooks.{}.", phase.as_str())),
+                "no demo line for `hooks.{}`: {text}",
+                phase.as_str()
+            );
+            assert!(
+                text.contains(phase.what_it_does()),
+                "no description for `{}`: {text}",
+                phase.as_str()
+            );
+        }
+    }
+
+    /// ANTI-VACUOUS, and it runs FIRST: a slice that found nothing satisfies
+    /// every "expected N" by having nothing to count, so the count of demo rows
+    /// is asserted to be exactly the number of phases *and* to be non-zero.
+    #[test]
+    fn hook_phase_teaching_lines_are_non_vacuous() {
+        let lines = hook_phase_teaching_lines();
+        let text = lines.join("\n");
+        assert!(!text.trim().is_empty(), "the block must not be empty");
+        let demos = lines
+            .iter()
+            .filter(|l| l.trim_start().starts_with("hooks."))
+            .count();
+        assert!(demos > 0, "no demo lines at all in: {text}");
+        assert_eq!(
+            demos,
+            HookPhase::ALL.len(),
+            "exactly one demo line per phase, in: {text}"
+        );
+    }
+
+    /// The exact clause that was missing. `post_failure` is the phase a user
+    /// cannot infer from the other two — its name does not say that the tool
+    /// *failed*, and nothing else in the empty state mentions its payload.
+    #[test]
+    fn hook_phase_teaching_lines_name_the_post_failure_phase_and_its_payload() {
+        let text = hook_phase_teaching_lines().join("\n");
+        assert!(text.contains("post_failure"), "missing phase row: {text}");
+        assert!(text.contains("TOOL_ERROR"), "missing payload note: {text}");
+    }
+
+    /// NEAR-MISS / REGRESSION SURFACE — the three sentences that hold for every
+    /// phase were in this block before the refactor, and adding the derived
+    /// rows is not allowed to quietly drop them.
+    #[test]
+    fn hook_phase_teaching_lines_keep_the_shared_closing_facts() {
+        let text = hook_phase_teaching_lines().join("\n");
+        for fact in [
+            "Pre-hooks that exit non-zero block the tool.",
+            "Post-hooks always pass through the tool output.",
+            "All hooks have a 5-second timeout.",
+        ] {
+            assert!(text.contains(fact), "dropped `{fact}` from: {text}");
+        }
+    }
+
+    /// The **cross-door** guard: `/help hooks` is the other teaching door, and
+    /// it keeps its own prose (a full command reference, not this short block),
+    /// so the two doors can still drift on the one thing that must not drift —
+    /// the accepted spelling of each key. Every demo line here must appear
+    /// verbatim in `help_data::command_help("hooks")`, trimmed only of its own
+    /// indentation (`help_data` writes its indent as `\x20`).
+    #[test]
+    fn hook_phases_usage_examples_match_the_help_door() {
+        let help = crate::help_data::command_help("hooks").expect("`/help hooks` must exist");
+        for phase in HookPhase::ALL {
+            let example = phase.usage_example().trim();
+            assert!(
+                example.starts_with(&format!("hooks.{}.", phase.as_str())),
+                "`{example}` does not name its own phase"
+            );
+            assert!(
+                help.contains(example),
+                "`{example}` is taught by `/hooks` but absent from `/help hooks`"
+            );
         }
     }
 

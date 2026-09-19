@@ -2777,3 +2777,58 @@ fn piped_stdout_closed_early_does_not_panic() {
         "yoyo must not panic (exit 101) when its stdout pipe closes early; got: {status:?}"
     );
 }
+
+/// `handle_hooks`'s empty state must READ the shared phase statement rather
+/// than carry one of its own — the defect this guards is a second hand-written
+/// copy of a set that has an authority: until Day 203 the block demoed `pre`
+/// and `post` only, so the one user who needs the teaching text was told the
+/// surface was two phases wide after Day 202 made it three.
+///
+/// LIMIT, stated so it is not over-read: this is a **source-level** guard over
+/// the emission point's *call site*. It proves the function calls
+/// `hooks::hook_phase_teaching_lines()` and carries no literal phase demo of
+/// its own; it never proves a user saw the right text, and it would not notice
+/// the helper itself regressing (that is `src/hooks.rs`'s derivation guard).
+#[test]
+fn hooks_empty_state_reads_the_shared_phase_statement() {
+    let src = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands_config.rs"),
+    )
+    .expect("should be able to read src/commands_config.rs");
+
+    let start = src
+        .find("pub fn handle_hooks(")
+        .expect("handle_hooks must exist in src/commands_config.rs");
+    // Slice to the next top-level item, so the assertions below cannot be
+    // satisfied by a neighbouring function.
+    let rest = &src[start + 1..];
+    let end = ["\npub fn ", "\nfn ", "\npub(crate) fn "]
+        .iter()
+        .filter_map(|marker| rest.find(marker))
+        .min()
+        .map(|i| i + start + 1)
+        .unwrap_or(src.len());
+    let body = &src[start..end];
+
+    // Anti-vacuous first: an empty or mis-sliced body satisfies every "does not
+    // contain" below by having nothing to search.
+    assert!(
+        body.contains("No hooks configured."),
+        "slice is not handle_hooks's body: {body}"
+    );
+
+    let call = ["hook_phase", "_teaching_lines()"].concat();
+    assert!(
+        body.contains(&call),
+        "the empty state must derive its phase list from the shared statement, \
+         not re-list it: {body}"
+    );
+    for phase in ["pre.", "post.", "post_failure."] {
+        let literal = ["hooks.", phase].concat();
+        assert!(
+            !body.contains(&literal),
+            "`{literal}` is hand-written in handle_hooks — the demo lines live \
+             in hooks::HookPhase only: {body}"
+        );
+    }
+}

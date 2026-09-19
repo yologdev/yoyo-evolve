@@ -371,7 +371,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // directions, and the cross-door drift guard. This is a whole new phase
     // with its coverage, not incidental growth — the split is owed and still
     // not done. Number pasted from what the gate printed, not computed.
-    ("src/hooks.rs", 3387),
+    ("src/hooks.rs", 3545),
     // Day 161 (#662 half 1): +9 lines — run_prompt_auto_retry now breaks out of
     // the retry loop (with one dim stderr line) on deterministic tool refusals
     // instead of burning MAX_AUTO_RETRIES on an identical answer.

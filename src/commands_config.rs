@@ -903,15 +903,15 @@ pub fn handle_hooks(hooks: &[crate::hooks::ShellHook]) {
         println!();
         println!("  Add hooks to .yoyo.toml:");
         println!();
-        println!("    # Pre-hook: runs before every bash tool call");
-        println!("    hooks.pre.bash = \"echo 'About to run bash'\"");
-        println!();
-        println!("    # Post-hook: runs after every tool call (wildcard)");
-        println!("    hooks.post.* = \"echo 'Tool finished'\"");
-        println!();
-        println!("  Pre-hooks that exit non-zero block the tool.");
-        println!("  Post-hooks always pass through the tool output.");
-        println!("  All hooks have a 5-second timeout.{RESET}");
+        // The phase list is DERIVED from `HookPhase::ALL` (see
+        // `hooks::hook_phase_teaching_lines`) rather than written here: this
+        // block used to hand-write a `pre`/`post` pair, so the one user who
+        // needs the teaching text — the user with nothing configured — was told
+        // the surface was two phases wide after Day 202 made it three.
+        for line in crate::hooks::hook_phase_teaching_lines() {
+            println!("{line}");
+        }
+        println!("{RESET}");
         return;
     }
 
