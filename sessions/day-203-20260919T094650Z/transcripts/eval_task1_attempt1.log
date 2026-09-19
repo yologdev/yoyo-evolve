@@ -1,0 +1,113 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me judge the diff against the task.
+
+The task asked for:
+1. `HookPhase::usage_example(self)` — done, with exhaustive match.
+2. `HookPhase::what_it_does(self)` — done.
+3. `pub fn hook_phase_teaching_lines() -> Vec<String>` — done, iterates HookPhase::ALL.
+4. In `commands_config.rs`, replace hard-coded block with loop — done, and it shrank (17 lines out, 10 in).
+5. `tests/module_size.rs` register paste — done (3387 → 3545).
+6. Tests in hooks.rs: derivation guard, anti-vacuous, post_failure present, near-miss closing facts — all present, plus a cross-door guard.
+7. `tests/integration.rs` source-level guard — present.
+8. ARCHITECTURE.md notes — present.
+
+Let me verify a couple of things. The task said the empty-state block should keep the DIM/RESET wrapping and `No hooks configured.` first line unchanged. The diff shows `println!("{RESET}");` added after the loop — previously RESET was appended to the last line. That's fine.
+
+Let me check the `usage_example` strings match help_data. The diff claims a cross-door guard test: `hook_phases_usage_examples_match_the_help_door` requires each `usage_example().trim()` to appear verbatim in `command_help("hooks")`. Tests pass, so presumably it does.
+
+Wait — one thing to check: `HookPhase::ALL` — is it an array of `HookPhase` (Copy)? `for phase in HookPhase::ALL` requires it to be an array/slice by value. Let me check. If `ALL` is `&[HookPhase]` then iterating gives `&HookPhase` and `phase.as_str()` would need auto-deref... `what_it_does(self)` takes self by value, and `usage_example(self)` too — so phase must be `HookPhase` by value. Tests pass, so it works.
+
+Also `HookPhase::PostFailure.as_str()` used for the TOOL_ERROR note.
+
+Let me quickly verify the actual file content to confirm the diff is what's on disk and that tests exist and pass (build/tests pass per harness). Let me do a focused check: run the specific new tests quickly, or just read the relevant code. The instructions say don't re-run the full suite. But a focused check is allowed if uncertainty blocks verdict. I think the diff is clearly aligned.
+
+One potential concern: the task said the teaching block for the empty state should keep `No hooks configured.` first line. Let me check handle_hooks to confirm. Also confirm the loop prints and RESET.
+
+Also the task said `usage_example` should use exactly the spellings already shipped in help_data. The PostFailure example in hooks.rs is `"    hooks.post_failure.* = \"echo \\\"$TOOL_ERROR\\\" >&2\""` which renders as `    hooks.post_failure.* = "echo \"$TOOL_ERROR\" >&2"`. The task description says `hooks.post_failure.* = "echo \"$TOOL_ERROR\" >&2"`. Good. And the cross-door test trims and checks help contains it — but wait, help_data likely writes it with different quoting/indentation. The test passes per harness, so fine.
+
+Hmm, but actually — does the cross-door test use `\x20` indentation? The comment says help_data writes its indent as `\x20`. In help_data.rs line 529-549 maybe uses `\x20` escapes. `.trim()` removes leading whitespace, so fine.
+
+Let me do a quick sanity check by reading the files to confirm consumer wiring and that nothing is dangling. Actually I should check one thing: the diff added `usage_example` and `what_it_does` with `pub fn` — are they used? Yes by hook_phase_teaching_lines and the tests. `.to_string()` on `&'static str` → String, fine.
+
+Let me just verify quickly the file on disk matches and run the two new test names to be thorough? The harness already ran tests and they pass. I'll do a fast grep to confirm the code is present and command_help contains the spellings.
+
+Let me run a quick focused check (<30s).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '885,925p' src/commands_c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'hook_phase_teaching_lin… ✓ (8ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting: line 622-624 shows a function returning `HookPhase::ALL`? Let me look — `HookPhase::ALL` at 622-624 seems to be a method. Actually `pub const ALL` at 582 and something around 622-624 referencing it. Fine.
+
+Everything checks out. The `usage_example` strings match help_data (with `\x20` = space indentation; the guard trims). The `PostFailure` example equals `hooks.post_failure.* = "echo \"$TOOL_ERROR\" >&2"`.
+
+Let me verify the feature works by running the binary with `/hooks`... Actually the task is a CLI REPL command. Running the binary would require a model/interactive session. The `handle_hooks` function is called from the REPL. I could invoke the built binary with `--help`? No. The feature is a REPL command. I can test the pure helper via a quick unit run, but that's fine — harness already passed tests including the derivation tests.
+
+Actually, I could run the specific new tests to confirm they pass by name. That's a focused check under 30s.
+
+Let me run `cargo test --bin yoyo hook_phase_teaching` and the integration test.
+
+Actually the harness says tests PASS. But confirming the new tests actually exist and pass by name is cheap-ish (compile may take a while though). Since build is already done (target cached), running specific tests should be fast. Let me do it with a timeout.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (173ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, 10 tests filtered by "hook_phase" — includes the 5 new plus maybe some pre-existing. All pass.
+
+Now the cross-door guard `hook_phases_usage_examples_match_the_help_door` — it doesn't contain "hook_phase" exactly? "hook_phases_usage..." contains "hook_phase". Yes included in the 10.
+
+Let me also quickly run the integration guard test by name.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test in… ✓ (146ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All good. Now check the tests/module_size gate passes (harness said tests pass). Also confirm the `commands_config.rs` file line count is under cap — it shrank. Let me quickly confirm and also the module_size gate.
+
+Actually harness said full tests pass. Good.
+
+Now write the verdict.
+
+Intent alignment: PASS — implementation matches: usage_example/what_it_does/hook_phase_teaching_lines in hooks.rs, loop in commands_config.rs, register paste, ARCHITECTURE.md notes, tests.
+
+Forgotten touchpoints: usage_example and what_it_does are pub but consumed by hook_phase_teaching_lines and tests; hook_phase_teaching_lines consumed by commands_config.rs and tests. No dangling definitions. NEW: no new enum variants. Register paste done. PASS.
+
+Doc sync: ARCHITECTURE.md updated (per CLAUDE.md, history goes there, not CLAUDE.md). No docs/src change expected per task. Behavior change is user-facing text only. PASS.
+
+Product surface: task kind is product, and it changed a user-facing message. It's a correctness fix (teaching all three phases), not a config default/flag/wizard/startup change. No opt-in needed. Not evolve-kind changing product surface. PASS.
+
+Write verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 23s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md: PASS.
+
+What I verified (focused, no full-suite rerun):
+• `src/hooks.rs — additive HookPhase::usage_example(self) / what_it_does(self) (exhaustive match on self, so a 4th variant is E0004) and hook_phase_teaching_lines() built by iterating HookPhase::ALL, carrying the three shared closing sentences plus the $TOOL_ERROR` note.
+• `src/commands_config.rs::handle_hooks — hard-coded block replaced by a loop over the shared helper; No hooks configured.` and the DIM/RESET wrapping preserved; the file shrinks in net.
+• `usage_example spellings match the accepted vocabulary in help_data.rs:535-539` (confirmed by grep), which the new cross-door test also pins.
+• `tests/module_size.rs` register paste (3387 → 3545) and the ARCHITECTURE.md history notes are present.
+• Ran the new tests by name: cargo test --bin yoyo hook_phase → 10 passed; cargo test --test integration hooks_empty_state → 1 passed.
+
+No dangling definitions, no new enum variants, no product-surface defaults touched. One minor observation (not a failure): the ARCHITECTURE.md commands_config.rs note is filed under the commands_config_mcp.rs bullet, which the diff explains as the nearest registered entry since commands_config.rs has no bullet of its own.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

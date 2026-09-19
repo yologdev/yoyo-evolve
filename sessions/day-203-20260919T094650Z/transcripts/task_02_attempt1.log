@@ -1,0 +1,1709 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start with Step 0 — measuring before writing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TaskStatus::" src/gasp.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn task_result" src/gas… ✓ (2ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Grep confirms TaskStatus::Abandoned absent, and the line count is 1575. Wait, the task scope said `Files: src/gasp.rs, tests/gasp_cli_run_ordering.rs`. But the existing verdict vocabulary is in `src/gasp_cli.rs`. Let me read the task_result body.
+
+Actually the file list says src/gasp.rs and tests/gasp_cli_run_ordering.rs. Interesting: `tests/gasp_cli_run_ordering.rs` drives `src/gasp_cli.rs`? Wait, the task says "src/gasp.rs is behind the default-off gasp feature". Let me read.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1000,1130p src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1130,1260p src/gasp.rs ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — where's the task node in `task_result_in`? The grep showed TaskStatus::InProgress at 764, Open at 813, Done at 935 — none in `task_result_in`. So the task node creation happens elsewhere! Let me look. The task says "Task node: status TaskStatus::Abandoned when no_op". Let me find where the task node is created for task_result. Maybe `record_task` / `ensure_task`.
+
+Let me search for "TaskStatus" more thoroughly and for where task nodes get recorded.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TaskStatus" src/ | hea…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn ensure_task\|record_… ✓ (4ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The task node for a task is created at line 809 (`record_task` at 809-813 with `TaskStatus::Open`) — that's likely in `task_start`/`task_open`. And line 924-935 is `session_task_*`. Let's read 780-960.
+
+So the task node is created by a *different* call (`task start`), not by `task_result`. Hmm. The task says "Task node: status TaskStatus::Abandoned when no_op". Let me read carefully. `task_result` is what's called at the end. Does it update the task node status? Let me read 900-960.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 740,960p src/gasp.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So `task_result` does NOT currently create or update a task node. Hmm. Wait — let me check: does `task_result_in` update the task status? Looking at the code I read from 1067-1240, it does: classify_verdict, propose_patch, record_eval, record_decision_node, update_patch_status, record_failure. No `update_task_status`.
+
+But the task says: "**Task node**: status `TaskStatus::Abandoned` when `no_op`, carrying the harness `reason` **verbatim**". So we need to emit a task node. Hmm, but the anti-vacuous test says "exactly one task node exists" — meaning the task node is created earlier by `task_planned` (task start). So the task node exists from the planning phase, and `task_result` should update its status to Abandoned.
+
+Wait, but "the status assertion is about a row that is really there" — exactly one task node exists. In the test, drive `task-result` after presumably `task-planned`. So `task_result` should call `update_task_status(Abandoned, reason)`.
+
+Hmm, but does today's code update task status at all in task_result? Let me grep the whole gasp.rs and gasp_cli.rs for `update_task_status`.
+
+Also the task lists Files: `src/gasp.rs`, `tests/gasp_cli_run_ordering.rs`. But earlier the note said "src/gasp_cli.rs:335-380 — enum TaskVerdict..." and tests file `tests/gasp_cli_run_ordering.rs`. Let me check the tests file exists and how it drives things.
+
+Let me check update_task_status callers.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "update_task_status" sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls tests/ | head -60 && echo "--… ✓ (4ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So `task_result` today does NOT touch the task node. Hmm, but the task says the task node's status should be Abandoned when no_op. That means we need to add an `update_task_status` call in `task_result_in` for the no_op case.
+
+Wait — but there's a subtlety at gasp.rs:893-905: `update_task_status` hard-errors with `node not found` when the node is absent. So the no_op path must tolerate an absent task node... Let's read 880-940.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 870,915p src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,120p tests/gasp_cli_run… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at how tests drive task-result; look for existing unverified_verdict tests and the graph-node reading helpers.
+
+Also note: the task said the task node exists. Let's check whether `task-result` in the CLI emits a task node. Hmm, maybe `gasp_cli.rs` run_ordering? Let me check what `task-result` subcommand does, and whether `task start`/`task planned` is a separate command. Let's read the tests for `task_result_node_ids_have_the_sidecar_shape` and the CLI run path in gasp.rs.
+
+Actually wait. Maybe there IS a task node update in task_result... let me re-read the full task_result_in body carefully — I read 1019-1240 and saw no task status update. Let me grep for "Abandoned" in src/ (maybe in a vendored yoagent-state crate there's TaskStatus::Abandoned variant).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,420p tests/gasp_cli_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Abandoned" ~/.cargo/re… ✓ (6ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`TaskStatus::Abandoned` exists in yoagent-state 0.5.2 primitives. Good.
+
+Now — where's the task node? In `run_task_result_with_reason`, only `session-start` then `task-result` are called. So "exactly one task node exists" refers to the session node created by `session-start` (line 760-764, TaskStatus::InProgress). Hmm, but then the task node for the actual task... `task_planned` is not called in these tests.
+
+Wait — the task says "Task node: status TaskStatus::Abandoned when no_op". Which task node? Given these tests only call session-start + task-result, the only task node is the session node. Hmm, that doesn't seem right to mark the session node abandoned.
+
+Hmm, actually maybe `task_result` should update the task node identified by `task_node_id(run_id, num)`. And the test's anti-vacuous assertion "exactly one task node exists" — with the session-start creating a session task node... that would be 2 task nodes (session + task_1)? Unless task_1 node is created by task-result... Let me check whether the harness calls `task-planned` before task-result. Let's check evolve.sh line 3018 area. Also check what `--num` etc. Let me look at `gasp-task-plan` usage in evolve.sh.
+
+Actually let me just check the CLI: does `task-result` create a task node? Let me grep gasp_cli.rs for task_result and the run_ordering tests. Let me look at src/gasp_cli.rs TaskResult arm.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "task_result\|task_plann…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gasp_task_result\|gasp_… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the harness calls `task-planned` at 2071 before `task-result`. So the task node `task_{run_id}_{num}` exists with status `Open` (from `task_planned_in` → `TaskStatus::Open`).
+
+Wait, but `task_planned_in` at 813 sets `TaskStatus::Open`. Hmm, and the session node is `TaskStatus::InProgress`. And in session_end, session node → `Done`.
+
+So for task_result: today, the task node (task_{run}_{num}) stays `Open` forever! That's an existing gap. Slice 2 wants: when no_op, set the task status to `Abandoned` with the harness reason.
+
+Hmm, but the "exactly one task node exists" in the test. In the test file's `run_task_result_with_reason`, only session-start + task-result are called — no task-planned. So the task node wouldn't exist. Unless the new test drives task-planned too. The task says "drive `task-result … rejected <same-sha> <same-sha>`". Hmm, "the same run with pre_sha != post_sha and rejected still emits exactly one patch node" — that's the existing near-miss test which uses run_task_result.
+
+The instruction (a) "anti-vacuous first: exactly one task node exists, so the status assertion is about a row that is really there" — this suggests new helper functions counting task nodes. With session-start creating a session task node, `task.created` events... hmm "exactly one task node exists" — the session node is a `task.created` event too (record_task with TaskStatus::InProgress).
+
+Hmm. So if the new test calls session-start (1 session task node) + task-planned (1 task node) + task-result, then there would be 2 `task.created` events. To have "exactly one task node", maybe we should filter to the task node with id `task_{run}_{num}`.
+
+Actually, re-reading: "(a) anti-vacuous first: exactly one task node exists, so the status assertion is about a row that is really there". Maybe it means exactly one *task status change* event (`task.status_changed`)? Let's check what event kind `update_task_status` emits in yoagent-state 0.5.2.
+
+Let me check the yoagent-state source for update_task_status and the event kind.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.4s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-state-0.5.2 &&…  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-state-0.5.2 &&… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-state-0.5.2 &&… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So `update_task_status` appends `task.status_changed` with `{task_id, status, reason}` and applies an UpdateNode op which errors if the node doesn't exist (as documented in gasp.rs:893-905 and tests/gasp_session_end_guard.rs).
+
+Now: for the no_op case, we need to set the task node to Abandoned. Which task node? `task_node_id(run_id, num)`. That node only exists if `task-planned` ran. In the test, we need to call `task-planned` first (harness does at evolve.sh:2071).
+
+But the task said the test asserts "exactly one task node exists". If session-start also creates a task node, there'd be 2 `task.created` events. Hmm — unless the helper counts only `task.status_changed` events, or filters by the specific node id.
+
+Hmm, let me reconsider. Maybe the design should be: `task_result` emits a `task.created` for the abandoned task? No — "exactly one task node exists, so the status assertion is about a row that is really there" reads like an anti-vacuous guard on the node count.
+
+Let me look at the existing test helper structure more and see how the tests check `task.created` in the existing tests (run_ordering test for ordering). Let me read the rest of the test file (lines 420-728).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 420,728p tests/gasp_cli_r… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me see the truncated middle section (lines 300-420) and also find `task_created_ids` helper and the full-session test that uses task-planned. Let me view lines 250-330 and 530-620.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 250,340p tests/gasp_cli_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn task_created_ids" -A… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the design. Key question: how does task-result know which task node to mark Abandoned? It has `run_id` and `num` → `task_node_id(run_id, num)`.
+
+But `update_task_status` hard-errors if the node doesn't exist. In the existing tests (`run_task_result_with_reason`), only session-start + task-result are called — no `task-planned`. So the task node `task_{run}_{num}` doesn't exist there. The near-miss test passes `rejected` with pre != post — on the no_op path being false, we must not call update_task_status (or call it in a way that doesn't break). Actually the task says: "When `!no_op`, the task-status path must be **byte-identical** to today." Today there's no task status update at all. So `!no_op` → no update_task_status call. Good — that keeps existing tests passing.
+
+For `no_op` (pre_sha == post_sha), emit update_task_status(task_node_id(run_id,num), Abandoned, Some(reason)). But if the node doesn't exist, update_task_status returns Err → task_result fails. Hmm. In the real harness flow, `task-planned` was called so the node exists. But what does the new test do? The task says "(a) anti-vacuous first: exactly one task node exists, so the status assertion is about a row that is really there".
+
+If the new test calls session-start + task-planned + task-result, then `task_created_ids` would return 2 ids: session node and task_1 node. So "exactly one task node exists" wouldn't hold... unless we filter to the task we care about.
+
+Hmm. Alternatively, maybe the new test does NOT call task-planned, and instead `task_result` on the no_op path itself creates the task node? But no — "Task node: status TaskStatus::Abandoned when no_op, carrying the harness reason verbatim" and the anti-vacuous guard "exactly one task node exists" reads most naturally as: count `task.status_changed` events filtered to status Abandoned... no.
+
+Hmm, let me reconsider. Let me check the session-start function: does it create a task node named `task_{run_id}_session`? Yes (line 760). But in a test that calls session-start + task-planned + task-result, `task.created` count = 2.
+
+Alternatively — the new test could filter task nodes by a helper `task_status_of(state_dir, task_id)` counting `task.status_changed` payloads for that id, with anti-vacuous assertion that the node exists (`task_created_ids` contains `task_{run}_{num}`) and that exactly one status change names it.
+
+Actually re-reading the requirement: "(a) **anti-vacuous first**: exactly one task node exists, so the status assertion is about a row that is really there". Hmm, "exactly one task node exists" — maybe the design intends the no_op path to be the ONLY thing creating a task node? No...
+
+Wait. Actually maybe I'm overcomplicating. What if the new test calls session-start, then task-planned (making node task_1), then task-result with equal shas. Then domain events include `task.created` × 2 (session + task_1). To assert "exactly one task node exists" in the relevant sense, the helper could count `task.status_changed` events whose `task_id` == `task_{run}_1`. That's exactly one after the change, zero before → anti-vacuous.
+
+Hmm, but "task node exists" vs "status change". I think the intent is: guard that the node whose status we assert actually exists. I'll implement a helper `task_status_changes(state_dir, task_id)` returning the list of status change payloads for that node, asserting the node was created (`task_created_ids` contains it) as the anti-vacuous step, then assert exactly one status change and its status == Abandoned.
+
+Hmm, but actually maybe simpler and closer to the letter: after running, assert exactly one `task.status_changed` exists **whose task_id is the planned task node**? Let me just write:
+
+```rust
+/// Every `task.status_changed` payload naming `task_id`, in file order.
+fn task_status_changes(state_dir: &Path, task_id: &str) -> Vec<serde_json::Value> {
+    domain_events(state_dir)
+        .into_iter()
+        .filter(|(k, p)| {
+            k == "task.status_changed"
+                && p.pointer("/task_id/0").and_then(|i| i.as_str()) == Some(task_id)
+        })
+        .map(|(_, p)| p)
+        .collect()
+}
+```
+
+Wait — how is TaskId serialized? `TaskId` is a newtype struct. Let me check: `#[derive(Serialize)] pub struct TaskId(pub String);` — probably serializes as a plain string (newtype struct serializes as inner). Let me check primitives.rs.
+
+Also the Status enum serializes as "Abandoned" (unit variant). And `reason` as the string.
+
+Let me check TaskId definition.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.0s (2 ✓)
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-state-0.5.2 &&… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-state-0.5.2 &&… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-state-0.5.2 &&… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+TaskId is a newtype tuple struct serializing as a plain string. Good: payload `{"task_id": "task_run_x_1", "status": "Abandoned", "reason": "..."}`.
+
+Now, the error path: `update_task_status` errors if the node doesn't exist. Design decision needed: what if the no_op task-result arrives without a prior `task-planned`? Options:
+1. Check existence with `get_node` first (like session_end does) and skip with a stderr note if absent — mirroring the #849 pattern already in this file.
+2. Let it error.
+
+The session_end pattern exists precisely because of #849 (update_task_status hard-errors on missing node). The task says nothing explicitly about this, but the tests I write will call `task-planned` so the node exists. However: robustness matters — the harness's `task-planned` could have been skipped. Also correctness: making task_result fail entirely on the abandoned path would lose the whole record.
+
+Also: should the task node be marked Abandoned for the non-no_op paths too (Promoted → Done)? The task explicitly says: "**When `!no_op`, emit exactly what is emitted today**" — so no, don't add task status updates on the other paths. Good, keep it narrow.
+
+Now about the existence check: The task said "Task node: status TaskStatus::Abandoned when no_op, carrying the harness reason verbatim (never re-worded)". It doesn't mention a guard. But a hard error would be a behavior change for a caller who calls task-result with equal shas and no task-planned. Hmm. Given the harness always calls task-planned first, but the session_end precedent (#849, and `tests/gasp_session_end_guard.rs` asserts session_end never calls update_task_status without an existence check)...
+
+Actually wait — `tests/gasp_session_end_guard.rs` is a source-level guard over `session_end`. Let me read it to see whether it might constrain what I write (e.g., it might scan the whole file, or a slice of session_end). It slices session_end's body presumably. Let me check.
+
+Also let me check `tests/module_size.rs` register — gasp.rs at 1575 lines, cap 2000, not registered. Fine.
+
+Let me read tests/gasp_session_end_guard.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,120p tests/gasp_session… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+This is a really important detail: **`update_task_status` appends `task.status_changed` BEFORE it can return an error** — so a missing node still writes the event (the op fails, and errors). So `if let Err(...)` around it cannot protect against a missing node; the check must be on the call.
+
+Hmm wait, actually: `record_event` appends to the log first, then `apply_ops_caused_by` returns Err for a missing node. So a call on a missing node logs a spurious `task.status_changed` AND returns Err (which would propagate up through `?` and make task-result fail non-zero).
+
+So for our no_op path: if we call `update_task_status` unconditionally and the node doesn't exist, we'd both write a bogus event and fail the command. That's bad.
+
+Two options:
+(A) Follow the session_end pattern: check `get_node(task_node)` first, skip with stderr note if absent.
+(B) Make the abandoned path defensive.
+
+But hold on. Wait. Let's reconsider: maybe the right design is that the abandoned path *creates* the task node if absent? No — the task explicitly says "Task node: status TaskStatus::Abandoned when no_op" — status implies an existing node being updated. And the test's anti-vacuous assertion "(a) exactly one task node exists" implies the test arranges for the node to exist (via task-planned).
+
+Hmm, but with existence-check-and-skip, the test could pass a task-planned call so the node exists.
+
+Hmm, but wait: is there a subtlety about which node? The task said "exactly one task node exists". If the test does session-start + task-planned, there are two task.created events (session node + task_1). Unless... hmm, let me re-check whether session-start creates the session node. Yes at line 760. And the four_call test asserts both session_node and planned_node exist. So there are 2 task nodes.
+
+So "exactly one task node exists" in requirement (a) must be interpreted as: exactly one task node *named by the run's task num* i.e. `task_{run_id}_1`... Or perhaps the intent is: exactly one `task.status_changed` event naming that task node.
+
+Hmm, hold on. Maybe the intent is different: maybe the new test drives `task-result` WITHOUT `task-planned`, and the design is that the no_op path should... hmm.
+
+Let me reconsider the whole thing. Maybe the design is simpler than I think: perhaps `task_result_in` should emit the task-status change on the no_op path regardless, and the anti-vacuous "(a) exactly one task node exists" refers to `task.created` filtered... 
+
+Let me look at git log / the issue #915 to see the actual request. Let me read the issue.
+
+Actually, better: let's check if there's a session_plan/task_02.md describing this task in more detail. The recently changed files include session_plan/task_01.md and task_02.md. This task is likely task_02. Let me read them.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/task_02.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/task_01.md | he… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The task file matches the prompt. So my reading of the design is confirmed by the task file: it isn't more specific about the existence check.
+
+Now, "exactly one task node exists" — hmm. Let me reconsider once more with the harness in mind. In `run_task_result_with_reason`, only session-start + task-result are called. If the new no_op test follows that pattern (no task-planned), then:
+- `task.created` events: only 1 → the session node (`task_{run}_session`).
+- So "exactly one task node exists" would be TRUE if we count `task.created` events!
+
+That reading is very natural: run session-start (creates 1 task node: the session node) then task-result with equal shas → assert exactly one task node exists (anti-vacuous: something is there to assert about), and its status is `Abandoned`.
+
+But then which task node gets abandoned? The session node?! That seems wrong semantically... unless the design is: on the no_op path, mark *the task node for this task* — but there is no such node unless task-planned ran.
+
+Hmm. Alternatively `task_result` could emit `record_task` for the abandoned task when no_op (creating the task node with status Abandoned directly, since `record_task` takes a full Task with status). That would create exactly one *new* task node... but combined with the session node, `task.created` count = 2.
+
+Hmm, wait. Actually, maybe the new test should be like the four_call test: session-start, task-planned, task-result, and then assert "exactly one task node exists" among... no.
+
+Let me look at how the issue #915 was phrased — maybe it says "task node Abandoned". Let me read the issue.
+
+Also let me check git log for slice 1 to see the style of that commit and whether there's an existing pattern for "the task node for num".
+
+Let me read the issue body via gh.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.8s (2 ✓)
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 915 --json title,b…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && ls sessi… ✓ (6ms)
+ ✓ (378ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The issue says: "task → `TaskStatus::Abandoned` with the reason, and no patch node".
+
+"task → TaskStatus::Abandoned" — so the task node (the one created by `task-planned`). So the harness flow: task-planned creates node `task_{run}_{num}` with status Open; task-result with equal shas sets it to Abandoned.
+
+Now the test's anti-vacuous "(a) exactly one task node exists". Under this design, the test must call task-planned to create the node. Then `task.created` count = 2 (session + task_1). Hmm.
+
+Unless... the helper counts `task.status_changed` for the specific node. Let me design the test helper as:
+
+```rust
+/// The status changes recorded for the one task node this run's `--num` names.
+fn sole_task_status_change(state_dir: &Path, task_id: &str) -> serde_json::Value {
+    // Anti-vacuous first: the node must have been CREATED, or a status
+    // assertion would be about a row that does not exist.
+    let ids = task_created_ids(state_dir);
+    assert!(ids.contains(&task_id.to_string()), ...);
+    ...
+}
+```
+
+Actually the requirement (a) says "exactly one task node exists, so the status assertion is about a row that is really there". I'll interpret and implement: assert that exactly one task node carries this task's id — i.e., the count of `task.created` events with id == `task_{run}_{num}` is exactly 1. That's genuinely anti-vacuous and honest. Hmm, but it's a bit of a rewrite of the requirement's letter.
+
+Alternative: maybe I model this like "the task-status change for this node". Honestly, a cleaner reading: use a helper that returns the status changes for the plan's task node and asserts exactly one, with the existence precondition.
+
+Hmm, let me reconsider whether `task_planned` is required in the test. What if the design instead is: task_result does `get_node(task_node_id)`; if the node exists → update to Abandoned; if not → record_task with status Abandoned? That's getting complicated.
+
+Wait, actually — there's a third possibility I should check: does `session_start` create a node with id `task_{run_id}_1`? No, it's `task_{run_id}_session`.
+
+Hmm, but hold on. What does the harness actually call for the task? Let me look at evolve.sh around 2071 and 3018 to see the flow and what num is used. Also whether `task-planned` is even reached before the reject path (2071 vs 3018: yes, planned at 2071 comes before 3018).
+
+So in production the node exists. Good.
+
+Now, decision on the missing-node case. I'll mirror `session_end`'s #849 discipline: check existence first, and if absent, print a stderr note and skip (don't fail the whole command, don't write a bogus event). That's the established pattern in this file, and it protects against a caller that skips task-planned. Also `tests/gasp_session_end_guard.rs` only slices session_end, so no constraint there. But should I add a similar source-level guard? Not required.
+
+Hmm, but wait: with an existence check, the test must ensure the node exists. If I write the test calling task-planned, fine.
+
+Hmm, but there's a subtlety: does the new test need task-planned to also be reflected? The near-miss test ("the same run with pre_sha != post_sha and rejected still emits exactly one patch node with status Reverted, byte-identically to before") — there's an existing test `rejected_verdict_records_no_commit_artifact` which uses run_task_result("rejected", ...) with pre != post. That's the near-miss. But the task says the near-miss test should assert "exactly one patch node with status Reverted". Let me check whether an existing test asserts patch status for rejected. `sole_patch_status` exists; `rejected_verdict_records_no_commit_artifact` asserts artifacts empty. Does any test assert Reverted status? Let me grep.
+
+I should add a near-miss test asserting: pre != post + rejected → exactly one patch.proposed, exactly one patch.status_changed with status Reverted, and no task.status_changed (byte-identical to today, since today emits no task status change on the !no_op path!). Hmm — careful: "byte-identical to before" — I can pin that no `task.status_changed` event names the task node on the near-miss path. That's a strong, honest near-miss assertion. But wait: does the near-miss run include task-planned? If yes, the session-end... no, we don't call session-end. So no task.status_changed at all. 
+
+Hmm, but careful: if the near-miss test calls task-planned, and pre != post, then no task.status_changed → good assertion. But is that "byte-identical to before"? Before the change, on the rejected path with pre != post, no task.status_changed. Yes.
+
+Hmm, but I worry: are there other tests that already cover the near-miss? `rejected_verdict_records_no_commit_artifact` covers part. The task explicitly asks for the near-miss with patch status Reverted. I'll write a dedicated test.
+
+Now, should the tests call task-planned? Let's think about the harness fidelity: the harness calls gasp_task_planned before the task runs, then task-result. To make the test realistic and to have a task node to abandon, yes — call `task-planned`.
+
+Hmm, but requirement (a) "exactly one task node exists" bugs me. With task-planned, there are 2 task.created. With session-start only, there's 1 task.created (the session node) — and then the no_op task-result would have no task node to abandon... unless we abandon the session node?! No.
+
+Hold on, hold on. Let me reconsider: maybe requirement (a) is exactly the *session-start-only* case and the design intent is different: maybe the "task node" in the new test refers to the ONE task.created... Hmm, if only session-start is called, the abandoned node would have to be the session node. That contradicts the issue.
+
+Alternatively: maybe the test calls `task-planned` but NOT `session-start`? No — task-result requires an open run ("task-result resumes the open run, so session-start above is required").
+
+OK here's another thought: maybe the test drives the full four-call session (like four_call_session_finishes_its_own_run_last) — session-start, task, task-result, session-end. Then `task.created` = 2, and the "exactly one task node exists" would be about... hmm, no.
+
+Let me just re-read: "(a) **anti-vacuous first**: exactly one task node exists, so the status assertion is about a row that is really there". 
+
+I think the *spirit* is: before asserting a status, assert the node exists. I'll implement it as: exactly one task node exists **with the plan's task id** — precisely worded in the assert message. Actually hmm, alternatively: "exactly one task node exists [that the status change can be about]" → the task node named by `--num`.
+
+Hmm wait. Actually, maybe there's a cleaner design that makes the letter true: what if the new test does NOT call task-planned, and instead the abandoned path creates the task node via `record_task` (status Abandoned) when it doesn't exist? Then with session-start only, `task.created` count = 2 (session + abandoned) → not 1.
+
+Unless the session node is filtered out (it's a different id, `_session`). A helper `task_created_ids` returns all. Hmm.
+
+You know what? Let me just design the test to use `task-planned` (realistic harness flow) and write the anti-vacuous assertion as counting task nodes whose id is the plan's task node: exactly one. I'll phrase it in a way that's both honest and close to the requirement. Actually — even better: I can make it *literally* "exactly one task node exists" by filtering out the session node, which is a distinct, documented convention (`_session` num, #847). Hmm, that's a bit contrived.
+
+Alternative cleaner reading: assert exactly one task node exists **for this task** — i.e. `task_created_ids(state_dir).iter().filter(|id| **id == task_node).count() == 1`. I'll write a helper:
+
+```rust
+/// The one task node this run planned, asserted to exist exactly once so the
+/// status assertion below is about a row that is really there.
+fn sole_planned_task_node(state_dir: &Path, run_id: &str, num: &str) -> String {
+    let expected = format!("task_{run_id}_{num}");
+    let ids = task_created_ids(state_dir);
+    let matching: Vec<&String> = ids.iter().filter(|id| **id == expected).collect();
+    assert_eq!(matching.len(), 1, "expected exactly one task node `{expected}` ...: {ids:?}");
+    expected
+}
+```
+
+Then assert the one task.status_changed for that node has status Abandoned and reason containing "no changes landed".
+
+Hmm, wait. But actually, hmm: is it possible the task-planned node id is `task_{run}_{num}` — yes, `task_node_id(run_id, num)`.
+
+OK. Now also (c) zero patch nodes exist: assert `proposed_patches(...).is_empty()` and no `patch.status_changed`.
+
+(d) the reason contains "no changes landed" (case-insensitive).
+
+Now implement the code change in `task_result_in`.
+
+Structure: currently the body flows: ensure_goal → build patch → propose_patch → link → record_eval → record_decision_node → update_patch_status → record_failure.
+
+New: 
+```rust
+let no_op = pre_sha == post_sha;
+```
+near the top, with the comment explaining the key choice.
+
+Then:
+- if no_op: update task status to Abandoned with reason (after an existence check), and return early — no patch nodes, no eval, no decision, no failure node.
+
+Wait — should the eval/decision/failure nodes still be emitted on the no-op path? Requirement 3: "**Patch nodes**: when `no_op`, emit **none** — no `patch.proposed`, no `patch.status_changed`. A patch over an empty commit range is a patch that does not exist; the honest record is the abandoned task plus the reason."
+
+"the honest record is the abandoned task plus the reason" — implies only the task node. But what about eval/decision/failure nodes? An `eval.finished` is recorded with `Some(patch_id)` as caused_by — and `record_eval(... Some(patch_id))` links to the patch node. If no patch node exists, then linking to it would fail (CreateRelation to a missing node?). Let me check `record_eval` in yoagent-state: it creates a node and a relation to patch_id... If the patch node doesn't exist, does that error? Relations are created via StateOp::CreateRelation — probably no existence check on the target in yoagent-state's projector (it might create a dangling relation). Risky.
+
+And `record_decision_node(..., Some(NodeId::new(format!("patch_{suffix}"))))` — same.
+
+The cleanest and most defensible: on the no_op path, return early after the task-status update. "Task plus the reason" — that's the record. No eval (nothing was evaluated), no decision (no patch to decide on), no failure node (a failure node means "task reverted" — nothing was reverted).
+
+Hmm, but is a failure node honest? The task was abandoned. `record_failure` says "task reverted: {title}". For the gate case (no changes landed) nothing was reverted. So no.
+
+But hold on — would dropping the eval/decision/failure nodes break the dashboard or other consumers? The task file says "the honest record is the abandoned task plus the reason". I'll follow the task file: early return with only the task status update.
+
+Hmm, but this is a judgement call that could be viewed as over-reach (the task explicitly enumerates only patch nodes as omitted). Let me weigh: with no patch node, `record_eval(… Some(patch_id))` would reference a non-existent node. Let me check whether that errors.
+
+Let me look at record_eval in yoagent-state 0.5.2.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.8s (2 ✓)
+
+
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-state-0.5.2 &&…  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-state-0.5.2 &&… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 6ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me continue. I've done Step 0 measurements. Now I need to implement the change.
+
+Key facts gathered:
+- `task_result` (pub) at :1019, `task_result_in` (store-generic body) at :1067.
+- Task status node: the task node is created by `task_planned` (`task.created` with `TaskStatus::Open`) or `session_start` (`InProgress`). `task_result` currently never touches task status — it only emits patch/eval/decision/failure.
+- Patch nodes: `patch.proposed` (via `state.propose_patch(patch)`) and `patch.status_changed` (via `state.update_patch_status(...)`).
+- `pre_sha`/`post_sha` consumed in: the patch description `format!("commits {pre_sha}..{post_sha} in {repo}")`, `patch.base_project_ref.commit = pre_sha`, decision reason `format!("reverted to {pre_sha}: {reason}")`.
+- `TaskStatus::Abandoned` absent from src/gasp.rs — confirmed.
+- yoagent-state 0.5.2 `TaskStatus::Abandoned` exists at primitives.rs:56. Need to check Cargo.lock version actually used. The registry has 0.4.1 and 0.5.2. Let me check Cargo.toml/lock.
+
+Now the design:
+1. `let no_op = pre_sha == post_sha;` near top of `task_result_in`.
+2. When `no_op`: update task status to `Abandoned` with reason verbatim, and emit NO patch nodes (no patch.proposed, no patch.status_changed). Also no eval/decision/failure? The task says patch nodes emit none. What about eval and decision? The task says "Patch nodes: when no_op, emit none — no patch.proposed, no patch.status_changed." It doesn't mention eval/decision/failure. Hmm. But eval is linked to patch_id... If we don't propose a patch, `patch_id` doesn't exist, and `record_eval` takes `Option<PatchId>` so we could pass None. But the task says roughly net-neutral, one branch, and lists specifically step 4: "When !no_op, emit exactly what is emitted today, including the EvalStatus mapping..." implying that when no_op, the eval/decision path is skipped or at least the patch nodes are skipped.
+
+Careful reading: "3. **Patch nodes**: when `no_op`, emit **none** — no `patch.proposed`, no `patch.status_changed`. A patch over an empty commit range is a patch that does not exist; the honest record is the abandoned task plus the reason."
+
+"The honest record is the abandoned task plus the reason" — suggests when no_op, the whole thing is: task status Abandoned + reason. Nothing else. So we should early-return after recording the abandoned task status. That's simplest and most honest: no patch, no eval, no decision, no failure.
+
+Hmm, but should there be a failure node? "the honest record is the abandoned task plus the reason" — no failure node. But wait, tests: near-miss test asserts exactly one patch node with status Reverted. The new-path test asserts zero patch nodes and task status Abandoned and reason contains harness string. So early-return is consistent.
+
+But do we know which task node to update? `task_result` receives `run_id` and `num`. The task node id is `task_node_id(run_id, num)` = `task_{run_id}_{num}`. The existing tests drive `--num 1` after `session-start` (which creates the session node) — but does it create task_1? In `run_task_result_with_reason`, only `session-start` is called, then `task-result --num 1`. So `task_{run_id}_1` may not exist! The task node for num 1 would be created by `task_planned` (the "task" arm), which the test helper doesn't call.
+
+Hmm. Also there's the session node `task_{run_id}_session`.
+
+So for the new path, which task node gets Abandoned? Options:
+- `task_node_id(run_id, num)` — the planned task for this num. If missing, update_task_status would... In yoyo's session_end they added an existence check because `update_task_status` appends the event before it can error. So a missing node would append `task.status_changed` for a nonexistent node, and the projector would log a skipped op.
+
+For the test to pass with "exactly one task node exists" and its status Abandoned, the test should drive `task` (task_planned) first, then `task-result`. The task plan says: "drive `task-result … rejected <same-sha> <same-sha>`" and assert "exactly one task node exists". Hmm — but the existing helper's `gasp_call` supports arms `session-start`, `task`, `task-result`, `session-end`.
+
+Wait — "exactly one task node exists" — the anti-vacuous assertion means: read task.created events, assert exactly one. If we drive session-start + task (planned) + task-result, there'd be two task nodes (session node + task node). Hmm, the session node is `task_{run_id}_session`.
+
+Actually maybe the new-path test should mirror the existing pattern: session-start then task-result, and then assert exactly one `task.status_changed` event whose task_id is the session node? Hmm.
+
+Let me think about what's most natural and minimal. The defect: a `rejected` task over an empty commit range gets a patch.proposed over `commits {pre}..{post}` — a patch that does not exist. The honest record: task Abandoned + reason, no patch.
+
+For `task_result` to mark a task Abandoned, it needs a task node. The natural one is the task node for this `num` — the same convention used by `task_planned`. But if the harness's reject-on-no-changes path happens before... Actually the harness calls `gasp_task_planned "$TASK_NUM"` at line 2071 early in each task, before implementation. So by the time the reject path runs at line 3018, the task node exists. Good — in the real flow the node exists.
+
+But `task_result` currently doesn't know the task node exists, and the existing code doesn't check. For the no_op path, we need to update the task node status. Following the #849 discipline (session_end), we should check existence first with `get_node`, because `update_task_status` appends the event before it can fail — a nonexistent node would append a `task.status_changed` for a ghost.
+
+Hmm, but that adds complexity. Let's do it properly: check existence before updating, and if missing, print a stderr note (like session_end does). Actually — silence vs stderr: task says the reason must be carried verbatim on the task node. If the node is missing we can't. Let me keep it simple but honest: check `get_node`, and if absent, emit the stderr note (mirroring session_end's shape).
+
+Wait, but for the test "exactly one task node exists, so the status assertion is about a row that is really there" — the test will drive session-start + task (planned, creating task_{run}_1) + task-result + ... then read task.status_changed events. There'd be the session node too (created by session-start). So "exactly one task node" can't mean total task.created. It must mean: exactly one `task.status_changed` event for the task node, or: read the node's final status.
+
+Hmm. Actually re-read the task: "(a) **anti-vacuous first**: exactly one task node exists, so the status assertion is about a row that is really there; (b) its status is `Abandoned`".
+
+So the test should call `task` (plan) for num 1 after session-start, then `task-result --num 1`. Then task.created events = 2 (session node + task_1). Unless... the helper drives only session-start and task-result and interprets "the task node" as the session node. Hmm.
+
+Hmm, wait. Actually maybe no helper extension is needed: `task_result` could update the SESSION node when... no, that's wrong; the task node for `num` is the right one.
+
+Alternatively, the "exactly one task node" could be scoped: filter `task.created` whose id == `task_{run_id}_{num}` and assert exactly one. Then assert the status from the `task.status_changed` event with that task_id. That satisfies "exactly one task node exists [with that id]" — it's anti-vacuous because it asserts presence of the node first.
+
+I'll write a helper `task_status_events(state_dir)` returning (task_id, status, reason) triples from `task.status_changed`, and in the new-path test drive session-start → task → task-result(rejected, equal shas), then assert exactly one task.status_changed with task_id == `task_{run}_1` and status Abandoned.
+
+Actually simpler and closer to the plan's wording: assert that exactly one `task.created` has id `task_{run_id}_1` (anti-vacuous), and exactly one `task.status_changed` for it, status Abandoned, reason containing "no changes landed" (case-insensitive).
+
+Hmm, but the plan says "the emitted task reason contains the harness string". The reason carried verbatim. OK.
+
+Now, what about session node closure at session-end? Not relevant; the test won't call session-end.
+
+Now, what reason fragment does the harness pass? `No changes landed: the committed diff … is empty`. The plan suggests asserting fragment `no changes landed` case-insensitively. Good — I'll use a const `NO_OP_REASON = "No changes landed: the committed diff is empty"` or similar and assert lowercase contains "no changes landed".
+
+Now, implementation in `task_result_in`:
+
+At the top, after computing verdict/landed/oracle_ran:
+
+```rust
+// #915 slice 2: a `rejected` task over an EMPTY commit range is not a rejected
+// patch — there is no patch. The harness's no-changes-landed gate
+// (`scripts/evolve.sh:3018`) passes `PRE_TASK_SHA` and `$(git rev-parse HEAD)`,
+// which are EQUAL when nothing landed, so the case is identifiable from an
+// argument git supplies rather than from a fourth verdict word. Keying on the
+// range also makes the shape true for every future caller, not just this one —
+// and a fourth verdict spelling would have to be emitted by the harness, a
+// protected file this agent cannot edit.
+let no_op = pre_sha == post_sha;
+if no_op {
+    return record_abandoned_task(state, actor, run_id, num, reason).await; // hmm
+}
+```
+
+Wait, but the doc comment says "Derive `let no_op = pre_sha == post_sha;` once, near the top of `task_result`" — `task_result` (the pub wrapper) or the body? The body is `task_result_in`. The reason pre_sha/post_sha only reach the body. So derive it in `task_result_in`.
+
+But careful about the early return: the plan says "Task node: status Abandoned when no_op, carrying the harness reason verbatim". And "Patch nodes: when no_op, emit none". It doesn't explicitly say to skip eval/decision/failure, but "the honest record is the abandoned task plus the reason" strongly implies an early return with just the task status update. Also emitting an eval with no patch would need `None` patch_id — a `eval.finished` for a task with no patch, and a decision with no patch target. That would contradict "plus the reason" only.
+
+Hmm, but is loss of the eval/decision/failure record acceptable? For a no-op, there is nothing to evaluate, no patch to approve/reject, and the failure node says "task reverted: <title>" — but nothing was reverted (nothing had landed). So emitting a failure node would be a lie too. Early return is right.
+
+Let me write a helper to keep `task_result_in` readable and net-neutral-ish. Something like:
+
+```rust
+/// #915 slice 2 — the no-op shape...
+async fn abandon_task<S: EventStore>(
+    state: &YoAgentState<S>,
+    actor: &ActorRef,
+    run_id: &str,
+    num: &str,
+    reason: &str,
+) -> Result<(), StateError> {
+    let task_id = task_node_id(run_id, num);
+    // `update_task_status` appends `task.status_changed` BEFORE it can return an
+    // error, so an `if let Err(..)` around it cannot protect against a missing
+    // node — the check must be on the CALL (#849). ...
+    if state.get_node(NodeId::new(task_id.as_str())).await.is_none() {
+        eprintln!("gasp: task node {task_id} does not exist — ...");
+        return Ok(());
+    }
+    state.update_task_status(TaskId::new(task_id), TaskStatus::Abandoned, Some(reason.to_string())).await?;
+    Ok(())
+}
+```
+
+Wait — but the task says "add a definition without its consumer" — fine, I add the call site in the same edit.
+
+Hmm, but do I even need the existence check? It adds a branch and a stderr path. But without it, in the real harness flow the node exists. In the test we'll create it. #849's precedent says check. But it also changes behavior when the node is missing: today, a missing node would still emit a patch. With my change and no existence check, `update_task_status` on a missing node appends the event but the projector skips the op — and the whole function would still... hmm, actually in the early-return design, if the node is missing we'd emit nothing at all (no patch). That's arguably fine, but silence is bad.
+
+Hmm, wait. There's a subtlety: does the harness always plan the task before calling task-result rejected? Line 2071 `gasp_task_planned "$TASK_NUM"` runs in the task loop; the reject path at 3018 is inside the same loop after. So yes. But there's also the "session" reject? Let me check the harness around 3018 and whether there are reject paths for the session task.
+
+Let me look at the harness code to be sure.
+
+Also important: `task_node_id` for planned tasks uses `num`; what about a reject of the *session* task (no planned tasks)? Not our concern.
+
+Let me check evolve.sh lines ~2990-3030 and ~2050-2080.
+
+Also need to check: does `task_result` get called for the no-changes case with verdict "rejected" only, or could the accept path also pass equal shas? The harness accept path line 3229 passes `$PRE_TASK_SHA` and presumably `$(git rev-parse HEAD)`; if a task was accepted with no changes... the gate at task_landed_changes prevents that. But keying on the range covers it.
+
+Now let me also consider: with no_op, should we still ensure_goal? The early return would skip `ensure_goal`. The goal node is needed for the patch link ("advances" → goal). Without a patch, no link, so no goal needed. But hmm — `session_start` already ensures the goal. Fine, skip.
+
+But careful: if we early-return before `ensure_goal`, and a task node's goal relation... the task node was created by task_planned with its own goal. Fine.
+
+Now the tests. I need to extend `tests/gasp_cli_run_ordering.rs`:
+- new helper to run session-start + task + task-result with configurable shas, or extend `run_task_result_with_reason` with pre/post shas.
+
+Existing `run_task_result_with_reason(verdict, run_id, reason)` uses constants PRE_SHA/POST_SHA and doesn't call `task`. I'll add a new helper:
+
+```rust
+/// As [`run_task_result_with_reason`], but the caller chooses both shas and the
+/// run first plans a real task node (`task --num 1`), which is what the
+/// no-changes-landed shape has to move to `Abandoned`.
+fn run_planned_task_result(verdict: &str, run_id: &str, pre_sha: &str, post_sha: &str, reason: &str) -> tempfile::TempDir
+```
+
+Hmm, do the existing tests need planning? For the near-miss test ("same run with pre_sha != post_sha and rejected still emits exactly one patch node with status Reverted"), I can use the new helper with PRE_SHA/POST_SHA. That test asserts patch.status_changed status "Reverted"... wait, is the status string "Reverted"? The plan says status `Reverted`. But the code uses `PatchStatus::Rejected`. Let me check the enum's serialization: `PatchStatus::Rejected` serializes as "Rejected". Let me check primitives.
+
+Let me grep PatchStatus in yoagent-state.
+
+Earlier grep on state.rs showed `PatchStatus::Rejected`. Let me check the enum: probably `Proposed, Promoted, Rejected, Reverted...`. The plan says "status `Reverted`". Let me verify by reading primitives.
+
+Also the existing test `rejected_verdict_records_no_commit_artifact` uses run_task_result("rejected", ...) — that's the near-miss-ish path already (with PRE_SHA != POST_SHA). I could reuse it, but the plan wants an explicit near-miss test with `rejected` and unequal shas asserting exactly one patch with status Reverted/Rejected. There's already `sole_patch_status` helper. I'll add a test using it.
+
+Let me now check PatchStatus enum and whether `sole_patch_status` returns "Rejected".
+
+Also, in the no-op path, the emitted events must have ZERO patch.proposed. The test helper `proposed_patches` counts them.
+
+Let me read evolve.sh around 3000-3030 and PatchStatus.
+────────────────────────────────────────────────────────────────────────────────
+
+Continuing. Let me verify the remaining facts: PatchStatus serialization and the harness reject path.
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-state-0.5.2 &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2995,3030p scripts/evolve… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed the harness call at 3018 with `$PRE_TASK_SHA` and `$(git rev-parse HEAD)` — equal when nothing landed, unequal when real commits were made.
+
+Now PatchStatus enum name.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-state-0.5.2 &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent-state" Cargo.to… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2560,2575p Cargo.lock && …  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-state-0.5.2 &&… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+PatchStatus is in another module. Let me find it.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-state-0.5.2 &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PatchStatus" src/gasp.r… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+PatchStatus has no `Reverted`; it's `Rejected`. The task's test description says "still emits exactly one patch node with status `Reverted`" — that's the plan's imprecision; the actual serialized status is `Rejected`. I'll assert `Rejected` and note the plan's word was wrong in the journal? Actually the task says assert status `Reverted`. Hmm — careful. The honest thing: the existing code emits `PatchStatus::Rejected`, so the emitted string is "Rejected". Asserting "Reverted" would fail. The plan's wording is wrong. I'll assert on the actual emitted value ("Rejected") and note the discrepancy in the ARCHITECTURE.md note (the plan said "Reverted"; the vocabulary has no such variant). That's the honest move — do not bend the test to a wrong word.
+
+Wait, let me double check: maybe the existing test `rejected_verdict_records_no_commit_artifact` asserts something. Let me look at lines 230-273 of the test file to see how patch status is read for rejected.
+
+Let me read the test file fully around lines 230-350 (already partly seen). `sole_patch_status` returns the `status` string of `patch.status_changed`. No existing test asserts "Rejected"... Let me grep.
+
+Now let me write the implementation.
+
+First the source change in `src/gasp.rs`. Let me view precise lines 1067-1110 and the end of the function again to place the early return.
+
+Plan:
+
+```rust
+async fn task_result_in<S: EventStore>(
+    ...
+) -> Result<(), StateError> {
+    use crate::gasp_cli::{classify_verdict, verdict_landed, verdict_oracle_ran, TaskVerdict};
+
+    // #915: ONE statement of the verdict vocabulary ... (existing comments)
+    let verdict = classify_verdict(verdict);
+    let landed = verdict_landed(verdict);
+    let oracle_ran = verdict_oracle_ran(verdict);
+    let suffix = format!("{run_id}_{num}");
+    ensure_goal(state, goal, actor).await?;
+
+    // #915 slice 2 ... `let no_op = pre_sha == post_sha;`
+    if no_op {
+        return abandon_task(state, actor, run_id, num, reason).await;
+    }
+    ...
+```
+
+Where to put `no_op` + the early return? "near the top of `task_result`". I'd put it after the verdict computation, before `ensure_goal`/patch construction. Since `no_op` doesn't need the goal or the patch. Actually, should ensure_goal still run? Session-start already ensures the goal. If a caller calls task-result without session-start... `resume_open_run` requires an open run, which session-start created and which ensured the goal. So skipping ensure_goal in the no_op branch is safe. But to be conservative and avoid changing which nodes exist, hmm — ensure_goal is idempotent and the goal node likely already exists. Keeping it costs nothing but adds an unnecessary node write in the no-op path. The plan says "the honest record is the abandoned task plus the reason", so no extra nodes. I'll early-return before ensure_goal.
+
+Hmm, but actually if I early-return before ensure_goal, and the goal doesn't exist (edge case), the abandoned task node still has its goal relation from task_planned which ensured the goal itself. Fine.
+
+Now `abandon_task` helper:
+
+```rust
+/// #915 slice 2 — the record for a task whose commit range is empty.
+///
+/// A `rejected` task over `pre_sha == post_sha` is not a rejected patch: no
+/// patch exists to reject. The honest record is the task itself, moved to
+/// `Abandoned`, carrying the caller's reason **verbatim** (it is the only
+/// evidence of the cause), and no patch, eval, decision or failure node —
+/// every one of those would describe work that was never attempted.
+///
+/// The existence check comes first for the reason #849 gives: in
+/// `yoagent-state` 0.5.2 `update_task_status` (`state.rs:483`) appends the
+/// `task.status_changed` event **before** it can return an error, so an
+/// `if let Err(..)` around the call cannot protect against a missing node.
+async fn abandon_task<S: EventStore>(
+    state: &YoAgentState<S>,
+    actor: &ActorRef,
+    run_id: &str,
+    num: &str,
+    reason: &str,
+) -> Result<(), StateError> {
+    let task_id = task_node_id(run_id, num);
+    if state.get_node(NodeId::new(task_id.as_str())).await.is_none() {
+        eprintln!(
+            "gasp: task node {task_id} does not exist — the no-op task cannot be \
+             marked abandoned (the run is unaffected). Expected when `task` never \
+             ran for num {num}."
+        );
+        return Ok(());
+    }
+    state
+        .update_task_status(
+            TaskId::new(task_id),
+            TaskStatus::Abandoned,
+            Some(reason.to_string()),
+        )
+        .await?;
+    Ok(())
+}
+```
+
+Hmm: `update_task_status` uses `ActorRef::system("yoagent-state")` as actor internally, so `actor` param isn't needed. Do I need `actor`? No. Drop it to avoid unused variable (clippy -D warnings). But then the call in `task_result_in` doesn't pass actor.
+
+Wait, but is there value in the actor? The state function ignores it. Drop.
+
+`state.get_node` — signature? In session_end it's used as `session.state().get_node(NodeId::new(...)).await.is_some()`. Returns Option<Node>. Good.
+
+Note: `state` is `&YoAgentState<S>`; `get_node` is a method on YoAgentState. In session_end it's `session.state().get_node(...)` where state() returns `&YoAgentState<S>` presumably. Let me confirm the type of `session.state()` in gasp.rs.
+
+Also is `TaskStatus` imported at line 164? Yes: `TaskStatus` in the use list. And `TaskId`, `NodeId`, `EventStore`, `ActorRef` all imported. Good.
+
+Now — "add a definition without its consumer in the same edit": both halves in the same edit. Good.
+
+Also net-neutral sizing — +~35 lines in gasp.rs. 1575 → ~1610, under 2000. Fine.
+
+Now: is there any risk the early return breaks the existing tests? Existing tests use PRE_SHA != POST_SHA, so no_op is false → unchanged behavior. Good.
+
+Now, one more consideration: `TaskStatus::Abandoned` — is `update_task_status` going to hook the task node? Yes.
+
+Let me now write the tests.
+
+New helper: I'll generalize with a `Shas` pair. Simplest: add
+
+```rust
+/// #915 slice 2 — the near-miss pair's shas. The no-changes-landed shape is
+/// keyed on these two being EQUAL, so the guard has to drive both sides.
+const NO_OP_SHA: &str = "ccccccc3333333333333333333333333333cccc3";
+
+/// As [`run_task_result_with_reason`], but the caller names both shas and the
+/// run first plans a real task node (`task --num 1`) — the node the no-op
+/// shape has to move to `Abandoned`.
+fn run_planned_task_result(
+    verdict: &str,
+    run_id: &str,
+    pre_sha: &str,
+    post_sha: &str,
+    reason: &str,
+) -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    scratch_repo(dir);
+
+    let start = gasp_call(dir, &["session-start", "--run-id", run_id, "--day", "203", "--task", "no-op shape test"]);
+    assert!(start.status.success(), ...);
+
+    let planned = gasp_call(dir, &["task", "--run-id", run_id, "--num", "1", "--title", "no-op shape task", "--kind", "evolve"]);
+    assert!(planned.status.success(), "task (planned) failed: {}", String::from_utf8_lossy(&planned.stderr));
+
+    let result = gasp_call(dir, &[
+        "task-result", "--run-id", run_id, "--num", "1", "--title", "no-op shape task",
+        "--verdict", verdict, "--pre-sha", pre_sha, "--post-sha", post_sha,
+        "--repo", "yologdev/yoyo-evolve", "--reason", reason,
+    ]);
+    assert!(result.status.success(), "task-result ({verdict}) failed: {}", String::from_utf8_lossy(&result.stderr));
+
+    tmp
+}
+```
+
+I need to check the `task` arm's argv — the task_planned arm flags. Let me check gasp_cli parse for "task" and the shim argv test around line 723-810 to see exact flags (`--num`, `--title`, `--kind`, `--run-id`, `--state-dir`). Let me read gasp_cli.rs 250-330 and 500-580.
+
+Then a helper to read task status events:
+
+```rust
+/// Every `task.status_changed` as `(task_id, status, reason)`, in file order.
+fn task_status_changes(state_dir: &Path) -> Vec<(String, String, Option<String>)> { ... }
+```
+
+And a helper `task_created_ids`.
+
+The new-path test:
+
+```rust
+/// #915 slice 2 — a `rejected` task over an EMPTY commit range is not a
+/// rejected patch; it is an abandoned task.
+#[test]
+fn no_op_rejected_task_is_abandoned_and_proposes_no_patch() {
+    let tmp = run_planned_task_result("rejected", "run_gasp_no_op", NO_OP_SHA, NO_OP_SHA, NO_CHANGES_REASON);
+    let dir = tmp.path();
+
+    // Anti-vacuous first: the planned task node exists, so the status assertion
+    // below is about a row that is really there.
+    let planned_id = "task_run_gasp_no_op_1".to_string();
+    let ids = task_created_ids(dir);
+    assert!(ids.iter().filter(|i| **i == planned_id).count() == 1, "...");
+
+    let changes = task_status_changes(dir);
+    assert_eq!(changes.len(), 1, "exactly one task.status_changed — the abandoned task and nothing else: {changes:?}");
+    let (id, status, reason) = &changes[0];
+    assert_eq!(id, &planned_id);
+    assert_eq!(status, "Abandoned");
+    let reason = reason.as_deref().unwrap_or_else(|| panic!(...));
+    assert!(reason.to_ascii_lowercase().contains("no changes landed"), "...");
+
+    // Zero patch nodes: no `patch.proposed` for a range that is empty.
+    assert!(proposed_patches(dir).is_empty(), "...");
+    assert_eq!(patch_status_changes(dir).len(), 0, "no patch.status_changed either — there is no patch to change");
+}
+```
+
+Hmm, wait: does the test file have a helper for patch.status_changed count? `sole_patch_status` asserts exactly one. I'll inline a filter.
+
+Near-miss test:
+
+```rust
+/// The near-miss guard ... `pre_sha != post_sha` + `rejected` is byte-identical
+/// to before: one patch, status `Rejected`, still proposed.
+#[test]
+fn rejected_task_over_a_real_range_still_proposes_one_patch() {
+    let tmp = run_planned_task_result("rejected", "run_gasp_real_range", PRE_SHA, POST_SHA, "reverted: oracle failed");
+    let dir = tmp.path();
+    assert_eq!(proposed_patches(dir).len(), 1, "...");
+    assert_eq!(sole_patch_status(dir), "Rejected", "...");
+}
+```
+
+Hmm — "byte-identically to before" — the plan says status `Reverted`; the actual vocabulary emits `Rejected`. I'll assert `Rejected` and add a comment naming the plan's word vs the vocabulary.
+
+Actually wait. Let me reconsider: maybe the plan author intended `PatchStatus::Rejected` and misremembered the variant name. Since the emitted string comes from `PatchStatus::Rejected` serialized → "Rejected". Let me verify serialization: derived Serialize on the enum → variant name as-is → "Rejected". Yes.
+
+Should the near-miss test use the planned-task helper or the existing one? The planned task node also gets a `task.status_changed`? No — on the !no_op path, `task_result_in` does not touch the task status at all (today). So with !no_op, changes = [] (the planned task stays Open). Interesting asymmetry: on a real reject, the task node stays `Open` today. Should it be `Done`? Not our task — do not restructure. The plan says: "When `!no_op`, emit exactly what is emitted today". So the task node stays Open. Good — and my near-miss test should assert that no `task.status_changed` is emitted on that path (that's the byte-identical part). Hmm, that's a strong assertion but correct: it pins that the no-op branch is the only one that touches the task status. Actually careful: asserting "zero task.status_changed" on the !no_op path is asserting today's behavior — true, and it's the guard that the new branch didn't leak. I'll include it as the near-miss evidence, but is it a *guard* that could be wrong? It pins current behavior. Fine, but if a future change legitimately marks tasks Done on reject, this test would fail and need an update — that's acceptable (tests pin behavior).
+
+Hmm, but the plan explicitly enumerated the near-miss assertion: "the same run with `pre_sha != post_sha` and `rejected` still emits exactly one patch node with status `Reverted`, byte-identically to before." I'll do that plus the zero-task-status-change assertion as extra evidence. Actually, adding the extra assertion risks being "scope creep"? No, it's fine and it's the residue guard.
+
+Hmm, but hold on. If I keep the existing helper `run_task_result_with_reason` for the existing tests (they don't plan a task), and the new helper plans one — the near-miss test could use the existing `run_task_result("rejected", ...)` which uses PRE_SHA/POST_SHA. That's simpler and keeps the existing helper's "no planned task" shape. But then the near-miss test doesn't exercise a planned task... it doesn't matter for the !no_op path since task status isn't touched.
+
+Better: use the new planned helper for BOTH sides of the no-op guard so the two tests differ in exactly one input (the shas). That's the cleanest near-miss design: same helper, same verdict, same reason, only the range differs. Except the reason string differs too (the no-op reason vs a revert reason). Let me use the same reason? No — the no-op reason is the harness's "No changes landed...". For the near-miss I can use any reason; using a different reason makes the pair differ in two inputs. Better to keep reason identical? Hmm, the no-op test asserts the reason fragment "no changes landed", so its reason must be the harness one. The near-miss just needs a reason. I'll use the same harness-shaped reason for both? That'd be dishonest-ish (a real range with a "No changes landed" reason is contradictory). I'll use distinct honest reasons and note it. Actually — near-miss purity: differ in exactly one input is ideal, but the reason is carried into the record and differs legitimately. I'll keep the same helper and note in a comment that only the range differs in *shape*; the reason differs because a real revert's reason is a revert reason. Hmm, simpler: use "oracle failed: test_x" for near-miss.
+
+Fine.
+
+Now `NO_CHANGES_REASON`: mirror the harness sentence: "No changes landed: the committed diff between the pre-task sha and HEAD is empty". Let me check evolve.sh's exact `REVERT_REASON` text for the empty-diff gate, to make the test's fixture a faithful harness string. Let me grep for "No changes landed" in evolve.sh.
+
+Let me also check the `task` arm flags in gasp_cli.rs.
+
+Then: run the tests.
+
+Positive control: mutate `let no_op = pre_sha == post_sha;` → `let no_op = false; // NEUTERED ...`, run the new test (expect red by name) and near-miss (green), restore, verify green + empty diff. Do it as one atomic command.
+
+Also ARCHITECTURE.md note.
+
+Let me gather the remaining details.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.5s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "No changes landed" scri…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 240,330p src/gasp_cli.rs ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. The `task` arm requires `--num` and `--title`; `--kind` optional (kind_of). Let me check the shim argv test for the `task` arm to copy flags exactly (line ~760-810).
+
+Also check how `run_task_result_with_reason` calls session-start; `--task` is optional.
+
+Now let me view gasp_cli.rs 500-580 for the dispatch (to confirm `task` maps to `gasp::task_planned`).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 500,575p src/gasp_cli.rs … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now let me check `session.state()` type and `get_node` availability, then make the source edit.
+
+Let me look at lines 1067-1115 precisely (with exact text for edit_file).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1063,1100p src/gasp.rs | … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note: my earlier `sed -n` output showed comments as "... (N more similar lines)" — that's the tool truncating long comment blocks. I need exact text for edit_file. Let me use a targeted approach: insert after `let oracle_ran = verdict_oracle_ran(verdict);` line.
+
+I'll anchor on:
+```
+    let oracle_ran = verdict_oracle_ran(verdict);
+    let suffix = format!("{run_id}_{num}");
+    ensure_goal(state, goal, actor).await?;
+```
+This is unique enough. Let me verify exact whitespace with a grep -n exact.
+
+Actually there might be other occurrences of `let suffix = format!` etc. The combination is unique within task_result_in. Let's check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let oracle_ran = verdic…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "async fn session_end" -… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`session.state()` returns `&YoAgentState<GitEventStore>`. My helper is generic over S: EventStore, and takes `state: &YoAgentState<S>` — fine.
+
+Now make the source edit. Insert the no_op derivation + early return, and add the helper function.
+
+Wait — one consideration about the doc comment for `task_result` (the pub wrapper, lines ~1000-1019) that says something about "four-process session through the real binary ... byte-identical comparison". Let me read the full doc comment there to decide whether to mention the no-op path. Let me read lines 985-1020 fully.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=985 && NR<=1020' src/ga… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `awk` output is also being collapsed ("... (31 more similar lines)") — the tool seems to collapse repeated/comment lines. Let me use `sed -n '985,1019p'` with a pipe through cat -n... it collapsed before too. Maybe the tool collapses long runs of `///` comment lines. Let me get the content differently, e.g. `grep -n "" file | sed -n` or python.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (4 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line 1015-1017 says "`verdict` is compared against `"promoted"` exactly as the sidecar does" — that's now superseded by slice 1 (classify_verdict). I won't touch it (out of scope, and it's a claim about the sidecar). Actually it's stale-ish but slice 1 landed it; not my task. Leave it.
+
+Now let me make the edit. Insert after line 1096 (`let oracle_ran = ...`).
+
+Content to insert:
+
+```rust
+    // #915 slice 2 — "nothing landed" is not a rejected patch, and the two
+    // commit shas say which case this is. The harness's empty-diff gate
+    // (`scripts/evolve.sh:3018`) calls `task_result … rejected "$PRE_TASK_SHA"
+    // "$(git rev-parse HEAD)"`, and when no changes landed it has reset
+    // nothing, so the two arrive EQUAL. Keying on the range rather than on a
+    // fourth verdict word is deliberate: a new spelling would have to be
+    // emitted by `scripts/evolve.sh`, a protected file this loop cannot edit,
+    // and the range is true for every future caller too. `no_op` also covers
+    // an accepted task over an empty range, which the harness gate now
+    // prevents — but a record shape should not depend on a gate in another
+    // file continuing to hold. A reader who "simplifies" this back to a
+    // verdict string re-opens the hole.
+    let no_op = pre_sha == post_sha;
+    if no_op {
+        return abandon_task(state, run_id, num, reason).await;
+    }
+```
+
+Wait: `abandon_task` needs `state` (&YoAgentState<S>) — but a generic helper takes `&YoAgentState<S>` where S: EventStore; generic inference works.
+
+Hmm, one problem: the helper being generic over S requires `S: EventStore` bound; fine.
+
+Where to place the helper? Right after `task_result_in`'s end, before the `#[cfg(test)] mod tests`. Good.
+
+Now also: should the no-op branch print something to stdout? Not required.
+
+One more consideration: `reason` verbatim, and if reason is empty? `update_task_status(..., Some(reason.to_string()))` would set `Some("")`. The existing code uses `(!reason.is_empty()).then(|| reason.to_string())` when updating patch status. For the task node, mirroring that would be more consistent: `(!reason.is_empty()).then(|| reason.to_string())`. But the plan says "carrying the harness `reason` **verbatim**". The harness always passes a reason on this path. Using the `then` form means an empty reason → None, which is "absence gets its own name" (Day 144) and matches the neighboring call site's discipline. Hmm, but the test asserts the reason contains "no changes landed" — fine either way.
+
+I think mirroring the neighbouring `(!reason.is_empty()).then(...)` is the better discipline and consistent within the file. But it adds subtlety. The plan says verbatim. Verbatim ≠ always `Some`. I'll use the same `(!reason.is_empty()).then(|| reason.to_string())` form and document it: empty reason → `None`, because a `Some("")` says "there is a reason and it is blank" while the truth is that none was given.
+
+Hmm, but careful: the existing code path for the abandoned task — a reader comparing with patch status update sees the same idiom. Good, do that.
+
+Now write the helper:
+
+```rust
+/// #915 slice 2 — the record for a task whose commit range is EMPTY.
+///
+/// A task that landed nothing is not a rejected patch: there is no patch to
+/// reject, no oracle to have passed or failed, and nothing to revert. So the
+/// honest record is the task node moved to [`TaskStatus::Abandoned`] carrying
+/// the caller's reason, and no patch, eval, decision or failure node at all —
+/// every one of those would describe work that was never attempted.
+///
+/// The existence check comes first for the reason #849 gives: in
+/// `yoagent-state` 0.5.2 `update_task_status` (`state.rs:483`) appends the
+/// `task.status_changed` event **before** it can return an error, so an
+/// `if let Err(..)` around the call cannot protect against a missing node —
+/// the check has to be on the call. A missing node is a stderr note rather
+/// than an error: the run is still open and must close normally.
+async fn abandon_task<S: EventStore>(
+    state: &YoAgentState<S>,
+    run_id: &str,
+    num: &str,
+    reason: &str,
+) -> Result<(), StateError> {
+    let task_id = task_node_id(run_id, num);
+    if state
+        .get_node(NodeId::new(task_id.as_str()))
+        .await
+        .is_none()
+    {
+        eprintln!(
+            "gasp: task node {task_id} does not exist — the no-op task cannot be marked \
+             abandoned (the run is unaffected). Expected when `task` never ran for num {num}."
+        );
+        return Ok(());
+    }
+    state
+        .update_task_status(
+            TaskId::new(task_id),
+            TaskStatus::Abandoned,
+            // Absence gets its own name (Day 144): an empty reason is `None`,
+            // never `Some("")` — the same idiom the patch-status update uses.
+            (!reason.is_empty()).then(|| reason.to_string()),
+        )
+        .await?;
+    Ok(())
+}
+```
+
+Need `NodeId` imported — yes (used in session_end). `TaskId` imported. `TaskStatus` imported.
+
+Now, is `get_node` a method on `YoAgentState`? session_end uses `session.state().get_node(NodeId::new(...)).await`. Yes.
+
+Let's make the edits.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the implementation in src/gasp.rs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (3 → 23 lines)
+        let oracle_ran = verdict_oracle_ran(verdict);
+  +     // #915 slice 2 — "nothing landed" is not a rejected patch, and the commit
+  +     // RANGE is what says so. The harness's empty-diff gate
+  +     // (`scripts/evolve.sh:3018`) calls
+  +     // `task_result … rejected "$PRE_TASK_SHA" "$(git rev-parse HEAD)"`; when no
+  +     // changes landed it has reset nothing (there is nothing to reset), so the
+  +     // two shas arrive EQUAL.
+  +     //
+  +     // Keying on the range rather than on a fourth verdict word is deliberate,
+  +     // not merely convenient. A new spelling would have to be *emitted* by
+  +     // `scripts/evolve.sh`, a protected file this loop cannot edit; and the
+  +     // range is a property of the caller's own argument, so the shape holds for
+  +     // every future caller instead of only the one that learned the new word.
+  +     // It also covers an accepted task over an empty range, which the harness
+  +     // gate now blocks — but a record's shape must not depend on a gate in
+  +     // another file continuing to hold. A reader who "simplifies" this back to a
+  +     // verdict string re-opens the hole.
+  +     let no_op = pre_sha == post_sha;
+  +     if no_op {
+  +         return abandon_task(state, run_id, num, reason).await;
+  ... (3 more lines)
+ ✓ (1m 24s)
+        let oracle_ran = verdict_oracle_ran(verdict);
+  +     // #915 slice 2 — "nothing landed" is not a rejected patch, and the commit
+  +     // RANGE is what says so. The harness's empty-diff gate
+  +     // (`scripts/evolve.sh:3018`) calls
+  +     // `task_result … rejected "$PRE_TASK_SHA" "$(git rev-parse HEAD)"`; when no
+  +     // changes landed it has reset nothing (there is nothing to reset), so the
+  +     // two shas arrive EQUAL.
+  +     //
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now add the helper function after `task_result_in` ends (before `#[cfg(test)] mod tests`). The end of the function is:
+
+```
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+```
+
+Let me anchor on:
+```
+            .await?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+```
+
+Is that unique? There are other `Ok(()) }` then mod tests... Let's just use the text right before `#[cfg(test)]\nmod tests {`.
+
+The unique anchor: "\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn unset_env_is_disabled_silently() {"
+
+Let me build the edit with old_text = "}\n\n#[cfg(test)]\nmod tests {\n    use super::*;" and new_text = helper + that.
+
+Careful: `}\n\n#[cfg(test)]` might appear elsewhere? Only one mod tests at end presumably. Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/ga… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (4 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (6 → 55 lines)
+  +     Ok(())
+  + }
+  + 
+  + /// #915 slice 2 — the record for a task whose commit range is EMPTY.
+  + ///
+  + /// A task that landed nothing is not a rejected patch: there is no patch to
+  + /// reject, no oracle that could have passed or failed, and nothing to revert.
+  + /// So the honest record is the task node moved to [`TaskStatus::Abandoned`]
+  + /// carrying the caller's reason, and **no** patch, eval, decision or failure
+  + /// node at all — every one of those would describe work that was never
+  + /// attempted. The call site is [`task_result_in`], which reaches here only when
+  + /// `pre_sha == post_sha`.
+  + ///
+  + /// The existence check comes first for the reason #849 gives: in
+  + /// `yoagent-state` 0.5.2 `update_task_status` (`state.rs:483`) appends the
+  + /// `task.status_changed` event **before** it can return an error, so an
+  + /// `if let Err(..)` around the call cannot protect against a missing node — the
+  + /// check has to be on the call. A missing node is a stderr note rather than an
+  + /// error: the run is still open and must close normally, and the reason this
+  + /// path may legitimately find no node is that `task` never ran for this `num`.
+  ... (32 more lines)
+ ✓ (1m 23s)
+  +     Ok(())
+  + }
+  + 
+  + /// #915 slice 2 — the record for a task whose commit range is EMPTY.
+  + ///
+  + /// A task that landed nothing is not a rejected patch: there is no patch to
+  + /// reject, no oracle that could have passed or failed, and nothing to revert.
+  + /// So the honest record is the task node moved to [`TaskStatus::Abandoned`]
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me continue. Now I need to update the doc comment on `task_result` maybe, and write the tests. Let me first check the build compiles.
+
+Wait — the `no_op` early return happens before `ensure_goal`. But also note the `verdict` variable is now unused on the no_op path — it's used later. Fine.
+
+Also concern: `let landed` / `let oracle_ran` computed but not used if no_op — no, they're used after. Fine, they're before the return so used in the later path.
+
+Let me build.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --features gasp 2>&1… ✓ (22.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Builds. Now let me also update the `task_result` doc comment about the verdict comparison — line 1015-1017 says "`verdict` is compared against `"promoted"` exactly as the sidecar does". That's still true, but now there's a new early-return branch. Let me add a note there. Actually, let me keep it minimal but accurate — add the #915 slice 2 note.
+
+Now, tests. Add to `tests/gasp_cli_run_ordering.rs`:
+1. Helper for a run with equal shas.
+2. New path test.
+3. Near-miss test.
+
+Let me look at the helper signature again: `run_task_result_with_reason(verdict, run_id, reason)` hardcodes PRE_SHA/POST_SHA. I need a variant taking both shas.
+
+Let me refactor: add `run_task_result_full(verdict, run_id, reason, pre_sha, post_sha)` and make `run_task_result_with_reason` delegate.
+
+Let me read lines 165-235 exactly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (4 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me refactor the helper to take both shas. I'll generalize `run_task_result_with_reason` to add a shas variant, keeping the existing function's signature byte-identical for callers.
+
+Plan:
+```rust
+fn run_task_result_with_reason(verdict: &str, run_id: &str, reason: &str) -> tempfile::TempDir {
+    run_task_result_with_shas(verdict, run_id, reason, PRE_SHA, POST_SHA)
+}
+
+fn run_task_result_with_shas(verdict, run_id, reason, pre_sha, post_sha) -> ... { ... }
+```
+
+Then add a helper to read the task node status. The task node status: `task.created` carries the full Task payload with `status` (Open/InProgress), and `task.status_changed` carries `{task_id, status, reason}`. The `task.current` event? Let's check what the projector emits — `state.ops_applied` is filtered out. So the final status is only visible via the `task.status_changed` event payload. That's fine — assert on the emitted event (which is exactly what this file's doc says: assert the emitted events).
+
+Let me write a helper `task_status_changes(state_dir) -> Vec<serde_json::Value>` filtering `task.status_changed`.
+
+Now the tests:
+
+```rust
+/// #915 slice 2 — a task that landed nothing is `Abandoned`, not a rejected patch.
+#[test]
+fn no_op_task_result_abandons_the_task_and_proposes_no_patch() {
+    let tmp = run_task_result_with_shas("rejected", "run_gasp_noop", NO_CHANGES_REASON, PRE_SHA, PRE_SHA);
+
+    // Anti-vacuous first: exactly one task node, so the status assertion below
+    // is about a row that is really there.
+    let task_ids = task_created_ids(tmp.path());
+    assert_eq!(task_ids.len(), 1, "...");
+    assert_eq!(task_ids[0], "task_run_gasp_noop_1");
+    ...
+}
+```
+
+Hmm — one issue: `run_task_result_with_shas` over equal shas. Does anything else break? `session-end` isn't called, so the run stays open — the tempdir is dropped. Fine.
+
+Now: is exactly one task node created? `session-start` creates the session node: in `session_start`, `record_run_started` then `record_task` with `session_task_node_id(run_id)`. Wait — in the test `four_call_session_finishes_its_own_run_last`, both `task_<run>_session` and `task_<run>_1` exist. But `task_<run>_session` is created by `session-start`? Let me check: at line 760 the `record_task` with `session_task_node_id` — which function is that in? Let me check the function containing line 760.
+
+Earlier output showed lines 740-770 contain `record_run_started` and then `record_task` with `session_task_node_id(run_id)`. Which function? Let me check. Earlier I saw `session_start` around there. Let me verify.
+
+Actually the test `four_call_session_finishes_its_own_run_last` asserts both session node and planned node exist, and it does session-start, task, task-result, session-end. So the session node AND planned task node are both created — the session node by session-start, the planned node by `task`. In our test we only do session-start + task-result, so we get the session node but NOT `task_<run>_1` (since `task` wasn't called).
+
+Hmm. So `task_created_ids` will contain only `task_<run>_session`. That means my anti-vacuous "exactly one task node exists" is about the session node, and the status assertion "Abandoned" would be about the session node which is NOT abandoned. That breaks.
+
+So I need to actually call `task` to create the planned task node. But then the task node exists → abandon works. Let me add `task` calls in the no-op test's runner.
+
+Hmm, but the existing helper `run_task_result_with_reason` doesn't call `task` — and `rejected_verdict_records_no_commit_artifact` relies on the patch being created with `patch_<run>_1`. Without a `task` call, `patch.proposed` still happens (task_result doesn't require the task node). So the existing tests are fine.
+
+For my new test I want the task node. Options:
+(a) Call `task` in a new helper for the no-op test.
+(b) Assert on the session node.
+
+Option (a) is right. Let me write a dedicated helper that does session-start + task + task-result.
+
+Actually wait — for the near-miss test (pre != post, rejected), same thing: I'd want the task node too, for symmetry. But the near-miss's key assertion is "exactly one patch node with status Reverted". Existing tests already cover rejected with pre != post (the artifact test). I'll write the near-miss test with the `task` call too for a clean symmetric pair.
+
+Hmm, but careful: does calling `task` change the patch node id or anything? No: patch id is `patch_{run_id}_{num}`, and num is 1 in both.
+
+Actually, hold on. There's a subtlety with `task` and `--kind`: `task` takes `--kind` and reroutes the goal. Default kind? `kind_of(&flags)` — probably defaults to "evolve". Fine either way.
+
+Let me now write the helper:
+
+```rust
+/// `session-start` + `task` + one `task-result` with explicit shas, against a
+/// fresh scratch repo. The planned task node is required here (unlike
+/// [`run_task_result_with_reason`], which drives `task-result` on its own): the
+/// no-op path's whole subject is the **task node's** status, so a run that
+/// never planned one would make the status assertion vacuous.
+fn run_planned_task_result(verdict: &str, run_id: &str, reason: &str, pre_sha: &str, post_sha: &str) -> tempfile::TempDir
+```
+
+And then the `task` call:
+```rust
+let planned = gasp_call(dir, &["task", "--run-id", run_id, "--num", "1", "--title", "artifact verdict task"]);
+```
+
+Let me check the `task` arm's required flags: `num`, `title`, `kind` (kind_of). Let me check `kind_of` — it probably has a default so `--kind` is optional.
+
+Let me check.
+
+Then assert planned.status.success().
+
+Now the assertions for the new-path test:
+(a) exactly one task node exists with id `task_<run>_1` — anti-vacuous.
+(b) its status is Abandoned — from `task.status_changed` payload where task_id == that node.
+(c) zero patch nodes — `proposed_patches` empty AND `patch.status_changed` absent.
+(d) reason contains "no changes landed" case-insensitively.
+
+For (c), the task says "zero patch nodes exist" — I'll assert both no `patch.proposed` and no `patch.status_changed` (the two patch events the normal path emits), plus no eval/decision/failure nodes since those all attach to a patch. Hmm, the task spec says "no `patch.proposed`, no `patch.status_changed`". Let me assert those two explicitly, and also that no eval/decision/failure landed (since those are the other nodes that would describe the phantom patch). That's beyond spec but is the honest reading of "no patch node". Hmm — careful about over-reach: but per the code, the early return skips all of them, and asserting it prevents a future "simplification" that returns early only for the patch. I'll include them and say why.
+
+Actually, let me be careful about scope creep. The task's wording: "**Patch nodes**: when `no_op`, emit **none** — no `patch.proposed`, no `patch.status_changed`. A patch over an empty commit range is a patch that does not exist; the honest record is the abandoned task plus the reason." Asserting the absence of the eval/decision/failure nodes too is consistent with "the honest record is the abandoned task plus the reason". I'll do it — it's a strictly stronger assertion in the same direction, not a new behavior.
+
+For (d): `reason` is on the `task.status_changed` payload as `reason`.
+
+Near-miss test:
+```rust
+#[test]
+fn rejected_verdict_over_a_non_empty_range_still_proposes_one_reverted_patch() {
+    // pre != post, rejected → exactly one patch.proposed, status Reverted
+}
+```
+Need to check: what status does rejected map to? `PatchStatus::Rejected`. But the existing test `sole_patch_status` — for the unverified test it returned "Promoted". Let's check `rejected_verdict_records_no_commit_artifact`: it only checks artifacts. The task says "still emits exactly one patch node with status `Reverted`". Hmm — the task says `Reverted`, but the code emits `PatchStatus::Rejected` which serializes as "Rejected". Let me check: is there a "Reverted" string anywhere? The task text says "still emits exactly one patch node with status `Reverted`, byte-identically to before". That's a factual error in the task file — the code emits `PatchStatus::Rejected`. I must assert on what the code actually emits ("Rejected"), and note the discrepancy. Let me verify by running.
+
+Let me also add the session-end to close the run? Not needed.
+
+Also — the near-miss test should assert the task node status is NOT Abandoned (it's absent, since !no_op skips the update entirely). Actually on the !no_op path, the task node keeps whatever status it had (Open). So: assert no `task.status_changed` event at all on the rejected non-empty path. That's the byte-identical claim. Good — that's a strong near-miss: the guard fires only on the equal-sha side.
+
+Let me now check `kind_of` default and the `task` arm flags.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn kind_of" -A 12 src/g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Reverted" src/ | head ✓ (5ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: no `Reverted` patch status exists. The patch status for `rejected` is `PatchStatus::Rejected` → "Rejected". The task file's "Reverted" is inaccurate; I'll assert `Rejected` and note the discrepancy.
+
+Now let me write the tests. First update the helper.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.2s (2 ✓)
+
+Now the tests. First, generalize the helper to take explicit shas:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/gasp_cli_run_ordering.rs (53 → 94 lines)
+    fn run_task_result_with_reason(verdict: &str, run_id: &str, reason: &str) -> tempfile::TempDir {
+  +     run_task_result_full(verdict, run_id, reason, PRE_SHA, POST_SHA, false)
+  + }
+  + 
+  + /// The one implementation. Every test in this file drives the **real** binary
+  + /// through it, so a behavioural assertion is about the event log the CLI
+  + /// actually wrote rather than about a function signature.
+  + ///
+  + /// `pre_sha`/`post_sha` are parameters because they are the *subject* of the
+  + /// #915 slice 2 pair below, not decoration: the no-op shape is keyed on the two
+  + /// being equal. `plan_task` controls whether a `task` call runs first — the
+  + /// no-op tests need the planned task node to exist, because the node whose
+  + /// status they assert on is that node, and a run that never planned one would
+  + /// make the assertion vacuous.
+  + fn run_task_result_full(
+  +     verdict: &str,
+  +     run_id: &str,
+  +     reason: &str,
+  +     pre_sha: &str,
+  +     post_sha: &str,
+  ... (44 more lines)
+ ✓ (1m 24s)
+    fn run_task_result_with_reason(verdict: &str, run_id: &str, reason: &str) -> tempfile::TempDir {
+  +     run_task_result_full(verdict, run_id, reason, PRE_SHA, POST_SHA, false)
+  + }
+  + 
+  + /// The one implementation. Every test in this file drives the **real** binary
+  + /// through it, so a behavioural assertion is about the event log the CLI
+  + /// actually wrote rather than about a function signature.
+  + ///
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now add the helper for reading task status changes, and the two tests.
+
+Let me add a helper `task_status_changes` and the tests, placed after `promoted_verdict_still_records_passed_byte_identically` (before `task_created_ids`)? Better: put the two new tests near the end, after `four_call_session_finishes_its_own_run_last`. But helpers `task_created_ids` are defined mid-file. Rust doesn't care about order. I'll append at end of file, with the helper functions too.
+
+Let me check the end of the file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 tests/gasp_cli_run_orde… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> tests… (201 lines) ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — `NO_CHANGES_LANDED_REASON` is a copy of the harness's real string. That's long and could drift. Better to use a short distinctive fragment, since I assert on the fragment "no changes landed". Actually the test task says: "the emitted task reason contains the harness string (assert on a distinctive fragment, e.g. `no changes landed`, case-insensitively)". So I should pass a reason containing that fragment. A full copy of the harness string risks drift and looks like redundancy. But it's also more faithful.
+
+Hmm. My assertion checks "no changes landed" case-insensitively. If I copy the whole harness sentence, and the harness later changes its wording, my copy drifts — but my assertion still passes (it's a contains). The copy is then just decoration that implies fidelity it doesn't have. Let me simplify: use a short reason that is unmistakably the harness's shape, and say plainly in the doc that it's a fragment. Less pretence.
+
+Actually — the honest thing: the reason is passed verbatim by definition (whatever the test passes). The valuable assertion is that the fragment survives into the task record. Let me use a moderately-sized real fragment: 
+
+```rust
+/// The fragment `scripts/evolve.sh:2553` puts at the head of its empty-diff
+/// reason. Quoted as a fragment, not as a copy of the whole sentence: the test
+/// asserts the *harness's* wording survives into the record, and a verbatim copy
+/// of a protected file's string would drift silently while still passing.
+const NO_CHANGES_LANDED_REASON: &str =
+    "No changes landed: the committed diff aaaaaaa1..HEAD is empty after the implementation \
+     and any build-fix agents. An empty diff is not a promotion: there is nothing to evaluate.";
+```
+
+That still has the drift problem. Alternatively just use the fragment directly as the reason string and name the const to say it's a fragment. Let me rename to make it honest: `HARNESS_NO_CHANGES_REASON_FRAGMENT`. And keep it short.
+
+Let me rewrite that const and its uses.
+
+Also I used `domain_event_kinds(tmp.path())` assigned to `status_changes` — misleading name. Rename to `kinds`.
+
+Also the trailing `assert_ne!(PRE_SHA, POST_SHA, ...)` at the end of the near-miss test is odd — it asserts a test constant rather than behaviour. It's a real property (the near-miss is only a near-miss if the shas differ) but it's static. Actually it's fine and cheap, but it reads like padding. Let me keep it but reposition? Hmm — it does guard against someone "simplifying" by making the near-miss test use equal shas too, which would collapse the pair. That's a genuine anti-vacuous guard for the *pair*. Keep it, but put it first (before the anti-vacuous readings) — no, it's fine at the end. Actually let me move it to the top of the test where it guards the fixture... it's a const check, order doesn't matter. Leave it.
+
+Let me fix the const and variable naming.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/gasp_cli_run_ordering.rs (7 → 12 lines)
+  - /// The sentence `scripts/evolve.sh:2553` builds when its empty-diff gate fires.
+  - /// Copied from the harness read-only: this file must not edit it, and a test
+  - /// that invented its own wording would prove nothing about the real reason.
+  - const NO_CHANGES_LANDED_REASON: &str = "No changes landed: the committed diff aaaaaaa1..HEAD \
+  -      (aaaaaaa1) is empty after the implementation and any build-fix agents (last exit code 0). \
+  -      An empty diff is not a promotion: there is nothing to evaluate, so the evaluator was not \
+  -      run, and this task counts as NOT succeeded.";
+  + /// The fragment `scripts/evolve.sh:2553` puts at the head of the reason it
+  + /// passes on the empty-diff path, near enough to the harness's sentence to be
+  + /// the same claim.
+  + ///
+  + /// A **fragment**, deliberately, and not a verbatim copy of the whole sentence:
+  + /// the assertion below is that the *caller's* wording survives into the record,
+  + /// and a copied string from a protected file would drift silently while the test
+  + /// kept passing — a copy that agrees with itself. The harness's own wording is
+  + /// checked where it lives, not here.
+  + const HARNESS_NO_CHANGES_REASON: &str = "No changes landed: the committed diff aaaaaaa1..HEAD \
+  +      is empty after the implementation and any build-fix agents. An empty diff is not a \
+  +      promotion: there is nothing to evaluate, so the evaluator was not run.";
+ ✓ (1m 24s)
+  - /// The sentence `scripts/evolve.sh:2553` builds when its empty-diff gate fires.
+  - /// Copied from the harness read-only: this file must not edit it, and a test
+  - /// that invented its own wording would prove nothing about the real reason.
+  - const NO_CHANGES_LANDED_REASON: &str = "No changes landed: the committed diff aaaaaaa1..HEAD \
+  -      (aaaaaaa1) is empty after the implementation and any build-fix agents (last exit code 0). \
+  -      An empty diff is not a promotion: there is nothing to evaluate, so the evaluator was not \
+  -      run, and this task counts as NOT succeeded.";
+  + /// The fragment `scripts/evolve.sh:2553` puts at the head of the reason it
+  ... (11 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (30 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (24.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp --tes… ✓ (641ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 8 pass. But wait — did my new tests actually exercise the abandon path? Let me verify by running just the no-op test with output, and importantly let me confirm the assertion isn't vacuous. Let me check the test names.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp --tes… ✓ (146ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the positive control: neuter the `no_op` gate so it is never true, and confirm exactly the new-path test reddens by name while the near-miss stays green. Run as one atomic mutate → run → restore, with the mutation line marked NEUTERED.
+
+The mutation: `let no_op = pre_sha == post_sha;` → `let no_op = false; // NEUTERED ...`.
+
+Let me do it as one atomic command.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive control — one atomic mutate → run → restore:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/gasp.… (16 lines) ✓ (10.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Positive control worked exactly as designed: the new-path test reddens *by name*, the near-miss stays green, restore is clean (69 insertions is my real change vs HEAD; no NEUTERED marker left).
+
+Let me verify the restore is byte-identical to before mutation — `git diff --stat` shows 69 insertions which is my real change; the /tmp backup was taken after my change, so it's fine.
+
+Now run the full suite: `cargo fmt --check`, `cargo clippy --all-targets --features gasp -- -D warnings`, `cargo build`, `cargo test --locked --features gasp`.
+
+Also add the ARCHITECTURE.md note. And update the `task_result` doc comment (line ~1015) to mention the new branch.
+
+Let me first update the doc comment on task_result.
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired exactly as designed. Now the doc comment and docs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (4 lines) ✓ (19ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (6 → 11 lines)
+    /// `verdict` is compared against `"promoted"` exactly as the sidecar does —
+    /// the two graphs must agree on what a promotion is, so this is deliberately a
+    /// byte-identical comparison and not a looser parse.
+  + ///
+  + /// #915 slice 2: an **empty commit range** (`pre_sha == post_sha`) is its own
+  + /// shape — the task node becomes `Abandoned` carrying the reason and **no patch
+  + /// node is written at all**. See [`task_result_in`]'s `no_op` derivation and
+  + /// [`abandon_task`] for why the range, and not a verdict word, is the key.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn task_result(
+        session: &GraphSession,
+ ✓ (1m 24s)
+    /// `verdict` is compared against `"promoted"` exactly as the sidecar does —
+    /// the two graphs must agree on what a promotion is, so this is deliberately a
+    /// byte-identical comparison and not a looser parse.
+  + ///
+  + /// #915 slice 2: an **empty commit range** (`pre_sha == post_sha`) is its own
+  + /// shape — the task node becomes `Abandoned` carrying the reason and **no patch
+  + /// node is written at all**. See [`task_result_in`]'s `no_op` derivation and
+  + /// [`abandon_task`] for why the range, and not a verdict word, is the key.
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the ARCHITECTURE.md gasp.rs entry:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^### .*gasp.rs\|^## .*g… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gasp" ARCHITECTURE.md |… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md is large with very long lines. Let me find the gasp.rs entry specifically.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/gasp.rs" ARCHITECTU… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Lines 439-452 seem to be the `src/gasp.rs` entry. Let me see lines 440-452 headers to find where the gasp.rs entry starts.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The gasp.rs entry is line 442 (40KB long line), followed by continuation paragraphs 444-452, then line 453 starts gasp_cli.rs. So I should append my Day 203 note as a new paragraph after line 452 (blank line 451 separates). I'll insert after line 452.
+
+Let me write the note. It must include:
+- the new no-op shape
+- the key (`pre_sha == post_sha`, not a verdict word) and why (harness protected, already distinguishes by range)
+- the residue (old rows stand)
+- stated test limit (tests drive the real CLI so they prove emitted events; they do not prove the harness stops passing equal shas)
+
+Also note the near-miss and positive control. And correct the task file's "Reverted" mis-remembering.
+
+Let me view line 452 fully to know the ending and the tone.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note line 452 explicitly says "Deliberately NOT done: gap 2 of #915 ... whether to key it on pre_sha == post_sha or on an explicit verdict is a design call". My new note should mark that as now DONE (superseded claim recorded rather than erased). Let me insert new paragraphs after line 452.
+
+Let me write the Day 203 note.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (53ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, previously line 453 was `- gasp_cli.rs`; now it's 455. Good — insertion correct.
+
+Now check the module size gate: is src/gasp.rs registered? Task says it's not on the register (cap 2000). Let me verify actual size and run the module_size test.
+
+Also gasps: ARCHITECTURE.md docs gate — tests/doc_symbols.rs checks backticked symbols in CLAUDE.md only? Let me check. And there may be a gate scanning ARCHITECTURE.md too. Let's run the full test suite.
+
+Note: my note contains a backticked `NEUTERED` and `tests/neutered_guards.rs` — the neutered_guards test scans source files for markers with certain words. Does it scan ARCHITECTURE.md? Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ARCHITECTURE\|glob\|rea…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/gasp.rs && grep -n "ga… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+src/gasp.rs is 1649 lines (I said 1644 in the note — need to fix; the fmt may have reflowed). Let me recompute: original 1575 + 69 = 1644, but actual is 1649. Let me compute the diff precisely.
+
+Wait — the insertion said "1 file changed, 69 insertions" earlier before I added the doc-comment line and the extra doc lines. Let me recompute the actual growth: git diff --stat.
+
+Also check whether neutered_guards scans ARCHITECTURE.md (directories walked).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,130p tests/neutered_g… ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Growth is 74 lines (1575 → 1649). ARCHITECTURE.md is not in SCAN_ROOTS, so my ARCHITECTURE note containing `NEUTERED` is fine.
+
+Fix the note's line count from 1644 to 1649. Also check `git diff --stat` shows ARCHITECTURE.md 2 insertions (one blank + one note line = 2). Good.
+
+Now let me update the number in the ARCHITECTURE note.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now run the full check suite:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1.6s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (16.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 25s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 35s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green. Now run the gasp-featured test suite and CI's feature-gated test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --locked --features g… ✓ (2m 6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green. Also verify the gasp_cli_run_ordering tests specifically ran (in feature mode) — yes 8 tests earlier.
+
+Let me double-check that the near-miss test's `Rejected` claim is right by verifying what was emitted (the test passed, and `sole_patch_status` asserts one patch.status_changed with status). Let me actually dump the event log for the no-op case once, to confirm the real shape, for my own confidence and to report honestly. Quick: run the single test with a dump... Actually the tests already assert exactly that. But let me independently confirm the equal-sha path emits zero patch events and one task.status_changed Abandoned, by running a manual CLI session.
+
+Actually, the tests do exactly that and passed. Good enough — bounded verification.
+
+One more thing: check that `tests/doc_version_claims.rs` passed (it did, all tests green).
+
+Also the module_size gate: passed.
+
+Let me check the pre-push lint (evolve.sh heredocs) isn't affected — I didn't touch scripts/.
+
+Now commit.
+
+Also: should I update ARCHITECTURE.md for the gasp_cli.rs entry? No — I didn't change gasp_cli.rs.
+
+Let me do a final `git status` and diff review before committing.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The diff is clean: the `!no_op` path is byte-identical (only the early return inserted).
+
+Now commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (41ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done. Committed as f582d357.
+
+## What I changed
+
+`src/gasp.rs` (+74 lines, 1575 → 1649):
+• `task_result_in derives let no_op = pre_sha == post_sha;` once and returns early on it. The key is the commit **range**, not a new verdict word — written into the code as a comment, with the mechanism: a fourth spelling would have to be emitted by scripts/evolve.sh (protected), and the range is a property of the caller's own argument, so the shape holds for every future caller.
+• New abandon_task(state, run_id, num, reason): moves the task node to TaskStatus::Abandoned carrying the reason verbatim (None on empty, never Some("")), and writes no patch, eval, decision or failure node. The get_node existence check precedes the update_task_status call — in yoagent-state 0.5.2 that call appends its event before it can error (#849), so an if let Err would guard nothing.
+• The !no_op path is byte-identical: the early return is the only insertion.
+
+`tests/gasp_cli_run_ordering.rs` (+248 lines): generalized the driver to take explicit shas and an optional task call, then two tests:
+• `no_op_task_result_abandons_the_task_and_proposes_no_patch — anti-vacuous node check first, then Abandoned, then zero patch.proposed **and** zero patch.status_changed/eval.finished/decision.created/failure.observed, plus the no changes landed` fragment.
+• `rejected_verdict_over_a_non_empty_range_still_proposes_one_rejected_patch` — the near-miss.
+
+`ARCHITECTURE.md`: Day 203 note appended after the gasp.rs entry, carrying the superseded claim (the paragraph above said gap 2 was "deliberately NOT done" and the key was a design call — both true then, false now).
+
+## Two corrections I made rather than followed
+
+1. **The task file specified the near-miss status as Reverted.** No such word exists: `PatchStatus` has no `Reverted` variant, and `grep -rn "Reverted" src/` finds only git-command output. The test asserts `Rejected`, the status the code has always emitted.
+2. **I did not copy the harness sentence verbatim into the test.** A copied string from a protected file drifts silently while the test keeps passing. The fixture is a fragment and the assertion is contains.
+
+## Verification
+• `cargo fmt -- --check, cargo clippy --all-targets -- -D warnings (plain and --features gasp), cargo build` — all clean.
+• `cargo test 5678 passed / 0 failed; cargo test --locked --features gasp` 5699 passed / 0 failed.
+• **Positive control run serially as one atomic mutate→run→restore, mutation marked `NEUTERED` so `tests/neutered_guards.rs` enforced the restore: neutering `no_op` reddened exactly** the new test by name (`expected exactly one task.status_changed for task_run_gasp_noop_1 … left: 0, right: 1`) while the near-miss stayed green. Restored, grep NEUTERED src/ is empty, diff green.
+
+Stated limit: these tests drive the real CLI, so they prove the events task_result emits for a given sha pair — they do not prove the harness stops passing equal shas or that any caller uses this branch. The seven false Day 194–195 rows stay in the append-only graph; this changes what is written from here on.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
