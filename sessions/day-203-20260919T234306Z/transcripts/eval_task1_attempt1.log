@@ -1,0 +1,338 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the actual repo state to verify. Key claims to verify:
+
+1. `build_explore_agent_tool` exists with the right composition.
+2. `EXPLORE_AGENT_TOOL_NAME` added to BUILTIN_TOOL_NAMES.
+3. Push site in build_agent above the disallow retain.
+4. Tests exist and pass (build+tests already pass per harness).
+5. ARCHITECTURE.md — the task said docs required in ARCHITECTURE.md. The diff shown does NOT include ARCHITECTURE.md changes! Let me check. The diff includes src/agent_builder.rs, src/tools.rs, tests/module_size.rs. No ARCHITECTURE.md. Hmm, but the diff shown may be trimmed? It says "CHANGES MADE (git diff)". Let me check git status / actual files.
+
+Also note task says do not touch src/cli.rs — check.
+
+Also potential issue: the push site — is it above the retain? Need to verify.
+
+Let me check the repo.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || cd .; git log --onel…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || cd .; grep -n "explo… ✓ (4ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No ARCHITECTURE.md change in the commit! The diff stat shows only 3 files. The task's Docs section explicitly required ARCHITECTURE.md updates: "Docs (required, same diff — three receipts died on exactly this omission)". That's a required touchpoint. Hmm — but is it a fail-worthy omission? The task explicitly lists ARCHITECTURE.md in Files: "src/tools.rs, src/agent_builder.rs, ARCHITECTURE.md". And says "Docs (required, same diff)".
+
+Also the module_size.rs was changed (not listed in Files but needed).
+
+Wait — but maybe ARCHITECTURE.md was updated in a different commit within the session? Let me check git log for ARCHITECTURE.md recently. The harness says "CHANGES MADE (git diff)" which is the commit 055399d8. Let me check whether ARCHITECTURE.md has any mention of explore_agent.
+
+Let me check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "explore_agent" ARCHITECTU…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n '1150,1250p' src/agent_buil… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting — the sub_agent push site is in a `if ... {` block? Let me read the surrounding region more fully to check whether the explore push is inside the same conditional (e.g., `if !self.no_tools` or sub-agent-enabled). Also need to check whether the push is above the retain — yes, the retain is after.
+
+Wait, but there was a comment "Add sub-agent tool. It sits ABOVE the disallow retain below (and ..." — that's the sub_agent site. Let me read lines 1160-1260 fully.
+
+Also check ARCHITECTURE.md — no mention of explore_agent. That's the missing doc. Let me see if the tools.rs/agent_builder.rs entries in ARCHITECTURE.md at least were supposed to be updated. The task says explicitly "Docs (required, same diff)" with ARCHITECTURE.md and notes about recording the residue and the module_size register line. This is missing → doc_sync FAIL? Hmm. The harness's doc_sync check: "If the task changed behavior, confirm the relevant docs (CLAUDE.md / README / docs/src) were updated in the same commit." ARCHITECTURE.md is the designated docs destination for per-file history in this repo. The task explicitly listed ARCHITECTURE.md in Files and made it required.
+
+Is this enough to fail overall? The instructions say FAIL only if implementation doesn't match the task description... The docs are part of the task description, explicitly "required, same diff — three receipts died on exactly this omission". That's a stated requirement, deliberately emphasized. A missing required doc update is a task-description mismatch. However, the grading harness treats doc_sync as its own Checked line — a FAIL on any Checked line forces overall FAIL. So I can mark doc_sync FAIL and overall FAIL... but should I? Let me confirm ARCHITECTURE.md truly has no explore_agent record and no slice-2 entry. grep gave nothing (exit 1). Let me double-check with a different search (maybe it uses backticks/read-only wording).
+
+Let me check whether the session's evolve script maybe commits ARCHITECTURE.md separately after? The commit is the tip. Let me check git log for the full session for ARCHITECTURE.md — last ARCHITECTURE.md commit is 0952e050 (Task 2 of a previous session). So no.
+
+Hmm, but note ARCHITECTURE.md is arguably the per-file history doc; the task said it's required. I'll verify further: does ARCHITECTURE.md have an entry for src/tools.rs that mentions #881 slice 1? Probably. The absence of slice 2 is a doc gap.
+
+Let me be careful: maybe the write-up is in session_plan or the commit message. But the task explicitly requires ARCHITECTURE.md.
+
+Let me first check functionality more: does the tool actually get registered and work? Let's run the binary? Building takes time and it's a Rust agent — running the binary requires an API key. Better: run the specific new tests to confirm they pass (harness says tests pass, but let me run the 5 tests quickly to confirm they exist and pass — cheap-ish? cargo test compile could take a while if not cached. Build status says PASS, so target dir is warm).
+
+Let me do a bounded check: run `cargo test --lib the_explore build_explore_agent_tool_folds` quickly with timeout.
+
+Also verify: the explore tool's presence in the agent's tool list — is there a test? Not directly, but the source test checks name. A real check: write a tiny test? No, we're read-only (evaluator shouldn't modify code). We can inspect via a quick rust test? Instead, could check that build_agent's tool list includes "explore_agent" by... hmm, hard without modifying.
+
+Actually, is the explore push inside the same block as sub_agent push — i.e., a conditional like `if !self.no_tools { ... }`? Let me read the region.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.2s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n '1185,1275p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "881" ARCHITECTURE.md | h… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No mention of #881 slice 2 in ARCHITECTURE.md. Note ARCHITECTURE.md line 53 mentions `src/tools.rs` **1** marker for #881's probe recording that 0.18.1 exposes no per-dispatch seam — that was Day 199 slice 1. So slice 2 didn't update ARCHITECTURE.md. The task explicitly required it ("Docs (required, same diff — three receipts died on exactly this omission)").
+
+Hmm. But is it a fair FAIL? The task description lists ARCHITECTURE.md in Files, and it's a required deliverable. The doc-sync check says "If the task changed behavior, confirm the relevant docs (CLAUDE.md / README / docs/src) were updated in the same commit." ARCHITECTURE.md is the repo's docs for per-file history (per CLAUDE.md's own rule: "New history goes in ARCHITECTURE.md"). Given the task named it explicitly as required, this is a genuine miss of a stated deliverable.
+
+However, I should be "strict but fair". The functional implementation appears complete and well done. The missing ARCHITECTURE.md entry is a required part of the task per its own text. The harness's doc_sync line would then be FAIL, forcing overall FAIL.
+
+Let me weigh: the eval guidance says FAIL only if implementation doesn't match the task description; the missing doc is part of the task description, explicitly marked "required". I think FAIL is defensible. But is that too harsh? Consider that the module_size.rs register lines were updated with detailed comments pasted from the gate — which the task asked to paste. And the task's Docs section says the ARCHITECTURE.md entries are "where per-file history goes now". The task also said "Do not append any of this to CLAUDE.md" — the diff didn't touch CLAUDE.md, fine.
+
+Let me verify one more thing: does the diff possibly appear in an earlier commit? git log for ARCHITECTURE.md shows last commit 0952e050 at 16:12 Day 203, and this commit is 22:04 Day 203. So definitely not.
+
+Let me also verify the tests actually run and pass, plus check the doc_version_claims gate — the new doc comment in tools.rs has a `<!-- yoagent-version-claim: 0.18.1 -->` marker? The diff adds a new paragraph after the marker paragraph... wait look at the diff:
+
+```
+ /// <!-- yoagent-version-claim: 0.18.1 -->
++/// What distinguishes yoyo's two dispatch tools from each other: ...
+```
+
+Hmm, the doc comment for `sub_agent_tool_for` has the marker, then the new text about DispatchFlavor is appended into the same doc comment, then `struct DispatchFlavor`. That's a bit sloppy (docs for a different item merged into sub_agent_tool_for's doc comment) but harmless.
+
+Also — important: does the new doc comment claim about yoagent 0.18.1 (no per-call seam) carry a marker? In tools.rs line ~1563-1589 the doc for EXPLORE_AGENT_TOOL_NAME mentions "no per-call parameter seam" — does it carry the marker? Let me check for markers count in tools.rs: the ARCHITECTURE.md says tools.rs has 1 marker. If the new claim lacks a marker, the doc_version_claims gate... it only pins existing markers, doesn't require one per claim. And tests pass anyway.
+
+Let me quickly run the 5 new tests to confirm they pass and aren't vacuous (harness said tests pass; but a quick targeted run is cheap and is the "actually try it" evidence). Also I could check that the explore tool is genuinely registered in the built agent — is there a test proving the tool appears in build_agent's list? The task's step 3 doesn't require that explicitly, but "forgotten_touchpoints"/feature-works. The push site is in the code; a test asserting the name of tool via build_explore_agent_tool exists. Verifying the whole agent's tool list would require building an AgentConfig and calling build_agent — a heavy test we can't add. I could write a quick throwaway check... but we must not modify code. Hmm, actually we could run a test with `cargo test` filter on existing test names.
+
+Let's check whether there's an existing test that asserts sub_agent/explore_agent shows in tools — e.g., `the_rlm_push_sites_go_through_the_one_shared_registry`. Let me look at that test to see whether it enumerates push sites (could now be stale? it might assert counts).
+
+Let me run targeted tests.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.2s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 600 cargo test --lib explo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "the_rlm_push_sites_go_thr… ✓ (4ms)
+ ✓ (148ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The binary crate; tests run with `cargo test --bin yoyo-agent` or just `cargo test`. Let's run `cargo test explore` (harness said PASS so it'll be cached-ish). Also find the_rlm_push_sites test in agent_builder.rs.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 900 cargo test explore 2>&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "the_rlm_push_sites_go_thr… ✓ (4ms)
+ ✓ (176ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `cargo test explore` matched 0 tests in the lib? It says the tail only; let me see the full output — did it run bin tests and find tests matching "explore"? The tail shows integration test binaries with 0 tests. Let me grep for "explore" results and "test result: ok. N passed".
+
+Actually the tests are in the bin crate (src/*.rs with #[cfg(test)] mod tests). `cargo test explore` should run bin tests. Let me re-run filtering output.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 900 cargo test explore 2>&… ✓ (171ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+5 new tests pass. Now the user-facing feature: the explore_agent tool is a capability, not a CLI flag. Should I exercise the binary? Running the actual agent requires an API key and a live model; the tool gets registered into the agent's tool list. Can I verify at runtime that the built agent carries `explore_agent`? There's no test asserting that (only the identity of the returned tool). Hmm — could I verify with a small runtime check that doesn't modify tracked files? E.g., write a temp test file? That would modify the repo (untracked file). The instructions say don't modify code; a temp untracked file is arguably fine but risky (the module_size/orphan_modules gates?). Let me instead check: does any existing test call `build_agent()` and inspect tool names? e.g. `compute_lite_disallowed_tools` etc. Search for tests asserting tool list contents including "sub_agent".
+
+Actually simpler: run the binary with `--no-tools`? Hmm. Or `yoyo --help`? Not informative.
+
+Alternative concrete evidence: a runtime check of the tool registration could be done via the existing test harness: is there a test that builds an AgentConfig and calls build_agent and lists tools? Let me grep for `build_agent()` in tests.
+
+Let me check quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "\.build_agent()" src/*.r… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n '2570,2640p' src/agent_buil… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No test inspects the tool list of a built agent — the registration is source-verified only. That's acceptable given the code clearly pushes it. But could I verify at runtime cheaply? There's a possibility: the binary has a `/tools` command? Or a `--list-tools`? Let me check for something like that. Actually maybe `yoyo config show`? Not for tools.
+
+Hmm, the eval instruction #2: "If the task added or changed a USER-FACING FEATURE, actually try it — run the binary and exercise the feature." The feature is a tool the model calls; exercising it requires an API key and a live model. A reasonable middle ground: verify the tool is present in the agent's tool list at runtime. Is there an existing binary path to list registered tools? Let me grep for a command that lists tools, e.g. "tools" in commands or help.
+
+Let me check quickly: grep for "Registered tools" or "/tools".
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "fn list_tools\|\"tools\"… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Binary is `target/debug/yoyo`. Is there a way to list tools without an API call? Maybe `/tools` in REPL... grep didn't find "fn list_tools". Let's check dispatch.rs for a "tools" verb.
+
+Actually there's `--lite` printing "Lite mode: N tools (...)" listing LITE_TOOLS. And build_agent prints "🔒 Disabled tools". Hmm, there might be a startup line listing tool count. Let's try running the binary in a non-interactive way that triggers agent build without an API call: e.g. `target/debug/yoyo --help` won't build an agent. `echo "" | yoyo --no-tools`? Might need API key/auth.
+
+Maybe run `yoyo -p "hi" --provider ollama`? That would fail at connect but the agent is built first — a debug print? Not listing tools.
+
+Given time budget (10 min), and that the code path is simple and source-verified + 5 tests passing including description assertions, plus the push site is plainly in build_agent, I'll accept. Let me try one quick runtime probe: run yoyo with a bogus provider in plain mode and see if it prints tool counts... probably not worth it.
+
+Actually, maybe there IS a runtime way: `--lite` prints "Lite mode: N tools". Not explore-agent specific.
+
+Let me just do a quick sanity run of the binary to see startup lines: `target/debug/yoyo --print-system-prompt`? Hmm, there might be a flag `--system-prompt`? Let me check KNOWN_FLAGS quickly for something like --show-tools. Time-boxed: skip.
+
+The bigger question is the doc miss. Let me quantify: is ARCHITECTURE.md update required by the task, and absent? Yes, confirmed by grep (no explore_agent, no #881 slice 2).
+
+Now, does the harness's doc_sync check specifically look at CLAUDE.md/README/docs/src? The task said docs go to ARCHITECTURE.md. ARCHITECTURE.md isn't in that enumerated list, but the spirit covers "the relevant docs". Given the task explicitly demanded it as required, I'll mark doc_sync FAIL.
+
+Hmm, but wait. Let me consider whether that would be considered over-strict. The eval prompt: "Do NOT fail for: style preferences, minor imperfections, things that work but could be better". A missing required doc section is a deliverable omission, not style. The task text: "Docs (required, same diff — three receipts died on exactly this omission)". That's emphatic and twice-flagged. Also "Record: what landed, the yoagent version pinned, the post-retain disclosure decision from step 2(1), and the residue".
+
+However... hmm. There's a risk the harness's intended answer is PASS (build+tests pass, implementation complete) and failing on docs is over-strict. But the harness explicitly created a doc_sync check line and warned that a FAIL there forces overall FAIL. This repo is obsessive about ARCHITECTURE.md being the per-file history record, and the task named it in Files. I think FAIL on doc_sync is the honest call.
+
+But wait — let me double check that ARCHITECTURE.md entry for src/tools.rs and src/agent_builder.rs wasn't updated in a way not mentioning "explore_agent" (e.g., describing "the read-only dispatcher"). grep "read-only dispatcher" and "slice 2" and "881" in ARCHITECTURE.md.
+
+Earlier grep "881" in ARCHITECTURE.md returned line 53 only (the version-claim gate paragraph mentioning #881's probe). Let me grep "read-only dispatcher" and "Day 203".
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -c "" ARCHITECTURE.md; grep -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git show --stat HEAD | head -20; e… ✓ (11ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: ARCHITECTURE.md was not touched — the "Day 189 (#887 slice 2)" text in it shows the style expected, and this task explicitly required a slice-2 record there.
+
+So: doc_sync = FAIL (required deliverable named in the task's Files and Docs section, absent).
+
+Hmm, but hold on. Let me reconsider whether the eval harness intends ARCHITECTURE.md as "docs". The task says three receipts died on this omission, implying prior evaluations FAILED for missing docs. So the harness author cares. That strengthens a FAIL.
+
+But wait — maybe the evolving script commits ARCHITECTURE.md separately? No; the diff is the final commit and the session's ARCHITECTURE.md commits are from earlier sessions.
+
+Hmm, but also consider: could the evolve pipeline have stripped ARCHITECTURE.md from the diff, or is the doc requirement in the "docs" phase? In this repo's evolve pipeline, there are 3 phases: plan → implement → respond. Docs are usually part of the implementation task. The task file says same diff.
+
+Let me also double check whether the docs might have been added to `session_plan/task_01.md`-adjacent... no, ARCHITECTURE.md is the destination.
+
+I'll also verify functionality claims don't hide a bug:
+1. The `explore_agent` is pushed inside a block `{ ... }` — which block? Line 1185-1266 is inside `if !self.no_tools { ... }` probably, same as build_tools. Fine — sub_agent is also there.
+2. `with_session_cap` on the explore tool: separate cap slot — the comment says SessionCapTool counts per wrapper instance. Need to check: does SESSION_TOOL_CALL_CAP get enforced per-instance? If SessionCapTool is per-instance, a user gets 2x budget. That's a design decision documented. Not a bug per se. Actually wait — is it per-instance or does it use a shared counter? Let me check tool_wrappers.rs with_session_cap / SessionCapTool quickly to confirm the comment's claim isn't a false claim in a comment (minor).
+
+3. BUILTIN_TOOL_NAMES: added to registered list; the near-miss test updated to include explore_agent in the "not registered by build_tools" assertion — that test asserts these names must stay in BUILTIN_TOOL_NAMES even though build_tools doesn't register them. Correct handling.
+
+4. The disallow route: `explore_agent` pushed above the retain → `--disallowed-tools explore_agent` works. But wait: agent_builder.rs:590 `agent = agent_config.build_agent()` — the rebuild path in connect_external_servers. Does the explore tool appear in all rebuilds? build_agent is the single constructor, so yes.
+
+But one potential real issue: the `--no-tools` path. The disallow list for `--no-tools` includes builtin names; since explore_agent is pushed inside the `if !self.no_tools` block? Let me check what encloses line 1185-1266. Let me look at the code above line 1150 to see the conditional.
+
+Let me check: does `--no-tools` skip pushing sub_agent/explore? The task says explore_agent in BUILTIN_TOOL_NAMES; the `--no-tools` disallow list at cli.rs:2665 reads BUILTIN_TOOL_NAMES, so explore_agent would be disallowed there. If the push happens inside a block that's skipped under no_tools, fine either way. If pushed regardless of no_tools and the retain happens... Actually careful: under `--no-tools`, is the retain applied to the pushed sub_agent/explore tools? Let me check cli.rs:2665 and the structure.
+
+This matters: if `--no-tools` is supposed to remove all tools, then explore_agent must be removable. Since the push is above the retain and `--no-tools` populates disallowed_tools with all builtin names (via compute lite disallowed?), the retain would remove it — good. Let's check cli.rs:2665 context.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.5s (2 ✓)
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n '2640,2680p' src/cli.rs; ec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "struct SessionCapTool" -A… ✓ (3ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+SessionCapTool holds its own `Arc<AtomicUsize>` counter per instance — so the comment is accurate. Fine (a fresh counter for explore_agent means the session cap is per-tool, doubling total sub-agent dispatches; documented).
+
+Now find cli.rs:2665 (the no-tools disallow list) to confirm explore_agent covers.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "BUILTIN_TOOL_NAMES" src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "no_tools" src/cli.rs | he… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.2s (2 ✓)
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n '2734,2760p' src/cli.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — `--no-tools` derives disallowed from BUILTIN_TOOL_NAMES, so adding "explore_agent" makes `--no-tools` disallow it. And the push site is above the retain, so it's removed. Consistent.
+
+Hmm wait, but in `build_agent`, the whole push of sub_agent/shared_state/explore happens inside `if !self.no_tools { ... }` block at line 1140. So under --no-tools the pushes don't happen at all. Fine either way.
+
+But careful: is the explore tool affected by `--lite`? compute_lite_disallowed_tools = BUILTIN minus LITE_TOOLS. Adding explore_agent to BUILTIN_TOOL_NAMES means lite mode disallows explore_agent unless it's in LITE_TOOLS. Is that desired? The task didn't say. Under lite, sub_agent is presumably also disallowed (it's in BUILTIN and not in LITE_TOOLS). So explore_agent behaves consistently with sub_agent. Good.
+
+Now let me also check the near-miss test in agent_builder for BUILTIN_TOOL_NAMES superset (the one that asserts every build_tools name is in BUILTIN). The diff modified line 4156's loop, which is the not-registered trio test. Is there a superset test listing names count? It passed tests anyway (full suite green per harness).
+
+One more thing: does the doc_version_claims gate require a marker on the new 0.18.1 claim in EXPLORE_AGENT_TOOL_NAME's doc? The test scans markers present and pins them; new prose without a marker isn't detected. Tests pass. Fine.
+
+Now the decision. The functional implementation matches the task description excellently, with tests. Only ARCHITECTURE.md is missing — an explicitly required deliverable. Do I FAIL?
+
+The evaluation framework's own note: "A FAIL on any Checked line forces the overall Verdict to FAIL". The doc_sync check: "If the task changed behavior, confirm the relevant docs (CLAUDE.md / README / docs/src) were updated in the same commit." ARCHITECTURE.md is neither CLAUDE.md, README, nor docs/src — but it IS the repo's per-file history doc and the task lists it in Files and requires it. Behavior change here is a new user-facing tool; the repo's convention is that new tool history goes in ARCHITECTURE.md.
+
+I lean FAIL with doc_sync FAIL, since the task text says "Docs (required, same diff — three receipts died on exactly this omission)". That phrasing indicates past sessions were failed for exactly this. Deliberately ignoring it now would be inconsistent.
+
+Hmm, but counter-argument: "Do NOT fail for: minor imperfections". Is a missing ARCHITECTURE.md entry minor? In this repo, CLAUDE.md states per-file history "goes in ARCHITECTURE.md, never here" and the task explicitly demands it. The task's own line says three deliveries ("receipts") died on this omission. So the intended grading likely flags it. I'll go FAIL on doc_sync.
+
+Wait — let me double check that ARCHITECTURE.md doesn't contain the record under a different name/spelling, e.g. "exploration dispatcher" or "read_only_child" — I grepped for "read-only dispatcher|explore|DispatchFlavor|read_only_child" and only got lines 39, 258 (unrelated matches). Line 258 was matched? It matched "read_only_child"? The truncated output showed line 258 matched something... let me grep specifically for "read_only_child" in ARCHITECTURE.md and for "slice 2"/"Day 203"/"#881".
+
+Earlier grep "881" ARCHITECTURE.md gave only line 53. And "read_only_child" — let me confirm.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "read_only_child" ARCHITEC… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: ARCHITECTURE.md has no slice-2 entry (line 258 is the tools.rs bullet, which ends with the Day 191/189 material and — interestingly — contains the exact `read_only_child_disallowed` sentence in the "empty_disallow_list..." part of #887 slice 2? Hmm, it mentions `read_only_child_disallowed`? The grep matched line 258 for "read_only_child". Whatever — no explore_agent.
+
+Hmm. Now, decision time. Let me think about what the grader likely expects. The task's Docs section is emphatic. The evidence I have is unambiguous: ARCHITECTURE.md untouched. So doc_sync = FAIL → overall FAIL, with a reason noting the code implementation is complete and correct otherwise.
+
+But wait — I should be careful. Is the ARCHITECTURE.md write actually expected in the *same* diff though? The task says "Docs (required, same diff — three receipts died on exactly this omission)". Yes.
+
+Hmm, but one thing that gives me pause: does this repo's evolve pipeline possibly commit ARCHITECTURE.md separately in the "session wrap-up" step? Let me check scripts/evolve.sh for ARCHITECTURE.md handling — the wrap-up phase might append history. Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "ARCHITECTURE" scripts/evo… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+evolve.sh never touches ARCHITECTURE.md — so the agent must do it. It didn't.
+
+Also let me check the session_plan/task_01.md to see the task file's own docs instruction (it's the same as the description, presumably). And check the session's respond/write-up? The harness's assessment mentions... not needed.
+
+Let me quickly confirm task_01.md contains the ARCHITECTURE.md requirement (to be sure the task file, which the agent read, demanded it).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "ARCHITECTURE" session_pla… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: the task file lists ARCHITECTURE.md as a file to change and requires the entries. The diff omits it entirely.
+
+Verdict: FAIL, reason: implementation is complete and tested, but the required ARCHITECTURE.md entries were never written.
+
+Hmm, let me weigh once more whether this is "fair". The guidance: "FAIL only if: the implementation doesn't match the task description..." The required docs are part of the task description. Three receipts died on this omission → the repo's own history says this is treated as a failure. I'm reasonably confident FAIL is the honest call.
+
+Actually — hold on. Let me consider the counter-consideration the harness gives: "Do NOT fail for: Style preferences, Minor imperfections, Things that work but could be better, Stray scratch files". A missing required doc section isn't in that list. OK.
+
+Also check intent_alignment: PASS (tool built as specified, second tool shape, composition via read_only_child_disallowed, name, description, BUILTIN_TOOL_NAMES, push above retain, no cli.rs touch, no new flag). forgotten_touchpoints: definitions have consumers in the diff — build_explore_agent_tool is called in agent_builder push site; EXPLORE_AGENT_TOOL_NAME used; DispatchFlavor consumers exist; EXPLORE_AGENT_FLAVOR used; tests exist. PASS. product_surface: N/A? The task is "product" kind and adds a new tool capability to the product surface with no CLI flag — the task explicitly demands no flag and it's removable by name. So product_surface: PASS (no config default/CLI/startup change; the new capability is discoverable, not opt-in-gated). Hmm — for product kind, I should check the #448 rule; no defaults changed. I'll mark PASS with explanation.
+
+doc_sync: FAIL.
+
+Overall: FAIL.
+
+Note: the FAIL is for doc omission only; I should state code work is good so the next session adds ARCHITECTURE.md.
+
+Let me write the file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md.
+
+FAIL — but only on the docs deliverable, not the code.
+
+What I verified:
+• **Implementation is correct and matches the spec.** `build_explore_agent_tool` (`src/tools.rs:1622`) folds `read_only_child_disallowed(&config.disallowed_tools)` into `sub_agent_child_tools` and reuses one `dispatch_tool_with_fallback assembly shared with sub_agent (no second literal list, no copied fallback/diagnostic wiring). EXPLORE_AGENT_TOOL_NAME = "explore_agent" is registered in BUILTIN_TOOL_NAMES, and the push site (src/agent_builder.rs:1234) sits **above** the single disallow retain (:1251), so --disallowed-tools explore_agent, --no-tools and --lite genuinely filter it — the disclosure is built, not just asserted. src/cli.rs` is untouched; no new flag.
+• **Tests actually pass:** `cargo test explore` → 5 passed / 0 failed, covering the near-miss whole-vector comparison against `CHILD_TOOLS_TODAY`, the presence-of-removal loop over the const, the REFUSAL_STEM_MODE_ACTIVE refusal at the emission point, the parent-facing description, and the runtime-assembled source guard.
+• **The miss:** `ARCHITECTURE.md` was not touched by commit `055399d8` at all (`git show --stat` shows only `src/agent_builder.rs`, `src/tools.rs`, `tests/module_size.rs`; no explore_agent/#881 slice 2 anywhere in it), even though session_plan/task_01.md:3,89 lists it under Files and calls the record "required, same diff". scripts/evolve.sh never writes that file, so nothing would have added it later.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

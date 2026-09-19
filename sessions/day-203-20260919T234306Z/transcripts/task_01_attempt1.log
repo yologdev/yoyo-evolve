@@ -1,0 +1,2247 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by verifying the upstream fact that decides the shape, then look at the existing code.
+  ▶ $ ls ~/.cargo/registry/src/*/yoagent-0.18.1/src/sub_agent.rs 2>/dev/null; grep -n …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1420,1620p' src/tools.rs ✓ (5ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The output is truncated with "... (N more similar lines)". Let me read the actual file sections properly with read_file.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1430,1620p' src/tools.rs…  ▶ $ sed -n '250,340p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b5… ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Need to check `parameters_schema` and `execute` at 0.18.1 to confirm no per-call seam.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn parameters_schema\|fn execute\|params\[" /home/runner/.cargo/registr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent_tool_for\|fn … ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '330,400p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b5…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1673,1800p' src/tools.rs ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: yoagent 0.18.1 `parameters_schema()` = `{"task": string}`, execute reads only `params["task"]`. No per-call seam. So option 2 (second tool) is the shape.
+
+Now let me look at the registration site in agent_builder.rs.
+
+Interesting: `sub_agent_tool_for` hardcodes the name "sub_agent". I need to parameterize the name+description. But careful — the task says "reuse — never re-spell — the existing pieces". I could add a name parameter to `sub_agent_tool_for`, but that would change call sites. Alternatively wrap the built SubAgentTool — the name is a field in SubAgentTool built via `from_provider("sub_agent", ...)` — hmm, SubAgentTool has `tool_name` field private. There's no `with_name` builder presumably. Let me check.
+
+Actually — the cleanest approach: add a `tool_name: &str` parameter and a description choice to `sub_agent_tool_for`. But the description differs. Let me see how `sub_agent_tool_for` is used: two call sites in build_sub_agent_tool_at_depth. Adding parameters means updating those. That's fine.
+
+Actually wait — a much simpler approach: build the whole explore tool as a separate function that mirrors `build_sub_agent_tool_at_depth` but with a different name/description and a fixed read-only disallow list. But that duplicates a lot (fallback, diagnostic wrappers). The task says reuse.
+
+Best: parameterize `sub_agent_tool_for` with a `tool_name` and `description` argument (or a small struct/enum). Hmm, "never re-spell" refers to the child tool set composition. Let me do:
+
+```rust
+fn sub_agent_tool_for(
+    config: &AgentConfig,
+    tool_name: &str,
+    description: &str,
+    provider_name: &str,
+    ...
+)
+```
+
+Hmm, that's a lot of params. Alternatively, define a helper that picks name/description from a kind:
+
+Actually simplest and most surgical: make `sub_agent_tool_for` take the name and description. Let me structure:
+
+- `const SUB_AGENT_TOOL_DESCRIPTION: &str = "..."` (move existing description)
+- `const EXPLORE_AGENT_TOOL_DESCRIPTION: &str = "..."`
+
+Then `sub_agent_tool_for(config, name, description, provider, model, key, child_tools, shared_state)`.
+
+That's 8 params — clippy `too_many_arguments` triggers at 8? Default threshold is 7. Currently 6 params. With 8 it would warn. Hmm. `#[allow(clippy::too_many_arguments)]`? Better: introduce a struct? Or keep it simpler.
+
+Alternative approach: keep `sub_agent_tool_for` as is, and add a separate `explore_agent_tool_for` that is a thin wrapper? But that re-spells the builder chain.
+
+Better: add a small enum/struct `SubAgentFlavor { name, description }`:
+
+```rust
+struct SubAgentFlavor<'a> {
+    name: &'a str,
+    description: &'a str,
+}
+const SUB_AGENT_FLAVOR: SubAgentFlavor = ...;
+const EXPLORE_AGENT_FLAVOR: SubAgentFlavor = ...;
+```
+
+Then sub_agent_tool_for has 7 params (config + flavor + provider + model + key + child_tools + shared_state) = 7. Exactly at threshold (warning is > 7). Good.
+
+Actually clippy's too_many_arguments default is 7, and it triggers when count > 7. So 7 params is fine.
+
+Now for `build_explore_agent_tool`. Structure:
+
+```rust
+pub(crate) fn build_explore_agent_tool(config: &AgentConfig) -> (Box<dyn AgentTool>, SharedState) {
+    let shared_state = SharedState::new();
+    ...
+}
+```
+
+Wait need to know how build_sub_agent_tool is called in agent_builder.rs — with shared state. Let's look.
+
+Also nesting: for the explore tool, does the child get a nested `sub_agent`? The task says "give the explore tool the same depth-bounded sub_agent child path only if it is cheap to do through the existing builder; if it forces a copy of build_sub_agent_tool_at_depth, leave it out and say so".
+
+Hmm. If I add a flavor parameter to `build_sub_agent_tool_at_depth`, then recursion can reuse it. But the nested tool inside the explore child: should it be `sub_agent` or `explore_agent`? For an explore child, the nested delegation should probably stay read-only too — a child that could dispatch a *write-capable* sub_agent would be a hole in the confinement. That's a real consideration!
+
+Actually wait: if `explore_agent`'s child tools include the nested `sub_agent` (built via build_sub_agent_tool_at_depth with the normal path → write-capable tools, modulo `--read-only-subagents` global), that would be a confinement hole: parent asks explore_agent to explore, child dispatches sub_agent which can write. Hmm, is that bad? The confinement is a narrowing of this dispatch. If explore's child can dispatch a write-capable sub_agent, the narrowing is decorative.
+
+Safest: for the explore flavor, the nested tool should also be read-only, i.e. the nested tool should be the read-only variant. So parameterize the depth builder by "flavor" and "read_only: bool" — the nested tool for the read-only flavor is another explore-style tool at depth+1.
+
+Hmm, but simpler: keep the nested tool omitted? The task says nesting is optional and must be announced if omitted. But an explore child arguably benefits from nesting (RLM recursion). Let's think about cost of doing it right.
+
+Design:
+
+```rust
+/// Which delegation capability a built tool exposes: the ordinary `sub_agent`
+/// (write-capable child) or `explore_agent` (read-only child, #881 slice 2).
+#[derive(Clone, Copy)]
+enum SubAgentKind { General, Explore }
+```
+
+- `fn sub_agent_kind_name(kind) -> &'static str`
+- `fn sub_agent_kind_description(kind) -> &'static str`
+
+Then `build_sub_agent_tool_at_depth(config, kind, depth, shared_state)`.
+
+- child_disallowed: for Explore, always `read_only_child_disallowed(&config.disallowed_tools)`; for General, the existing global-flag-based logic.
+- nested: `if depth + 1 < MAX_SUB_AGENT_DEPTH { push build_sub_agent_tool_at_depth(config, kind, depth+1, shared_state) }` — same kind, so explore's child nests explore. Confinement is preserved and the recursion is finite.
+
+Wait, but for the General kind, the nested tool gets named "sub_agent" — same as before, good. For Explore, nested named "explore_agent". Good.
+
+Then:
+```rust
+pub(crate) fn build_sub_agent_tool(config) -> (Box<dyn AgentTool>, SharedState) {
+    let shared_state = SharedState::new();
+    (build_sub_agent_tool_at_depth(config, SubAgentKind::General, 0, &shared_state), shared_state)
+}
+
+pub(crate) fn build_explore_agent_tool(config) -> (Box<dyn AgentTool>, SharedState) {
+    let shared_state = SharedState::new();
+    (build_sub_agent_tool_at_depth(config, SubAgentKind::Explore, 0, &shared_state), shared_state)
+}
+```
+
+Hmm, but the task says `build_explore_agent_tool(config: &AgentConfig) -> Box<dyn AgentTool>` "(plus, if the parent needs it, a `&SharedState` parameter)". Let me check how build_sub_agent_tool is used in agent_builder.rs — does it share the parent's SharedState? Let's look at line ~1181.
+
+Also need to check: the shared_state for the parent — "the same SharedState store the parent's sub_agent uses". So the parent has one SharedState, and both tools should use it. Let's check agent_builder.
+
+Let me read the relevant part of agent_builder.rs.
+
+Also the test for near-miss: "a default config's existing tool set is unchanged and the explore_agent child disallow list differs from sub_agent's only by READ_ONLY_CHILD_REMOVED_TOOLS".
+
+Let me now read agent_builder around the push site and BUILTIN_TOOL_NAMES.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.0s (2 ✓)
+
+Confirmed: yoagent 0.18.1's SubAgentTool::parameters_schema() is {"task": string} and execute reads only params["task"] — no per-call seam, so option 2 (a second tool) is the shape. Now the registration site:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_sub_agent_tool\|B…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1190,1290p' src/agent_bu… ✓ (4ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The output of sed for agent_builder.rs is placeholder-truncated with "..." lines. That's the tool trimming. Let me read the file with read_file at the right offset to get real text.
+
+The push site for the sub-agent tool is around line 1181-1200 per the task. Let me read with read_file src/agent_builder.rs offset around 1150.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:1140..1220 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The sub_agent push site is actually ABOVE the retain (contradicting the task's claim that it's after). Good — the comment says #887 step 1 moved it above. So the task's premise ("sits after the disallowed_tools retain — so, exactly like sub_agent, it cannot be filtered there") is stale. Great: pushing `explore_agent` right here means `disallowed_tools = ["explore_agent"]` genuinely removes it. That resolves step 2(1) as option (a) — no disclosure needed... but I should note that the task's premise was stale and record it in ARCHITECTURE.md.
+
+Wait, careful: `effective_disallowed_tools` — does it have special handling for `sub_agent`/`shared_state` pairing? Let's check. Line ~618 in cli.rs referenced BUILTIN_TOOL_NAMES... Actually `effective_disallowed_tools` is in agent_builder.rs. Let me look.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn effective_disallowed…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "BUILTIN_TOOL_NAMES" -B4… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Important: BUILTIN_TOOL_NAMES contains `sub_agent` and `shared_state`, but the const comment says "This list must stay in sync with tools::build_tools and any tool added via yoagent's with_sub_agent (currently sub_agent)". The CLAUDE.md says: "the three names build_tools does not register — ask_user, sub_agent, shared_state — must stay listed". So the superset guard: every name build_tools registers must be listed. And a near-miss twin: the three not-registered names must stay listed.
+
+So where does `explore_agent` belong? `build_tools` does NOT register it (it's pushed in build_agent like sub_agent). So it belongs in the "not-registered" list — i.e. add to BUILTIN_TOOL_NAMES, and update the near-miss twin test to expect four not-registered names.
+
+Let me now check the tests for BUILTIN_TOOL_NAMES.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4050,4200p' src/agent_bu… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the existing tools.rs tests around read_only_child_disallowed and sub_agent_child_tool_names and the read-guard refusal string (REFUSAL_STEM_MODE_ACTIVE).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "REFUSAL_STEM_MODE_ACTI…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "read_only_child_disallo… ✓ (4ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.4s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:4010..4170 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:4169..4329 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me see the CHILD_TOOLS_TODAY const and child_tool_names test helper.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CHILD_TOOLS_TODAY" -B16… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I have enough understanding. Let me plan the implementation.
+
+### src/tools.rs changes
+
+1. Add a flavor concept. Let me look at how minimal I can be while reusing.
+
+Current `build_sub_agent_tool_at_depth(config, depth, shared_state)`:
+- computes child_disallowed
+- builds child_tools
+- pushes nested
+- builds primary + fallback + diagnostic
+
+I'll add a `kind: SubAgentKind` parameter:
+
+```rust
+/// Which delegation capability a built tool exposes (#881 slice 2).
+///
+/// `General` is the ordinary `sub_agent`: its child inherits the caller's own
+/// disallow list, and additionally loses the write-class file tools only when
+/// the process-global `--read-only-subagents` switch is on. `Explore` is
+/// `explore_agent`: every child it dispatches is read-only **by construction**,
+/// so the narrowing travels with the dispatch rather than with the session.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SubAgentKind {
+    General,
+    Explore,
+}
+```
+
+Methods: name(), description(), child_disallowed(config).
+
+Then:
+
+```rust
+impl SubAgentKind {
+    fn name(self) -> &'static str {
+        match self { Self::General => "sub_agent", Self::Explore => "explore_agent" }
+    }
+    fn description(self) -> &'static str { ... }
+    fn child_disallowed(self, config: &AgentConfig) -> Vec<String> {
+        match self {
+            Self::Explore => read_only_child_disallowed(&config.disallowed_tools),
+            Self::General => if crate::cli::is_read_only_subagents() { read_only_child_disallowed(...) } else { config.disallowed_tools.clone() },
+        }
+    }
+}
+```
+
+Wait — the source-level guard test required: "one test slicing `build_explore_agent_tool`'s body ... proving its disallow list comes from `read_only_child_disallowed` rather than a second literal."
+
+Hmm, if the composition lives in `build_sub_agent_tool_at_depth`, then `build_explore_agent_tool`'s body is just:
+```rust
+pub(crate) fn build_explore_agent_tool(config) -> (Box<dyn AgentTool>, SharedState) {
+    let shared_state = SharedState::new();
+    (build_sub_agent_tool_at_depth(config, SubAgentKind::Explore, 0, &shared_state), shared_state)
+}
+```
+That body doesn't contain `read_only_child_disallowed` nor a literal list. The task specified "proving its disallow list comes from read_only_child_disallowed rather than a second literal". Hmm — the test requirement says slice `build_explore_agent_tool`'s body. But a better test would slice the `Explore` arm. Let me be honest and precise: I'll write the source guard over the function that carries the decision — and I should say in the doc comment why the slice is what it is.
+
+Actually, maybe simpler and more faithful to the task: put the decision in a pure function that `build_explore_agent_tool`'s path calls, and write the source guard over the composition site where the Explore arm lives. Let me reconsider: could I make `build_explore_agent_tool` self-contained enough?
+
+Alternative: make the explore child disallow a named pure function used by the Explore arm... that's over-engineering.
+
+Let me instead take the approach: the source guard slices the `Explore` arm of `child_disallowed` (or the whole `impl SubAgentKind`) and asserts:
+- the name `read_only_child_disallowed` appears
+- no literal `"write_file"`/`"edit_file"`/`"rename_symbol"` strings appear within the slice (i.e. not a second literal list)
+
+Hmm, careful: the assertion "no literal write_file in the slice" — needles assembled at runtime.
+
+Actually, a cleaner and stronger test: assert `SubAgentKind::Explore.child_disallowed(&cfg)` equals `read_only_child_disallowed(&cfg.disallowed_tools)` for a table of configs — that's a behavioural equivalence, far stronger than a source-level guard. And then also assert that the child tool names for Explore equal the read-only child set. The source-level guard is asked for because a behavioural test can't distinguish... hmm, actually it can: if someone replaced the Explore arm with a second literal list `vec!["write_file","edit_file","rename_symbol"]`, the behavioural test would still pass (same result). That's exactly why the source guard is asked: to prove it's the *same statement*, not a re-spelling.
+
+OK so the source guard is legitimately about "one statement of the read-only child set".
+
+I'll implement the guard to slice the `Explore` arm region. Let me choose the implementation so the slice is stable: put the child-disallow decision for both kinds into one method `child_disallowed`, and write the guard to slice from `fn child_disallowed` to the end of that fn, then assert the slice contains `read_only_child_disallowed` and contains no `write_file` literal.
+
+Hmm, but the task explicitly names `build_explore_agent_tool`'s body. I'll note the deviation and why in the write-up + doc comment. Actually, is there a way to keep the decision inside `build_explore_agent_tool`? 
+
+Option: don't add a `kind` param to `build_sub_agent_tool_at_depth`. Instead factor the shared composition into a helper that takes (name, description, child_disallowed) — e.g.:
+
+```rust
+fn build_delegation_tool(
+    config: &AgentConfig,
+    name: &'static str,
+    description: &'static str,
+    child_disallowed: &[String],
+    depth: usize,
+    shared_state: &SharedState,
+) -> Box<dyn AgentTool>
+```
+
+That's 6 params. And nesting: for recursion, it needs to know how to build the nested tool — which is kind-dependent. Hmm, the recursion needs the kind. So passing a `kind` is natural.
+
+I'll go with `SubAgentKind` and be honest about the guard's slice. Actually — I can satisfy the letter better: write the guard to slice the *whole* `impl SubAgentKind` block... no.
+
+Let me just reconsider once more: make `build_explore_agent_tool` the place that computes the disallow list, and pass it down. i.e.:
+
+```rust
+pub(crate) fn build_explore_agent_tool(config: &AgentConfig) -> (Box<dyn AgentTool>, SharedState) {
+    let shared_state = SharedState::new();
+    let disallowed = read_only_child_disallowed(&config.disallowed_tools);
+    let tool = build_delegation_tool_at_depth(config, SubAgentKind::Explore, &disallowed, 0, &shared_state);
+    (tool, shared_state)
+}
+```
+But then the nested one at depth+1 must also be read-only — it would be built inside `build_delegation_tool_at_depth` recursively, which would need to recompute. Passing the list down works: recursion passes the same `disallowed`. Hmm, but then `build_sub_agent_tool` (General) passes its own computed list.
+
+That's actually clean! Both entry points compute their own top-level disallow list, and the recursion just threads it. And then `build_explore_agent_tool`'s body literally contains `read_only_child_disallowed`. That satisfies the task's stated guard shape exactly.
+
+But wait: the General entry point's list depends on `crate::cli::is_read_only_subagents()` — read once at the top, which is even better (read once per build instead of per depth level).
+
+So:
+
+```rust
+pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (Box<dyn AgentTool>, SharedState) {
+    let shared_state = SharedState::new();
+    let disallowed = if crate::cli::is_read_only_subagents() {
+        read_only_child_disallowed(&config.disallowed_tools)
+    } else {
+        config.disallowed_tools.clone()
+    };
+    let tool = build_delegation_tool(config, SubAgentKind::General, &disallowed, 0, &shared_state);
+    (tool, shared_state)
+}
+
+pub(crate) fn build_explore_agent_tool(config: &AgentConfig) -> (Box<dyn AgentTool>, SharedState) {
+    let shared_state = SharedState::new();
+    let disallowed = read_only_child_disallowed(&config.disallowed_tools);
+    let tool = build_delegation_tool(config, SubAgentKind::Explore, &disallowed, 0, &shared_state);
+    (tool, shared_state)
+}
+```
+
+And `build_delegation_tool_at_depth(config, kind, child_disallowed: &[String], depth, shared_state)`.
+
+Hmm, but the existing name `build_sub_agent_tool_at_depth` is referenced in comments elsewhere (cli.rs:117, cli.rs:2601, agent_builder comments). Renaming it means updating those comments. The task said don't touch cli.rs ("Do NOT touch src/cli.rs (7,272 / 7,272 registered, and any line there is register drift)"). Renaming would require editing cli.rs comments → register drift. So I must KEEP the name `build_sub_agent_tool_at_depth`.
+
+OK. So keep the name `build_sub_agent_tool_at_depth` and add params. But then `build_explore_agent_tool` can't contain `read_only_child_disallowed`... unless:
+
+```rust
+pub(crate) fn build_explore_agent_tool(config: &AgentConfig) -> (Box<dyn AgentTool>, SharedState) {
+    let shared_state = SharedState::new();
+    let disallowed = read_only_child_disallowed(&config.disallowed_tools);
+    let tool = build_sub_agent_tool_at_depth_explore(config, &disallowed, 0, &shared_state);
+    ...
+}
+```
+
+Hmm, getting complicated. Simpler: keep `build_sub_agent_tool_at_depth(config, depth, shared_state)` signature unchanged and add the kind via a *thin* different function for explore that computes the list and threads it... but recursion.
+
+Alternative simplest approach that keeps everything: add a parameter but also keep the name. Rename param list:
+
+```rust
+fn build_sub_agent_tool_at_depth(
+    config: &AgentConfig,
+    kind: SubAgentKind,
+    depth: usize,
+    shared_state: &SharedState,
+) -> Box<dyn AgentTool>
+```
+
+and inside, compute `kind.child_disallowed(config)`. Then `build_explore_agent_tool` = wrapper calling with Explore. The source guard then slices... hmm.
+
+You know what — I could put the read-only decision directly in `build_explore_agent_tool` AND have the recursion recompute via kind. I.e.:
+
+```rust
+pub(crate) fn build_explore_agent_tool(config: &AgentConfig) -> (Box<dyn AgentTool>, SharedState) {
+    let shared_state = SharedState::new();
+    // The read-only narrowing, applied to the caller's own list (union, never
+    // replacement). This is the ONE statement of the explore child's tool fence:
+    // #881 slice 1's `read_only_child_disallowed`, not a second literal list.
+    let disallowed = read_only_child_disallowed(&config.disallowed_tools);
+    let tool = build_delegation_at_depth(config, SubAgentKind::Explore, &disallowed, 0, &shared_state);
+    (tool, shared_state)
+}
+```
+
+where `build_delegation_at_depth` takes `child_disallowed: &[String]` and threads it to nested levels. And `build_sub_agent_tool` does its own (global-flag-dependent) computation and calls `build_delegation_at_depth(config, SubAgentKind::General, &disallowed, 0, &shared_state)`.
+
+Then `build_sub_agent_tool_at_depth` is renamed to `build_delegation_at_depth` — which breaks the comment references in cli.rs (2 sites) and the source-level test that greps `"fn build_sub_agent_{}_at_depth("`.
+
+Hmm, cli.rs:117 and cli.rs:2601 reference `tools::build_sub_agent_tool_at_depth` in comments. Let me check whether any test asserts on those comment strings... The task says "Do not touch src/cli.rs". Editing a comment in cli.rs adds 0 lines but changes content; the module_size gate counts lines, so a same-line comment edit is fine register-wise. But the task forbids touching cli.rs.
+
+Hmm, "any line there is register drift" — the module_size gate registers grandfathered modules with a line count; editing a line in place doesn't change the count. But the instruction is explicit: don't touch cli.rs. I'd rather keep the function name `build_sub_agent_tool_at_depth` to avoid needing to.
+
+Decision: keep the name `build_sub_agent_tool_at_depth`, add a `kind: SubAgentKind` parameter, and have the kind own the child-disallow decision. Then the source guard slithers: the task asks for a guard proving the explore path's list comes from `read_only_child_disallowed` rather than a second literal. I'll write the guard to slice the `SubAgentKind::Explore` arm of `child_disallowed` — assembled at runtime — and document that the slice is the Explore arm rather than `build_explore_agent_tool`'s body because the decision lives at the single composition point both entry points share (and putting it in `build_explore_agent_tool` would have meant either a second copy of the depth/fallback/diagnostic chain or a rename of the function cli.rs comments cite by name).
+
+Hmm, that's a decent honest explanation. But actually... hmm. Let me reconsider ONE more time whether I can have both: keep `build_sub_agent_tool_at_depth` name AND have `build_explore_agent_tool` carry the `read_only_child_disallowed` call.
+
+What if `build_sub_agent_tool_at_depth` keeps its exact 3-arg signature for General, and I add a `kind` to... no.
+
+What about: `build_explore_agent_tool` computes the list and stores it, then calls a variant that takes it:
+
+```rust
+pub(crate) fn build_explore_agent_tool(config: &AgentConfig) -> (Box<dyn AgentTool>, SharedState) {
+    let shared_state = SharedState::new();
+    let disallowed = read_only_child_disallowed(&config.disallowed_tools);
+    let tool = build_sub_agent_tool_read_only_at_depth(config, &disallowed, 0, &shared_state);
+    (tool, shared_state)
+}
+```
+and `build_sub_agent_tool_at_depth` for General delegates to the same `_read_only_`... no wait, General's list is computed with the global flag at each depth (harmless). Actually I could have `build_sub_agent_tool_at_depth(config, depth, ss)` compute its list once at depth 0 and pass down... it's the same function.
+
+Honestly: the cleanest is to have ONE recursion function with (config, kind_or_list, depth, ss). I'll go with `kind`.
+
+Let me now decide the guard. I'll write:
+
+```rust
+#[test]
+fn the_explore_path_composes_slice_1s_fold_rather_than_a_second_literal() {
+    let src = include_str!("tools.rs");
+    // slice the Explore arm of SubAgentKind::child_disallowed
+    let arm = format!("{}::{} =>", "SubAgentKind", "Explore");
+    let start = src.find(&arm).expect(...);
+    let rest = &src[start..];
+    let end = rest.find("\n        }").expect(...); // hmm fragile
+    ...
+}
+```
+
+Fragile. Better: slice the whole `fn child_disallowed` body (find "fn child_disallowed" → find "\n    }\n"). Assert:
+- body contains `read_only_child_disallowed` (assembled at runtime: `format!("read_only_child_{}", "disallowed")`) — proves the fold is called.
+- body contains NO literal write-class name — proves it is not a second list. Assemble needles at runtime from the const: for name in READ_ONLY_CHILD_REMOVED_TOOLS, assert `!body.contains(&format!("\"{name}\""))` — careful: the const itself is a literal list but it lives outside the slice. Good. And the anti-vacuous: assert the slice is non-empty and contains the General arm's `is_read_only_subagents` needle so the slice really is the function.
+
+Hmm wait: if body has no literal write-class names, that's a good "no second literal list" proof. But the const is defined elsewhere and the guard slices only this function. Good.
+
+Hmm, but hold on — is `child_disallowed` as an inherent method on SubAgentKind acceptable to clippy? `fn child_disallowed(&self, config)` where self is Copy — `self` by value is better for Copy types; clippy has `trivially_copy_pass_by_ref` in pedantic only. I'll take `self: Self` (by value).
+
+Now let me also think about the description text for explore_agent. Requirements:
+(a) says read-only by construction
+(b) says what that means — no write_file/edit_file/rename_symbol
+(c) parent model must not read absent capability as nonexistent
+(d) nesting statement if omitted.
+
+I'll include nesting: recursion of the same kind (explore → explore) up to the same depth cap. Good — cheap, and confinement preserved.
+
+Description draft:
+
+```
+"Delegate a read-only exploration subtask to a fresh sub-agent with its own context window. \
+ Use for locating code, reading files, and searching a codebase without changing it. \
+ This sub-agent is read-only BY CONSTRUCTION: it has no write_file, edit_file or \
+ rename_symbol tool, and it may not dispatch a write-capable sub-agent, so asking it to \
+ make a change is not possible rather than merely discouraged — report that back instead \
+ of working around it. It still has bash (read it as a way to explore: rg, ls, git log, cat), \
+ read_file, list_files, search and web_search. It shares the parent's shared_state store, so \
+ store a large artifact once and pass its key to later dispatches rather than re-pasting it. \
+ It has its own explore_agent tool and may delegate further, bounded to a hard nesting cap. \
+ It starts with a clean context and returns a summary of what it did."
+```
+
+Also for the `sub_agent` description — unchanged (must be byte-identical for the regression surface? The task's near-miss test is about the tool SET and child disallow list. But changing sub_agent's description would be a behaviour change for every user. So keep it byte-identical.)
+
+Now, the "refusal is a refusal, not a filter" test: "the child keeps `bash` via `with_read_guard_bash_arc` (`src/tools.rs:1490`), so a write attempt returns the `REFUSAL_STEM_MODE_ACTIVE`-shaped error the parent can see — assert on that string at the emission point rather than on the tool simply being missing."
+
+Hmm. Wait: `with_read_guard_bash_arc` only refuses when `/read` or `/plan` mode is active. In default mode, bash is NOT refused — a read-only child can write through bash (documented limit). So the test as literally stated is wrong: outside `/read` mode, bash does not refuse anything.
+
+Hmm, what does the task mean? "a write attempt returns the REFUSAL_STEM_MODE_ACTIVE-shaped error". Let me look at `with_read_guard_bash_arc` and the ReadModeGuardTool to understand.
+
+Actually let me check `src/tool_wrappers.rs` around REFUSAL_STEM_MODE_ACTIVE and read-guard behavior.
+
+Let me look. Also check whether there's an existing test asserting a bash write attempt in read mode returns the refusal. Then I can write a test that drives the same seam.
+
+Actually: the honest, testable version of that requirement: with `/read` mode ON, the explore child's bash refuses a write command with a `REFUSAL_STEM_MODE_ACTIVE` message, and that refusal is visible to the parent. That's assertable via the tool wrapper directly (as existing tests do). Let me look at how existing tests drive read-guard.
+
+Let me search tool_wrappers.rs tests.
+
+I need to be careful about scope/time. Let me focus: the core deliverable is the tool + registration + tests + docs. The "refusal" test — I'll implement it at the read-mode seam: build the child bash tool via the same helper and assert the error message contains REFUSAL_STEM_MODE_ACTIVE. Let me check what's available.
+
+Let me look at tool_wrappers.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn with_read_guard_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '25,60p' src/tool_wrapper… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "with_read_guard_bash_a… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:4455..4525 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. So the "refusal is a refusal" test: build the child tools for the explore path and, with /read mode on, execute the bash tool with a write-class command, asserting the error names read mode and carries REFUSAL_STEM_MODE_ACTIVE. That requires the test to find the bash tool inside the child tools vec (by name) and drive it. That's doable: `sub_agent_child_tools(...)` returns Vec<Arc<dyn AgentTool>>, find the one named "bash", execute with read mode set, assert refusal.
+
+That's a meaningful test: it asserts the explore child's bash is guarded by the read-mode seam (i.e. the child did not get a raw unguarded bash), which is a real property and is the "refusal, not a filter" half.
+
+Serial test needed (global read mode). Use `#[serial_test::serial]` + reset. Let me check how tools.rs tests handle serial and the read mode reset helpers.
+
+Let me check existing serial usage in tools.rs tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial" src/tools.rs | … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's check the serial test section in tools.rs (lines 2820-2900) to see the general structure (mod tests already has `use serial_test::serial`).
+
+Let me also check what `crate::commands_config::set_read_mode` is and if tools.rs tests already use it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2820,2880p' src/tools.rs… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I was in the middle of exploring. Let me pick up and implement. I have enough context:
+
+1. Confirmed yoagent 0.18.1 has no per-call seam → second tool is the shape.
+2. `src/tools.rs`: `READ_ONLY_CHILD_REMOVED_TOOLS`, `read_only_child_disallowed`, `sub_agent_child_tools`, `build_sub_agent_tool`, `build_sub_agent_tool_at_depth`, `sub_agent_tool_for`.
+3. `src/agent_builder.rs`: push site at ~1181, `BUILTIN_TOOL_NAMES`, superset/near-miss guards.
+
+Plan:
+- Add `build_explore_agent_tool(config: &AgentConfig, shared_state: &SharedState) -> Box<dyn AgentTool>` in tools.rs, beside `build_sub_agent_tool`. Reuse `sub_agent_tool_for` but with a different name and description. Problem: `sub_agent_tool_for` hardcodes `SubAgentTool::from_provider("sub_agent", ...)`. I need to parameterize the name/description, or write a variant. The task says "reuse — never re-spell — the existing pieces". I'll add a parameterized helper: `sub_agent_tool_for_named(config, provider, model, api_key, child_tools, shared_state, name, description)` and have `sub_agent_tool_for` call it with "sub_agent" + the existing description. That keeps one statement.
+
+Also nesting: build_explore_agent_tool should not copy `build_sub_agent_tool_at_depth`. The child tools of the explore tool = `sub_agent_child_tools(&config.dir_restrictions, &read_only_child_disallowed(&config.disallowed_tools))`. But should the explore child get a nested sub_agent? Per the task: "give the explore tool the same depth-bounded sub_agent child path only if it is cheap to do through the existing builder; if it forces a copy of build_sub_agent_tool_at_depth, leave it out and say so in the description and the write-up".
+
+`build_sub_agent_tool_at_depth(config, depth, shared_state)` builds a nested sub_agent at depth+1 and includes it in the child tools. It's a private fn; I could call it with depth=1 to get a nested sub_agent for the explore child's children. But that nested tool would be a full `sub_agent` (with write tools at its own child level — global flag dependent). Hmm, actually the nested tool at depth 1 would itself use `crate::cli::is_read_only_subagents()` for its children. That's the same as the existing depth behavior. Adding `Arc::from(build_sub_agent_tool_at_depth(config, 1, shared_state))` to the explore child tools is cheap (one call) and gives recursion. But careful: the nested children of that sub_agent would NOT be read-only unless the global flag is set. That's a fidelity leak: explore_agent → nested sub_agent → child gets write tools.
+
+The task says nesting is optional and if left out, say so. Given the fidelity leak, and to keep the change minimal and honest, I think the cleanest choice is: leave nesting out of the explore child, and announce it in the description and write-up. Actually wait — but is it really a leak if I include it? The nested `sub_agent` at depth 1 would build its own child tools with `config.disallowed_tools` (not read-only) unless global flag. So a grandchild could write. That undermines "read-only by construction" at depth 2. Leaving it out is safer and simpler. And it's explicitly permitted by the task.
+
+Hmm, but consider: the explore sub-agent itself (the child) — its tools are the read-only set, which excludes... does it include a nested sub_agent? With my choice, no. So explore_agent is a leaf dispatcher: it can't recurse. That's a limit to announce.
+
+Actually, let me reconsider: could I make it recursive while preserving read-only? I could write a small depth-aware explore builder... but that requires a copy of `build_sub_agent_tool_at_depth` logic. The task says if it forces a copy, leave it out. So: leave it out, announce it.
+
+Now the tools:
+- `build_explore_agent_tool(config: &AgentConfig, shared_state: &SharedState) -> Box<dyn AgentTool>`.
+
+Implementation:
+```rust
+pub(crate) const EXPLORE_AGENT_TOOL_NAME: &str = "explore_agent";
+
+pub(crate) fn build_explore_agent_tool(
+    config: &AgentConfig,
+    shared_state: &SharedState,
+) -> Box<dyn AgentTool> {
+    let child_disallowed = read_only_child_disallowed(&config.disallowed_tools);
+    let child_tools = sub_agent_child_tools(&config.dir_restrictions, &child_disallowed);
+    Box::new(sub_agent_tool_for_named(config, &config.provider, &config.model, &config.api_key, child_tools, shared_state, EXPLORE_AGENT_TOOL_NAME, EXPLORE_AGENT_DESCRIPTION))
+}
+```
+
+Wait — but the primary/fallback/diagnostic wrapper structure. The existing `build_sub_agent_tool_at_depth` also adds fallback + DiagnosticSubAgentTool. Should explore_agent get the fallback and diagnostics? For consistency yes, but that requires the wrapper code. To keep it cheap and to reuse: I could refactor `build_sub_agent_tool_at_depth` to take a name/description/child_disallowed... Hmm.
+
+Simplest approach that maximizes reuse: extract the "primary + fallback + diagnostic" assembly into a helper that takes `name`, `description`, and `child_tools`:
+
+```rust
+fn sub_agent_tool_with_fallback(
+    config: &AgentConfig,
+    name: &str,
+    description: &str,
+    child_tools: Vec<Arc<dyn AgentTool>>,
+    shared_state: &SharedState,
+) -> Box<dyn AgentTool>
+```
+
+Then `build_sub_agent_tool_at_depth` builds child_tools (with nesting) and calls this helper with "sub_agent" and the SUB_AGENT_DESCRIPTION; `build_explore_agent_tool` builds the read-only child tools and calls the same helper with "explore_agent" and EXPLORE description.
+
+That's a clean reuse refactor. But it touches `build_sub_agent_tool_at_depth`, which has the source-level guard test `the_child_tool_seam_is_handed_the_parents_disallow_list` that slices that function's body and asserts it contains `&config.disallowed_tools`... wait, actually it asserts `body.contains("&config.disallowed_tools")`? Let's re-read: `let wired = format!("&config.{}_tools", "disallowed");` → `"&config.disallowed_tools"`. Hmm, the current code is:
+
+```rust
+let child_disallowed = if crate::cli::is_read_only_subagents() {
+    read_only_child_disallowed(&config.disallowed_tools)
+} else {
+    config.disallowed_tools.clone()
+};
+```
+
+It contains `&config.disallowed_tools`. OK so as long as that stays in the body, the guard passes. Also the placeholder check: `format!("dir_restrictions, &{}]", "[")` → `"dir_restrictions, &[]"` must NOT appear. Fine.
+
+Also, if I move the primary/fallback assembly out of `build_sub_agent_tool_at_depth`, the guard's slice (`start` at `fn build_sub_agent_tool_at_depth(` to `\n}\n`) still contains the child_disallowed lines. Good.
+
+But careful: the guard finds the end via `rest.find("\n}\n")` — the first `\n}\n` after the function start. If the function's body contains a nested `\n}\n`... the current body has closures like `.and_then(|...| {...})` — those end with `})` not `}` at start of line. OK.
+
+Hmm, moving the fallback assembly out would be a bigger refactor. Is it necessary? Let me consider a minimal alternative: `build_explore_agent_tool` does NOT reuse the fallback/diagnostic wrappers, just builds the primary `sub_agent_tool_for_named`. That's simpler but loses diagnostics/fallback for explore_agent — an inconsistency. But it's less code churn and less risk.
+
+Hmm. Which is better? The task says "the tool itself: `sub_agent_tool_for(...)` with the tool name `explore_agent`". It explicitly points at `sub_agent_tool_for`, implying a single call. So the minimal approach is what the task describes. But diagnostics being absent for explore_agent means a failure gets yoagent's opaque summary when the fallback... well, DiagnosticSubAgentTool wraps errors to be more legible. Losing it for explore_agent is a real regression in legibility for that tool.
+
+I think the right move, given "reuse — never re-spell", is to extract the fallback+diagnostic assembly into a helper and use it for both. It keeps one statement of that policy. Let me look at the full body of `build_sub_agent_tool_at_depth` again (lines 1520-1615) to plan the extraction.
+
+Let me read the exact current text of that function to do a careful edit.
+
+Also need to check `sub_agent_model_label` and whether `DiagnosticSubAgentTool` needs config.model.
+
+Let me read lines 1500-1620.
+
+Actually I have most of it from the earlier cat -n output. Let me get exact text via read_file.
+
+Then:
+- `sub_agent_tool_for` → add name/description params. Rename? It's `fn sub_agent_tool_for(config, provider_name, model, api_key, child_tools, shared_state) -> SubAgentTool`. I'll add `name: &str, description: &str` params. Callers: two sites inside `build_sub_agent_tool_at_depth`. Also check tests referencing `sub_agent_tool_for`. Let me grep.
+
+Then agent_builder.rs:
+- `BUILTIN_TOOL_NAMES` add "explore_agent".
+- Near-miss twin test: update the loop over ["ask_user","sub_agent","shared_state"] to include "explore_agent".
+- Push site: push explore_agent before the retain so `disallowed_tools = ["explore_agent"]` removes it. It's at the same site as sub_agent (pre-retain). Good — option (a) satisfied genuinely.
+
+Wait: does `effective_disallowed_tools` need updating? It pairs `shared_state` with `sub_agent`. If a user disallows `sub_agent`, explore_agent stays. That's fine — they're separate capabilities. Should disallowing `sub_agent` also remove explore_agent? Arguably yes for the "confinement" reading... but `--restricted` removes `sub_agent`? Let me check RESTRICTED_REMOVED_TOOLS. The cli comment at 1733-1751 says --restricted's own comment about sub_agent is a disclosure that it can't be filtered... Actually let me check whether `sub_agent` is in RESTRICTED_REMOVED_TOOLS.
+
+Hmm, I need to check. If `--restricted` removes `sub_agent`, then a restricted user would still get `explore_agent` — a delegation tool that escaped the restriction. That could be a real hole: restricted mode is meant to prevent delegation (or at least restrict it). Let me check.
+
+Let me also check the session cap: should explore_agent get `with_session_cap`? The sub_agent push wraps with `with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP)`. For consistency, explore_agent should too (runaway-loop breaker). I'll wrap it the same way.
+
+Let me now gather: RESTRICTED_REMOVED_TOOLS, compute_lite_disallowed_tools, session cap usage, and tests referencing sub_agent_tool_for.
+
+Let me run these greps.
+
+Also, I should check `README.md`/docs — the task says docs required: ARCHITECTURE.md entries for tools.rs and agent_builder.rs, plus paste module_size register line if printed. Also maybe docs/src changes? The task lists Files: src/tools.rs, src/agent_builder.rs, ARCHITECTURE.md. Plus the generic instruction about CLAUDE.md/README.md if behavior changes. Adding a new builtin tool is a user-facing capability — README may have a tool list. Let me check README for a tools table mentioning `sub_agent`.
+
+Let's do the greps now, then implement.
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up from my exploration. Let me gather the remaining facts I need before editing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RESTRICTED_REMOVED_TOOL…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "sub_agent_tool_for" sr… ✓ (5ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+RESTRICTED_REMOVED_TOOLS = ["bash"] only. So sub_agent survives `--restricted` too (and there's a disclosure comment in cli.rs ~1733-1751). So explore_agent surviving restricted mode is the same existing behavior — consistent, no new hole.
+
+Now, `SESSION_TOOL_CALL_CAP` is imported in tools.rs and used at 1314 (in test?). Let me check 1300-1320.
+
+Now let me read the exact body of build_sub_agent_tool_at_depth (1511-1620) so I can do surgical edits.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:1508..1623 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I'll design the refactor:
+
+1. Change `sub_agent_tool_for` to take `name: &str, description: &str` (or better: a single `name` and look up description? No — two params is fine, but "never re-spell" means the description for sub_agent stays in one place as a const).
+
+Let me restructure:
+
+```rust
+/// Tool name the read-only exploration sub-agent is registered under (#881
+/// slice 2)...
+pub(crate) const EXPLORE_AGENT_TOOL_NAME: &str = "explore_agent";
+
+const SUB_AGENT_DESCRIPTION: &str = "...existing text...";
+
+const EXPLORE_AGENT_DESCRIPTION: &str = "...read-only...";
+```
+
+Then `sub_agent_tool_for(config, provider_name, model, api_key, child_tools, shared_state, name, description)`.
+
+Hmm, that's 8 params — clippy `too_many_arguments` threshold is 7. Current is 6. Adding 2 → 8, which trips `clippy::too_many_arguments` (default threshold 7). -D warnings would fail. So I need to avoid that.
+
+Options: bundle name+description into a struct, e.g.
+
+```rust
+/// The two things that differ between the `sub_agent` and `explore_agent`
+/// registrations of the *same* builder: what the tool is called and what the
+/// parent model is told about it.
+struct SubAgentFlavor {
+    name: &'static str,
+    description: &'static str,
+}
+```
+
+That is cleaner and self-documenting. Then `sub_agent_tool_for(config, provider, model, api_key, child_tools, shared_state, flavor)` — 7 params, exactly at the limit (clippy's default `too_many_arguments` is 7 = warn above 7? The default threshold is 7, meaning functions with more than 7 args warn. 7 args is OK).
+
+Actually let me count current: config, provider_name, model, api_key, child_tools, shared_state = 6. Adding flavor = 7. Fine.
+
+And extract the fallback+diagnostic assembly:
+
+```rust
+/// Assemble the primary tool, its one fallback retry and the diagnostic
+/// wrapper — the *shape* of a dispatch tool, which is identical for
+/// `sub_agent` and `explore_agent` and must not be spelled twice.
+fn dispatch_tool_with_fallback(
+    config: &AgentConfig,
+    flavor: &SubAgentFlavor,
+    child_tools: Vec<Arc<dyn AgentTool>>,
+    shared_state: &SharedState,
+) -> Box<dyn AgentTool>
+```
+
+Then `build_sub_agent_tool_at_depth` = child_tools + nesting → `dispatch_tool_with_fallback(config, &SUB_AGENT_FLAVOR, child_tools, shared_state)`.
+
+And:
+
+```rust
+pub(crate) fn build_explore_agent_tool(
+    config: &AgentConfig,
+    shared_state: &SharedState,
+) -> Box<dyn AgentTool> {
+    let child_disallowed = read_only_child_disallowed(&config.disallowed_tools);
+    let child_tools = sub_agent_child_tools(&config.dir_restrictions, &child_disallowed);
+    dispatch_tool_with_fallback(config, &EXPLORE_AGENT_FLAVOR, child_tools, shared_state)
+}
+```
+
+Wait — but the source-level guard test asserts that `build_explore_agent_tool`'s body contains a call to `read_only_child_disallowed` (per the task: "one test slicing build_explore_agent_tool's body proving its disallow list comes from read_only_child_disallowed rather than a second literal"). Good, that works.
+
+Now, the guard test `the_child_tool_seam_is_handed_the_parents_disallow_list` slices `build_sub_agent_tool_at_depth` from its `fn` to the first `\n}\n`. After my refactor, the body will be much shorter but still contains `&config.disallowed_tools`. Careful: the slice's end finder uses `\n}\n` — the function body ends with:
+```
+    dispatch_tool_with_fallback(config, &SUB_AGENT_FLAVOR, child_tools, shared_state)
+}
+```
+followed by `\n\n` — so `\n}\n` matches at the closing brace. Good.
+
+Hmm wait, one issue: the guard finds `start = src.find("fn build_sub_agent_tool_at_depth(")`. That still exists. Good.
+
+2. Now the description strings.
+
+SUB_AGENT_DESCRIPTION — currently embedded in `sub_agent_tool_for`. Move it verbatim into a const.
+
+EXPLORE_AGENT_DESCRIPTION — must say:
+- read-only by construction
+- what that means: no write_file/edit_file/rename_symbol
+- nesting: this dispatched agent has no further sub_agent tool of its own (announced limit)
+- shares the same shared_state store (store once, read by reference)
+- bash retained (narrowing not sandbox) — should I mention that? Honesty: the parent model should know bash can still write. The existing READ_ONLY_CHILD_REMOVED_TOOLS doc says a caller who wants that closed adds bash to --disallowed-tools. For the model-facing description, saying "read-only" while bash can write would be the confident-wrong-diagnosis defect mirrored to the model. I'll state it plainly: "bash is still available (read-only is a narrowing, not a sandbox)".
+
+Now, where does the description live? `sub_agent_tool_for` sets `.with_description(...)`. I'll make flavor carry it.
+
+3. agent_builder.rs:
+- import build_explore_agent_tool.
+- At the push site (after `let (sub_agent_tool, shared_state) = build_sub_agent_tool(self);`), add:
+```rust
+let explore_agent_tool = build_explore_agent_tool(self, &shared_state);
+```
+and push it wrapped with maybe_hook + with_session_cap, before the retain.
+
+Careful about `self` vs `&self`: `build_sub_agent_tool(self)` takes `&AgentConfig`; within `configure_agent(&self)`, `self` is `&Self`; `build_sub_agent_tool(self)` works because deref coercion from &AgentConfig. Actually AgentConfig — is `configure_agent` a method on AgentConfig? `build_sub_agent_tool(self)` compiles today, so `build_explore_agent_tool(self, &shared_state)` will too.
+
+- BUILTIN_TOOL_NAMES: add "explore_agent".
+- near-miss twin test: add "explore_agent" to the list. The test asserts each name in the list is in BUILTIN_TOOL_NAMES but NOT registered by build_tools. explore_agent is not registered by build_tools (it's pushed in build_agent) → belongs in the not-registered list. Good.
+
+4. Tests in tools.rs:
+a) near-miss/byte-identical: default config's existing tool set unchanged, and explore child disallow differs from sub_agent's only by READ_ONLY_CHILD_REMOVED_TOOLS. Hmm — "the `explore_agent` child disallow list differs from `sub_agent`'s only by `READ_ONLY_CHILD_REMOVED_TOOLS`; assert with whole-vector equality and against the const, never a re-typed literal."
+
+So I want a way to observe the disallow list. `build_explore_agent_tool` doesn't expose it. But I can express it purely: for a default config (disallowed_tools = []), the explore child disallow list is `read_only_child_disallowed(&[])` = READ_ONLY_CHILD_REMOVED_TOOLS... and sub_agent's (with the global off) is `[]`. Hmm, "differs from sub_agent's only by READ_ONLY_CHILD_REMOVED_TOOLS" — I can assert:
+
+```rust
+let base = config.disallowed_tools.clone(); // default: empty
+let explore = read_only_child_disallowed(&base);
+let plain = base.clone(); // what sub_agent gets when the global is off
+assert_eq!(explore, s(READ_ONLY_CHILD_REMOVED_TOOLS)); // whole-vector, against the const
+```
+
+Hmm, that's just re-testing slice 1. What the task wants is: the *default* tool set (the parent's) is unchanged — i.e. adding explore_agent doesn't change any existing user's behavior. And a check that the explore child set differs from the sub_agent child set by exactly the const.
+
+Better test formulation: assert on the child tool NAME vector (which is observable via `sub_agent_child_tools`):
+- `child_tool_names(&read_only_child_disallowed(&[]))` (explore child) vs `child_tool_names(&[])` (sub_agent child): the difference must be exactly READ_ONLY_CHILD_REMOVED_TOOLS. Formally: explore_names + sorted diff... Let me express:
+
+```rust
+let plain = child_tool_names(&[]);
+let explore = child_tool_names(&read_only_child_disallowed(&[]));
+// anti-vacuous
+assert!(!READ_ONLY_CHILD_REMOVED_TOOLS.is_empty());
+let removed: Vec<&String> = plain.iter().filter(|n| !explore.contains(n)).collect();
+let added: Vec<&String> = explore.iter().filter(|n| !plain.contains(n)).collect();
+assert!(added.is_empty(), ...);
+let expected: Vec<String> = READ_ONLY_CHILD_REMOVED_TOOLS.iter().map(|s| s.to_string()).collect();
+assert_eq!(removed, expected.iter().collect::<Vec<_>>(), ...);
+```
+Hmm, comparing Vec<&String> to Vec<&String> — need care. Let me write:
+```rust
+let removed: Vec<String> = plain.iter().filter(|n| !explore.contains(n)).cloned().collect();
+let expected: Vec<String> = s(READ_ONLY_CHILD_REMOVED_TOOLS);
+assert_eq!(removed, expected, "...");
+```
+`s` closure is defined inside `read_only_child_disallowed_table` test; I'll define a local one.
+
+Also the "existing tool set unchanged" part: that's really an agent_builder-side claim (BUILTIN_TOOL_NAMES) plus "no default config path changed". Hmm — what's the honest, verifiable assertion? The parent's tool set now gains a tool (that IS a change to every user's tool list!). Wait — is it? The task says no CLI flag, so every user gets `explore_agent` in their tool list. So the parent's tool set IS changed. The "unchanged path" the task refers to: "a default config's *existing* tool set is unchanged" — meaning the tools that existed before are all still there, nothing removed/renamed/reordered. So assert: the pre-existing builtin names are all still present, and in the same relative order.
+
+Concretely in tools.rs I can't see the parent agent's list. But in agent_builder.rs there might be a test enumerating tool names... Let me check tests in agent_builder around 4000-4050 (`test_allowed_tools_filter`). Hmm.
+
+Honest approach: in tools.rs, assert the *child* set (which is what explore_agent dispatches) contains every name of CHILD_TOOLS_TODAY minus the const — already covered by existing tests. The new near-miss assertion I'll write is the "differs by exactly the const" one plus the explore child keeps bash/readers.
+
+Additionally in agent_builder.rs I can write a test that the default tool list (from build_tools_with_hooks) is unchanged — but that's existing. The meaningful new guard: `explore_agent` is filterable by disallowed_tools. But at the push site it's pre-retain, and the retain uses `effective_disallowed_tools(self.disallowed_tools)`; I can test `tool_name_disallowed("explore_agent", &effective_disallowed_tools(&["explore_agent".into()]))` is true — that's a pure test proving removability by the same statement. Good, cheap and real. Actually more honest: the retain happens in `configure_agent`, which can't be observed. So a pure test on `tool_name_disallowed` + a source-level guard that the push is above the retain... The existing guard for #887 (`the_rlm_push_sites_go_through_the_one_shared_registry`) may help. Let me look at how that source-level guard is written, and possibly extend the pattern: a source-level guard that `explore_agent` is pushed before the `retain`.
+
+Let me check that test to follow the house pattern.
+
+b) presence not absence: loop READ_ONLY_CHILD_REMOVED_TOOLS asserting each absent from explore child names, with non-empty first. Partly covered by existing `a_read_only_child_loses_the_write_tools_and_keeps_every_reader`. I'll add one that goes through `build_explore_agent_tool`'s disallow list... but names aren't observable from the built tool. So drive `sub_agent_child_tools` with the same fold. Hmm, that's re-testing slice 1 territory. The distinguishing new content: the fold happens inside `build_explore_agent_tool`. A source-level guard covers the wiring; the behavioral test covers the composition. I'll write the behavioral test using the same two calls that `build_explore_agent_tool` makes, and state in the doc comment that the fold's *use* is pinned by the source-level guard.
+
+c) the refusal is a refusal, not a filter: drive the real guarded bash Arc from an explore child tool set: find `bash` in `sub_agent_child_tools(&restrictions, &read_only_child_disallowed(&[]))`, turn read mode ON, execute `touch build.log`, assert the error message contains REFUSAL_STEM_MODE_ACTIVE. That's a strong end-to-end test — it goes through the actual tools the explore child gets. Need `#[serial]` and reset. Use `crate::commands_config::set_read_mode(true)`.
+
+Careful: ReadModeGuardTool Bash kind uses `detect_write_command`. `touch build.log` should be detected. The mock test used `{"command": "touch build.log"}` and got a refusal. Real BashTool's params: `{"command": "touch build.log"}`. Good. And the tool must be found by name "bash" in the Vec<Arc<dyn AgentTool>>. I can find it: `tools.iter().find(|t| t.name() == "bash")`.
+
+Let me write:
+```rust
+#[tokio::test]
+#[serial]
+async fn a_write_attempt_from_the_explore_child_is_refused_not_absent() {
+    struct ReadModeReset;
+    impl Drop for ReadModeReset { fn drop(&mut self) { crate::commands_config::set_read_mode(false); } }
+    let _reset = ReadModeReset;
+
+    let tools = sub_agent_child_tools(&DirectoryRestrictions::default(), &read_only_child_disallowed(&[]));
+    // anti-vacuous: the explore child really does keep bash (the stated limit) — if it
+    // is gone, the assertion below would pass for the wrong reason (absence, not refusal).
+    let bash = tools.iter().find(|t| t.name() == "bash").expect("...");
+    crate::commands_config::set_read_mode(true);
+    let err = bash.execute(serde_json::json!({"command": "touch build.log"}), test_tool_context(None)).await.expect_err("...");
+    let msg = format!("{err:?}");
+    assert!(msg.contains(REFUSAL_STEM_MODE_ACTIVE), "...");
+}
+```
+Wait, `expect_err` requires the Ok type to be Debug. ToolResult probably implements Debug. The mock test used `.expect_err(...)` so yes.
+
+Hmm, but careful: does the read-mode guard on bash get bypassed in plan-apply? No mode set besides read.
+
+Is `crate::commands_config::set_read_mode` accessible from tools.rs tests? It's `pub(crate)` presumably; used in tool_wrappers tests. Fine.
+
+But: REFUSAL_STEM_MODE_ACTIVE — is it in scope in tools.rs? tools.rs imports from tool_wrappers at line 26-27: `with_read_guard_bash_arc, with_recovery_hints, with_session_cap, with_truncation,` ... and `DiagnosticSubAgentTool, FallbackSubAgentTool, ToolFailureTracker, SESSION_TOOL_CALL_CAP,`. Need `REFUSAL_STEM_MODE_ACTIVE` added to the import list, or reference it as `crate::tool_wrappers::REFUSAL_STEM_MODE_ACTIVE`. Adding an import could trip unused warnings if only used in tests → tests are compiled with `#[cfg(test)]` so an import used only in tests would be "unused" in non-test builds → clippy error. Safer: fully-qualify as `crate::tool_wrappers::REFUSAL_STEM_MODE_ACTIVE` inside the test.
+
+d) source-level guard on `build_explore_agent_tool` body: assembled at runtime needles, slice body, assert contains `read_only_child_disallowed` reference. Also assert it does NOT contain a literal `"write_file"` / a second literal list. Let me write:
+
+```rust
+#[test]
+fn build_explore_agent_tool_folds_the_read_only_list_rather_than_re_spelling_it() {
+    let src = include_str!("tools.rs");
+    let needle = format!("fn build_{}_tool(", "explore_agent");
+    let start = src.find(&needle).expect("...");
+    let rest = &src[start..];
+    let end = rest.find("\n}\n").expect("...");
+    let body = &rest[..end];
+    let fold = format!("read_only_child_{}(&config.disallowed_tools)", "disallowed");
+    assert!(body.contains(&fold), "...");
+    // and it must NOT carry a second literal list of write-class names
+    for name in READ_ONLY_CHILD_REMOVED_TOOLS {
+        let literal = format!("\"{name}\"");
+        assert!(!body.contains(&literal), "...");
+    }
+}
+```
+Careful: the literal `"write_file"` inside the body — my body is:
+```rust
+pub(crate) fn build_explore_agent_tool(
+    config: &AgentConfig,
+    shared_state: &SharedState,
+) -> Box<dyn AgentTool> {
+    ...
+}
+```
+Includes the doc comment? No — `start` is at "fn build_explore_agent_tool(", so the doc comment above isn't included. Good, because my doc comment might name write_file. Actually to be safe I won't rely on that; the body has no literals.
+
+Hmm wait: is there a risk the description const contains "write_file"? The description const is defined outside the function body. Fine.
+
+Also careful: `include_str!("tools.rs")` — but the file will contain the string `format!("fn build_{}_tool(", "explore_agent")`. The needle "fn build_explore_agent_tool(" appears in the source at the definition AND not in the test (since the test assembles it). Good.
+
+Also the end-of-body finder `\n}\n`: the body ends with `}` at col 0 after the dispatch call. Let me make sure there's no earlier `\n}\n`. The body:
+```rust
+) -> Box<dyn AgentTool> {
+    // comments...
+    let child_disallowed = read_only_child_disallowed(&config.disallowed_tools);
+    let child_tools = sub_agent_child_tools(&config.dir_restrictions, &child_disallowed);
+
+    dispatch_tool_with_fallback(config, &EXPLORE_AGENT_FLAVOR, child_tools, shared_state)
+}
+```
+No inner `}` at line start. Good.
+
+e) Also a test that the explore description announces read-only and the removed names, and announces the nesting limit? Cheap and matches the "parent model must not read absent capability as nonexistent" requirement. I could assert on `build_explore_agent_tool(...).description()`. That's observable! `Box<dyn AgentTool>` → `.description()`. So:
+
+```rust
+#[test]
+fn the_explore_agent_description_announces_read_only_and_its_limits() {
+    let config = test_agent_config("anthropic", "claude-sonnet-5");
+    let state = SharedState::new();
+    let tool = build_explore_agent_tool(&config, &state);
+    assert_eq!(tool.name(), "explore_agent");
+    let d = tool.description();
+    for gone in READ_ONLY_CHILD_REMOVED_TOOLS {
+        assert!(d.contains(gone), "...");
+    }
+    assert!(d.contains("read-only"), "...");
+}
+```
+And also assert the sub_agent's description does NOT claim read-only? Better: assert the two tools are distinct and the sub_agent's name is "sub_agent" and its description mentions write: cheap presence checks. And nesting limit statement: assert description mentions something like "no further sub_agent" — I'll include a phrase and assert it.
+
+Now also share the same SharedState: assert that the explore tool is built over the passed store — observable? `SubAgentTool` has `shared_state` private. Not observable. Instead, the signature taking `&SharedState` + the parent passing its own handle is pinned by a source-level assertion in agent_builder? I'll note it in the write-up and add the claim to the source guard: assert agent_builder pushes `build_explore_agent_tool(self, &shared_state)`. Let me look at the existing RLM push-site guard to append there or write a sibling.
+
+Let me now look at that test.
+
+f) Explicit sync test for `--read-only-subagents`? Task says: never composed with /read mode's process-global state. Just structural.
+
+5. Now check module_size register lines: `tools.rs` and `agent_builder.rs` are grandfathered. The task says paste the register line verbatim in ARCHITECTURE.md if printed. I'll run the test and see.
+
+Let me look at the RLM push-site source guard test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "the_rlm_push_sites_go_t… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn the_rlm_push_sites_g… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, I understand the house pattern. Now let me write the code.
+
+Step 1: src/tools.rs — refactor `sub_agent_tool_for` into a flavor-parameterized version, extract fallback/diagnostic assembly, add `build_explore_agent_tool`.
+
+Let me write the edits.
+
+First, the flavor struct + descriptions + tool name const, placed right before `sub_agent_tool_for` (line 1673) or near `build_sub_agent_tool`. I'll put the explore builder right after `build_sub_agent_tool_at_depth`, and the flavor/dispatch helper near `sub_agent_tool_for`.
+
+Plan for edits in tools.rs:
+
+Edit A: after `build_sub_agent_tool_at_depth` (line 1622 `}`), replace the tail of that function with a call to the new dispatch helper, and add `build_explore_agent_tool`.
+
+Actually cleaner: 
+1. Replace lines 1566-1621 (from "// The primary attempt" through the DiagnosticSubAgentTool Box::new(...) close) with:
+```rust
+    dispatch_tool_with_fallback(config, &SUB_AGENT_FLAVOR, child_tools, shared_state)
+```
+2. Then after the function's closing `}`, insert `build_explore_agent_tool` + `EXPLORE_AGENT_FLAVOR` etc.
+
+3. Add `dispatch_tool_with_fallback` and `SUB_AGENT_FLAVOR` near `sub_agent_tool_for`, and change `sub_agent_tool_for` signature to accept flavor.
+
+Let me write it out.
+
+Definitions:
+
+```rust
+/// What distinguishes the two dispatch tools yoyo registers — `sub_agent` and
+/// `explore_agent` — from each other. Everything else about them (the provider
+/// wiring, the nesting-less child tool set, the fallback retry, the diagnostic
+/// wrapper) is assembled by the *same* code, because two spellings of one
+/// policy is the "two doors, one policy, one deaf" shape this repo has already
+/// shipped six times.
+struct DispatchFlavor {
+    name: &'static str,
+    description: &'static str,
+}
+```
+
+Wait — does `sub_agent_tool_for` use `flavor.name` as `SubAgentTool::from_provider(name, ...)`? Yes: `SubAgentTool::from_provider("sub_agent", provider, model_config)` sets tool_name. Let me verify from_provider's signature sets tool_name to the first arg. Check yoagent.
+
+Let me grep `from_provider` in yoagent sub_agent.rs.
+
+Also the existing test `empty_registry_yields_the_same_tool_vector_as_before` or others may assert the tool name "sub_agent" — need to keep that.
+
+Let me check from_provider.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub fn from_provider\|pub fn from_config\|pub fn with_description" -A 1…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "explore" src/ --includ… ✓ (5ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note `src/help.rs:268` mentions `--read-only-subagents` "dispatched agent can explore but not edit. Session-wide, not ...". Interesting — I may want to update that help text to mention the new per-dispatch tool? The task says don't touch cli.rs. help.rs is separate. The task's Files list is tools.rs, agent_builder.rs, ARCHITECTURE.md. I'll keep scope; but let me look at help.rs line ~260-275 to see if there's a tools list I must update for accuracy (docs rule: stale docs as bad as failing tests).
+
+Let me check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '252,285p' src/help.rs; e… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The help text says "Session-wide, not per-dispatch." That's a statement the new tool changes... well, it's still true of the flag: the flag is session-wide. But now there IS a per-dispatch read-only option (explore_agent). The honest update: the flag is session-wide, and per-dispatch read-only is now available via the `explore_agent` tool. Since "Session-wide, not per-dispatch" becomes misleading once a per-dispatch option exists, I should update that line — but the task says Files: tools.rs, agent_builder.rs, ARCHITECTURE.md and "Do not touch src/cli.rs". help.rs isn't cli.rs. Hmm, but it's a help-text change → it may be covered by help_data tests that check usage forms.
+
+Risk assessment: modifying help.rs could break a test that pins the exact text (e.g. `test_every_subcommand_table_is_documented_in_usage_form` or a flag-doc drift guard). Also module_size register for help.rs. The safest honest move: keep the change minimal but fix the now-misleading clause in help.rs, since a stale doc claim is a defect. Let me check what "Session-wide, not per-dispatch." is being contrasted with — the new tool is not a flag, so the flag remains session-wide. But the sentence "not per-dispatch" tells a user no per-dispatch option exists, which is now false.
+
+Given the strict scope note and the strong "don't touch cli.rs" warning, and that the flag's own semantics are unchanged, I think the right call is: update that one clause in help.rs to point at `explore_agent`, and verify tests. It's a small surgical edit inside the same conceptual change. But if help.rs is under module_size pressure... let me check the line counts later. Actually adding lines to help.rs risks the module size gate (line count). Let me check: help.rs — is it in the register?
+
+Let me first check the module size gate for tools.rs/agent_builder.rs/help.rs, then decide. Priority: get the implementation done. I'll handle docs after tests pass.
+
+Actually — to minimize risk and respect the task's explicit file list, I'll consider a *rewrite* of the existing lines (same number of lines) rather than adding lines. E.g. change line "dispatched agent can explore but not edit. Session-wide, not" → "dispatched agent can explore but not edit. Session-wide; the" and "per-dispatch. A NARROWING, not a sandbox — bash remains, so a" → "per-dispatch `explore_agent` tool is the per-dispatch form. bash remains, so a". Hmm, that changes line width but not count. Good idea: same line count, no size drift.
+
+Let me now do the implementation. Start with tools.rs.
+
+Edit 1: replace the tail of build_sub_agent_tool_at_depth (1566-1621) with the dispatch call.
+
+Let me be careful with exact text matching. I'll use edit_file with the block from "    // The primary attempt, on the session's configured model." through the closing of the DiagnosticSubAgentTool Box::new and the function's `}`.
+
+Actually I need to keep the fallback/diagnostic comments somewhere — they should move into `dispatch_tool_with_fallback`. Those comments are load-bearing (they explain why diagnostics are outermost). I'll move them into the new helper.
+
+Edit 1 old_text (1566-1622):
+```
+    // The primary attempt, on the session's configured model.
+    let primary = sub_agent_tool_for(
+        config,
+        &config.provider,
+        &config.model,
+        &config.api_key,
+        child_tools.clone(),
+        shared_state,
+    );
+
+    // One fallback attempt, and only when a fallback model is actually
+    // configured and differs. With none configured — every user who has not
+    // set one, and the whole regression surface — the un-decorated tool is
+    // returned byte-identically.
+    let fallback = sub_agent_fallback_target(
+        &config.provider,
+        &config.model,
+        config.fallback_provider.as_deref(),
+        config.fallback_model.as_deref(),
+    )
+    .and_then(|(fb_provider, fb_model)| {
+        sub_agent_fallback_key(&config.provider, &config.api_key, &fb_provider)
+            .map(|fb_key| (fb_provider, fb_model, fb_key))
+    });
+
+    let inner: Box<dyn AgentTool> = match fallback.as_ref() {
+        None => Box::new(primary),
+        Some((fb_provider, fb_model, fb_key)) => {
+            let secondary = sub_agent_tool_for(
+                config,
+                fb_provider,
+                fb_model,
+                fb_key,
+                child_tools,
+                shared_state,
+            );
+            Box::new(FallbackSubAgentTool::new(
+                Box::new(primary),
+                Box::new(secondary),
+                &config.model,
+                fb_model,
+            ))
+        }
+    };
+
+    // Failure diagnostics are the OUTERMOST wrapper and are applied at this
+    // single site — unconditionally, whether or not a fallback exists. Putting
+    // them inside `FallbackSubAgentTool` would reach only users who configured
+    // a fallback model and leave everyone else with yoagent's opaque summary
+    // string: the "two doors, one policy, one deaf" shape this repo has already
+    // shipped six times. Outermost also means it annotates the error that
+    // actually *survives* the fallback attempt rather than an intermediate one.
+    Box::new(DiagnosticSubAgentTool::new(
+        inner,
+        sub_agent_model_label(&config.model, fallback.as_ref().map(|(_, m, _)| m.as_str())),
+    ))
+}
+```
+new_text:
+```
+    dispatch_tool_with_fallback(config, &SUB_AGENT_FLAVOR, child_tools, shared_state)
+}
+
+/// The name the read-only exploration dispatcher is registered under (#881
+/// slice 2). A separate name — not a parameter on `sub_agent` — because
+/// yoagent 0.18.1's `SubAgentTool::parameters_schema()` exposes exactly one
+/// key, `task`, and `execute()` reads only `params["task"]`
+/// (`sub_agent.rs:338-365`), so there is no per-call seam a decorator could
+/// inspect. Confirmed at the pinned version rather than assumed from the
+/// issue's 0.13.0 reading: **design option 3 is rejected on the pinned crate
+/// too**, and the second tool (option 2) is the shape.
+pub(crate) const EXPLORE_AGENT_TOOL_NAME: &str = "explore_agent";
+...
+```
+
+Then the flavor structs, `dispatch_tool_with_fallback`, and `build_explore_agent_tool`.
+
+Let me write the whole new block.
+
+```rust
+/// Build the read-only exploration dispatcher (#881 slice 2).
+///
+/// This is the *composition* the previous slice shipped the halves for:
+/// `READ_ONLY_CHILD_REMOVED_TOOLS` / `read_only_child_disallowed` (the pool)
+/// and `sub_agent` (the dispatcher). Until this landed the only thing that
+/// joined them was the process-global `--read-only-subagents` flag, so the
+/// answer to "explore this, and you may not write" was *every sub-agent in the
+/// session is read-only*, never *this dispatch is*. Here the narrowing is a
+/// property of the TOOL, so a caller picks it per dispatch and the flag is
+/// untouched.
+///
+/// Reuses, rather than re-spells, the three existing pieces: the fold
+/// (`read_only_child_disallowed`), the child tool set
+/// (`sub_agent_child_tools`) and the whole dispatch assembly
+/// (`dispatch_tool_with_fallback`, which also gives this tool the same
+/// fallback retry and the same diagnostic wrapper as `sub_agent`).
+///
+/// **Deliberately a leaf: the dispatched child gets no nested `sub_agent`.**
+/// Giving it one would mean calling `build_sub_agent_tool_at_depth` from here,
+/// whose nested tool builds ITS children from `config.disallowed_tools` — so
+/// at depth 2 the write-class tools would come back, and "read-only by
+/// construction" would be true of one hop only. A copy of the depth-walker
+/// that threaded the read-only fold through every level was the alternative,
+/// and the announced limit is cheaper and more honest than a silent one. The
+/// description names this limit, and so does the write-up.
+pub(crate) fn build_explore_agent_tool(
+    config: &AgentConfig,
+    shared_state: &SharedState,
+) -> Box<dyn AgentTool> {
+    // The ONE fold — never a second literal list of write-class names.
+    let child_disallowed = read_only_child_disallowed(&config.disallowed_tools);
+    let child_tools =
+        sub_agent_child_tools(&config.dir_restrictions, &child_disallowed);
+    dispatch_tool_with_fallback(config, &EXPLORE_AGENT_FLAVOR, child_tools, shared_state)
+}
+```
+
+Wait: `build_explore_agent_tool`'s body must contain `read_only_child_disallowed(&config.disallowed_tools)` for my source guard. Yes.
+
+Hmm, one thing: `sub_agent_child_tools(&config.dir_restrictions, &child_disallowed)` — the source guard in my test asserts the body contains the fold; fine.
+
+Now the flavors:
+
+```rust
+/// What distinguishes yoyo's two dispatch tools from each other: the name the
+/// parent model sees and the sentence it is given about the tool. Everything
+/// else — provider wiring, child tool set assembly, the one fallback retry, the
+/// diagnostic wrapper — is the *same code*, because two spellings of one policy
+/// is the "two doors, one policy, one deaf" shape this repo has already shipped
+/// six times.
+struct DispatchFlavor {
+    name: &'static str,
+    description: &'static str,
+}
+
+const SUB_AGENT_FLAVOR: DispatchFlavor = DispatchFlavor {
+    name: "sub_agent",
+    description: "Delegate a subtask to a fresh sub-agent with its own context window. \
+             Use for complex, self-contained subtasks like: researching a codebase, \
+             running a series of tests, or implementing a well-scoped change. \
+             The sub-agent has bash, file read/write/edit, list, and search tools. \
+             The sub-agent also has its own sub_agent tool and may delegate further, \
+             bounded to a hard nesting cap (recursion is available and finite). \
+             It starts with a clean context and returns a summary of what it did.",
+};
+
+/// The read-only dispatcher's parent-facing description.
+///
+/// It states the narrowing AND what the narrowing means in tool names, because
+/// the Day-181 third-door defect is exactly this: a model that cannot see a
+/// capability does not conclude *that tool is missing*, it concludes **the
+/// capability does not exist** and works around it. So the sentence says what
+/// is removed, that it was removed *on purpose*, and what the child still has —
+/// including the two limits, stated rather than left to be discovered: `bash`
+/// survives (this is a narrowing, not a sandbox) and the child is a leaf.
+const EXPLORE_AGENT_FLAVOR: DispatchFlavor = DispatchFlavor {
+    name: EXPLORE_AGENT_TOOL_NAME,
+    description: "Delegate a READ-ONLY exploration subtask to a fresh sub-agent ...",
+};
+```
+
+Hmm: `name: EXPLORE_AGENT_TOOL_NAME` — const-to-const assignment in a const struct field is fine (both &'static str).
+
+Now `dispatch_tool_with_fallback`:
+
+```rust
+/// Assemble one dispatch tool: the primary attempt, its single fallback retry
+/// when a distinct fallback model is configured, and the diagnostic wrapper
+/// outermost.
+///
+/// One statement for both `sub_agent` and `explore_agent`. The comments about
+/// the fallback and the wrapper placement live here rather than at either call
+/// site precisely because the placement argument is identical for both: an
+/// unwrapped error reaching only users who configured a fallback is the
+/// "two doors" shape, and diagnostics inside `FallbackSubAgentTool` would
+/// annotate the intermediate error rather than the one that *survives*.
+fn dispatch_tool_with_fallback(
+    config: &AgentConfig,
+    flavor: &DispatchFlavor,
+    child_tools: Vec<Arc<dyn AgentTool>>,
+    shared_state: &SharedState,
+) -> Box<dyn AgentTool> {
+    let primary = sub_agent_tool_for(
+        config,
+        &config.provider,
+        &config.model,
+        &config.api_key,
+        child_tools.clone(),
+        shared_state,
+        flavor,
+    );
+
+    // One fallback attempt, and only when a fallback model is actually
+    // configured and differs. With none configured — every user who has not
+    // set one, and the whole regression surface — the un-decorated tool is
+    // returned byte-identically.
+    let fallback = sub_agent_fallback_target(
+        &config.provider,
+        &config.model,
+        config.fallback_provider.as_deref(),
+        config.fallback_model.as_deref(),
+    )
+    .and_then(|(fb_provider, fb_model)| {
+        sub_agent_fallback_key(&config.provider, &config.api_key, &fb_provider)
+            .map(|fb_key| (fb_provider, fb_model, fb_key))
+    });
+
+    let inner: Box<dyn AgentTool> = match fallback.as_ref() {
+        None => Box::new(primary),
+        Some((fb_provider, fb_model, fb_key)) => {
+            let secondary = sub_agent_tool_for(
+                config,
+                fb_provider,
+                fb_model,
+                fb_key,
+                child_tools,
+                shared_state,
+                flavor,
+            );
+            Box::new(FallbackSubAgentTool::new(
+                Box::new(primary),
+                Box::new(secondary),
+                &config.model,
+                fb_model,
+            ))
+        }
+    };
+
+    // Failure diagnostics are the OUTERMOST wrapper ... (moved comment)
+    Box::new(DiagnosticSubAgentTool::new(
+        inner,
+        sub_agent_model_label(&config.model, fallback.as_ref().map(|(_, m, _)| m.as_str())),
+    ))
+}
+```
+
+and `sub_agent_tool_for` gains `flavor: &DispatchFlavor` and uses `flavor.name`, `flavor.description`.
+
+Order of items: `build_sub_agent_tool_at_depth` (which calls dispatch_tool_with_fallback defined later in the file) — Rust allows any order. Fine.
+
+Where to place `DispatchFlavor`, `SUB_AGENT_FLAVOR`, `EXPLORE_AGENT_FLAVOR`, `dispatch_tool_with_fallback`? Natural: right before `sub_agent_tool_for` (line ~1663 after `sub_agent_system_prompt`). But `build_explore_agent_tool` at ~1623 references EXPLORE_AGENT_FLAVOR defined later — fine.
+
+Hmm, wait. Is `DispatchFlavor` field `description` used only via `flavor.description`? Yes. And `name`. Both read → no dead_code.
+
+Clippy might warn `struct field is never read` if only used in one place? No, it's read.
+
+Now let me do the edits.
+
+Also: `sub_agent_tool_for` is used elsewhere? Only the two sites in dispatch helper now. Good.
+
+Let me write the edits carefully with edit_file.
+
+Then agent_builder.rs edits:
+- import: `use crate::tools::{build_explore_agent_tool, build_hook_registry, build_sub_agent_tool, build_tools_with_hooks};`
+- push site.
+- BUILTIN_TOOL_NAMES.
+- near-miss test list.
+
+Push site: I'll add after the shared_state push:
+```rust
+            // #881 slice 2: the read-only dispatcher is a *capability*, not a
+            // convenience, so it is not behind an opt-in flag (the
+            // discoverability debt of #745/#767/#769). It is removable the
+            // ordinary way, by name, through `--disallowed-tools
+            // explore_agent` — possible because this push, like `sub_agent`'s,
+            // sits ABOVE the single `retain` below rather than after it. That
+            // is the honest half of the claim and it is pinned by
+            // `the_default_disallow_seam_also_filters_explore_agent`.
+            let explore_tool = build_explore_agent_tool(self, &shared_state);
+            tools.push(maybe_hook(
+                with_session_cap(explore_tool, SESSION_TOOL_CALL_CAP),
+                &hooks,
+            ));
+```
+
+Careful: `build_sub_agent_tool(self)` consumed nothing; `self` is a `&Self`... Let me check the signature: `let (sub_agent_tool, shared_state) = build_sub_agent_tool(self);` then later `Box::new(SharedStateTool::new(shared_state))` — so shared_state is moved. I must call `build_explore_agent_tool(self, &shared_state)` BEFORE `shared_state` is moved into SharedStateTool. Yes, place it before/after the shared_state push but before the move happens... The code is:
+
+```rust
+tools.push(maybe_hook(with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP), &hooks));
+tools.push(maybe_hook(Box::new(SharedStateTool::new(shared_state)), &hooks));
+```
+So I'll insert between them? Then `shared_state` is borrowed before the move — fine since the explore push comes first. Let me insert right after the sub_agent push and before the shared_state push. Good.
+
+Also should explore_agent be paired with shared_state like sub_agent via effective_disallowed_tools? The pairing rule: if `sub_agent` is disallowed, also disallow `shared_state` (a store with nobody on the other end). Now explore_agent ALSO uses the store. So if a user disallows BOTH sub_agent and explore_agent, shared_state should go too. Hmm — the pairing predicate currently keys on `sub_agent` only. Should I extend it to "if sub_agent AND explore_agent are both disallowed → also shared_state"? 
+
+Think: the rationale for the pairing is "a store with nobody on the other end is not worth a tool slot". With explore_agent present, the store still has a consumer. If a user disallows only `sub_agent`, the current rule removes `shared_state` too — but explore_agent still uses the store! So the existing pairing rule would now remove the store while explore_agent remains → explore_agent's dispatch would still work (the SubAgentTool has its own handle), but the *parent* loses its handle, breaking the documented RLM step 1 (parent stores the artifact, then dispatches). That's a real regression introduced by adding explore_agent: today `--disallowed-tools sub_agent` → parent loses shared_state, consistent because no dispatch tool remains. With explore_agent, "no dispatch tool remains" is no longer implied by "sub_agent is disallowed".
+
+So I should update `effective_disallowed_tools`: push `shared_state` only when ALL dispatch tools are disallowed. Concretely:
+
+```rust
+pub(crate) fn effective_disallowed_tools(disallowed: &[String]) -> Vec<String> {
+    let mut effective = disallowed.to_vec();
+    if tool_name_disallowed("sub_agent", &effective)
+        && tool_name_disallowed(EXPLORE_AGENT_TOOL_NAME, &effective)
+        && !tool_name_disallowed("shared_state", &effective)
+    {
+        effective.push("shared_state".to_string());
+    }
+    effective
+}
+```
+Hmm, but that changes existing behavior: today `--disallowed-tools sub_agent` → [sub_agent, shared_state]; after: [sub_agent] (since explore_agent survives). Is that a behavior change for product users? Yes — but it's the *coherent* one: the store now has a remaining consumer. And the existing test `effective_disallowed_tools_pairs_shared_state_with_sub_agent` pins the old table, including the row `(&["sub_agent"], &["sub_agent","shared_state"], ...)`. If I change the rule, that row must change — and the task says "Never delete existing tests", but updating an existing table row to reflect a deliberate rule change is different from deleting. Hmm, risky: the repo's checker (`check_assertion_weakening.py`) may flag a relaxed assertion. Changing a table row value is a legitimate characterization change, but the CI assertion-weakening checker... it only runs on evolve commits (scripts/check_assertion_weakening.py in CI?). Let me check whether CI runs it. It's a gate mentioned in CLAUDE.md as "CI runs all four checks (build, test, clippy, fmt)". The weakening checker is run by evolve script for planning maybe. Not in CI, I think. But pre-push hook only lints heredocs.
+
+Alternative: don't touch `effective_disallowed_tools` and instead handle it at the push: if the user disallowed `sub_agent` but not `explore_agent`, the parent keeps shared_state (because the pairing didn't fire)... no wait, the pairing DOES fire on `sub_agent` alone. So the parent loses shared_state while keeping explore_agent. That's the inconsistency.
+
+How much does it matter? The RLM documented pattern requires the parent to have `shared_state` to store artifacts. With `--disallowed-tools sub_agent` and explore_agent present, the user's list removes sub_agent (their explicit ask) and *also* removes shared_state (the pairing) — which now removes the parent's handle for explore_agent. Before my change, that was correct: no dispatcher left. After, it's over-broad.
+
+Options:
+(A) Update the pairing predicate to require all dispatchers disallowed (needs test row change).
+(B) Leave pairing as-is and disclose it (the pairing becomes slightly over-broad).
+(C) Make explore_agent's tool also pair: i.e. add "explore_agent" to the disallow list when... no.
+
+Hmm. The task says Step 2.1: "Push the new tool in build_agent at the site that already pushes the sub-agent tool (:1181), which sits after the disallowed_tools retain — so, exactly like sub_agent, it cannot be filtered there." — Note: this text says the site is after the retain?! But at HEAD, the push is BEFORE the retain (line 1205 push, retain at 1217). So the task's parenthetical is describing an older revision (the #887 step-1 fix moved it above). Actually the task says at :1181 which is `let (sub_agent_tool, shared_state) = build_sub_agent_tool(self);` — pre-retain. The task's claim "sits after the disallowed_tools retain" is stale; the honest thing is to note that in the write-up (the push is above the retain, so option (a) applies and it IS filterable — the better outcome).
+
+I'll note that discrepancy in ARCHITECTURE.md: the task file asserted post-retain; at HEAD the push is pre-retain (#887 step 1 moved it), so the tool is genuinely filterable by name and no disclosure paragraph is needed beyond saying so.
+
+For (A) vs (B): I lean to (A) — it's the coherent rule and cheap, with the test row updated to keep the property tested in both directions. But it widens the diff and touches a table that another test may depend on. Risk of breaking existing tests: `effective_disallowed_tools_pairs_shared_state_with_sub_agent` is the only consumer of that rule (plus agent_builder's retain). The `--lite` path passes compute_lite_disallowed_tools which may include "sub_agent"? Let me check cli.rs:597 compute_lite_disallowed_tools — what does it produce? If lite disallows sub_agent but not explore_agent, then after (A) lite keeps shared_state but the store has a consumer (explore_agent). Also lite would keep explore_agent — is that desired? Lite mode = minimal tool set for cheap models. If lite disallows sub_agent, should it also disallow explore_agent? Arguably yes — lite is about tool count. Hmm! That's a real consideration: `--lite` disallows sub_agent today to keep the tool count small; explore_agent would then be a NEW tool in lite mode, making lite's own stderr count line wrong ("Disabled tools: ..." and the count). CLAUDE.md mentions "made `--lite` ship 6 tools while its own stderr line claimed 4" — so lite's tool count matters to tests.
+
+Let me check compute_lite_disallowed_tools and whether it lists sub_agent explicitly, and whether there's a test pinning the lite tool count.
+
+This is important. Let me look.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '580,640p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "compute_lite_disallowe… ✓ (4ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`compute_lite_disallowed_tools` = all BUILTIN_TOOL_NAMES not in LITE_TOOLS. So adding "explore_agent" to BUILTIN_TOOL_NAMES automatically adds it to lite's disallow list (unless LITE_TOOLS includes it). That's consistent: lite disallows it because it's not in LITE_TOOLS. Let me check LITE_TOOLS content and its tests.
+
+Then `effective_disallowed_tools(lite list)` contains "sub_agent" → would also push "shared_state" (already in the lite list probably). Fine either way.
+
+So in lite mode: disallowed = {..., sub_agent, explore_agent, shared_state?}. Whether shared_state is in LITE_TOOLS matters.
+
+Decision on the pairing rule: I'll go with (A) — update `effective_disallowed_tools` to require BOTH dispatch tools disallowed before dropping `shared_state`. Rationale: the pairing's whole justification is "a store with nobody on the other end is not worth a tool slot". `explore_agent` is now a second consumer of the same store, so the predicate must name both. This is exactly the "pairing is encoded once" spirit. And for lite: LITE_TOOLS presumably doesn't contain sub_agent/explore_agent → both disallowed → shared_state also dropped (if not already). Same as before.
+
+But: does this break the useful case `--disallowed-tools sub_agent` for someone who wants no delegation at all? They'd need to name explore_agent too (or use both). Slight extra friction, but the per-capability naming is the point of this slice (`disallowed_tools` is exact-name). And it's the honest semantics.
+
+Hmm, hold on. Let me reconsider. There is a simpler view: `effective_disallowed_tools` implements "#715: the store goes with the tool it exists to serve". Both dispatch tools serve/use it. The pair-ness is symmetric now. Requiring all consumers to be gone is right.
+
+Let me check LITE_TOOLS to be sure.
+
+Also check the existing test table to update the `(&["sub_agent"], &["sub_agent","shared_state"], ...)` row → becomes `(&["sub_agent"], &["sub_agent"], "...")`? That would be a *weakened* assertion (the row's expected value shrinks)? It's a characterization change, not a weakening per se... Actually the checker classifies "assertion count dropped"/"needle shrank" as WEAKENED. `&["sub_agent","shared_state"]` → `&["sub_agent"]` is a needle shrink → could be flagged WEAKENED by check_assertion_weakening.py. Hmm. That's cosmetic-flavored risk in a repo that has a whole instrument for it. And the change isn't strictly necessary for the task.
+
+Alternative (B'): keep `effective_disallowed_tools` unchanged, and instead make the *explore* push respect the pairing consistently by... hmm, there's no way: the pairing fires on sub_agent alone.
+
+Wait — actually, think about whether it's even a defect. If a user disallows `sub_agent`, the intent is "no delegation". Under (B), they also lose shared_state (unchanged from today) but gain explore_agent — a delegation tool! That is arguably wrong in the *other* direction: their explicit "no delegation" gets a new delegation tool they didn't ask for. Hmm, but they can disallow it by name; the tool set is not a security boundary in that sense (it's the parent model's menu).
+
+Given (i) the task explicitly says do not silently claim confinement, (ii) the task's step 2.1 offers option (a) route through effective_disallowed_tools / retain → I choose (a) for filterability by name, which is satisfied by the pre-retain push.
+
+I'll leave the #715 pairing rule alone but ADD the disclosure + a test pinning current behavior, and record in ARCHITECTURE.md the residue: "with `sub_agent` disallowed, `shared_state` is still dropped by the #715 pairing even though `explore_agent` survives — the pairing predicate names one consumer while the store now has two. Not changed here (it is a one-line change to a table that documents existing user-visible behavior); recorded as residue." Hmm, is that the right call? It IS a small honest fix and arguably part of "compose properly". But changing user-visible behavior of `--disallowed-tools sub_agent` in a task whose stated regression surface is "every user who never calls the new tool" would violate "the default is unchanged"... no, only for users who disallow sub_agent.
+
+Hmm, let me think about which is more defensible for the *user*. A user who writes `--disallowed-tools sub_agent` says "no delegation". Then explore_agent appears as a delegation tool. Then #715 drops shared_state. So they have no way to store artifacts but a dispatcher exists. Mildly incoherent.
+
+Actually — maybe the cleanest: treat `explore_agent` as a *second name for the same capability family* in the pairing, i.e. the pairing condition becomes `sub_agent OR explore_agent disallowed` → drop shared_state only if BOTH are gone... no, that's (A).
+
+You know what? Let me look at whether there's an even better option: extend the pairing to "if any dispatch tool is disallowed, also disallow... " no.
+
+Let me quantify (A)'s blast radius: the only callers are the retain (agent_builder), cli.rs:2754 (--no-tools?) and 2801 (--lite). Let me read those two sites. If lite's LITE_TOOLS excludes both dispatch tools, then for lite the outcome under (A) is unchanged (both disallowed → shared_state dropped iff not already). For --no-tools at 2754, presumably it disallows everything including both. So (A) only changes the explicit `--disallowed-tools sub_agent` case. That's a narrow, deliberate, better-behaved change... but it does flip an existing test row.
+
+Decision: I'll go with (A), with the table row *strengthened* rather than shrunk in the way I write it: replace the row with two rows — `(&["sub_agent"], &["sub_agent"], "the store still has a consumer: explore_agent")` and `(&["sub_agent", "explore_agent"], &["sub_agent","explore_agent","shared_state"], "#715 pairing: both dispatch tools gone, so the store follows")`. The second row restores the full needle that was "lost", so the assertion count and needle set for shared_state is retained in the new row. That reads as a deliberate characterization change with the property still pinned, and the total assertion strength is preserved. I'll also update the doc comment on `effective_disallowed_tools` to explain the predicate change, and update ARCHITECTURE.md.
+
+Hmm, but hold on: "Never delete existing tests" — I'd be modifying one row of a table test, not deleting a test. And CLAUDE.md's rule is about deleting tests. I think it's fine and honest, especially if I keep the shared_state needle somewhere. Let me check the full existing table to see all rows.
+
+Let me read the test.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.9s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3660,3760p' src/agent_bu… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "const LITE_TOOLS" -A 1… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "LITE_TOOLS" src/ | hea… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+LITE_TOOLS = 4 tools; `compute_lite_disallowed_tools` filters BUILTIN_TOOL_NAMES → adding "explore_agent" to BUILTIN_TOOL_NAMES automatically disallows it in lite mode. So lite's tool set is unchanged (still 4). And lite's disallow list now includes explore_agent, so under rule (A) the pairing still fires if sub_agent is also there (it is: sub_agent not in LITE_TOOLS). So lite behavior unchanged under (A). 
+
+Also `--lite` stderr count line: claims 4, and now with explore_agent pushed pre-retain and then filtered out by the retain, lite still ships `bash, read_file, write_file, edit_file` = 4. Wait — but the retain filters `explore_agent`? The retain uses `effective_disallowed_tools(self.disallowed_tools)`; for lite, `disallowed_tools = compute_lite_disallowed_tools()` which includes explore_agent → yes, filtered. 
+
+And for --no-tools (cli.rs:2745): `for name in BUILTIN_TOOL_NAMES { ... }` — let me check that site: with --no-tools, disallow list = all builtin names, so explore_agent is disallowed → filtered. Good, automatic.
+
+Now, one more consideration: is `explore_agent` in `BUILTIN_TOOL_NAMES` → included in the near-miss twin test's `not registered` list? Yes it must be added there.
+
+Now the `--no-tools` path at cli.rs:2745 uses BUILTIN_TOOL_NAMES directly; fine (no edit to cli.rs needed — that's the point of the const being the single authority).
+
+Now, decision on (A): with lite and --no-tools unchanged, the only behavior change is explicit `--disallowed-tools sub_agent` (and `--restricted`? RESTRICTED_REMOVED_TOOLS = ["bash"] only, so no).
+
+Hmm, wait. There's another important one: `--lite` sets disallowed_tools = lite list which includes "sub_agent" and now "explore_agent" → both → shared_state dropped. Same as before. OK.
+
+So (A) changes exactly one user-visible case: a user explicitly passing `--disallowed-tools sub_agent` keeps `shared_state`. Is that better? Yes: the store has a remaining consumer (explore_agent). But it also means the user who said "no delegation" keeps a delegation tool and keeps the store — arguably they wanted neither.
+
+Hmm, hmm. Let me think about which reads better to a user. `--disallowed-tools sub_agent` — after this slice, if I do nothing, they get: no sub_agent, no shared_state, but explore_agent (a read-only delegation tool). If I do (A): no sub_agent, explore_agent, shared_state.
+
+The pairing's rationale ("a store with nobody on the other end is not worth a tool slot") is now satisfied only when both dispatchers are gone. So (A) is the correct predicate under its own stated rationale. Doing nothing leaves a predicate whose comment ("the store goes with the tool it exists to serve") is now false, since the store is served by two tools.
+
+I'll do (A) and be explicit in the doc comment + ARCHITECTURE.md that this is a deliberate, user-visible change in exactly one configuration, and why.
+
+Wait, actually — careful. Is it *desirable* for `--disallowed-tools sub_agent` to keep shared_state? The user's list is about tools; shared_state is a bookkeeping tool. Under (A) they keep it because explore_agent serves it. Yes — that's the coherent read.
+
+OK. Now let me also double check the `--restricted` + sub_agent disclosure comment in cli.rs:1733-1751 mentioned in the task, just to reference it correctly in the write-up. Let me read it.
+
+Actually, I have limited budget (already used a lot). Let me start editing now. I'll read that cli comment quickly since I may cite it.
+
+Let me minimize further reads and write code.
+
+Edits plan (7 edits):
+tools.rs:
+1. tail of build_sub_agent_tool_at_depth → dispatch call.
+2. insert explore const + build_explore_agent_tool after that function.
+3. change sub_agent_tool_for signature + body; add DispatchFlavor, flavors, dispatch_tool_with_fallback before it.
+4. tests: add new tests in `mod tests`.
+
+agent_builder.rs:
+5. import.
+6. effective_disallowed_tools predicate.
+7. push site.
+8. BUILTIN_TOOL_NAMES.
+9. near-miss test list + update pairing table rows.
+
+Then ARCHITECTURE.md, then run fmt/clippy/build/test.
+
+Let me write edit 1.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have what I need. Starting the implementation in src/tools.rs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (57 → 67 lines)
+  -     // The primary attempt, on the session's configured model.
+  -     let primary = sub_agent_tool_for(
+  -         config,
+  -         &config.provider,
+  -         &config.model,
+  -         &config.api_key,
+  -         child_tools.clone(),
+  -         shared_state,
+  -     );
+  - 
+  -     // One fallback attempt, and only when a fallback model is actually
+  -     // configured and differs. With none configured — every user who has not
+  -     // set one, and the whole regression surface — the un-decorated tool is
+  -     // returned byte-identically.
+  -     let fallback = sub_agent_fallback_target(
+  -         &config.provider,
+  -         &config.model,
+  -         config.fallback_provider.as_deref(),
+  -         config.fallback_model.as_deref(),
+  -     )
+  ... (101 more lines)
+ ✓ (14.6s)
+  -     // The primary attempt, on the session's configured model.
+  -     let primary = sub_agent_tool_for(
+  -         config,
+  -         &config.provider,
+  -         &config.model,
+  -         &config.api_key,
+  -         child_tools.clone(),
+  -         shared_state,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+As expected — the helper/flavors aren't written yet. Let me add them now (edit 3), replacing `sub_agent_tool_for`.
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — now the flavor/dispatch helper replacing sub_agent_tool_for:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (8 → 136 lines)
+  + /// What distinguishes yoyo's two dispatch tools from each other: the name the
+  + /// parent model sees, and the sentence it is given about the tool.
+  + ///
+  + /// Everything else — provider wiring, the `SharedState` handle, the one
+  + /// fallback retry, the diagnostic wrapper — is assembled by the *same* code in
+  + /// `dispatch_tool_with_fallback`. Two spellings of one policy is the "two
+  + /// doors, one policy, one deaf" shape this repo has already shipped six times,
+  + /// so the second tool (#881 slice 2) reuses the first's assembly rather than
+  + /// copying it.
+  + struct DispatchFlavor {
+  +     name: &'static str,
+  +     description: &'static str,
+  + }
+  + 
+  + /// The ordinary dispatcher: whatever the parent was allowed to run, one hop
+  + /// away. Description unchanged from before the slice — the second flavor is the
+  + /// only new text, so the parent's existing view of `sub_agent` is byte-identical.
+  + const SUB_AGENT_FLAVOR: DispatchFlavor = DispatchFlavor {
+  +     name: "sub_agent",
+  +     description: "Delegate a subtask to a fresh sub-agent with its own context window. \
+  ... (116 more lines)
+ ✓ (17.0s)
+  + /// What distinguishes yoyo's two dispatch tools from each other: the name the
+  + /// parent model sees, and the sentence it is given about the tool.
+  + ///
+  + /// Everything else — provider wiring, the `SharedState` handle, the one
+  + /// fallback retry, the diagnostic wrapper — is assembled by the *same* code in
+  + /// `dispatch_tool_with_fallback`. Two spellings of one policy is the "two
+  + /// doors, one policy, one deaf" shape this repo has already shipped six times,
+  + /// so the second tool (#881 slice 2) reuses the first's assembly rather than
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me now use `flavor` inside `sub_agent_tool_for` — replace the hardcoded name/description with `flavor.name` and `flavor.description`.
+────────────────────────────────────────────────────────────────────────────────
+
+Now wire the flavor into sub_agent_tool_for's body:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1806,1850p' src/tools.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (13 → 5 lines)
+        let model_config =
+            crate::agent_builder::create_model_config(provider_name, model, config.base_url.as_deref());
+  -     SubAgentTool::from_provider("sub_agent", provider, model_config)
+  -         .with_description(
+  -             "Delegate a subtask to a fresh sub-agent with its own context window. \
+  -              Use for complex, self-contained subtasks like: researching a codebase, \
+  -              running a series of tests, or implementing a well-scoped change. \
+  -              The sub-agent has bash, file read/write/edit, list, and search tools. \
+  -              The sub-agent also has its own sub_agent tool and may delegate further, \
+  -              bounded to a hard nesting cap (recursion is available and finite). \
+  -              It starts with a clean context and returns a summary of what it did.",
+  -         )
+  +     SubAgentTool::from_provider(flavor.name, provider, model_config)
+  +         .with_description(flavor.description)
+            .with_system_prompt(sub_agent_system_prompt(provider_name, model))
+ ✓ (16.8s)
+        let model_config =
+            crate::agent_builder::create_model_config(provider_name, model, config.base_url.as_deref());
+  -     SubAgentTool::from_provider("sub_agent", provider, model_config)
+  -         .with_description(
+  -             "Delegate a subtask to a fresh sub-agent with its own context window. \
+  -              Use for complex, self-contained subtasks like: researching a codebase, \
+  -              running a series of tests, or implementing a well-scoped change. \
+  -              The sub-agent has bash, file read/write/edit, list, and search tools. \
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now `src/tools.rs` compiles apart from the dead-code (needs consumer in agent_builder). Let me now register in agent_builder.rs.
+
+Note: `sub_agent_tool_for` still takes provider_name/model for the system prompt. Fine.
+
+Now agent_builder.rs changes:
+1. imports: `build_explore_agent_tool`
+2. push site
+3. BUILTIN_TOOL_NAMES
+4. near-miss test update
+
+Let me view the push site region and edit.
+────────────────────────────────────────────────────────────────────────────────
+
+Now register it in src/agent_builder.rs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (1 → 3 lines)
+  - use crate::tools::{build_hook_registry, build_sub_agent_tool, build_tools_with_hooks};
+  + use crate::tools::{
+  +     build_explore_agent_tool, build_hook_registry, build_sub_agent_tool, build_tools_with_hooks,
+  + };
+ ✓ (16.6s)
+  - use crate::tools::{build_hook_registry, build_sub_agent_tool, build_tools_with_hooks};
+  + use crate::tools::{
+  +     build_explore_agent_tool, build_hook_registry, build_sub_agent_tool, build_tools_with_hooks,
+  + };
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (8 → 26 lines)
+                    &hooks,
+                ));
+                tools.push(maybe_hook(
+  -                 Box::new(SharedStateTool::new(shared_state)),
+  +                 Box::new(SharedStateTool::new(shared_state.clone())),
+  +                 &hooks,
+  +             ));
+  + 
+  +             // #881 slice 2: the READ-ONLY dispatcher, beside its unrestricted
+  +             // twin and sharing the SAME store — a caller picks per dispatch
+  +             // instead of flipping the process-global `--read-only-subagents`.
+  +             //
+  +             // It is pushed here, ABOVE the disallow retain below, for exactly
+  +             // the reason the paragraph above gives about `sub_agent`: at this
+  +             // site `--disallowed-tools explore_agent` genuinely removes it, so
+  +             // the removable-by-name claim in `build_explore_agent_tool`'s doc
+  +             // comment is built rather than asserted. The same `with_session_cap`
+  +             // applies, and it is a SEPARATE cap slot from `sub_agent`'s because
+  +             // `SessionCapTool` counts per work, not per name — a run that only
+  +             // explores cannot exhaust the ordinary dispatcher's budget or the
+  ... (5 more lines)
+ ✓ (1m 56s)
+                    &hooks,
+                ));
+                tools.push(maybe_hook(
+  -                 Box::new(SharedStateTool::new(shared_state)),
+  +                 Box::new(SharedStateTool::new(shared_state.clone())),
+  +                 &hooks,
+  +             ));
+  + 
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's check whether `SessionCapTool` counts per instance or globally. Wait — I claimed in the comment "it is a SEPARATE cap slot from `sub_agent`'s because `SessionCapTool` counts per work, not per name". I need to verify that claim! Let me check `with_session_cap` / `SessionCapTool` in tool_wrappers.rs.
+
+If `SessionCapTool` uses a global atomic counter, then the two tools would share the cap and my comment would be a fabricated claim. Let me check before it's committed.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SessionCapTool" -A 45 s… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+"The counter is per-wrapper-INSTANCE" — so each `with_session_cap(...)` call allocates a fresh `Arc<AtomicUsize>` (let me confirm by reading `with_session_cap`). Two separate calls → two counters → separate budgets. My comment is accurate; let me verify `with_session_cap`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate) fn with_sess… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: `with_session_cap` allocates `Arc::new(AtomicUsize::new(0))` per call, so the two push sites have separate budgets. My comment is accurate.
+
+Now:
+1. Add `"explore_agent"` to BUILTIN_TOOL_NAMES.
+2. Update the near-miss test (line ~4120) to include explore_agent.
+3. Also update the doc comment on BUILTIN_TOOL_NAMES.
+
+Let me do these.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (14 → 15 lines)
+        "todo",
+        "web_search",
+        "sub_agent",
+  +     "explore_agent",
+        "shared_state",
+    ];
+ ✓ (1m 55s)
+        "todo",
+        "web_search",
+        "sub_agent",
+  +     "explore_agent",
+        "shared_state",
+    ];
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '30,42p' src/agent_builde… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:28..42 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (3 → 4 lines)
+    /// This list must stay in sync with `tools::build_tools` and any tool added
+  - /// via yoagent's `with_sub_agent` (currently `sub_agent`, see
+  - /// `build_sub_agent_tool`).
+  + /// via yoagent's `with_sub_agent` (currently `sub_agent` and its read-only
+  + /// sibling `explore_agent` — see `build_sub_agent_tool` /
+  + /// `build_explore_agent_tool`).
+ ✓ (1m 55s)
+    /// This list must stay in sync with `tools::build_tools` and any tool added
+  - /// via yoagent's `with_sub_agent` (currently `sub_agent`, see
+  - /// `build_sub_agent_tool`).
+  + /// via yoagent's `with_sub_agent` (currently `sub_agent` and its read-only
+  + /// sibling `explore_agent` — see `build_sub_agent_tool` /
+  + /// `build_explore_agent_tool`).
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now update the near-miss test to include explore_agent.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (1 → 1 lines)
+  -         for name in ["ask_user", "sub_agent", "shared_state"] {
+  +         for name in ["ask_user", "sub_agent", "explore_agent", "shared_state"] {
+ ✓ (1m 56s)
+  -         for name in ["ask_user", "sub_agent", "shared_state"] {
+  +         for name in ["ask_user", "sub_agent", "explore_agent", "shared_state"] {
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(err… ✓ (1m 12s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The test `the_rlm_push_sites_go_through_the_one_shared_registry` fails because `build_hook_registry` count is now 2? No — I didn't add a registry. Let me check what failed. Possibly `tools.push(maybe_hook(\n                with_session_cap(` count is now 2 (sub_agent + explore_agent). Yes! The assertion `assert_eq!(src.matches(&sub_agent_wrap).count(), 1, ...)` — the needle is `tools.push(maybe_hook(\n                with_session_` + `cap(sub_agent_tool` which is specific. Hmm, that should still be 1. But wait — the needle for shared_state is `Box::new(SharedStateTool::new(shared_state))` and I changed it to `shared_state.clone()`. That breaks the shared_state needle.
+
+Yes: `shared_state_wrap = "tools.push(maybe_hook(\n                Box::new(SharedStateTool::new(shared_state))"` — I changed to `shared_state.clone()`. That's why it fails.
+
+Options: keep the needle's spelling by using `SharedStateTool::new(shared_state)` — but then `shared_state` is moved... I need it for the explore tool. Alternative: clone in the original push? `Box::new(SharedStateTool::new(shared_state.clone()))`.
+
+Hmm — the needle test is a source-level guard. Which is more honest: update the needle, or keep the original spelling?
+
+Best: minimize the diff to the existing, already-guarded line. Clone at the explore site instead:
+- Keep `Box::new(SharedStateTool::new(shared_state))` untouched (needle intact).
+- Order: push explore_agent BEFORE the shared_state push, using `shared_state.clone()`. Then move `shared_state` into SharedStateTool last.
+
+Let me reorder: push sub_agent, push explore_agent (clone), push shared_state (move).
+
+But my explore push currently comes after the shared_state push. Reorder so explore comes before shared_state.
+
+Actually cleaner: keep the existing shared_state push exactly as-is and move it LAST. Let me restructure my edit.
+
+Let me view the current block and rewrite.
+────────────────────────────────────────────────────────────────────────────────
+
+The pre-existing shared_state push needle moved because I cloned it. Better to leave that guarded line byte-identical and clone at my new site instead:
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:1206..1246 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (26 → 37 lines)
+                tools.push(maybe_hook(
+                    with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP),
+  -                 &hooks,
+  -             ));
+  -             tools.push(maybe_hook(
+  -                 Box::new(SharedStateTool::new(shared_state.clone())),
+                    &hooks,
+                ));
+    
+  ···
+                // the removable-by-name claim in `build_explore_agent_tool`'s doc
+                // comment is built rather than asserted. The same `with_session_cap`
+                // applies, and it is a SEPARATE cap slot from `sub_agent`'s because
+  -             // `SessionCapTool` counts per work, not per name — a run that only
+  -             // explores cannot exhaust the ordinary dispatcher's budget or the
+  -             // other way round.
+  +             // `SessionCapTool` counts per wrapper instance, not per name — a run
+  +             // that only explores cannot exhaust the ordinary dispatcher's
+  +             // budget, or the other way round. (`/clear` rebuilds the agent and
+  +             // zeroes both, which is what "session-wide" means here.)
+  ... (19 more lines)
+ ✓ (2m 7s)
+                tools.push(maybe_hook(
+                    with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP),
+  -                 &hooks,
+  -             ));
+  -             tools.push(maybe_hook(
+  -                 Box::new(SharedStateTool::new(shared_state.clone())),
+                    &hooks,
+                ));
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^erro… ✓ (1m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The module-size gate now fails because tools.rs / agent_builder.rs grew past the grace band. Let me see the output.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (199ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/tools.rs"\|"src/ag… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I should paste the register line verbatim as the task instructs. Let me update both entries with the printed numbers.
+
+But first, I have tests to add (they will grow tools.rs further). So I should add tests FIRST, then paste the final numbers. Let me add the tests now, then re-run and paste final numbers.
+
+Let me now write the required tests in src/tools.rs.
+
+Tests required:
+1. near-miss / byte-identical: a default config's existing tool set unchanged, and the explore_agent child disallow list differs from sub_agent's only by READ_ONLY_CHILD_REMOVED_TOOLS — whole-vector equality, against the const.
+2. presence, not absence: explore child tool names exclude each name in READ_ONLY_CHILD_REMOVED_TOOLS (loop, assert non-empty first).
+3. the refusal is a refusal: the child keeps bash via with_read_guard_bash_arc, so a write attempt under read mode returns REFUSAL_STEM_MODE_ACTIVE-shaped error — assert on the string at the emission point.
+4. source-level guard: slice build_explore_agent_tool's body, assembled at runtime, proving its disallow list comes from read_only_child_disallowed.
+
+Also a test that the tool is named explore_agent and its description names the removed tools and the leaf limit. That's the Day-181 third-door requirement — worth pinning.
+
+For test 1: how do I compute "the explore_agent child disallow list"? It's `read_only_child_disallowed(&config.disallowed_tools)`. Compared to sub_agent's child disallowed = config.disallowed_tools (when the global flag is off, which is default in tests unless another test sets it — risky; the `--read-only-subagents` global is process-global). Hmm. There's a `set_read_only_subagents`. Tests run in parallel; another test could set it. Let me check whether any test sets it.
+
+Let me grep for set_read_only_subagents in tests.
+
+For safety, I'll write the comparison as pure: explore list = read_only_child_disallowed(&base); sub list (flag off) = base. Assert: explore == base + the three names, i.e. whole-vector equality against `base ++ READ_ONLY_CHILD_REMOVED_TOOLS` built from the const, and that removing those three from explore yields exactly base. That is the "differs only by the const" claim, tested purely without touching the global.
+
+But the task says "against the const, never a re-typed literal" and "whole-vector equality". Good.
+
+Let me also assert the child tool name vectors: explore child names vs sub_agent child names (both via child_tool_names helper with the respective disallow lists) → whole-vector equality: explore == sub minus the three.
+
+Also "a default config's existing tool set is unchanged" — I already have `empty_disallow_list_is_byte_identical_to_the_pre_seam_tool_set`. The new claim: with an empty base, `sub_agent_child_tools(restrictions, &read_only_child_disallowed(&[]))` differs from `CHILD_TOOLS_TODAY` exactly by the const. I'll write that with whole-vector equality.
+
+For test 3 (refusal at emission point): I need to execute the child's bash tool under read mode. The child tools are built by `sub_agent_child_tools`. I can find the bash tool by name and execute with a write command, under `set_read_mode(true)`. Use serial_test::serial and a reset guard like ReadModeReset (local to tool_wrappers tests, so I need my own or reuse). Let me check if src/tools.rs has such a guard... Let me grep for set_read_mode in tools.rs — earlier grep showed no matches for set_read_mode in tools.rs. So I'll write a small local guard.
+
+Actually maybe simpler and equally at the emission point: `with_read_guard_bash_arc` is already tested elsewhere. But the task asks specifically: "the child keeps bash via with_read_guard_bash_arc, so a write attempt returns the REFUSAL_STEM_MODE_ACTIVE-shaped error the parent can see — assert on that string at the emission point rather than on the tool simply being missing."
+
+So: get the bash tool from the explore child tool set, set read mode, execute `{"command": "touch x"}`, expect Err whose Debug contains REFUSAL_STEM_MODE_ACTIVE. This proves the guard is actually attached to the child's bash (which is what "keeps bash via with_read_guard_bash_arc" means). 
+
+Let me check `test_tool_context` signature in tools.rs for the ToolContext.
+
+Also need to check whether read-mode bash guard needs a `command` param — yes, MockTool used `{"command": ...}`.
+
+Let me check the child bash tool: `with_read_guard_bash_arc(Arc::new(yoagent::tools::bash::BashTool::default()))` → name "bash". I can find it in the vector via `.iter().find(|t| t.name() == "bash")`.
+
+Then execute. Note BashTool::default() executes commands — under read mode the guard refuses before executing. Good, no side effect.
+
+For test 4 (source-level guard): slice `build_explore_agent_tool`'s body from include_str!("tools.rs"), needles assembled at runtime, find the function start, end at "\n}\n", assert body contains `read_only_child_disallowed` assembled at runtime, and assert it does NOT contain a re-spelled literal like `"rename_symbol"` (the write-class literal) — that's the "never re-spell" half. Careful: the doc comment above the function mentions "write_class"/tool names? The doc comment is outside the body slice (starts at `fn build_explore_agent_tool`). Body: `read_only_child_disallowed(&config.disallowed_tools)`, `sub_agent_child_tools(...)`, `dispatch_tool_with_fallback(...)`. Contains "disallowed_tools" but not string literals with tool names. Good — I can assert `!body.contains("\"rename_symbol\"")` etc. But careful about the runtime-assembly rule: my test source contains these needles, and include_str! reads the whole file including the test — but I slice the body first, so it's fine; still assemble at runtime per discipline.
+
+Also the test should state in its doc comment that it proves presence, never that it fires.
+
+Where to place these tests? In the existing `mod tests` in tools.rs, near the #881 slice-1 tests (after `the_child_tool_seam_is_handed_the_parents_disallow_list`). Let me check what `test_agent_config` / helpers are available in that test module: `test_agent_config(provider, model)` exists. Also `child_tool_names(disallowed)` helper. Good.
+
+Let me check whether there's a helper to build an explore child tool set by name. I'll add a small local helper in tests.
+
+Now write the tests.
+
+Also should I test `build_explore_agent_tool` end-to-end for its tool name and description? Yes — cheap and valuable: assert `tool.name() == EXPLORE_AGENT_TOOL_NAME`, and description contains each removed tool name and the word "read-only"/"LEAF". That pins the Day-181 third-door requirement (the parent's view names what's missing). build_explore_agent_tool doesn't build an agent (no network) — SubAgentTool construction is cheap. DiagnosticSubAgentTool wraps it; `.name()` delegates. Good.
+
+Let me check the imports needed: `crate::commands_config::set_read_mode`, and serial_test::serial is already imported in tools.rs tests (line 1766: use serial_test::serial).
+
+Let me look at test_tool_context to build a ctx.
+────────────────────────────────────────────────────────────────────────────────
+
+Tests to add. Let me check the available test helpers first:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2085,2120p' src/tools.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_read_only_subagent… ✓ (5ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No test sets `set_read_only_subagents`, so the global is off in tests. But to be safe I'll write pure tests that don't depend on the global.
+
+Now, is there a test helper `test_tool_context`? Let me find its definition (line ~2090 was inside the tests module? Actually line 2090 is in the tests module shown above—"test_build_tools_count_unchanged" is around 2101. Earlier grep said `2090: fn test_tool_context(`. Let me read it.
+
+Wait, the sed output at 2085-2120 shows different content than the grep line numbers from before my edits — my edits shifted lines. Let me just grep for the definition.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_tool_context" -… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me add the tests after the existing #881 slice-1 block:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (7 → 238 lines)
+                !body.contains(&placeholder),
+                "the empty-slice placeholder is still at the call site — slice 2 \
+                 was not applied, or was applied beside it"
+  +         );
+  +     }
+  + 
+  +     // -----------------------------------------------------------------
+  +     // #881 slice 2 — the read-only `explore_agent` dispatcher
+  +     // -----------------------------------------------------------------
+  + 
+  +     /// The child tool set `explore_agent` gives its sub-agent, derived the same
+  +     /// way production derives it (`read_only_child_disallowed` folded into
+  +     /// `sub_agent_child_tools`). Kept as a helper so every test below drives
+  +     /// the REAL seam rather than a list written out by hand.
+  +     fn explore_child_tool_names(base: &[String]) -> Vec<String> {
+  +         child_tool_names(&read_only_child_disallowed(base))
+  +     }
+  + 
+  +     /// THE REGRESSION SURFACE, asserted first because it is every user who
+  +     /// never calls the new tool.
+  ... (216 more lines)
+ ✓ (1m 55s)
+                !body.contains(&placeholder),
+                "the empty-slice placeholder is still at the call site — slice 2 \
+                 was not applied, or was applied beside it"
+  +         );
+  +     }
+  + 
+  +     // -----------------------------------------------------------------
+  +     // #881 slice 2 — the read-only `explore_agent` dispatcher
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib 2>&1 | grep -E … ✓ (150ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib 2>&1 | tail -30 ✓ (116ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | gre… ✓ (1m 10s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4360,4400p' src/tools.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The failing assertion is line 4381: `dropped == const names`. Because `ordinary` has the write tools in the order write_file, edit_file, but const order is ["write_file","edit_file","rename_symbol"] — actually `rename_symbol` is NOT in the child tool set at all! CHILD_TOOLS_TODAY = bash, read_file, write_file, edit_file, list_files, search, web_search — no rename_symbol. So `dropped` = [write_file, edit_file], while the const has 3 entries. My assertion is wrong — the const is a *pool* of names removed, not all of which exist in the child set.
+
+Fix: compare dropped against the const filtered to those present in ordinary. That's exactly the correct statement.
+────────────────────────────────────────────────────────────────────────────────
+
+The dropped comparison was wrong: rename_symbol isn't in the child set at all, so the const is a pool of removals, not all of which exist there. Fixing to the correct claim:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (15 → 22 lines)
+  -         // ...and in the other direction, the const is exactly what was dropped.
+  -         let dropped: Vec<String> = ordinary
+  +         // ...and in the other direction, what was dropped is exactly the
+  +         // const's names — restricted to the ones the ordinary set actually
+  +         // carried, because `READ_ONLY_CHILD_REMOVED_TOOLS` is a pool of
+  +         // write-class names, not a claim that all three reach every child
+  +         // (`rename_symbol` is registered by neither). Filtering the const
+  +         // rather than typing two names keeps this test true if a name is added
+  +         // to either side.
+  +         let expected_dropped: Vec<String> = READ_ONLY_CHILD_REMOVED_TOOLS
+                .iter()
+  -             .filter(|n| !explore.contains(n))
+  -             .cloned()
+  +             .filter(|n| ordinary.iter().any(|o| o == *n))
+  +             .map(|n| (*n).to_string())
+                .collect();
+  +         assert!(
+  +             !expected_dropped.is_empty(),
+  +             "none of the const's names are in the ordinary child set — the \
+  +              comparison below would be vacuous: {ordinary:?}"
+  ... (11 more lines)
+ ✓ (14.3s)
+  -         // ...and in the other direction, the const is exactly what was dropped.
+  -         let dropped: Vec<String> = ordinary
+  +         // ...and in the other direction, what was dropped is exactly the
+  +         // const's names — restricted to the ones the ordinary set actually
+  +         // carried, because `READ_ONLY_CHILD_REMOVED_TOOLS` is a pool of
+  +         // write-class names, not a claim that all three reach every child
+  +         // (`rename_symbol` is registered by neither). Filtering the const
+  +         // rather than typing two names keeps this test true if a name is added
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I deleted the dropped binding along with the old assert. Restoring it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (8 → 13 lines)
+            // (`rename_symbol` is registered by neither). Filtering the const
+            // rather than typing two names keeps this test true if a name is added
+            // to either side.
+  +         let dropped: Vec<String> = ordinary
+  +             .iter()
+  +             .filter(|n| !explore.contains(n))
+  +             .cloned()
+  +             .collect();
+            let expected_dropped: Vec<String> = READ_ONLY_CHILD_REMOVED_TOOLS
+ ✓ (1m 54s)
+            // (`rename_symbol` is registered by neither). Filtering the const
+            // rather than typing two names keeps this test true if a name is added
+            // to either side.
+  +         let dropped: Vec<String> = ordinary
+  +             .iter()
+  +             .filter(|n| !explore.contains(n))
+  +             .cloned()
+  +             .collect();
+            let expected_dropped: Vec<String> = READ_ONLY_CHILD_REMOVED_TOOLS
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | gre… ✓ (1m 10s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo the_explor… ✓ (179ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+My `survivors` filter is backwards. The explore set is the smaller one (write tools removed). Filtering the *explore* set to remove the const names gives nothing extra — it gives ["bash", "read_file", "list_files", "search", "web_search"] which is explore minus... wait, explore has no write_file, so filtering does nothing; survivors == explore. That's the bug: I should map the ordinary set → remove the const names → should equal explore.
+
+Yes: `ordinary` minus const == `explore`. Let me fix.
+
+Also `dropped` = ordinary minus explore = [write_file, edit_file] and expected_dropped = const filtered to those in ordinary = [write_file, edit_file]. Good.
+
+So survivors should be: ordinary filtered by not-in-const == explore.
+
+My anti-vacuous check already exists. Let me rewrite that part.
+────────────────────────────────────────────────────────────────────────────────
+
+My survivors filter ran on the wrong side — ordinary minus the const is what should equal explore:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (13 → 14 lines)
+  -         // The difference, computed from the const rather than typed: removing
+  -         // exactly the const's names from the explore set gives the ordinary set
+  -         // back, and nothing else moved.
+  -         let survivors: Vec<String> = explore
+  +         // The difference, computed from the const rather than typed: the
+  +         // ordinary set minus the const's names IS the explore set, so nothing
+  +         // else moved in either direction. (The filter runs on `ordinary` —
+  +         // the superset — because the narrowing only ever removes.)
+  +         let survivors: Vec<String> = ordinary
+                .iter()
+                .filter(|n| !READ_ONLY_CHILD_REMOVED_TOOLS.contains(&n.as_str()))
+                .cloned()
+                .collect();
+            assert_eq!(
+  -             survivors, ordinary,
+  +             survivors, explore,
+                "the explore child set differs from the ordinary one by something \
+                 other than READ_ONLY_CHILD_REMOVED_TOOLS"
+            );
+ ✓ (2m 5s)
+  -         // The difference, computed from the const rather than typed: removing
+  -         // exactly the const's names from the explore set gives the ordinary set
+  -         // back, and nothing else moved.
+  -         let survivors: Vec<String> = explore
+  +         // The difference, computed from the const rather than typed: the
+  +         // ordinary set minus the const's names IS the explore set, so nothing
+  +         // else moved in either direction. (The filter runs on `ordinary` —
+  +         // the superset — because the narrowing only ever removes.)
+  ... (11 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now update the two module-size register lines (paste the numbers the gate printed):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tools.rs src/agent_bui… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '155,157p;472,474p' tests… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '466,475p' tests/module_s… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '460,473p' tests/module_s… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs:460..474 ✓ (0ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (6 → 13 lines)
+        // a second one that agrees today) plus the `hook_seam_tests` module that
+        // drives that seam over a real SharedStateTool. Number pasted from what
+        // the gate itself printed, after cargo fmt.
+  -     ("src/tools.rs", 4525), // Day 202: +262 for the shared-registry seam.
+  +     // Day 203 (#881 slice 2): 4525 -> 4899. +374 for the `explore_agent`
+  +     // dispatcher: `DispatchFlavor` + `dispatch_tool_with_fallback` (the
+  +     // fallback/diagnostic assembly both dispatch tools now share instead of
+  +     // spelling twice), `build_explore_agent_tool`, and the five tests that
+  +     // pin the two child sets, the refusal stem, the parent-facing description
+  +     // and the fold. Number pasted from what the gate itself printed (line
+  +     // count after `cargo fmt`; the gate ran on 4655 pre-fmt).
+  +     ("src/tools.rs", 4899), // Day 203: #881 slice 2, the read-only dispatcher.
+ ✓ (1m 22s)
+        // a second one that agrees today) plus the `hook_seam_tests` module that
+        // drives that seam over a real SharedStateTool. Number pasted from what
+        // the gate itself printed, after cargo fmt.
+  -     ("src/tools.rs", 4525), // Day 202: +262 for the shared-registry seam.
+  +     // Day 203 (#881 slice 2): 4525 -> 4899. +374 for the `explore_agent`
+  +     // dispatcher: `DispatchFlavor` + `dispatch_tool_with_fallback` (the
+  +     // fallback/diagnostic assembly both dispatch tools now share instead of
+  +     // spelling twice), `build_explore_agent_tool`, and the five tests that
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,160p' tests/module_s… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs:145..157 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 9 lines)
+        // and getting that wrong marks no row at all. Number pasted from the gate.
+  -     ("src/agent_builder.rs", 4314),
+  +     // Day 203 (#881 slice 2): 4314 -> 4347 (+33, inside REGISTER_DRIFT_GRACE_LINES,
+  +     // so a warning rather than the ratchet). The read-only `explore_agent` push
+  +     // beside the `sub_agent` one — above the disallow retain, so
+  +     // `--disallowed-tools explore_agent` genuinely removes it rather than being
+  +     // a confinement claim nothing built — plus `"explore_agent"` in
+  +     // BUILTIN_TOOL_NAMES and the comment at that const. Number pasted from what
+  +     // the gate itself printed, after cargo fmt.
+  +     ("src/agent_builder.rs", 4347),
+ ✓ (1m 22s)
+        // and getting that wrong marks no row at all. Number pasted from the gate.
+  -     ("src/agent_builder.rs", 4314),
+  +     // Day 203 (#881 slice 2): 4314 -> 4347 (+33, inside REGISTER_DRIFT_GRACE_LINES,
+  +     // so a warning rather than the ratchet). The read-only `explore_agent` push
+  +     // beside the `sub_agent` one — above the disallow retain, so
+  +     // `--disallowed-tools explore_agent` genuinely removes it rather than being
+  +     // a confinement claim nothing built — plus `"explore_agent"` in
+  +     // BUILTIN_TOOL_NAMES and the comment at that const. Number pasted from what
+  +     // the gate itself printed, after cargo fmt.
+  +     ("src/agent_builder.rs", 4347),
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/tools.rs … ✓ (1m 10s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 5684 lib tests pass. Now the full suite:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^erro…

@@ -1,0 +1,145 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me judge the diff. Let me verify a few key claims quickly: does `read_only_child_disallowed` exist, `child_tool_names` test helper, `sub_agent_child_tools` signature, `test_agent_config`, `test_tool_context`, `REFUSAL_STEM_MODE_ACTIVE`, `SharedState::new`, and whether build passes (harness says pass). Also check that the push site is above the retain.
+
+Let me do a few focused greps.
+
+Also check whether `sub_agent_tool_for` is called elsewhere (other call sites need the new flavor arg) — build passing implies fine.
+
+Let me check the ordering of the push site relative to the retain in agent_builder.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "explore_agent\|build_ex…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (9ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the push site ordering (above the retain) and BUILTIN_TOOL_NAMES lists, and the near-miss test in agent_builder. Also verify that the tool is actually registered (test passing). Let me look at agent_builder around 1180-1250.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1175,1250p src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1440,1480p src/tools.rs &… ✓ (6ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Push site is above the retain (line ~1207-1226 push, retain at 1251). Good — so `--disallowed-tools explore_agent` genuinely removes it.
+
+BUILTIN_TOOL_NAMES gained "explore_agent", and near-miss test list updated to four names. Good.
+
+Now, note a subtlety: the task said explore child's disallow list differs from sub_agent's only by READ_ONLY_CHILD_REMOVED_TOOLS. The explore tool's child tools come from `sub_agent_child_tools` which retains based on `tool_name_disallowed`; the ordinary sub_agent at depth 0 passes `config.disallowed_tools`. In tests, they compare base=[] derived lists. Fine.
+
+Wait — one thing: in the test, `child_tool_names` returns names in the order from `sub_agent_child_tools`. CHILD_TOOLS_TODAY lists 7 tools, but sub_agent_child_tools also adds nested sub_agent? Let's check: `sub_agent_child_tools(restrictions, disallowed)` gives 7 base tools. The depth walker then pushes nested sub_agent tool. Actually in `build_sub_agent_tool_at_depth`, `child_tools` starts from `sub_agent_child_tools` and then pushes nested. Wait, line 1548-1560 region. Let me check whether the explore tool's child gets nested sub_agent — the tests claim it does not because `build_explore_agent_tool` calls `sub_agent_child_tools` directly, no nested push. From the diff: `build_sub_agent_tool_at_depth` does the nested push before dispatch; `build_explore_agent_tool` just calls `sub_agent_child_tools` → no nested sub_agent. Consistent with the "leaf" claim. Good.
+
+But wait — does the explore child include `shared_state`? The description says "it shares this session's shared_state store". `sub_agent_child_tools` — need to check whether it includes shared_state tool. Let me check lines 1475-1510.
+
+Actually potential issue: description claims the child "shares this session's shared_state store, so store a large artifact once and pass the key" — but if the child's tool set doesn't include `shared_state` tool, the child can't read it... Actually the shared state is passed as the parent's store to `sub_agent_tool_for`, which uses `.with_shared_state(shared_state)` presumably, and the sub-agent automatically receives a shared_state tool per CLAUDE.md ("sub-agents automatically receive a shared_state tool that reads/writes the same yoagent::SharedState key-value store"). Let me verify sub_agent_tool_for uses with_shared_state.
+
+Let me check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.2s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1475,1520p src/tools.rs &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "explore_agent" src/ te… ✓ (6ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Everything seems consistent. Description claim about shared_state: `.with_shared_state(shared_state.clone())` — per CLAUDE.md, sub-agents automatically receive a `shared_state` tool reading the same store. OK.
+
+Now the check: is the tool actually visible to the parent model / working? The task says product-facing feature: try it. But running the binary would require an API key and a model call. We can at least check `--no-tools`/disallow computation includes explore_agent? Actually `--lite` disallow uses BUILTIN_TOOL_NAMES; explore_agent now in there, so lite would disallow it — fine.
+
+Can I exercise the feature without network? Hard. But maybe I can verify registration by a quick test: run a small check that `build_agent` includes explore_agent in tools. Is there a test? Let me check if any test asserts the tool is registered in build_agent... The tests in tools.rs build the tool directly. The agent_builder near-miss test only checks BUILTIN_TOOL_NAMES contains names. Hmm — is there a test that the push site exists in build_agent? Not in the diff. That's a minor gap (the task's step 2 said register it, and pin with a test only if post-retain disclosure). The push is above the retain, so no disclosure test required. But no test verifies the registration at all... The task's step 3 required tests: near-miss/byte-identical, presence, refusal, source guard — all present. Registration test not required explicitly.
+
+Let me at least confirm the tool shows up in the built agent's tool list by a quick unit-ish check. Could I run `cargo test` on a specific test? The harness says tests pass. I could write a tiny test... no, don't modify code.
+
+Alternative: run the binary with `--no-tools`? Not informative. Maybe use `cargo test --bin yoyo` specific existing test? Not needed.
+
+Let me check whether AgentConfig has a way to list tools... `configure_agent` exposes no tool-name accessor per the ARCHITECTURE note. So can't easily verify without a test.
+
+Actually — I can verify quickly with a temporary throwaway test? Task says don't modify code. Better: trust the build + reading the push site. The push site is clearly inside `if !self.no_tools` block and pushes the tool built by `build_explore_agent_tool`.
+
+One risk: `build_explore_agent_tool` requires `&SharedState` and the shared_state variable is created by `build_sub_agent_tool(self)` which returns (tool, state). The explore push uses `&shared_state`, and then SharedStateTool takes ownership of shared_state. Since explore push is before, fine — and the clone inside `with_shared_state` happens inside build. Good.
+
+Another: session cap double-counting? It's a separate wrapper instance; a comment says so. Fine.
+
+Docs: ARCHITECTURE.md entry updated for both tools.rs and agent_builder.rs. No CLAUDE.md append. Task specifically said record in ARCHITECTURE.md. Done. Doc_sync for user-facing docs (docs/src)? The task didn't require docs/src, and no CLI flag. But is the new tool user-facing enough that docs should mention it? Task's docs section required only ARCHITECTURE.md + register line. It's a product capability though — docs/src/configuration/... hmm. The task explicitly scoped docs to ARCHITECTURE.md. I'd mark doc_sync PASS (behavior change reflected in ARCHITECTURE.md as the task specified).
+
+Wait — the module_size register entry: the diff updated GRANDFATHERED_OVERSIZED_MODULES for both files (agent_builder 4314→4347, tools 4525→4899). tools.rs +374 is past the 100-line grace, so pasting was required — done. Good.
+
+Let me do one focused check: does the module_size gate actually pass with these values? Harness says tests pass, so yes.
+
+Now one more check on the test `the_explore_child_loses_every_write_class_tool_by_name` asserts READ_ONLY_CHILD_REMOVED_TOOLS names absent — but `rename_symbol` is registered by neither list (child tools are 7: bash, read_file, write_file, edit_file, list_files, search, web_search). So only write_file and edit_file are in the child set. Fine, the absence loop is over-strong but harmless.
+
+Product surface check: no CLI flag added; the new tool is default-available. Is that a product-surface change that needs opt-in? #448's rule is about evolve-loop conveniences becoming product defaults. This adds a tool to every session's tool list — it consumes a bit of prompt/token budget and adds a second delegation tool. The task explicitly argues no flag needed and the task description sanctioned that decision. The kind is product. Does adding a tool by default break product users? It's additive, removable by name. The task's own text says this is decided. As evaluator, I should judge whether it's an evolve-convenience shipped as default — it's a user-facing capability for all users (read-only exploration), not a loop convenience. Acceptable. I'll mark product_surface PASS with note.
+
+Also verify: does adding explore_agent to BUILTIN_TOOL_NAMES affect --lite disallow list (compute_lite_disallowed_tools) — meaning --lite users would lose explore_agent. That's the safe direction and consistent with how sub_agent... wait, sub_agent is in BUILTIN_TOOL_NAMES too, so lite disallows it. Fine.
+
+Let me do a quick sanity run of one focused test to be sure the new tests exist and pass (cheap): run `cargo test --bin yoyo explore` — might take a while to build but build is already cached from harness? Let's try with a timeout; it's a targeted check <30s hopefully. Actually compiling could take long. The harness already ran full tests. I'll run the targeted test quickly.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.4s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (179ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+5 new tests pass. All required test categories present.
+
+Let me quickly also confirm the agent_builder near-miss test passes (BUILTIN_TOOL_NAMES near-miss) — it's part of the suite and harness said pass. Fine.
+
+One last: is `EXPLORE_AGENT_TOOL_NAME` used as consumer (yes, in flavor + test). `DispatchFlavor` used. `dispatch_tool_with_fallback` used twice. No dead code. The whole build passes with clippy -D warnings per harness? The harness said build & tests pass; clippy not confirmed. The diff was gated presumably. I'll not re-run full clippy (that's slow). Hmm, `cargo clippy --all-targets -- -D warnings` is the CI gate and the task explicitly required it. Could be quick since it's cached? clippy would need recompile. Let's try with timeout 400 and check tail.
+
+Actually the harness states "Build: PASS, Tests: PASS" only. Clippy is a real risk (e.g. the `struct DispatchFlavor` with fields, or the test helper unused?). But it's within reason; a quick clippy run is a reasonable single extra check. Let me try with a time budget.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 500 cargo clippy --all-t… ✓ (206ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Clippy clean (cached, but finished with no warnings). Good enough.
+
+Also check fmt check quickly? Cheap.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All gates pass. Write verdict.
+
+Doc sync: behavior change (new tool) recorded in ARCHITECTURE.md per the task. docs/src wasn't required. I'll mark PASS.
+
+Product surface: PASS — additive product capability, no wizard/default change, removable by name; kind is product so #448 opt-in rule for evolve conveniences doesn't apply (arguably it's a product feature not an evolve convenience).
+
+Write to session_plan/eval_task_1.md.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 34s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md: PASS.
+
+What I verified beyond the supplied build/test status:
+
+• **Composition is real, not a re-spelling**: `build_explore_agent_tool` is three lines — `read_only_child_disallowed(&config.disallowed_tools)` → `sub_agent_child_tools(..)` → shared `dispatch_tool_with_fallback`. No second literal list.
+• **Removable by name**: the `explore_agent` push sits above the single `tools.retain(|t| !tool_name_disallowed(...))` (push ~:1207, retain :1251), so `disallowed_tools = ["explore_agent"]` genuinely filters it — no unearned confinement claim.
+• **Registration honest**: `"explore_agent"` added to `BUILTIN_TOOL_NAMES` and the near-miss twin moved to four names (`ask_user`, `sub_agent`, `explore_agent`, `shared_state`) in the same diff; src/cli.rs untouched.
+• **sub_agent unchanged**: name/description moved verbatim into `SUB_AGENT_FLAVOR`, assembly factored into one function, and the default child set is asserted byte-identical to `CHILD_TOOLS_TODAY`.
+• **Ran**: cargo test --bin yoyo explore → 5 passed; cargo clippy --all-targets -- -D warnings → clean; cargo fmt -- --check → clean.
+• **Docs**: ARCHITECTURE.md bullets for both touched files (per CLAUDE.md's rule), register numbers pasted from the gate; nothing appended to CLAUDE.md.
+
+Minor, non-blocking: there is no test that asserts the tool actually appears in build_agent's tool list (the new tests build it directly), so registration itself is verified by reading the push site rather than by a guard — worth a source-level pin later, not a FAIL.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
