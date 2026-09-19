@@ -270,7 +270,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // what the gate itself printed, after `cargo fmt`, rather than hand-typed:
     // a format pass after the final edit is what makes a pasted number stale in
     // the shrinking direction, and #884 was reverted for exactly that class.
-    ("src/commands_spawn.rs", 4485),
+    // Day 203 (#902 slice 2): +73 lines — the pinning test for the link Day 194
+    // traced and never observed: the worker seam reads the safe-mode global, and
+    // `--restricted` reaches that global by a road the pure seam never touches.
+    // Number pasted from what the gate itself printed, after `cargo fmt`.
+    ("src/commands_spawn.rs", 4558),
     // Day 162 (#692): +108 lines — extract_last_assistant_text now stops at the
     // newest turn's boundary (no stale-turn fallback) plus the regression tests
     // pinning that a text-less newest turn yields None, not an older turn's text.
