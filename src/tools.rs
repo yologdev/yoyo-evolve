@@ -1563,62 +1563,72 @@ fn build_sub_agent_tool_at_depth(
         child_tools.push(Arc::from(nested));
     }
 
-    // The primary attempt, on the session's configured model.
-    let primary = sub_agent_tool_for(
-        config,
-        &config.provider,
-        &config.model,
-        &config.api_key,
-        child_tools.clone(),
-        shared_state,
-    );
+    dispatch_tool_with_fallback(config, &SUB_AGENT_FLAVOR, child_tools, shared_state)
+}
 
-    // One fallback attempt, and only when a fallback model is actually
-    // configured and differs. With none configured — every user who has not
-    // set one, and the whole regression surface — the un-decorated tool is
-    // returned byte-identically.
-    let fallback = sub_agent_fallback_target(
-        &config.provider,
-        &config.model,
-        config.fallback_provider.as_deref(),
-        config.fallback_model.as_deref(),
-    )
-    .and_then(|(fb_provider, fb_model)| {
-        sub_agent_fallback_key(&config.provider, &config.api_key, &fb_provider)
-            .map(|fb_key| (fb_provider, fb_model, fb_key))
-    });
+/// The name the read-only exploration dispatcher is registered under (#881
+/// slice 2). A **second tool**, not a parameter on `sub_agent`, and that shape
+/// was decided by measurement rather than taste.
+///
+/// yoagent 0.18.1 (the version `Cargo.toml` pins — the issue's own reading was
+/// taken at 0.13.0, so it was re-derived here rather than inherited):
+/// `SubAgentTool::parameters_schema()` is `{"task": string}` and `execute()`
+/// reads exactly one key, `params["task"]` (`sub_agent.rs:338-365`). There is
+/// **no per-call parameter seam**, so #881's design option 3 — a decorator that
+/// inspects the task text and decides whether to narrow — has nothing to
+/// inspect and is rejected on the pinned crate too. Option 2 is the shape.
+///
+/// **No CLI flag gates this**, deliberately. A second tool is a *capability*,
+/// not a convenience, so hiding it behind an opt-in flag would be exactly the
+/// discoverability debt #745/#767/#769 already paid three times; #448's opt-in
+/// rule governs evolve-loop conveniences reaching product defaults, which this
+/// is not. It is removable the ordinary way, by name, through
+/// `disallowed_tools = ["explore_agent"]` — the push site in
+/// `agent_builder.rs` sits ABOVE the one disallow `retain`, so the name is
+/// genuinely respected rather than a claim of confinement that was never built.
+pub(crate) const EXPLORE_AGENT_TOOL_NAME: &str = "explore_agent";
 
-    let inner: Box<dyn AgentTool> = match fallback.as_ref() {
-        None => Box::new(primary),
-        Some((fb_provider, fb_model, fb_key)) => {
-            let secondary = sub_agent_tool_for(
-                config,
-                fb_provider,
-                fb_model,
-                fb_key,
-                child_tools,
-                shared_state,
-            );
-            Box::new(FallbackSubAgentTool::new(
-                Box::new(primary),
-                Box::new(secondary),
-                &config.model,
-                fb_model,
-            ))
-        }
-    };
-
-    // Failure diagnostics are the OUTERMOST wrapper and are applied at this
-    // single site — unconditionally, whether or not a fallback exists. Putting
-    // them inside `FallbackSubAgentTool` would reach only users who configured
-    // a fallback model and leave everyone else with yoagent's opaque summary
-    // string: the "two doors, one policy, one deaf" shape this repo has already
-    // shipped six times. Outermost also means it annotates the error that
-    // actually *survives* the fallback attempt rather than an intermediate one.
-    Box::new(DiagnosticSubAgentTool::new(
-        inner,
-        sub_agent_model_label(&config.model, fallback.as_ref().map(|(_, m, _)| m.as_str())),
-    ))
+/// Build the read-only exploration dispatcher (#881 slice 2).
+///
+/// This is the *composition* the previous slice shipped the halves for:
+/// `read_only_child_disallowed` (the pool — #881 slice 1) and `sub_agent` (the
+/// dispatcher). Until this landed the only thing joining them was the
+/// process-global `--read-only-subagents` flag read in
+/// `build_sub_agent_tool_at_depth`, so the answer to "explore this, and you may
+/// not write" was *every sub-agent in this session is read-only* — never *this
+/// dispatch is*. Here the narrowing is a property of the **tool**, so a caller
+/// picks it per dispatch and the flag (and `/read` mode, and the session) is
+/// untouched.
+///
+/// Reuses rather than re-spells all three existing pieces: the fold
+/// (`read_only_child_disallowed`), the child tool set (`sub_agent_child_tools`)
+/// and the whole dispatch assembly (`dispatch_tool_with_fallback`, which also
+/// gives this tool the same fallback retry and the same diagnostic wrapper as
+/// `sub_agent` — a second assembly site is the "two doors, one policy, one
+/// deaf" shape). The `SharedState` is the caller's, so an exploration artifact
+/// is stored once by reference (the RLM invariant) instead of pasted into the
+/// parent's context, and the parent's `shared_state` tool can still read it.
+///
+/// **Deliberately a leaf: the dispatched child gets no nested `sub_agent`.**
+/// The cheap route would be to call `build_sub_agent_tool_at_depth(config, 1,
+/// ..)` for it, and that is *wrong* rather than merely expensive: that walker
+/// builds ITS children from `config.disallowed_tools`, so at depth 2 the
+/// write-class tools reappear and "read-only by construction" would be true of
+/// one hop only. Threading the fold through every level means a second copy of
+/// the depth walker. The limit is announced in the tool description — where the
+/// *parent model* can see it — and in the write-up, because a silent absence
+/// reads to a model as a capability that does not exist (the Day-181 third
+/// door, recorded in `CLAUDE.md`).
+pub(crate) fn build_explore_agent_tool(
+    config: &AgentConfig,
+    shared_state: &SharedState,
+) -> Box<dyn AgentTool> {
+    // The ONE fold. A second literal list of write-class names here is what
+    // `build_explore_agent_tool_folds_the_read_only_list_rather_than_re_spelling_it`
+    // exists to catch.
+    let child_disallowed = read_only_child_disallowed(&config.disallowed_tools);
+    let child_tools = sub_agent_child_tools(&config.dir_restrictions, &child_disallowed);
+    dispatch_tool_with_fallback(config, &EXPLORE_AGENT_FLAVOR, child_tools, shared_state)
 }
 
 /// Build one `SubAgentTool` bound to an explicit `(provider, model, api_key)`.
@@ -1670,6 +1680,133 @@ fn build_sub_agent_tool_at_depth(
 /// the entire point of pinning it.
 ///
 /// <!-- yoagent-version-claim: 0.18.1 -->
+/// What distinguishes yoyo's two dispatch tools from each other: the name the
+/// parent model sees, and the sentence it is given about the tool.
+///
+/// Everything else — provider wiring, the `SharedState` handle, the one
+/// fallback retry, the diagnostic wrapper — is assembled by the *same* code in
+/// `dispatch_tool_with_fallback`. Two spellings of one policy is the "two
+/// doors, one policy, one deaf" shape this repo has already shipped six times,
+/// so the second tool (#881 slice 2) reuses the first's assembly rather than
+/// copying it.
+struct DispatchFlavor {
+    name: &'static str,
+    description: &'static str,
+}
+
+/// The ordinary dispatcher: whatever the parent was allowed to run, one hop
+/// away. Description unchanged from before the slice — the second flavor is the
+/// only new text, so the parent's existing view of `sub_agent` is byte-identical.
+const SUB_AGENT_FLAVOR: DispatchFlavor = DispatchFlavor {
+    name: "sub_agent",
+    description: "Delegate a subtask to a fresh sub-agent with its own context window. \
+             Use for complex, self-contained subtasks like: researching a codebase, \
+             running a series of tests, or implementing a well-scoped change. \
+             The sub-agent has bash, file read/write/edit, list, and search tools. \
+             The sub-agent also has its own sub_agent tool and may delegate further, \
+             bounded to a hard nesting cap (recursion is available and finite). \
+             It starts with a clean context and returns a summary of what it did.",
+};
+
+/// The read-only dispatcher's parent-facing text.
+///
+/// It states the narrowing **and what the narrowing means in tool names**,
+/// because the Day-181 third-door defect is precisely this: a model that cannot
+/// see a capability does not conclude *that tool is unavailable*, it concludes
+/// **the capability does not exist** and then hand-rolls it or reports the task
+/// impossible. So the sentence names the removed tools, says they were removed
+/// on purpose, and names what the child still has. The two limits are stated
+/// rather than left to be discovered: `bash` survives (so this is a
+/// narrowing, not a sandbox — a child can still write through a shell), and the
+/// child is a leaf with no `sub_agent` of its own.
+const EXPLORE_AGENT_FLAVOR: DispatchFlavor = DispatchFlavor {
+    name: EXPLORE_AGENT_TOOL_NAME,
+    description: "Delegate READ-ONLY exploration of a codebase or artifact to a fresh \
+             sub-agent with its own context window. The sub-agent is read-only BY \
+             CONSTRUCTION: it has no write_file, edit_file or rename_symbol tool, so a \
+             write attempt is refused rather than silently unavailable — do not \
+             reimplement a write by hand or report the task impossible because of it. \
+             It keeps bash, read_file, list_files, search and web_search, and it shares \
+             this session's shared_state store, so store a large artifact once and pass \
+             the key instead of pasting it into the task. Two limits, stated rather than \
+             implied: bash remains (a child can still write through a shell command — \
+             this is a narrowing, not a sandbox), and this child is a LEAF with no \
+             sub_agent tool of its own, so dispatch the sub-questions from here rather \
+             than expecting it to recurse.",
+};
+
+/// Assemble one dispatch tool: the primary attempt on the session's model, its
+/// single fallback retry when a distinct fallback model is configured, and the
+/// diagnostic wrapper outermost.
+///
+/// **One statement for both flavors.** The fallback and the wrapper placement
+/// are arguments about *how a dispatch is shaped*, not about what the child may
+/// run, so they live here instead of being repeated per tool. The placement
+/// argument in full, because a later reader would otherwise "simplify" it: the
+/// diagnostics sit at the single outermost site unconditionally, so putting
+/// them inside `FallbackSubAgentTool` would reach only users who configured a
+/// fallback model and leave everyone else with yoagent's opaque summary string,
+/// and outermost also means they annotate the error that *survives* the
+/// fallback attempt rather than an intermediate one.
+fn dispatch_tool_with_fallback(
+    config: &AgentConfig,
+    flavor: &DispatchFlavor,
+    child_tools: Vec<Arc<dyn AgentTool>>,
+    shared_state: &SharedState,
+) -> Box<dyn AgentTool> {
+    // The primary attempt, on the session's configured model.
+    let primary = sub_agent_tool_for(
+        config,
+        &config.provider,
+        &config.model,
+        &config.api_key,
+        child_tools.clone(),
+        shared_state,
+        flavor,
+    );
+
+    // One fallback attempt, and only when a fallback model is actually
+    // configured and differs. With none configured — every user who has not
+    // set one, and the whole regression surface — the un-decorated tool is
+    // returned byte-identically.
+    let fallback = sub_agent_fallback_target(
+        &config.provider,
+        &config.model,
+        config.fallback_provider.as_deref(),
+        config.fallback_model.as_deref(),
+    )
+    .and_then(|(fb_provider, fb_model)| {
+        sub_agent_fallback_key(&config.provider, &config.api_key, &fb_provider)
+            .map(|fb_key| (fb_provider, fb_model, fb_key))
+    });
+
+    let inner: Box<dyn AgentTool> = match fallback.as_ref() {
+        None => Box::new(primary),
+        Some((fb_provider, fb_model, fb_key)) => {
+            let secondary = sub_agent_tool_for(
+                config,
+                fb_provider,
+                fb_model,
+                fb_key,
+                child_tools,
+                shared_state,
+                flavor,
+            );
+            Box::new(FallbackSubAgentTool::new(
+                Box::new(primary),
+                Box::new(secondary),
+                &config.model,
+                fb_model,
+            ))
+        }
+    };
+
+    Box::new(DiagnosticSubAgentTool::new(
+        inner,
+        sub_agent_model_label(&config.model, fallback.as_ref().map(|(_, m, _)| m.as_str())),
+    ))
+}
+
 fn sub_agent_tool_for(
     config: &AgentConfig,
     provider_name: &str,
@@ -1677,6 +1814,7 @@ fn sub_agent_tool_for(
     api_key: &str,
     child_tools: Vec<Arc<dyn AgentTool>>,
     shared_state: &SharedState,
+    flavor: &DispatchFlavor,
 ) -> SubAgentTool {
     // Select the right provider
     let provider: Arc<dyn StreamProvider> = match provider_name {
@@ -1688,16 +1826,8 @@ fn sub_agent_tool_for(
 
     let model_config =
         crate::agent_builder::create_model_config(provider_name, model, config.base_url.as_deref());
-    SubAgentTool::from_provider("sub_agent", provider, model_config)
-        .with_description(
-            "Delegate a subtask to a fresh sub-agent with its own context window. \
-             Use for complex, self-contained subtasks like: researching a codebase, \
-             running a series of tests, or implementing a well-scoped change. \
-             The sub-agent has bash, file read/write/edit, list, and search tools. \
-             The sub-agent also has its own sub_agent tool and may delegate further, \
-             bounded to a hard nesting cap (recursion is available and finite). \
-             It starts with a clean context and returns a summary of what it did.",
-        )
+    SubAgentTool::from_provider(flavor.name, provider, model_config)
+        .with_description(flavor.description)
         .with_system_prompt(sub_agent_system_prompt(provider_name, model))
         .with_api_key(api_key)
         .with_tools(child_tools)
@@ -4196,6 +4326,250 @@ mod tests {
             "the empty-slice placeholder is still at the call site — slice 2 \
              was not applied, or was applied beside it"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // #881 slice 2 — the read-only `explore_agent` dispatcher
+    // -----------------------------------------------------------------
+
+    /// The child tool set `explore_agent` gives its sub-agent, derived the same
+    /// way production derives it (`read_only_child_disallowed` folded into
+    /// `sub_agent_child_tools`). Kept as a helper so every test below drives
+    /// the REAL seam rather than a list written out by hand.
+    fn explore_child_tool_names(base: &[String]) -> Vec<String> {
+        child_tool_names(&read_only_child_disallowed(base))
+    }
+
+    /// THE REGRESSION SURFACE, asserted first because it is every user who
+    /// never calls the new tool.
+    ///
+    /// A default configuration's existing child tool set must be unchanged AND
+    /// the new tool's list must differ from the ordinary dispatcher's **only**
+    /// by `READ_ONLY_CHILD_REMOVED_TOOLS` — whole-vector equality against the
+    /// const, never a re-typed literal, so a name added to the const moves both
+    /// sides at once instead of leaving this test asserting yesterday's three.
+    #[test]
+    fn the_explore_child_set_differs_from_the_ordinary_one_only_by_the_const() {
+        let base: Vec<String> = vec![];
+
+        // ANTI-VACUOUS, first: the two lists being compared must be non-empty
+        // and the const must actually name something, or "differs only by X"
+        // is satisfied by two empty sets.
+        assert!(
+            !READ_ONLY_CHILD_REMOVED_TOOLS.is_empty(),
+            "the const is empty — every assertion below would be vacuous"
+        );
+        let ordinary = child_tool_names(&base);
+        let explore = explore_child_tool_names(&base);
+        assert!(!ordinary.is_empty() && !explore.is_empty());
+
+        // The default child set is byte-identical to the recorded pre-#881 one.
+        assert_eq!(
+            ordinary, CHILD_TOOLS_TODAY,
+            "the DEFAULT (non-explore) child tool set moved — #881 slice 2 was \
+             supposed to add a tool, never alter the existing one"
+        );
+
+        // The difference, computed from the const rather than typed: the
+        // ordinary set minus the const's names IS the explore set, so nothing
+        // else moved in either direction. (The filter runs on `ordinary` —
+        // the superset — because the narrowing only ever removes.)
+        let survivors: Vec<String> = ordinary
+            .iter()
+            .filter(|n| !READ_ONLY_CHILD_REMOVED_TOOLS.contains(&n.as_str()))
+            .cloned()
+            .collect();
+        assert_eq!(
+            survivors, explore,
+            "the explore child set differs from the ordinary one by something \
+             other than READ_ONLY_CHILD_REMOVED_TOOLS"
+        );
+        // ...and in the other direction, what was dropped is exactly the
+        // const's names — restricted to the ones the ordinary set actually
+        // carried, because `READ_ONLY_CHILD_REMOVED_TOOLS` is a pool of
+        // write-class names, not a claim that all three reach every child
+        // (`rename_symbol` is registered by neither). Filtering the const
+        // rather than typing two names keeps this test true if a name is added
+        // to either side.
+        let dropped: Vec<String> = ordinary
+            .iter()
+            .filter(|n| !explore.contains(n))
+            .cloned()
+            .collect();
+        let expected_dropped: Vec<String> = READ_ONLY_CHILD_REMOVED_TOOLS
+            .iter()
+            .filter(|n| ordinary.iter().any(|o| o == *n))
+            .map(|n| (*n).to_string())
+            .collect();
+        assert!(
+            !expected_dropped.is_empty(),
+            "none of the const's names are in the ordinary child set — the \
+             comparison below would be vacuous: {ordinary:?}"
+        );
+        assert_eq!(
+            dropped, expected_dropped,
+            "explore_agent dropped something other than the const's names"
+        );
+    }
+
+    /// PRESENCE, not absence — the #250 shape. A list that silently became
+    /// empty must redden here rather than pass every "tool X is missing" check.
+    #[test]
+    fn the_explore_child_loses_every_write_class_tool_by_name() {
+        let names = explore_child_tool_names(&[]);
+
+        assert!(
+            !names.is_empty(),
+            "the explore child got NO tools at all — every exclusion below \
+             would pass vacuously"
+        );
+        for gone in READ_ONLY_CHILD_REMOVED_TOOLS {
+            assert!(
+                !names.iter().any(|n| n == gone),
+                "`{gone}` reached the read-only explore child: {names:?}"
+            );
+        }
+        // The readers, `bash` included, are the whole point of the mode.
+        for kept in ["bash", "read_file", "search", "list_files"] {
+            assert!(
+                names.iter().any(|n| n == kept),
+                "`{kept}` is not write-class and was removed anyway: {names:?}"
+            );
+        }
+    }
+
+    /// THE REFUSAL IS A REFUSAL, NOT A FILTER — asserted at the emission point.
+    ///
+    /// The explore child keeps `bash` wrapped in `with_read_guard_bash_arc`, so
+    /// under `/read` mode a write command comes back as the deterministic
+    /// `REFUSAL_STEM_MODE_ACTIVE`-shaped error the *parent can see and act on*,
+    /// rather than as a silently missing tool. Asserting the tool is absent
+    /// would pass even if the child had no bash at all; this asserts the guard
+    /// is genuinely attached to the one the child got.
+    #[tokio::test]
+    #[serial]
+    async fn the_explore_childs_bash_refuses_a_write_in_read_mode() {
+        struct ReadModeReset;
+        impl Drop for ReadModeReset {
+            fn drop(&mut self) {
+                crate::commands_config::set_read_mode(false);
+            }
+        }
+        let _reset = ReadModeReset;
+        crate::commands_config::set_read_mode(true);
+
+        let names = explore_child_tool_names(&[]);
+        assert!(
+            names.iter().any(|n| n == "bash"),
+            "the explore child has no bash — this test would be vacuous: {names:?}"
+        );
+
+        let tools = sub_agent_child_tools(
+            &DirectoryRestrictions::default(),
+            &read_only_child_disallowed(&[]),
+        );
+        let bash = tools
+            .iter()
+            .find(|t| t.name() == "bash")
+            .expect("the explore child must carry a bash tool");
+        let err = bash
+            .execute(
+                serde_json::json!({"command": "touch explore-should-not-exist.log"}),
+                test_tool_context(None),
+            )
+            .await
+            .expect_err("a write through the explore child's bash must be refused in read mode");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains(crate::tool_wrappers::REFUSAL_STEM_MODE_ACTIVE),
+            "the refusal must carry the stem the retry classifier keys on, so \
+             the parent reads it as a deliberate refusal rather than a tool \
+             failure: {msg}"
+        );
+    }
+
+    /// The parent's VIEW of the new tool, which is the Day-181 third door: a
+    /// model that cannot see `write_file` must not conclude the *capability* is
+    /// nonexistent. The description has to name what was removed, by name, and
+    /// state both limits (`bash` survives; the child is a leaf).
+    #[test]
+    fn the_explore_tool_names_the_removed_tools_and_its_own_limits() {
+        let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+        let state = SharedState::new();
+        let tool = build_explore_agent_tool(&config, &state);
+
+        assert_eq!(
+            tool.name(),
+            EXPLORE_AGENT_TOOL_NAME,
+            "the tool must register under the name BUILTIN_TOOL_NAMES lists, \
+             or the collision guard and the disallow filter name a tool that \
+             does not exist"
+        );
+
+        let desc = tool.description();
+        assert!(
+            !desc.is_empty(),
+            "an empty description would make every `contains` below vacuous"
+        );
+        for removed in READ_ONLY_CHILD_REMOVED_TOOLS {
+            assert!(
+                desc.contains(removed),
+                "the description does not name `{removed}` — the parent model \
+                 then reads an absent capability as a nonexistent one (Day 181): {desc}"
+            );
+        }
+        // Both limits, in the parent's own text.
+        assert!(
+            desc.contains("bash"),
+            "the description must disclose that bash survives, or the tool \
+             overstates its own confinement: {desc}"
+        );
+        assert!(
+            desc.to_lowercase().contains("leaf"),
+            "the description must announce that the child cannot recurse — a \
+             silent absence is the defect, an announced one is a limit: {desc}"
+        );
+    }
+
+    /// The SOURCE-LEVEL guard, and its doc comment is its limit statement: it
+    /// proves the fold is *referenced* by `build_explore_agent_tool`, never that
+    /// any particular run filtered anything. A driving test cannot see this —
+    /// yoagent 0.18.1 keeps `SubAgentTool`'s tool list private with no accessor
+    /// (the same wall that killed attempt #893) — so the wiring half is pinned
+    /// at the source, the `#842` discipline, with every needle assembled at
+    /// runtime so the test cannot match its own text.
+    #[test]
+    fn build_explore_agent_tool_folds_the_read_only_list_rather_than_re_spelling_it() {
+        let src = include_str!("tools.rs");
+
+        let start = src
+            .find(&format!("fn build_{}_tool(", "explore_agent"))
+            .expect("build_explore_agent_tool not found — did it get renamed?");
+        let rest = &src[start..];
+        let end = rest
+            .find("\n}\n")
+            .expect("could not find the end of build_explore_agent_tool's body");
+        let body = &rest[..end];
+
+        let fold = format!("read_only_child_{}", "disallowed(&config.disallowed_tools)");
+        assert!(
+            body.contains(&fold),
+            "build_explore_agent_tool does not compose read_only_child_disallowed \
+             — the read-only pool (#881 slice 1) is what makes this tool a \
+             composition rather than a second literal list"
+        );
+
+        // The other direction: a re-spelled literal would read as done while
+        // drifting from the const the moment a name is added to it.
+        for name in READ_ONLY_CHILD_REMOVED_TOOLS {
+            let literal = format!("\"{}\"", name);
+            assert!(
+                !body.contains(&literal),
+                "build_explore_agent_tool re-spells `{literal}` instead of \
+                 folding READ_ONLY_CHILD_REMOVED_TOOLS — the two lists agree \
+                 today and diverge the first time one moves"
+            );
+        }
     }
 }
 

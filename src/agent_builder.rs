@@ -22,7 +22,9 @@ use crate::hooks::{self, maybe_hook};
 use crate::prompt::{run_prompt, run_prompt_with_content, PromptOutcome};
 use crate::prompt_budget::is_audit_enabled;
 use crate::tool_wrappers::{with_session_cap, SESSION_TOOL_CALL_CAP};
-use crate::tools::{build_hook_registry, build_sub_agent_tool, build_tools_with_hooks};
+use crate::tools::{
+    build_explore_agent_tool, build_hook_registry, build_sub_agent_tool, build_tools_with_hooks,
+};
 
 /// Return the User-Agent header value for yoyo.
 pub(crate) fn yoyo_user_agent() -> String {
@@ -35,8 +37,9 @@ pub(crate) fn yoyo_user_agent() -> String {
 /// at connect time and skip the colliding MCP server with a clear warning.
 ///
 /// This list must stay in sync with `tools::build_tools` and any tool added
-/// via yoagent's `with_sub_agent` (currently `sub_agent`, see
-/// `build_sub_agent_tool`).
+/// via yoagent's `with_sub_agent` (currently `sub_agent` and its read-only
+/// sibling `explore_agent` — see `build_sub_agent_tool` /
+/// `build_explore_agent_tool`).
 pub(crate) const BUILTIN_TOOL_NAMES: &[&str] = &[
     "bash",
     "read_file",
@@ -49,6 +52,7 @@ pub(crate) const BUILTIN_TOOL_NAMES: &[&str] = &[
     "todo",
     "web_search",
     "sub_agent",
+    "explore_agent",
     "shared_state",
 ];
 
@@ -1206,6 +1210,35 @@ impl AgentConfig {
                 with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP),
                 &hooks,
             ));
+
+            // #881 slice 2: the READ-ONLY dispatcher, beside its unrestricted
+            // twin and sharing the SAME store — a caller picks per dispatch
+            // instead of flipping the process-global `--read-only-subagents`.
+            //
+            // It is pushed here, ABOVE the disallow retain below, for exactly
+            // the reason the paragraph above gives about `sub_agent`: at this
+            // site `--disallowed-tools explore_agent` genuinely removes it, so
+            // the removable-by-name claim in `build_explore_agent_tool`'s doc
+            // comment is built rather than asserted. The same `with_session_cap`
+            // applies, and it is a SEPARATE cap slot from `sub_agent`'s because
+            // `SessionCapTool` counts per wrapper instance, not per name — a run
+            // that only explores cannot exhaust the ordinary dispatcher's
+            // budget, or the other way round. (`/clear` rebuilds the agent and
+            // zeroes both, which is what "session-wide" means here.)
+            //
+            // Ordered before the `shared_state` push below so that push keeps
+            // its exact pre-slice spelling: its needle is pinned by
+            // `the_rlm_push_sites_go_through_the_one_shared_registry`, and
+            // cloning at THIS site instead of there leaves that guard reading
+            // the same bytes it did yesterday.
+            tools.push(maybe_hook(
+                with_session_cap(
+                    build_explore_agent_tool(self, &shared_state),
+                    SESSION_TOOL_CALL_CAP,
+                ),
+                &hooks,
+            ));
+
             tools.push(maybe_hook(
                 Box::new(SharedStateTool::new(shared_state)),
                 &hooks,
@@ -4120,7 +4153,7 @@ session will fail on the first turn with 'Tool names must be unique'."
         let tools = crate::tools::build_tools(true, &perms, &dirs, 10_000, false, vec![], None);
         let registered: Vec<&str> = tools.iter().map(|t| t.name()).collect();
 
-        for name in ["ask_user", "sub_agent", "shared_state"] {
+        for name in ["ask_user", "sub_agent", "explore_agent", "shared_state"] {
             assert!(
                 BUILTIN_TOOL_NAMES.contains(&name),
                 "'{name}' must stay in BUILTIN_TOOL_NAMES even though build_tools does \

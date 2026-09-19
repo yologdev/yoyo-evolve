@@ -153,7 +153,14 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // in `commands_config_mcp.rs` that would agree today and diverge silently
     // later — the `--mcp` id and the `[mcp_servers.*]` id are different strings,
     // and getting that wrong marks no row at all. Number pasted from the gate.
-    ("src/agent_builder.rs", 4314),
+    // Day 203 (#881 slice 2): 4314 -> 4347 (+33, inside REGISTER_DRIFT_GRACE_LINES,
+    // so a warning rather than the ratchet). The read-only `explore_agent` push
+    // beside the `sub_agent` one — above the disallow retain, so
+    // `--disallowed-tools explore_agent` genuinely removes it rather than being
+    // a confinement claim nothing built — plus `"explore_agent"` in
+    // BUILTIN_TOOL_NAMES and the comment at that const. Number pasted from what
+    // the gate itself printed, after cargo fmt.
+    ("src/agent_builder.rs", 4347),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
@@ -470,7 +477,14 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // a second one that agrees today) plus the `hook_seam_tests` module that
     // drives that seam over a real SharedStateTool. Number pasted from what
     // the gate itself printed, after cargo fmt.
-    ("src/tools.rs", 4525), // Day 202: +262 for the shared-registry seam.
+    // Day 203 (#881 slice 2): 4525 -> 4899. +374 for the `explore_agent`
+    // dispatcher: `DispatchFlavor` + `dispatch_tool_with_fallback` (the
+    // fallback/diagnostic assembly both dispatch tools now share instead of
+    // spelling twice), `build_explore_agent_tool`, and the five tests that
+    // pin the two child sets, the refusal stem, the parent-facing description
+    // and the fold. Number pasted from what the gate itself printed (line
+    // count after `cargo fmt`; the gate ran on 4655 pre-fmt).
+    ("src/tools.rs", 4899), // Day 203: #881 slice 2, the read-only dispatcher.
     // Day 163 (#726): -58 lines — emerging-risk annotation removed from
     // build_watch_fix_prompt, with its own test; see #724.
     ("src/watch.rs", 4418),
