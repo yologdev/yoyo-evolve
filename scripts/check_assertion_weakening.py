@@ -1347,6 +1347,55 @@ def count_register_payoff(findings, hunks, vocab):
     )
 
 
+def register_gate_denominator(findings, hunks) -> tuple:
+    """`(N, M, K)` -- the population `register-paid-to-empty` is read OVER, not a counter.
+
+    WHY A DENOMINATOR AND NOT A NEW COUNT (day 203). The census renders the register pair
+    as two bare integers, and a bare `0` cannot be told apart from "the gate admitted
+    nothing to look at" -- which is exactly what made the day-201 counter repair invisible
+    in the census for a whole session (2 and 0 before it, 2 and 0 after). The day-201
+    lesson states the required form of the number: "measure the base rate, then restrict it
+    by every condition on the path from the entry point to the changed line, and quote it
+    as a fraction over THAT set". So:
+
+      N -- hunks the classifier returned WEAKENED for, i.e. the population the payoff gate
+           admits. It equals the report's own `WEAKENED ..... N` line BY CONSTRUCTION (both
+           count findings with that verdict), and a self-test pins the two together so a
+           denominator can never describe a population the verdict counts disagree with.
+      M -- those of the N whose REMOVED side carries a register literal, via the day-201
+           `dense-or-joined` pair REUSED rather than re-spelled.
+      K -- the subset of M whose removed register literal is visible ONLY on the join, i.e.
+           the day-201 rustfmt split. `K == 0` over an `M > 0` denominator is the honest
+           reading this line exists to make sayable.
+
+    REMOVED SIDE ONLY, stated rather than left to be discovered: the added side is
+    deliberately out of scope because `count_register_payoff`'s WEAKENED gate never looks
+    at added lines either. `M` is DISJOINT from `register-lines-only` by construction --
+    that counter skips every hunk that produced a finding, and every hunk counted here
+    produced one.
+
+    PURE over data `scan_diff` has already parsed, like every counter above it, and it
+    takes no `vocab` because it reads the register SHAPES rather than test-ish lines.
+    """
+    n = m = k = 0
+    for f, h in _hunk_by_finding(findings, hunks):
+        if f.verdict != WEAKENED:
+            continue
+        n += 1
+        if not hunk_carries_shape(
+            h.removed, REGISTER_LITERAL_RE, REGISTER_LITERAL_JOINED_RE
+        ):
+            continue
+        m += 1
+        # The join is what made `hunk_carries_shape` true, so "no single line matches the
+        # DENSE pattern" is exactly "only the split spelling is here". Matched against the
+        # dense pattern, not the joined one: the joined one also matches every one-line
+        # form, which would make K == M and delete the distinction this number carries.
+        if not any(REGISTER_LITERAL_RE.search(ln) for ln in h.removed):
+            k += 1
+    return n, m, k
+
+
 # Keyed by the SAME constants `WRITTEN_CONVENTIONS` enumerates. The drift guard in
 # `run_self_tests` pins the two to one set; this dict must never grow a key that the
 # enumeration does not have, nor the reverse.
@@ -1373,7 +1422,7 @@ def convention_census(findings, hunks, vocab=None) -> dict:
 
 def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int, dict]:
     """Return `(findings, rust_hunks_seen, test_hunks_examined, skipped_unknown_vocab,
-    convention_census)`.
+    convention_census, register_gate_denominator)`.
 
     The fourth number is SKIPPED_UNKNOWN_VOCABULARY: a hunk in a dedicated test file with
     a real diff that this vocabulary could not read at all. It is counted here and summed
@@ -1388,7 +1437,7 @@ def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int, dict
     applied to itself one day later, which is the point: the #835 argument was already
     here and inlining still happened.
 
-    The FIFTH element is the convention census and it is the ONE deliberate signature
+    The FIFTH element is the convention census and it was the ONE deliberate signature
     widening in this tool's history. It was NOT derivable from the findings the way the
     MOVED count is: `register-lines-only` counts hunks that produced NO finding at all,
     and `whole-file-test-rename` vs `module-split` needs the hunk HEADER, which a `Finding`
@@ -1396,6 +1445,15 @@ def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int, dict
     would have to re-parse the diff to get it -- and re-deriving would be the second
     statement of a rule this file keeps refusing to write. It is PURELY ADDITIVE: no
     verdict, no counter above it, and no rendered byte of the pre-existing report changes.
+
+    The SIXTH element is the register gate's denominator `(N, M, K)` (day 203), widened by
+    the SAME argument one day's census later: `M` and `K` need the hunk's REMOVED lines,
+    which no `Finding` carries, so a renderer given only the findings could not compute
+    them -- and a caller that re-parsed the diff to get them would be re-running
+    `classify_assertion_change` to learn which hunks the gate admitted, i.e. the second
+    statement of a rule this file keeps refusing to write. It is ADDITIVE in the same
+    sense as the census: it changes no count and no verdict, and it is rendered only for a
+    caller that supplies it.
     """
     vocab = vocab or BUILTIN_VOCABULARY
     findings: list[Finding] = []
@@ -1426,7 +1484,15 @@ def scan_diff(text: str, vocab=None) -> tuple[list[Finding], int, int, int, dict
         )
     findings, _ = reconcile_moved_tests(findings, hunks)
     census = convention_census(findings, hunks, vocab)
-    return findings, rust_hunks, test_hunks, skipped_unknown_vocab, census
+    register_gate = register_gate_denominator(findings, hunks)
+    return (
+        findings,
+        rust_hunks,
+        test_hunks,
+        skipped_unknown_vocab,
+        census,
+        register_gate,
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -1613,6 +1679,46 @@ def render_convention_census(census) -> str:
     return "\n".join(lines)
 
 
+def render_register_gate_denominator(denominator) -> str:
+    """Render the register pair's DENOMINATOR `(N, M, K)`, or "" when it was not supplied.
+
+    THE LINE THIS REPLACES WAS TWO BARE INTEGERS, and a bare `0` cannot be told apart from
+    "the gate admitted nothing to look at" -- the ambiguity that made the day-201 counter
+    repair invisible in the census for a whole session (2 and 0 before it, 2 and 0 after).
+    The day-201 lesson names the required form: "restrict it by every condition on the path
+    from the entry point to the changed line, and quote it as a fraction over THAT set".
+    `N` is that set (the population the payoff gate admits), `M` is the first condition on
+    the path (the removed side carries a register literal), and `K` is the second (that
+    literal is visible only on the join -- the day-201 rustfmt split).
+
+    A ZERO IS RENDERED, and that is the whole point of the line rather than a slip. `K == 0`
+    over an `M > 0` denominator is a real reading -- "the gate looked at M register-removing
+    hunks and none of them needed the split reader" -- while the same `0` printed alone says
+    nothing. So the zero case is the one case that must NOT be suppressed, and the render
+    is gated on the CALLER SUPPLYING the tuple (a pre-change caller passes nothing and stays
+    byte-identical) rather than on the values inside it.
+
+    REMOVED SIDE ONLY, stated in the rendered band rather than left to be discovered: the
+    added side is out of scope because `count_register_payoff`'s WEAKENED gate does not look
+    there either, so a `K == 0` here is NOT evidence that no split register literal was
+    added on this range -- only that none was removed under a WEAKENED verdict.
+    """
+    if denominator is None:
+        return ""
+    n, m, k = denominator
+    return "\n".join(
+        [
+            f"  register-gate denominator: {n} WEAKENED hunks admitted by the gate;",
+            f"                              {m} of them removed a register literal;",
+            f"                              {k} of them removed a SPLIT-only guard.",
+            "  (REMOVED side only: `register-paid-to-empty`'s WEAKENED gate never looks at "
+            "added",
+            "  lines either, so K == 0 is not evidence that no split literal was ADDED.)",
+            "",
+        ]
+    )
+
+
 def blindness_fraction_line(examined: int, skipped: int) -> str:
     """The one line that turns two counters into the blindness FRACTION, so no row has to.
 
@@ -1664,6 +1770,7 @@ def render_report(
     skipped_unknown_vocab=0,
     census=None,
     skipped_names=None,
+    register_gate=None,
 ):
     counts = Counter(f.verdict for f in findings)
     out = []
@@ -1708,6 +1815,15 @@ def render_report(
     census_lines = render_convention_census(census)
     if census_lines:
         out.append(census_lines)
+
+    # The register pair's DENOMINATOR, immediately under the census that prints its two
+    # bare counts -- beside them, so no reading has to reconstruct the fraction by hand
+    # (the same reason `blindness_fraction_line` prints its derived number). Emitted
+    # whenever a caller supplies the tuple, INCLUDING an all-zero one: a suppressed zero
+    # is the exact ambiguity this line exists to remove.
+    gate_lines = render_register_gate_denominator(register_gate)
+    if gate_lines:
+        out.append(gate_lines)
 
     weak = [f for f in findings if f.verdict == WEAKENED]
     if weak:
@@ -1918,7 +2034,9 @@ def pair_one_sha(sha: str) -> dict:
     the classifier and publish it as a missing input.
     """
     try:
-        findings, rust_hunks, test_hunks, _skipped, _census = scan_diff(git_diff_one_commit(sha))
+        findings, rust_hunks, test_hunks, _skipped, _census, _rg = scan_diff(
+            git_diff_one_commit(sha)
+        )
     except GitRefUnreachable as exc:
         return {
             "pairing": PAIR_COULD_NOT_CHECK,
@@ -2236,12 +2354,18 @@ def _run(args):
         return run_pairing(args)
     vocab = Vocabulary(args.assert_macros, args.test_macros)
     census = {name: 0 for name in CONVENTION_COUNTERS}
+    # The register gate's denominator `(N, M, K)`, accumulated the same way the census is
+    # -- each element is a hunk count over the SAME set of scans, so summing it across
+    # commits in --per-commit mode describes the same range the summed verdicts do.
+    register_gate = [0, 0, 0]
     # The names behind SKIPPED_UNKNOWN_VOCABULARY, accumulated across modes. A set, then
     # sorted once at the render call, so the printed order is deterministic.
     skipped_names = set()
     if args.stdin:
         text = sys.stdin.read()
-        findings, rust_hunks, test_hunks, skipped, census = scan_diff(text, vocab)
+        findings, rust_hunks, test_hunks, skipped, census, register_gate = scan_diff(
+            text, vocab
+        )
         # THE NAMES ARE COLLECTED ONLY WHEN SOMETHING WAS SKIPPED, and that is a cost
         # decision stated rather than hidden: `unread_vocabulary_names_in_diff` is a second
         # pass over the diff, so it runs on exactly the runs where the disclosure prints
@@ -2257,13 +2381,15 @@ def _run(args):
         findings, rust_hunks, test_hunks, skipped = [], 0, 0, 0
         for sha in shas:
             text = git_diff_one_commit(sha)
-            f, rh, th, sk, c = scan_diff(text, vocab)
+            f, rh, th, sk, c, rg = scan_diff(text, vocab)
             # The census is summed from EACH COMMIT'S OWN SCAN, taken inside scan_diff
             # before the path below is prefixed with the sha. Re-deriving it here from the
             # mutated findings would look up a `(path, header)` pair that no longer exists
             # and silently report zero for every convention -- a census that cannot fail.
             for name, n in c.items():
                 census[name] += n
+            for i, n in enumerate(rg):
+                register_gate[i] += n
             for finding in f:
                 finding.path = f"{sha[:8]} {finding.path}"
             findings += f
@@ -2278,7 +2404,9 @@ def _run(args):
         commits = len(shas)
     elif args.from_ref:
         text = git_diff(args.from_ref, args.to_ref)
-        findings, rust_hunks, test_hunks, skipped, census = scan_diff(text, vocab)
+        findings, rust_hunks, test_hunks, skipped, census, register_gate = scan_diff(
+            text, vocab
+        )
         if skipped:
             skipped_names.update(unread_vocabulary_names_in_diff(text, vocab))
         window = f"{args.from_ref}..{args.to_ref}"
@@ -2298,6 +2426,7 @@ def _run(args):
             skipped,
             census,
             sorted(skipped_names),
+            tuple(register_gate),
         )
     )
     blind = render_blind_commits(blind_commits)
@@ -2491,13 +2620,13 @@ def run_self_tests():
     check("parser found two hunks", len(hunks) == 2, len(hunks))
     check("parser got the rs path", hunks[0].path == "src/git.rs", hunks[0].path)
     check("parser got the md path", hunks[1].path == "CLAUDE.md", hunks[1].path)
-    findings, rust_hunks, test_hunks, _sk, _census = scan_diff(diff)
+    findings, rust_hunks, test_hunks, _sk, _census, _rg = scan_diff(diff)
     check("scan filtered the md out", rust_hunks == 1, rust_hunks)
     check("scan examined one test hunk", test_hunks == 1, test_hunks)
     check("scan flagged the eq->contains", findings[0].verdict == WEAKENED, findings[0].verdict)
 
     # -- an empty diff is clean, not an error ---------------------------------------------
-    findings, rust_hunks, test_hunks, _sk, _census = scan_diff("")
+    findings, rust_hunks, test_hunks, _sk, _census, _rg = scan_diff("")
     check("empty diff clean", (findings, rust_hunks, test_hunks) == ([], 0, 0))
     report = render_report([], 0, 0, 0, "empty")
     check("clean report says none", "WEAKENED candidates: none" in report, report)
@@ -2638,7 +2767,7 @@ def run_self_tests():
             '+    assert!(msg.contains("exa"));',
         ]
     )
-    nm_findings, nm_rust, nm_test, _nm_sk, _census = scan_diff(no_move_diff)
+    nm_findings, nm_rust, nm_test, _nm_sk, _census, _rg = scan_diff(no_move_diff)
     check(
         "near-miss: a no-move diff renders byte-identically",
         render_report(nm_findings, 1, nm_rust, nm_test, "FIXTURE")
@@ -2693,7 +2822,7 @@ def run_self_tests():
             "+    }",
         ]
     )
-    ex_findings, _, _, _, _census = scan_diff(extraction_diff)
+    ex_findings, _, _, _, _census, _rg = scan_diff(extraction_diff)
     ex_verdicts = sorted(f.verdict for f in ex_findings)
     check(
         "1b502eacb937 shape: the extraction accuses nobody",
@@ -3047,7 +3176,7 @@ def run_self_tests():
 
     for conv_name, declared_verdict, _why in WRITTEN_CONVENTIONS:
         subject_path, fixture = conv_fixtures[conv_name]
-        conv_findings, conv_rs, _conv_test, _conv_sk, conv_census = scan_diff(fixture)
+        conv_findings, conv_rs, _conv_test, _conv_sk, conv_census, _rg = scan_diff(fixture)
 
         # ANTI-VACUOUS, FIRST: the scanner must have SEEN the fixture. A fixture matching
         # nothing satisfies every "expected verdict" assertion below by having nothing to
@@ -3121,7 +3250,7 @@ def run_self_tests():
     # quietly reclassify it as convention noise and manufacture a clean bill over a real
     # coverage reduction.
     payoff_path, payoff_fixture = conv_fixtures[CONVENTION_REGISTER_PAYOFF]
-    payoff_findings, _rs, _th, _payoff_sk, _census = scan_diff(payoff_fixture)
+    payoff_findings, _rs, _th, _payoff_sk, _census, _rg = scan_diff(payoff_fixture)
     payoff = [f for f in payoff_findings if f.path == payoff_path]
     check(
         "conventions: the register-paid-to-empty row is WEAKENED, not reconciled away",
@@ -3263,7 +3392,7 @@ def run_self_tests():
             "+    // register is EMPTY: every bypass converted (#864)",
         ]
     )
-    _sr_findings, _sr_rs, _sr_th, _sr_sk, sr_census = scan_diff(split_register_diff)
+    _sr_findings, _sr_rs, _sr_th, _sr_sk, sr_census, _rg = scan_diff(split_register_diff)
     check(
         "split shape: ANTI-VACUOUS -- the scanner saw the split register fixture",
         _sr_rs > 0,
@@ -3274,7 +3403,7 @@ def run_self_tests():
         sr_census.get(CONVENTION_REGISTER_LINES, 0) == 1,
         dict(sr_census),
     )
-    _sp_findings, _sp_rs, _sp_th, _sp_sk, sp_census = scan_diff(split_payoff_diff)
+    _sp_findings, _sp_rs, _sp_th, _sp_sk, sp_census, _rg = scan_diff(split_payoff_diff)
     check(
         "split shape: ANTI-VACUOUS -- the scanner saw the split payoff fixture",
         _sp_rs > 0 and [f.verdict for f in _sp_findings] == [WEAKENED],
@@ -3300,7 +3429,7 @@ def run_self_tests():
             '+    assert!(msg.contains("exa"));',
         ]
     )
-    ord_findings, ord_rs, ord_test, ord_sk, _census = scan_diff(ordinary_diff)
+    ord_findings, ord_rs, ord_test, ord_sk, _census, _rg = scan_diff(ordinary_diff)
     check(
         "conventions NEAR-MISS: an ordinary diff still scores WEAKENED unchanged",
         [f.verdict for f in ord_findings] == [WEAKENED],
@@ -3338,7 +3467,7 @@ def run_self_tests():
         == render_report(ord_findings, 1, ord_rs, ord_test, "FIXTURE", 40, ord_sk),
         None,
     )
-    empty_f, empty_rs, empty_th, empty_sk, empty_census = scan_diff("")
+    empty_f, empty_rs, empty_th, empty_sk, empty_census, _rg = scan_diff("")
     pre_change = render_report(empty_f, 0, empty_rs, empty_th, "FIXTURE")
     check(
         "census GATE: a pre-change caller's report never mentions the census",
@@ -3360,7 +3489,7 @@ def run_self_tests():
     # ... and the block DOES speak when a convention fired, so the gate above cannot be
     # satisfied by a renderer that ignores the census entirely.
     ms_path, ms_fixture = conv_fixtures[CONVENTION_MODULE_SPLIT]
-    ms_f, ms_rs, ms_th, ms_sk, ms_census = scan_diff(ms_fixture)
+    ms_f, ms_rs, ms_th, ms_sk, ms_census, _rg = scan_diff(ms_fixture)
     ms_render = render_report(ms_f, 1, ms_rs, ms_th, "FIXTURE", 40, ms_sk, ms_census)
     check(
         "census ANTI-VACUOUS: a convention fixture's report NAMES its own count",
@@ -3371,6 +3500,194 @@ def run_self_tests():
         "census: ... and the mode disclosure travels with it in the SAME rendered block",
         "BY MECHANISM" in ms_render and "--diff-filter=d" in ms_render,
         ms_render,
+    )
+
+    # -- THE REGISTER GATE'S DENOMINATOR (day 203) ----------------------------------------
+    # The census prints the register pair as two bare integers; this block pins the
+    # population they are read OVER. The near-miss order is deliberate: the anti-vacuous
+    # row comes first, because a `K == 1` assertion over an empty denominator would pass
+    # by agreeing with itself.
+    gate_path = "tests/gate.rs"
+    # (a) ANTI-VACUOUS: a WEAKENED hunk whose removed side carries a ONE-LINE register
+    # literal. `M >= 1` here is what licenses the `K == 0` on the next row.
+    gate_oneline_removed = "\n".join(
+        [
+            f"-    (\"{gate_path}\", 100),",
+            '-    assert_eq!(msg, "exact");',
+            '+    assert!(msg.contains("exa"));',
+        ]
+    )
+    gate_oneline_diff = "\n".join(
+        [
+            f"diff --git a/{gate_path} b/{gate_path}",
+            f"--- a/{gate_path}",
+            f"+++ b/{gate_path}",
+            "@@ -40,3 +40,2 @@",
+            gate_oneline_removed,
+        ]
+    )
+    _go_f, _go_rs, _go_th, _go_sk, _go_census, go_gate = scan_diff(gate_oneline_diff)
+    check(
+        "register GATE ANTI-VACUOUS: the fixture really is WEAKENED with a register removed",
+        _go_rs == 1 and [f.verdict for f in _go_f] == [WEAKENED] and go_gate[0] == 1,
+        (f"rs_hunks={_go_rs}", [f.verdict for f in _go_f], go_gate),
+    )
+    check(
+        "register GATE: N counts the WEAKENED hunks the payoff gate would admit",
+        go_gate[0] == 1 and go_gate[1] == 1,
+        go_gate,
+    )
+    check(
+        "register GATE: ... and a ONE-LINE register literal is NOT a split, so K == 0",
+        go_gate[2] == 0,
+        go_gate,
+    )
+    # N is not a second opinion about the verdict count -- it IS that count. Pinned against
+    # the rendered report, which is the number every published reading quotes.
+    check(
+        "register GATE: N equals the report's own WEAKENED count, by construction",
+        go_gate[0] == sum(1 for f in _go_f if f.verdict == WEAKENED)
+        and "WEAKENED ..................... 1" in render_report(
+            _go_f, 1, _go_rs, _go_th, "FIXTURE", 40, 0, None, None, go_gate
+        ),
+        (_go_census, go_gate),
+    )
+    # (b) THE SPLIT SHAPE -- the Day-201 rustfmt-split register literal, reuse of the
+    # existing fixture shape rather than a second spelling of it.
+    gate_split_diff = "\n".join(
+        [
+            f"diff --git a/{gate_path} b/{gate_path}",
+            f"--- a/{gate_path}",
+            f"+++ b/{gate_path}",
+            "@@ -40,4 +40,2 @@",
+            "-    (",
+            '-        "src/commands_search.rs",',
+            "-        4174,",
+            "-    ),",
+            '-    assert_eq!(msg, "exact");',
+            '+    assert!(msg.contains("exa"));',
+        ]
+    )
+    _gs_f, _gs_rs, _gs_th, _gs_sk, _gs_census, gs_gate = scan_diff(gate_split_diff)
+    check(
+        "register GATE ANTI-VACUOUS: the split fixture is WEAKENED with a register removed",
+        _gs_rs == 1 and [f.verdict for f in _gs_f] == [WEAKENED] and gs_gate[:2] == (1, 1),
+        (f"rs_hunks={_gs_rs}", [f.verdict for f in _gs_f], gs_gate),
+    )
+    check(
+        "register GATE: a SPLIT-only register removal is counted in K, and only via the join",
+        gs_gate == (1, 1, 1),
+        gs_gate,
+    )
+    # NEAR-MISS, BOTH DIRECTIONS, and this is the row that keeps N and M from being one
+    # number. Two WEAKENED hunks: the first removes a register literal, the second does
+    # not. N admits both (it is the gate's population); M admits only the first.
+    gate_nm_diff = "\n".join(
+        [
+            f"diff --git a/{gate_path} b/{gate_path}",
+            f"--- a/{gate_path}",
+            f"+++ b/{gate_path}",
+            "@@ -40,3 +40,2 @@",
+            '-    ("src/commands_search.rs", 4307),',
+            '-    assert_eq!(msg, "exact");',
+            '+    assert!(msg.contains("exa"));',
+            "@@ -80,3 +79,2 @@",
+            "-    let total = compute(a, b);",
+            '-    assert_eq!(total, "exact");',
+            '+    assert!(total.contains("exa"));',
+        ]
+    )
+    _gn_f, _gn_rs, _gn_th, _gn_sk, _gn_census, gn_gate = scan_diff(gate_nm_diff)
+    check(
+        "register GATE NEAR-MISS anti-vacuous: BOTH fixture hunks really are WEAKENED",
+        _gn_rs == 2 and [f.verdict for f in _gn_f] == [WEAKENED, WEAKENED],
+        (f"rs_hunks={_gn_rs}", [f.verdict for f in _gn_f]),
+    )
+    check(
+        "register GATE NEAR-MISS: a WEAKENED hunk with NO register literal is in N, not in M",
+        gn_gate == (2, 1, 0),
+        gn_gate,
+    )
+    # ... and the OTHER direction: a hunk that REMOVES a register literal without being
+    # WEAKENED is OUTSIDE the gate entirely -- N and M both refuse it, and that is not an
+    # accident of this counter: `count_register_lines` refuses it too, because it produced
+    # a finding. The fixture is asserted to carry the literal so the row cannot pass by
+    # feeding the scanner nothing.
+    gate_strengthened_diff = "\n".join(
+        [
+            f"diff --git a/{gate_path} b/{gate_path}",
+            f"--- a/{gate_path}",
+            f"+++ b/{gate_path}",
+            "@@ -40,3 +40,4 @@",
+            '-    ("src/commands_search.rs", 4307),',
+            "+    (",
+            '+        "src/commands_search.rs",',
+            "+        4307,",
+            "+    ),",
+            "-    assert!(msg.contains(\"exa\"));",
+            '+    assert_eq!(msg, "exact");',
+        ]
+    )
+    _gst_f, _gst_rs, _gst_th, _gst_sk, _gst_census, gst_gate = scan_diff(
+        gate_strengthened_diff
+    )
+    check(
+        "register GATE NEAR-MISS anti-vacuous: that fixture really carries a register "
+        "literal AND a non-WEAKENED verdict",
+        _gst_rs == 1
+        and [f.verdict for f in _gst_f] == [STRENGTHENED]
+        and hunk_carries_shape(
+            parse_unified_diff(gate_strengthened_diff)[0].removed,
+            REGISTER_LITERAL_RE,
+            REGISTER_LITERAL_JOINED_RE,
+        ),
+        (f"rs_hunks={_gst_rs}", [f.verdict for f in _gst_f]),
+    )
+    check(
+        "register GATE NEAR-MISS: a NON-WEAKENED hunk is in neither N nor M",
+        gst_gate == (0, 0, 0),
+        gst_gate,
+    )
+    # RENDER: the line is asserted as the STRING A CALLER RECEIVES, in both the populated
+    # and the all-zero case, and the all-zero case must still SPEAK -- a suppressed zero is
+    # the exact ambiguity this line exists to remove.
+    gate_render = render_report(
+        _gs_f, 1, _gs_rs, _gs_th, "FIXTURE", 40, 0, None, None, gs_gate
+    )
+    check(
+        "register GATE render: the line names all three numbers, N/M/K in order",
+        "register-gate denominator: 1 WEAKENED hunks admitted by the gate;" in gate_render
+        and "1 of them removed a register literal;" in gate_render
+        and "1 of them removed a SPLIT-only guard." in gate_render,
+        gate_render,
+    )
+    check(
+        "register GATE render: ... and the REMOVED-side limit travels with it",
+        "REMOVED side only" in gate_render,
+        gate_render,
+    )
+    zero_render = render_report([], 0, 0, 0, "FIXTURE", 40, 0, None, None, (0, 0, 0))
+    check(
+        "register GATE render: an all-zero denominator STILL renders, and does not panic",
+        zero_render.count("register-gate denominator: 0 WEAKENED hunks admitted by the gate;")
+        == 1,
+        zero_render,
+    )
+    # THE GATE, in the direction that matters most: a caller that does not pass the tuple
+    # (every call site that predates this line) is BYTE-IDENTICAL to no line at all.
+    check(
+        "register GATE: omitting the tuple is byte-identical to the pre-change report",
+        render_report(_gs_f, 1, _gs_rs, _gs_th, "FIXTURE", 40, 0, None, None, None)
+        == render_report(_gs_f, 1, _gs_rs, _gs_th, "FIXTURE", 40, 0, None, None)
+        and "register-gate denominator" not in render_report(
+            _gs_f, 1, _gs_rs, _gs_th, "FIXTURE", 40, 0, None, None
+        ),
+        None,
+    )
+    check(
+        "register GATE NEAR-MISS: renderer called DIRECTLY with None renders nothing",
+        render_register_gate_denominator(None) == "",
+        render_register_gate_denominator(None),
     )
 
 
@@ -3393,7 +3710,7 @@ def run_self_tests():
             "     dir.create(\"x\", \"y\");",
         ]
     )
-    fi_findings, fi_rs, fi_test, fi_sk, _census = scan_diff(foreign_idiom_diff)
+    fi_findings, fi_rs, fi_test, fi_sk, _census, _rg = scan_diff(foreign_idiom_diff)
     check(
         "vocabulary ANTI-VACUOUS: a real eqnice!/rgtest! hunk IS SEEN as skipped",
         fi_sk == 1,
@@ -3419,7 +3736,7 @@ def run_self_tests():
             "+    assert!(msg.contains(\"exa\"));",
         ]
     )
-    si_findings, _si_rs, si_test, si_sk, _census = scan_diff(standard_idiom_diff)
+    si_findings, _si_rs, si_test, si_sk, _census, _rg = scan_diff(standard_idiom_diff)
     check(
         "vocabulary NEAR-MISS: a STANDARD-dialect test hunk is examined, never skipped",
         si_sk == 0 and si_test == 1 and [f.verdict for f in si_findings] == [WEAKENED],
@@ -3440,7 +3757,7 @@ def run_self_tests():
             "+    let x = 2;",
         ]
     )
-    _pd_f, pd_rs, pd_test, pd_sk, _census = scan_diff(production_diff)
+    _pd_f, pd_rs, pd_test, pd_sk, _census, _rg = scan_diff(production_diff)
     check(
         "vocabulary NEAR-MISS: a src/ hunk is out of scope, NOT counted as skipped",
         (pd_rs, pd_test, pd_sk) == (1, 0, 0),
@@ -3714,7 +4031,7 @@ def run_self_tests():
             "     dir.create(\"x\", \"y\");",
         ]
     )
-    mx_f, mx_rs, mx_th, mx_sk, mx_census = scan_diff(mixed_diff)
+    mx_f, mx_rs, mx_th, mx_sk, mx_census, _rg = scan_diff(mixed_diff)
     mx_render = render_report(mx_f, 1, mx_rs, mx_th, "FIXTURE", 40, mx_sk, mx_census)
     # Every needle is BUILT AT RUNTIME from the fixture's own counts -- never transcribed
     # from another fixture, so this cannot pass by agreeing with a stale literal.
@@ -3853,7 +4170,7 @@ def run_self_tests():
         fi_sk == 1 and fi_findings == [] and fi_test == 0,
         (fi_sk, len(fi_findings), fi_test),
     )
-    wf_findings, wf_rs, wf_test, wf_sk, _census = scan_diff(foreign_idiom_diff, eqnice_vocab)
+    wf_findings, wf_rs, wf_test, wf_sk, _census, _rg = scan_diff(foreign_idiom_diff, eqnice_vocab)
     check(
         "extensible: --assert-macro eqnice turns that same hunk into a WEAKENED verdict",
         [f.verdict for f in wf_findings] == [WEAKENED],
@@ -3887,13 +4204,13 @@ def run_self_tests():
             " // unrelated trailing context",
         ]
     )
-    rg_blind_f, _rg_blind_rs, rg_blind_test, rg_blind_sk, _census = scan_diff(rgtest_removed_diff)
+    rg_blind_f, _rg_blind_rs, rg_blind_test, rg_blind_sk, _census, _rg = scan_diff(rgtest_removed_diff)
     check(
         "extensible ANTI-VACUOUS: the rgtest! fixture really IS blind by default",
         rg_blind_f == [] and rg_blind_test == 0 and rg_blind_sk == 1,
         (len(rg_blind_f), rg_blind_test, rg_blind_sk),
     )
-    rg_findings, _rg_rs, rg_test, rg_sk, _census = scan_diff(
+    rg_findings, _rg_rs, rg_test, rg_sk, _census, _rg_gate = scan_diff(
         rgtest_removed_diff, Vocabulary((), ("rgtest",))
     )
     check(
@@ -3924,7 +4241,7 @@ def run_self_tests():
             "+    eqnice!(expected, cmd.stdout());",
         ]
     )
-    add_findings, _a_rs, add_test, add_sk, _census = scan_diff(eqnice_added_diff, eqnice_vocab)
+    add_findings, _a_rs, add_test, add_sk, _census, _rg = scan_diff(eqnice_added_diff, eqnice_vocab)
     check(
         "extensible NEAR-MISS: an ADDED eqnice! is STRENGTHENED, never WEAKENED",
         [f.verdict for f in add_findings] == [STRENGTHENED],
@@ -3946,8 +4263,11 @@ def run_self_tests():
     # is compared, not a substring, so a shape list or a hunk count that moved would fail
     # here rather than hiding behind a matching verdict word.
     def _tuple(res):
-        f, rs, te, sk, _c = res
-        return ([(x.path, x.verdict, tuple(x.shapes)) for x in f], rs, te, sk)
+        # The register-gate denominator is deliberately folded INTO the tuple: this helper
+        # exists to compare a WHOLE scan result, and a field left out of it would be a
+        # comparison that cannot see the field it does not name.
+        f, rs, te, sk, _c, _rg = res
+        return ([(x.path, x.verdict, tuple(x.shapes)) for x in f], rs, te, sk, _rg)
 
     std_default = _tuple(scan_diff(standard_idiom_diff))
     std_widened = _tuple(scan_diff(standard_idiom_diff, eqnice_vocab))
@@ -4003,7 +4323,7 @@ def run_self_tests():
             " // trailing",
         ]
     )
-    leak_findings, _lk_rs, lk_test, _lk_sk, _census = scan_diff(leak_diff, eqnice_vocab)
+    leak_findings, _lk_rs, lk_test, _lk_sk, _census, _rg = scan_diff(leak_diff, eqnice_vocab)
     check(
         "extensible: a supplied name is WHOLE-TOKEN -- bare `eqnice` and `not_eqnice!` "
         "are not assertions",
@@ -4012,12 +4332,12 @@ def run_self_tests():
     )
     # ... and the escaping half: a name is DATA, so a regex metacharacter is literal. An
     # operator typing `.*` must not get a wildcard that reads every line as an assertion.
-    meta_findings, _m_rs, _m_test, _m_sk, _census = scan_diff(
+    meta_findings, _m_rs, _m_test, _m_sk, _census, _m_rg = scan_diff(
         standard_idiom_diff, Vocabulary((".*",))
     )
     check(
         "extensible: a supplied `.*` is ESCAPED to a literal, never compiled as a wildcard",
-        _tuple((meta_findings, _m_rs, _m_test, _m_sk, _census)) == std_default,
+        _tuple((meta_findings, _m_rs, _m_test, _m_sk, _census, _m_rg)) == std_default,
         [(f.verdict, f.shapes) for f in meta_findings],
     )
 
@@ -4073,7 +4393,7 @@ def run_self_tests():
             "+" + p4_added,
         ]
     )
-    p4_findings, p4_rs, p4_test, _p4_sk, _p4_census = scan_diff(p4_commit_diff)
+    p4_findings, p4_rs, p4_test, _p4_sk, _p4_census, _rg = scan_diff(p4_commit_diff)
     check(
         "gap2 PER-COMMIT ANTI-VACUOUS: the commit's hunk is EXAMINED, not blind",
         p4_rs == 1 and p4_test >= 1,
