@@ -1,0 +1,156 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me analyze the task and diff.
+
+The task: #902 slice — measure whether spawned worker's `load_project_context()` is a second door around parent's `--safe-mode`/`--restricted` decision, then route the parent's answer in.
+
+The diff: only adds a test `a_restricted_parent_confines_its_worker_through_the_real_global` in src/commands_spawn.rs, updates tests/module_size.rs register line, and updates ARCHITECTURE.md.
+
+Wait — the diff says ARCHITECTURE.md was updated with a "Day 203 (#902 slice 2)" entry. But the code diff to src/commands_spawn.rs only adds a test. The measurement concluded "branch B fired, the door is shut — no shipping behaviour changed in this task."
+
+Hmm, but "Day 194 (#902 slice)" already added `spawn_project_context_with` seam. So the fix was done in Day 194, and Day 203 is the second measurement which found it already closed. So this diff is a pinning test.
+
+Wait, but the task description says the measurement might show the door is open if not already fixed. The prior slice (Day 194) already fixed it. So this task (slice 2) is the measurement + pin.
+
+Actually, hold on. Let me check whether the seam `spawn_project_context_with` and `spawn_project_context` actually exist in the current tree, and whether the call sites route through them. The diff doesn't add those — they were added in Day 194. Let me verify by reading the current source.
+
+Also important: the task says ARCHITECTURE.md (write-up — NOT CLAUDE.md). The diff updates ARCHITECTURE.md. Good.
+
+Let me verify the code actually exists and the test is valid.
+
+Let me look at src/commands_spawn.rs around the relevant lines.
+
+Also I should check that the register number 4558 matches what the gate prints, but tests pass so the module_size test passed. Actually build/test PASS was reported by harness, so module_size passed... presumably. Let me do a quick check.
+
+Let me read the relevant code.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && wc -l sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "load_project_context" … ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the Day 194 fix is in place: both call sites use `spawn_project_context()`, the parent guards at cli.rs:2527.
+
+Let me read src/commands_spawn.rs lines 460-530 and 2440-2630 to verify.
+
+Also check cli.rs 2515-2535 to confirm the parent's `if !safe_mode` branch.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '460,530p' src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2515,2535p' src/cli.rs &… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The seam exists (added Day 194), the call sites route through it. This task (Day 203 slice) adds a pinning test that touches the real global.
+
+Now let me verify the diff's claim: it says "no shipping behaviour changed in this task". That matches — only a test + register + doc.
+
+Let me check the test compiles/runs. Harness said tests pass. Let me just quickly run the specific new test to be safe — it's cheap-ish. Actually the instructions say don't re-run full suite; running a single test is fine and takes <30s.
+
+Let me check the module_size value: 4558 matches wc -l 4558. Good.
+
+Let me run the new test and the module_size test.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (195ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now, is the test meaningful? Let me consider whether the task's requirements are met.
+
+Task requirements:
+- Step 1 MEASURE: recorded in ARCHITECTURE.md — branch B fired, door shut. It claims measurement at CLI with `--print-system-prompt` and `-p` prompt run. I can't verify the historical measurement, but I can verify the current state: the door is indeed closed now (Day 194 fix present). Let me do a quick independent verification: does `--print-system-prompt` under `--safe-mode` exclude project instructions? Actually that's a cheap check and would corroborate. But the fix landed in Day 194, not this diff. The task here is slice 2 — the measurement.
+
+Hmm wait — actually there's a subtlety. Is this task perhaps supposed to be the one that implements the fix? No — the assertion in ARCHITECTURE says Day 194 already did the fix and argues for the pinning test. Let me check the git log for when `spawn_project_context_with` was added.
+
+git log -S "spawn_project_context_with" --oneline — let me check.
+
+Actually the earlier diff in this session (from ARCHITECTURE.md shown both - and + lines) shows both Day 194 and Day 203 entries in the same ARCHITECTURE.md bullet. The removed line contained the Day 194 write-up only (up to "is the prose consistent with the code."). The added line appends the Day 203 paragraph. So Day 194's entry was already committed. This confirms Day 194 landed the fix in a prior session.
+
+So this task: measurement + pin. That matches the task description's "Both outcomes are valid deliverables" clause.
+
+Step 3: test at the seam, anti-vacuous first. The new test does anti-vacuous first, then near-miss? Actually the new test does anti-vacuous then the confined assertion on the real path. The near-miss (unconfined byte-identity) is covered by the pre-existing Day 194 tests. The task said "assert in this order: anti-vacuous; confined → load skipped; near-miss unconfined byte-identical". Pre-existing tests: `without_safe_mode_the_worker_receives_the_loaders_value_byte_identically`. Let me confirm it exists.
+
+Let me check the pre-existing tests in the file.
+
+Step 4: ARCHITECTURE.md updated ✓ (commands_spawn.rs entry), module_size updated ✓, fmt/build/test/clippy run (harness says build/test pass; clippy presumably run in the pipeline).
+
+Now doc_sync: behavior didn't change (no production line changed), so N/A? Actually the doc was updated anyway (ARCHITECTURE.md, which is the right place per task). CLAUDE.md untouched — correct, since task says NOT CLAUDE.md, and new history goes in ARCHITECTURE.md. So doc_sync: PASS.
+
+product_surface: This is a product-kind task but the diff changes no product surface (test-only + docs). N/A or PASS. It's a confinement narrowness; the fix was Day 194. I'd say N/A — no product surface changed in this diff. Hmm, but the task is Kind: product and the new test asserts product behavior. The rule: "N/A only if the diff touches no product surface". The diff touches no product surface (test + register + docs). So N/A is legal. But I could also say PASS. Let me use N/A with reason... Actually the harness says N/A is legal only for doc_sync and product_surface. I'll use PASS with explanation or N/A. The diff literally doesn't change behavior. I'll say N/A: test-only + docs, no product surface changed.
+
+Hmm, but reviewers might prefer PASS since it confirms the product behavior. Let me say PASS: the new test pins that a `--restricted`/`--safe-mode` parent's worker gets no project context, narrowing only. That's more informative. Either is fine. I'll use PASS.
+
+forgotten_touchpoints: new test has no new definitions. `use serial_test::serial;` is a consumer. Let me check that serial_test is a dependency already used elsewhere — yes, other tests use #[serial]. No new definitions. PASS.
+
+Let me quickly verify the near-miss pre-existing test exists and check the day-194 tests still there.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn without_safe_mode_th… ✓ (168ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All checks pass. The near-miss guard exists, the anti-vacuous exists, the register count matches, module_size test passes, the new test passes.
+
+Let me do one quick independent corroboration of the measurement claim (that the door is closed at CLI level for --restricted): run the binary `--print-system-prompt` in a temp repo with a CLAUDE.md marker, with and without --restricted. Actually the task's measurement is done at the parent's prompt composition (cli.rs), which is Day 194's fix, not this diff. But verifying corroborates the "clean reading" claim. It's cheap. Let's do it.
+
+Let me check the flag exists: `--print-system-prompt`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf doorchk && mkdir doorchk && cd doorchk && git init -q . && pri… ✓ (41ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Corroborated: the parent's load is gated for both flags. The worker seam consults the same global via spawn_project_context(). The measurement claim in ARCHITECTURE.md matches the observed behavior at the parent level.
+
+Now write the verdict.
+
+Also note: the diff includes a stray comment in module_size.rs that duplicates an existing comment? Looking at the diff for tests/module_size.rs:
+
+```
+-    ("src/commands_spawn.rs", 4485),
++    // Day 203 (#902 slice 2): +73 lines — ...
++    // Number pasted from what the gate itself printed, after `cargo fmt`.
++    ("src/commands_spawn.rs", 4558),
+```
+
+Fine, no stray files.
+
+Doc sync: ARCHITECTURE.md updated (correct place). The task explicitly says NOT CLAUDE.md. So PASS.
+
+Verdict PASS.
+
+One consideration: does the task require the fix to be in this diff if measurement showed the door open? Measurement showed closed (Day 194 already fixed). So deliverable is pin + writeup. Matches "do not invent a change to justify the task".
+
+Write to session_plan/eval_task_2.md.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 38s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md.
+
+PASS. Summary of what I verified:
+
+• **The measurement is honest.** The door was already closed by the Day-194 seam (`spawn_project_context_with`), so this task correctly delivers the pin + write-up instead of inventing a change. I confirmed the code: both call sites (src/commands_spawn.rs:857, :1009) use spawn_project_context() → spawn_project_context_with(cli_config::is_safe_mode(), …), matching the parent's if !safe_mode guard at cli.rs:2527.
+• **Independent corroboration of the "clean reading"**: in a temp repo with a CLAUDE.md marker, --print-system-prompt emits the marker 1× with no flag, 0× under both --safe-mode and --restricted.
+• **The new test** (`a_restricted_parent_confines_its_worker_through_the_real_global`) passes, asserts anti-vacuous first, and drives the real `--restricted`→global road that the three pre-existing pure/source-level guards structurally cannot reach.
+• **Gates**: register entry 4558 matches wc -l src/commands_spawn.rs, and tests/module_size.rs passes (28 tests).
+• **Docs/consumers**: ARCHITECTURE.md updated, CLAUDE.md correctly untouched; no dangling definitions, no new global writer, no product-surface change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

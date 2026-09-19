@@ -1,0 +1,1724 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the relevant parts of the file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "count_register_lines\|c… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read the relevant sections.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 855,900p scripts/check_as… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read the truncated section (1249-1270) and render_convention_census.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1240,1275p scripts/check_… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's look at how `render_convention_census` is called and where the census is used. Also look at scan_diff return and where the report renders. And look at run_self_tests and the register-related self-tests around line 3180-3240.
+
+Key design: I need to add a line to the census output with N, M, K. Where does N (WEAKENED hunks admitted by the gate on this range) come from? "N = hunks the classifier returned WEAKENED for on this range".
+
+So I need a new function, e.g. `register_gate_denominator(findings, hunks, vocab) -> (n, m, k)`.
+
+- N = count of hunks with verdict WEAKENED (from findings). Findings include reconciled MOVED rows... Let's use `_hunk_by_finding` or simply count findings with verdict == WEAKENED. Hmm, careful: findings are per hunk. `count_register_payoff` uses _hunk_by_finding and f.verdict == WEAKENED. Let me count N the same way: sum(1 for f, h in _hunk_by_finding(...) if f.verdict == WEAKENED). That is hunks admitted by the gate.
+
+- M = those whose removed side carries a register literal: `hunk_carries_shape(h.removed, REGISTER_LITERAL_RE, REGISTER_LITERAL_JOINED_RE)`.
+
+- K = subset whose removed register line is only visible after joining - i.e., NOT matched by dense REGISTER_LITERAL_RE on any single line of h.removed, but matched by joined path. That's the "split-only" reading.
+
+So K = hunks in M where not any(REGISTER_LITERAL_RE.search(ln) for ln in h.removed).
+
+Let me write a helper:
+
+```python
+def _carries_split_only(lines, dense_re, joined_re):
+    """True when `joined_re` reads a shape here that `dense_re` cannot see on any one line."""
+    if any(dense_re.search(ln) for ln in lines):
+        return False
+    return hunk_carries_shape(lines, dense_re, joined_re)
+```
+
+Hmm but hunk_carries_shape with dense_re fails => goes to windows. That is exactly split-only. But careful about `REGISTER_LITERAL_RE` vs `..._JOINED_RE`: the joined regex allows optional trailing comma. A split-only case: the dense regex requires `) ...` on one line; joined handles line break. Using `_carries_split_only(h.removed, REGISTER_LITERAL_RE, REGISTER_LITERAL_JOINED_RE)`.
+
+Actually wait — `hunk_carries_shape` returns True if dense matches any line OR joined matches a window that doesn't itself contain dense matches. So the split-only predicate is: not any dense match, and hunk_carries_shape is True. But hunk_carries_shape would then only return True via the joined path. Good.
+
+Now where to render the line. The task says emit for the scanned range:
+
+```
+register-gate denominator: N WEAKENED hunks admitted by the gate;
+                            M of them removed a register literal;
+                            K of them removed a SPLIT-only guard
+```
+
+But render_convention_census returns "" when no non-zero census. This denominator line should be emitted... Hmm. The task says "Emit, for the scanned range". The requirement: "an all-clean diff renders the line with N == 0 and no panic". So the line must render even when N == 0. Thus it should NOT be gated behind `any(census.values())`. So the denominator line needs its own render function, e.g. `render_register_gate_denominator(denom)` where denom is a tuple or a dict.
+
+But then where is it emitted? render_convention_census currently returns "" when empty. If I add the denominator line inside render_convention_census, the all-clean case returns "" and breaks requirement. So I should add a separate render function and call it from render_report next to render_convention_census — but that changes the byte output of existing reports for the all-clean case (which the docstring explicitly wants byte-identical). Hmm, but this task explicitly wants a new line, so the report output changes by design. But careful: the "empty case is byte-identical to before the census existed" is about the census. Adding a new line to the report is the intended deliverable; the task says "this adds a line and changes no number."
+
+Hmm, but where does the report print the census? Let me look at render_report. Also is the census rendered unconditionally? Let me check.
+
+Also note: is render_convention_census called in the report at all times, or only when census non-empty? Let's look.
+
+Let me check how the census is passed to render_report.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_convention_censu… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So there's a strong existing invariant: an ordinary diff's report is BYTE-IDENTICAL with/without census passed; and an all-zero census renders the same bytes as no census at all. Test at line 3336-3350.
+
+If I add the denominator line to the report unconditionally, that test would break (byte-identical claim). Hmm. The task's deliverable requires "an all-clean diff renders the line with N == 0 and no panic". That is about the render function for the denominator line, not necessarily the full report. So I can make `render_register_gate_denominator(denom)` a separate function that always renders (even N==0), and keep it out of render_report's flow? But then how does it get into the report at all? Hmm.
+
+Wait, the task says "Add ONE census line" — emit for the scanned range. It says render asserted as "a string a caller receives", in whichever modes the existing renderer tests use. So the render function returns the block; a caller gets it. Whether render_report includes it... Let's think about whether including it in render_report breaks the byte-identity test.
+
+The denominator line contains N, M, K. For an ordinary diff, N would be 0? Well, an ordinary diff may contain WEAKENED hunks... the near-miss fixture `ordinary_diff` — presumably not. Hmm, the test at 3336 says "an ordinary diff's report is BYTE-IDENTICAL with the census passed [and without]". If the denominator is a sixth element separate from census dict, then the report including it unconditionally would break the byte-identity... unless the denominator is None for a caller that passes nothing.
+
+Actually the cleanest approach consistent with the existing design: keep the denominator inside the census render path but... no, the requirement for N==0 rendering.
+
+Hmm. Let me re-read the task:
+
+Step 2: "Add ONE census line, not a new counter. Emit, for the scanned range: register-gate denominator: N ... M ... K ..."
+
+Step 3 self-tests: "near-miss / both directions: ... an all-clean diff renders the line with N == 0 and no panic; render asserted as a string a caller receives, in whichever modes the existing renderer tests use."
+
+So the render function must render for N==0. That means I need to decide where the line goes. Given the existing byte-identity tests, the safest approach that satisfies both:
+
+Option A: Add the denominator as a separate pure function `register_gate_denominator(findings, hunks, vocab) -> tuple[int,int,int]` and `render_register_gate_denominator(denom) -> str` always rendering. Then call `render_register_gate_denominator` from `render_report` only when the denominator is non-empty in a meaningful sense? No — requirement says all-clean renders N==0.
+
+Hmm, but the all-clean render test could be a direct call to `render_register_gate_denominator((0,0,0))`, like `blindness_fraction_line` is tested by direct call ("The zero branch is a guard at the point of the division, and it is tested by a direct call"). That sets a precedent! So: render the denominator in render_report only under some condition (e.g., when the census block renders, or when the scan is a real range), and test the zero-denominator branch by direct call.
+
+But the task explicitly says "an all-clean diff renders the line with N == 0 and no panic". Hmm, "an all-clean diff" — through the full path? That's ambiguous. Let me think about which is more honest and least disruptive.
+
+Actually, if I put the denominator line inside render_report gated on the census being non-empty... then for an all-clean diff the line doesn't render, contradicting the task. But the task wants the K==0 over non-zero denominator to be sayable. The whole point: "you can't distinguish a bare 0 from 'the gate admitted nothing'". So the denominator line is most valuable exactly when there ARE WEAKENED hunks but zero register rows. If N==0 and M==0 and K==0, the line says "the gate admitted nothing" — that's informative too.
+
+But there's the existing byte-identity test that I must not break: an ordinary diff's report must be byte-identical with the census passed vs not. If the denominator is derived from findings+hunks (not the census dict), then passing census or not doesn't change it... wait, the test compares render_report(..., census=None) vs render_report(..., census=_census) where _census is all zero. If the denominator line is rendered unconditionally in render_report, both calls would render it identically (since it's derived from findings/hunks which are the same in both calls). So byte-identity would still hold! Let me verify: test 3336:
+
+```
+render_report(ord_findings, 1, ord_rs, ord_test, "FIXTURE", 40, ord_sk, _census) == render_report(ord_findings, 1, ord_rs, ord_test, "FIXTURE", 40, ord_sk)  # presumably
+```
+
+Let me read that test precisely.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1655,1730p scripts/check_… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3325,3375p scripts/check_… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So `census GATE: ... and an all-zero census renders the SAME bytes as no census at all` compares render_report(empty_f, 0, empty_rs, empty_th, "FIXTURE", 40, 0, empty_census) with pre_change = render_report(empty_f, 0, empty_rs, empty_th, "FIXTURE").
+
+If my denominator line is rendered unconditionally in render_report derived from findings/hunks, then empty_f (no findings) and empty hunks... wait, render_report doesn't receive hunks! It receives findings, commits, rust_hunks (an int), test_hunks, window, max_findings, skipped_unknown_vocab, census, skipped_names.
+
+So render_report has no access to hunks or vocab. The denominator needs hunks and findings. Render_report has findings but not hunks. So I can't compute the denominator inside render_report without widening its signature — which would break the "pre-change caller" tests since a new positional arg... Actually adding a keyword arg with default None is fine. But then the "empty census renders same bytes as no census" test calls render_report(..., 0, empty_census) — I'd need the denominator passed in. If I add a `register_gate=None` keyword param, then the pre-change call omits it (None) and the empty-census call omits it too → both None → both render nothing. So byte-identity preserved. 
+
+So design: 
+- `register_gate_denominator(findings, hunks, vocab=None) -> tuple[int,int,int]` (pure, over already-parsed data).
+- `render_register_gate_denominator(denom) -> str` — ALWAYS renders (no empty gate), so `(0,0,0)` renders the line with N == 0.
+- `render_report(..., register_gate=None)`: if register_gate is not None, append the rendered line. A caller that passes nothing gets nothing → byte-identical to pre-change.
+
+Then where does render_report's caller pass it? scan_diff returns census; main's scan path and run_self_tests call render_report with census. Let me look at main / the scan function around line 2238-2300 to add the denominator to that path.
+
+Actually wait: should the denominator be returned by scan_diff too? scan_diff returns (findings, rust_hunks, test_hunks, skipped, census). Adding a 6th element would break all the tuple-unpacking self-tests (many `_census` unpacks). That's a lot of edits. Alternatively, compute the denominator where render_report is called, from findings + hunks. But the caller of render_report in main — does it have hunks? Let's look at lines 2230-2310.
+
+Hmm, but actually maybe cleaner: make `render_convention_census` handle it? No.
+
+Let me check: does scan_diff's caller (scan_range) have hunks? Let me read.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1395,1435p scripts/check_… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `_run` caller doesn't keep hunks. So the simplest honest design: put the denominator computation inside `scan_diff` too? That would require a 6th return element (breaks many unpacks) or adding to census dict (but census dict keys are pinned to CONVENTION_COUNTERS by a drift guard test — can't add a key).
+
+Alternative: make the denominator derivable from the census? No — N (WEAKENED hunks admitted) is derivable: N = counts[WEAKENED] from findings; but M and K need hunks (removed side), not available in render_report.
+
+Option: keep hunks around. In `_run`, `scan_diff` parses hunks internally and discards them. I could have the denominator computed inside scan_diff and returned. Adding a 6th return value means updating all unpacking sites. Let me count them: lines 1919 (scan_diff(git_diff_one_commit(sha)) - 4 elements?), 2244, 2281, 2494, 2500, 2641, 2696, 3050, 3124, 3266, 3277, 3303, 3341, plus maybe pair_one_sha usage. Let me grep for "scan_diff(".
+
+Actually, that's ~14 sites. That's a lot of edits but mechanical. Alternatively I could make the denominator a dict-like returned by a separate public function `register_gate_denominator(findings, hunks, vocab)` and have `_run` keep hunks by... hmm, `_run` would need hunks. Could I change scan_diff to return hunks as well? Same problem.
+
+Cleaner alternative: attach the denominator to the census? No (drift guard).
+
+Another alternative: compute denominator from `findings` only? M and K need removed lines. Findings carry path, header, verdict, shapes, detail — no removed lines. So no.
+
+Hmm — what about making the denominator a piece of the census render path via a separate function that the report calls, with hunks threaded? Let me reconsider: a minimal, honest approach is to add a 6th element to scan_diff's tuple. Actually wait — the existing style: this file already did a "deliberate signature widening" for the census. Doing it again for the denominator is consistent... but it quadruples test churn.
+
+Alternative minimal approach: have `scan_diff` return the denominator *inside* a small dataclass? No.
+
+Hmm, what about making scan_diff attach the denominator to the returned findings? No.
+
+Let me think again about a different, arguably better seam: `convention_census` returns the dict; the renderer `render_convention_census(census)` gets the dict. What if I make the denominator part of the census dict under a key that is NOT a convention... breaks drift guard (`set` equality) — no.
+
+OK here's another thought: the task says "Add ONE census line". The natural place is in the census block. But the requirement that an all-clean diff renders the line with N == 0 conflicts with render_convention_census's "" gate. Unless... the denominator render function is separate and always emits.
+
+Let me reconsider: maybe compute the denominator in `_run` by grabbing hunks via a second parse? That would be "re-deriving by re-parsing the diff" — explicitly called out as bad ("re-deriving would be the second statement of a rule this file keeps refusing to write"). But it wouldn't be a second statement of a *rule*, just a re-parse. Still, in per-commit mode the diff text per commit is available, so I could accumulate. Hmm, but the per-commit loop discards text. I'd have to call `parse_unified_diff(text)` again per commit → double parse cost. Not great but not a rule duplication.
+
+Better: have scan_diff return the denominator as the 6th element. Let me count the actual unpack sites and see if it's manageable with careful sed. Actually many unpacks use `_census` as the 5th name and ignore others with `_`. Converting `a, b, c, d, e = scan_diff(...)` to `a, b, c, d, e, f = scan_diff(...)` requires editing each. Risk of missing one → runtime error caught by self-tests. It's mechanical; 14 sites.
+
+Hmm, wait. Alternative that avoids touching scan_diff's signature: make the denominator a *mutable out-parameter*? Ugly.
+
+What about: add the denominator to the `Finding`? No.
+
+Actually — reconsider. What if `register_gate_denominator(findings, hunks, vocab)` is computed inside `convention_census`... no, census is pinned.
+
+Hmm, what about a module-level approach where `convention_census` computes and stores... no, no global state.
+
+OK, let me reconsider the whole framing. There's an even simpler approach that reuses existing machinery: `_hunk_by_finding(findings, hunks)` requires hunks. But what if I compute the denominator inside `scan_diff` and return it as part of a *named* structure — e.g., change scan_diff to return a `Scan` dataclass would break everything.
+
+Decision: widen scan_diff's return to 6 elements. It's explicit, additive, and consistent with the file's own precedent (the census was the "ONE deliberate signature widening"; this becomes the second, and I should document that). Actually hmm, that grows test churn and risk.
+
+Hold on. Let me reconsider once more: does the denominator really need hunks for M and K, or can it be computed over hunk data already reachable from findings? What if instead of hunks we use the hunk *removed lines*... not available.
+
+Alternative: pass the denominator through the census render by changing `convention_census` to return a dict that includes the denominator under a separate key NOT in CONVENTION_COUNTERS but the drift guard checks `set(empty_census) == set(CONVENTION_COUNTERS)` → breaks.
+
+OK. Another idea: rather than threading hunks, compute the denominator in `_run` by having scan_diff optionally stash the hunks. E.g., change scan_diff's return to `(findings, rust_hunks, test_hunks, skipped, census)` and add a *separate* pure function `scan_diff_with_hunks`? No, duplicated logic.
+
+Wait — actually there's a neat trick: `render_report` could take `register_gate` as a tuple computed by the caller. And `_run` can obtain hunks cheaply because `parse_unified_diff(text)` is available for the stdin/from_ref cases, and in per-commit mode accumulate. The cost is a second parse. But the docstring says the census is returned rather than re-derived "by a caller that would have to re-parse the diff to get it". So the file's own stated preference is to return it from scan_diff. I'll follow that precedent: return the denominator from scan_diff.
+
+Hmm, but 14 unpack sites... Let me actually count.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "scan_diff(" scripts/che… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Unpacking sites where all 5 are named: about 24. Many use `_census` as 5th. If I append a 6th element, ALL these unpackings break with "too many values to unpack". That's 24 edits. Mechanical but doable. However, `scan_diff` results are also compared via `_tuple(...)` — adding a 6th element changes those comparisons but they compare scan_diff to scan_diff, so fine.
+
+Hmm, wait. There's a much less invasive option: instead of returning a 6th tuple element, compute the denominator inside `scan_diff` and store it... The census dict is pinned.
+
+Hmm, what about attaching the denominator to the **findings list**? No.
+
+Alternative minimal-churn option: make `convention_census` return the dict as-is, and add a *separate* function `register_gate_denominator(findings, hunks, vocab)` that the caller invokes. Callers who need hunks... only `_run` (real run) and `run_self_tests` (which have the diff text and can parse). Actually in run_self_tests, tests use fixtures and `scan_diff(fixture)`; the test can do `parse_unified_diff(fixture)` itself. In `_run`, I'd need hunks per mode.
+
+Hmm. What if I add to `_run` a `hunks_for_gate = []` accumulation using `parse_unified_diff(text)` in each branch? That's a second parse of the same text. For stdin: one extra parse. For from_ref: one extra parse of a potentially large diff (HEAD~40..HEAD — fine). For per-commit: 40 extra parses — fine, these are tiny diffs. Actually the cost is not measured in the design but parse is cheap regex work; the report is already doing much heavier work.
+
+But the file explicitly warns against re-deriving by re-parsing. The rationale there was about the census needing the hunk HEADER which findings don't carry — re-parsing would be fine mechanically but they chose to return it. Their argument is about *duplicating a rule*. `parse_unified_diff` is a single function; calling it twice is not a second statement of a rule. Still, it's wasteful and inelegant.
+
+Let me weigh: 24 mechanical unpack edits vs. a second parse. Actually... there's a third option I like better: keep scan_diff's signature, but make the denominator part of the *hunk list already flowing*: i.e., move `render_report`'s register-gate param to accept the tuple, and have `_run`'s scan call sites get hunks from a new helper `scan_diff_ex(...)` — no, duplication.
+
+Hmm, actually, simplest of all and honest: since `convention_census(findings, hunks, vocab)` is pure and takes hunks, and `scan_diff` computes it, I can have `scan_diff` also compute the denominator and return it. The churn is the issue.
+
+Let me reconsider: is there a way to make all existing 5-element unpackings still work while returning 6? No, Python doesn't allow that.
+
+OK here's another idea that avoids the churn entirely: return the denominator *as part of the census dict* but under a key that the drift guard tolerates. The drift guard is `set(empty_census) == set(CONVENTION_COUNTERS)`. I could change that test... but the guard is load-bearing and the task says don't change existing tests/counters. Hmm, "Do not change any existing count or verdict" — the drift guard isn't a count. But weakening it is bad.
+
+Let me just do the 24 edits. Actually wait — maybe fewer: I can do it with sed carefully? Patterns vary. Risky but doable with a Python script that rewrites assignments of the form `<X> = scan_diff(...)`. Hmm, multi-line ones (3896, 4015) complicate.
+
+Actually, hmm, hold on. Let me reconsider a cleaner architecture that requires NO change to scan_diff: make the denominator a property of the **census render** by having `convention_census` return a dict *subclass* carrying the denominator as an attribute! E.g.:
+
+```python
+class ConventionCensus(dict):
+    """...carries the register-gate denominator beside the counts..."""
+    __slots__ = ("register_gate",)
+```
+
+Then `set(census) == set(CONVENTION_COUNTERS)` still holds (keys unchanged), `any(census.values())` unchanged, `_tuple(scan_diff(...))` comparisons — dict equality compares contents only, fine. Merge loop `census[name] += n` — census starts as a plain dict at line 2238, so it wouldn't carry the denominator in per-commit mode... I'd need to accumulate the denominator across commits there. But `render_convention_census(census)` gets `census.get(name, 0)` — works with a plain dict too. And `render_report(..., census)` — plain dict from the caller → no denominator attribute → renders nothing? Hmm, that makes the render conditional on the caller's dict type. Ugly and implicit — a "checking is implicit" smell.
+
+Better: pass the denominator explicitly to render_report as a new keyword arg `register_gate=None`. Then:
+- `_run` computes it. How? Via the dict-attribute trick: `scan_diff` returns census as ConventionCensus with `.register_gate`; `_run` passes `census.register_gate` — hmm, but in per-commit mode census is re-accumulated into a plain dict and I'd need to accumulate. Actually, in per-commit mode the gate population is per-commit hunks; the denominator sums naturally: sum N over commits, sum M, sum K. Each `c` from scan_diff carries its own register_gate; accumulate.
+
+Hmm, this dict-subclass idea is clever but implicit. The explicit version is more in keeping with this file's style (it's very explicit about seams).
+
+Let me just count the real cost of the 6-tuple approach: I'd edit ~24 lines. Each is a mechanical append of `, <name>`. Risk: missing one → ValueError at runtime, caught by self-tests/build. Actually a missed one would raise "not enough values to unpack" at import/run time in self-test mode → caught immediately. So risk is low and detectable.
+
+But wait: there's a subtlety with `_tuple(scan_diff(...))` comparisons at 3952-3987 — they compare tuples; fine.
+
+And at 3511/3512/3536/3615/3896 etc., the results are assigned to a single name (e.g. `pair_root = scan_diff(...)`) — then indexed? Let me check those usages. e.g. line 3511-3515.
+
+Actually let me look at a few of these to see how they consume the tuple.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3505,3545p scripts/check_… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note `_tuple(res)` unpacks exactly 5: `f, rs, te, sk, _c = res` — that would break with 6 elements. Indexing like `pair_root[3]` would still work, and `pair_root[:4]` still works. So the only breakages are the 5-element unpackings. Let me count those precisely.
+
+Actually, a MUCH better idea to avoid all of this: don't widen scan_diff's return tuple. Instead, add the denominator as an attribute on the returned census... no.
+
+Alternative clean approach: have `convention_census` include the denominator, and change the drift guard... no.
+
+Hmm, what about: keep scan_diff as-is but make `_run` compute the gate via a *new* function that takes the diff text (not hunks), i.e. `register_gate_denominator_for_diff(text, vocab)` — which internally calls parse_unified_diff + classify... that IS re-deriving/duplicating the classification rule (it must re-run classify_assertion_change to know which hunks are WEAKENED). Bad — second statement of a rule.
+
+OK. So threading from scan_diff it is. Let me count unpack sites needing edits:
+
+1. 1921 — 5 named → edit
+2. 2244 — 5 → edit
+3. 2260 — `f, rh, th, sk, c = scan_diff(...)` → edit
+4. 2281 — 5 → edit
+5. 2494 — 5 → edit
+6. 2500 — 5 → edit
+7. 2641 — 5 → edit
+8. 2696 — 5 → edit
+9. 3050 — 5 → edit
+10. 3124 — 5 → edit
+11. 3266 — 5 → edit
+12. 3277 — 5 → edit
+13. 3303 — 5 → edit
+14. 3341 — 5 → edit
+15. 3363 — 5 → edit
+16. 3396 — 5 → edit
+17. 3422 — 5 → edit
+18. 3443 — 5 → edit
+19. 3717 — 5 → edit
+20. 3856 — 5 → edit
+21. 3890 — 5 → edit
+22. 3896 — multi-line 5 → edit
+23. 3927 — 5 → edit
+24. 4006 — 5 → edit
+25. 4015 — multi-line 5 → edit
+26. 4076 — 5 → edit
+
+Plus `_tuple` helper at 3951.
+
+~27 edits. Hmm, that's a lot of churn in a 4100-line file, and the task says "Do not change any existing count or verdict" — mechanical unpack edits don't change counts, but they touch a lot.
+
+Let me think ONE more time for a lower-churn seam.
+
+Idea: Make the denominator a **module-level return of a separate function that takes hunks**, and have `scan_diff` cache... no globals.
+
+Idea: Since `render_convention_census(census)` receives the census dict, and the census dict is built inside `convention_census(findings, hunks, vocab)` where hunks ARE available — I could make `convention_census` return a `dict` subclass with an attribute. Then:
+- `render_convention_census(census)` reads `getattr(census, "register_gate", None)`. If present, render the line (even when all counts are zero? then `if not census or not any(census.values()): return ""` blocks it).
+
+Hmm — but requirement: all-clean diff renders the line with N == 0. Under this design, an all-clean diff → census all zeros → render_convention_census returns "" → line not rendered. Unless I restructure render_convention_census to render the denominator line even when counts are all zero and a denominator is present. That would break the existing byte-identity tests? Let's check: 
+- `census GATE: ... an all-zero census renders the SAME bytes as no census at all`: `render_report(empty_f, 0, empty_rs, empty_th, "FIXTURE", 40, 0, empty_census)` where empty_census came from `scan_diff("")` → would carry a denominator attribute (0,0,0) → renders the line → NOT byte-identical to pre_change. Test breaks.
+
+So the all-zero-census byte identity is directly in tension with "all-clean diff renders the line". Unless the denominator attribute is only set when there's something to see... but then an all-clean diff wouldn't render the line.
+
+Conclusion: the requirement "an all-clean diff renders the line with N == 0" must mean the *render function for the denominator* renders it when handed (0,0,0) — tested by a direct call, exactly like `blindness_fraction_line`'s zero branch (its docstring explicitly says "the zero branch is a guard at the point of the division, and it is tested by a direct call"). That precedent is strong and precedented in this exact file.
+
+But hmm — then in the real report, when does the denominator line appear? If it only appears when the census block appears (non-zero convention counts), then on a range where conventions are all zero but there ARE WEAKENED hunks, the denominator line wouldn't print — which is exactly the case the task wants readable ("a zero over a non-zero denominator is the honest reading this task exists to make sayable"). Hmm. Actually no: the denominator line's purpose is to make the register pair readable. If register-lines is 0 and register-payoff is 0 but N (WEAKENED hunks) is 31, then the line says "31 admitted, 0 removed a register literal, 0 split-only" → that's the honest reading. For that to print, the line must print even when census counts are zero.
+
+So we need the line to print whenever the denominator is *known* — i.e., in a real scan — but NOT print for a caller that didn't pass a denominator (pre-change callers). That's exactly the `None` vs `(0,0,0)` distinction. And the byte-identity test for the all-zero census uses a caller that passes census but NOT a denominator → renders nothing → byte-identical. 
+
+So: gating on `register_gate is None` (not passed) vs a supplied tuple. That keeps all four existing byte-identity tests green, and the line prints for real scans including N==0.
+
+This means render_report gains a keyword param `register_gate=None`. But hold on: the existing tests call `render_report(empty_f, 0, empty_rs, empty_th, "FIXTURE", 40, 0, empty_census)` positionally with 8 args; my new param must come after `skipped_names` or before? If after `skipped_names=None`, positional calls unaffected. The 9-arg call at 3634-ish passes `["eqnice!"]` as skipped_names positionally — fine if register_gate is 10th.
+
+Now, how does `_run` get the denominator? It needs hunks. Options:
+(a) scan_diff returns a 6th element (churn).
+(b) scan_diff's census is a dict subclass carrying the denominator (no churn, but implicit).
+(c) `_run` re-parses (duplication of nothing, just extra parse).
+
+Hmm. Let me think about (b) more concretely and whether it's honest. A dict subclass:
+
+```python
+class ConventionCensus(dict):
+    """The per-convention counts PLUS the register-gate denominator they are read against.
+
+    The denominator rides here rather than as a sixth element of scan_diff's tuple because
+    ... [reason]...
+    """
+    def __init__(self, counts, register_gate):
+        super().__init__(counts)
+        self.register_gate = register_gate
+```
+
+Hmm, but a `dict` subclass with `__slots__`? dict subclasses can have __dict__; `__slots__` on dict subclass is allowed (dict subclasses support slots since they have instance dict by default... actually defining `__slots__ = ()` on a dict subclass works). Fine.
+
+But: `census = {name: 0 for name in CONVENTION_COUNTERS}` in `_run` (line 2238) is a plain dict initialized for the per-commit accumulation; then `for name, n in c.items(): census[name] += n`. I'd need to accumulate the denominator there too. That's fine: `gate_n += c.register_gate[0]` etc.
+
+Then `render_report(..., census, sorted(skipped_names), register_gate)`. Hmm, but in stdin/from_ref modes census IS the ConventionCensus with `.register_gate`. In per-commit mode it's a plain dict. So `_run` would need a uniform variable. Something like:
+
+```python
+gate = (0, 0, 0)
+...
+# stdin:
+findings, rust_hunks, test_hunks, skipped, census = scan_diff(text, vocab)
+gate = census.register_gate
+...
+# per-commit:
+gate = tuple(sum) ...
+```
+
+That works but relies on the census carrying it — a bit indirect. Whereas the explicit returned tuple is clearer.
+
+Hmm, hmm. Honestly, maybe the simplest readable option: have `scan_diff` compute and return the denominator as the 6th element, and just do the 27 mechanical edits. It's explicit and the "not enough values to unpack" failure mode is loud. But 27 edits = high risk of a typo, and the diff is noisy for such a small feature.
+
+Alternative that's both explicit and low-churn: add a NEW function `scan_diff_full` ... no, duplication.
+
+Hmm wait. What about: keep scan_diff's 5-tuple, and add a separate pure function `register_gate_denominator(findings, hunks, vocab=None)`, and have `_run` in each of the three modes obtain hunks by calling `parse_unified_diff(text)` — the same function scan_diff calls, not a duplicated rule. Cost: one extra parse per mode (per commit in per-commit mode). The extra parse is O(diff size) regex work.
+
+Honestly... the extra parse is a real cost in the per-commit mode (40 parses extra) but tiny. And it duplicates nothing. But it does mean the report's denominator is computed from a *second parse of the same text*, which a future reader might flag as "why not return it from scan_diff?" — the answer being "to keep 27 unpack sites untouched" which is a weak reason, though the import-at-top-level and rate of change...
+
+Hmm, let me reconsider the dict-subclass option once more — it's zero extra work and zero duplicated rules and no signature churn. The subtlety is `__slots__` and that in per-commit mode the accumulator is a fresh plain dict. But I could simply make the accumulator a `ConventionCensus` too... Actually, instead of accumulating into a plain dict, accumulate:
+
+```python
+gate = (0, 0, 0)
+...
+elif args.from_ref and args.per_commit:
+    ...
+    for name, n in c.items():
+        census[name] += n
+    n_g, m_g, k_g = c.register_gate
+    gate = (gate[0] + n_g, gate[1] + m_g, gate[2] + k_g)
+```
+
+Hmm OK. Both designs need ~4 lines in _run. The dict-subclass needs no test churn. But is attribute-carrying-on-a-dict too clever/implicit for this codebase? The codebase is extremely explicit. Hmm.
+
+Let me reconsider: what does the task actually require of the *test* surface? "Self-tests inside the same file, wired into run_self_tests". It doesn't require the denominator to flow through scan_diff's tuple. The tests could compute the denominator by calling the pure function on `parse_unified_diff(fixture)` + findings from `scan_diff(fixture)`.
+
+I think there's an even simpler framing: the denominator is a function of (findings, hunks). Where the report needs it, hunks are needed. What if the denominator is rendered as part of the census *line block* computed by a function `render_register_gate_denominator(denom)`, and `_run` computes `denom = register_gate_denominator(findings, parse_unified_diff(text), vocab)`.
+
+Hmm, the extra parse.
+
+Decision time. I'll go with returning a 6th element from scan_diff — the most explicit, consistent with the file's stated precedent ("returned rather than re-derived by a caller that would have to re-parse the diff"), which literally describes this exact situation. The churn is mechanical and loudly checked. Actually hold on, let me reconsider the tuple-widening cost once more... 27 edits to test lines is also *test churn that could look like weakening* — the assertion-weakening checker watches test assertion changes! `check_assertion_weakening.py` scans MY OWN diffs; adding `, _gate` to unpack lines... does it affect assertion detection? Those are assignment lines, not assertion lines. `is_assertion_line` looks for assert!/assert_eq etc. Unpack lines aren't. But `_tuple(res)` helper change: `f, rs, te, sk, _c = res` → adding `_g`. Fine.
+
+Hmm, but there's also a risk: `tests/check_assertion_weakening` self-tests... no.
+
+Hmm, wait. Actually, let me reconsider ONE more option that is both explicit and churn-free: make the denominator a small namedtuple/dataclass returned by a separate function, and have `scan_diff`... no.
+
+You know what — there's a fourth option: keep the 5-tuple, and put the denominator computation INSIDE `convention_census`, returning counts as today, but *also* have `scan_diff` stash hunks on the findings? No.
+
+OK, fifth option, which I now think is actually the best: **don't thread hunks at all — thread the denominator through the census render, computed by `convention_census`'s caller.** I.e., make `convention_census` itself return the denominator... it returns a dict.
+
+Hmm, what if I add the denominator as a *key* in the census dict and adjust the two guards that assume keys ⊆ CONVENTION_COUNTERS? Where are those guards?
+- Line 3038-3039: `set(WRITTEN_CONVENTIONS_names) == set(CONVENTION_COUNTERS)` — compares sources, not the runtime dict. OK.
+- 3043: `all(name in render_convention_census({n: 1 for n in CONVENTION_COUNTERS}) ...)` — fine.
+- 3108: `sum(conv_census.values()) <= conv_rs` — would break if denominator keys are ints summed in! Yes it would break: `sum(census.values())` would include N (number of WEAKENED hunks) → sum might exceed rust_hunks. So keys must not be added to the same dict as counts. Confirms: no extra keys.
+
+Fine. Decision: 6th element of scan_diff's tuple. Let me now also double check: is there any other place that does `*scan_diff(...)` or indexes by position beyond what I saw? `pair_root[3]`, `pair_root[1]`, `pair_root[2]`, `nm_res[3]`, `two_names_scan[3]` — positional indices 0..3, unaffected by appending a 6th.
+
+Alright. Actually hmm, hold on. Let me reconsider the churn one final time by counting how many tests would need edits... all 5-element unpackings. Let me script it: find lines matching `^\s*[A-Za-z_][\w, ]*= scan_diff\(` where the LHS has exactly 5 targets (4 commas at top level) or is a single name (no unpack — fine). Let me be careful with multi-line ones.
+
+Honestly, I realize there might be an even less invasive approach: keep scan_diff returning 5, and add the denominator to the tuple via a **default-argument-free separate function** `scan_with_gate(text, vocab)` that calls scan_diff... but that re-runs classification. No.
+
+OK let me just do it. Plan:
+
+1. Add `register_gate_denominator(findings, hunks, vocab=None) -> tuple[int,int,int]` and `render_register_gate_denominator(gate) -> str` near count_register_payoff / render_convention_census.
+2. `scan_diff` returns 6-tuple including the denominator.
+3. `render_report(..., register_gate=None)` renders the line when not None.
+4. `_run`: thread it (stdin/from_ref: from scan_diff; per-commit: accumulate).
+5. Update all 5-element unpackings.
+6. Self-tests.
+7. ARCHITECTURE.md write-up.
+
+Wait — but step 5 makes the diff huge, and there's a "module size gate" (tests/module_size.rs) for Rust files, not Python. Fine.
+
+Hmm, let me reconsider ONE more time... Actually! Here's a thought: what if instead of a 6th tuple element, I make the denominator part of the census *render* by changing the signature of `render_report` to take `hunks=None`? Then `_run` needs hunks... same problem.
+
+What if scan_diff's census return stays, and I add `hunks` to... 
+
+OK actually, WAIT. Simpler: `parse_unified_diff(text)` is called inside scan_diff. What if the denominator function takes the *text*? No — re-classifies.
+
+Let me now consider: how bad is 27 edits really? It's mechanical and I can do it with a Python rewrite script that operates on the source lines, then verify with `python3 -c "import ast; ast.parse(open(...).read())"` and the self-tests. Actually even better: I can use a regex to append `, _gate` to unpack lines that have exactly 5 targets and call scan_diff. But each needs a distinct variable name to avoid clobbering? Reusing `_gate` across many is fine (throwaway). But some tests might want to assert on the gate (mine will, on purpose).
+
+Hmm, hold on, hold on. Let me step back and think about what's *best for the project*, not just what satisfies the task. The task says the missing thing is "the denominator the existing detector is reading over". A reader of the report sees:
+
+```
+  WRITTEN-CONVENTION CENSUS (MEASURED ...):
+    module-split ................. 0
+    whole-file-test-rename ....... 0
+    characterization-inversion ... 3
+    register-lines-only .......... 17
+    register-paid-to-empty ....... 0
+
+  register-gate denominator: 12 WEAKENED hunks admitted by the gate;
+                             0 of them removed a register literal;
+                             0 of them removed a SPLIT-only guard
+```
+
+But the census block only renders when a count is non-zero; the denominator line should render separately. Good.
+
+Now, for the per-commit mode: N = sum over commits of WEAKENED hunks. That's fine and matches the census's per-commit summation.
+
+Implementation detail for N: "hunks the classifier returned WEAKENED for on this range". Use the same pairing as count_register_payoff: `_hunk_by_finding(findings, hunks)` filtered `f.verdict == WEAKENED`. Note: `reconcile_moved_tests` may rebuild findings with verdict MOVED. So N counts findings with verdict WEAKENED that still pair to a hunk. Alternatively `sum(1 for f in findings if f.verdict == WEAKENED)` — but then M/K use hunk pairing. To keep N and M in the same population, use `_hunk_by_finding`. Hmm, but a finding that reconciled to MOVED is no longer WEAKENED; and `counts[WEAKENED]` in render_report counts findings by verdict (after reconciliation). So `sum(1 for f in findings if f.verdict == WEAKENED)` == the report's "WEAKENED ..................... N" line! That's a nice property: the denominator's N equals the WEAKENED count already printed... making the line partly redundant. Hmm, that's a good consistency argument (the two must agree) but it means N is not new information. The task explicitly defines N that way though: "N = hunks the classifier returned WEAKENED for on this range". And it's a useful consistency anchor. But using `_hunk_by_finding` gives a different (smaller) population if any WEAKENED finding failed to pair — actually every finding comes from a hunk, and `_hunk_by_finding` indexes by (path, header); in per-commit mode `finding.path` gets prefixed with the sha AFTER... wait:
+
+```python
+f, rh, th, sk, c = scan_diff(text, vocab)
+for finding in f:
+    finding.path = f"{sha[:8]} {finding.path}"
+```
+So paths are mutated post-scan; `_hunk_by_finding` is called inside scan_diff (before mutation), so within scan_diff pairing is fine. But the accumulated `findings` across commits have prefixed paths and shared `hunks` don't exist at render time. So in per-commit mode `_hunk_by_finding` at render time is impossible → confirms hunks aren't available at render time, and the denominator must be computed inside scan_diff per commit. Good: computing inside scan_diff and summing is the design.
+
+Within scan_diff, M and K require the hunk's removed side; N via `_hunk_by_finding` or by verdict count. I'll compute:
+
+```python
+def register_gate_denominator(findings, hunks, vocab=None):
+    pairs = _hunk_by_finding(findings, hunks)
+    n = 0; m = 0; k = 0
+    for f, h in pairs:
+        if f.verdict != WEAKENED:
+            continue
+        n += 1
+        if hunk_carries_shape(h.removed, REGISTER_LITERAL_RE, REGISTER_LITERAL_JOINED_RE):
+            m += 1
+            if not any(REGISTER_LITERAL_RE.search(ln) for ln in h.removed):
+                k += 1
+    return n, m, k
+```
+
+Wait: is "split-only" correctly `not any(dense)` and joined matches? Yes; `hunk_carries_shape` already returned True so if dense matched none, the window path matched.
+
+Hmm, the task says "M = those whose removed side carries a register literal" and "K = the subset whose removed register line is only visible after joining". Yes.
+
+Now about N vs the printed WEAKENED count: with `_hunk_by_finding`, a WEAKENED finding whose hunk is absent would be dropped. Since findings all come from hunks in the same call, N == counts[WEAKENED]. I'll assert that in a self-test (consistency between the two numbers) — nice, and it makes the line's N verifiable. Actually careful: is it possible for a finding's (path, header) to be absent from hunks? `reconcile_moved_tests` keeps path/header. Duplicate (path, header) pairs collapse in the idx dict — two hunks with identical path+header (possible? same path, same header, both in one diff — e.g., diff of a file with two identical hunk headers... unlikely but possible with -U0 and adjacent changes? Actually a unified diff for the same file cannot have two hunks with the same header because line ranges are monotonic and disjoint; two hunks with identical `@@ -0,0 +1 @@`... For a new file only one hunk. Fine.)
+
+Hmm, but if two hunks had the same (path, header), idx collapses to the last, and the pair list would contain two identical pairs (findings iterate) → still counts 2. Fine.
+
+Now, where does the census block vs denominator line go? I'll render the denominator line via a separate render function appended right after the census block (or in its place). Design in render_report:
+
+```python
+    census_lines = render_convention_census(census)
+    if census_lines:
+        out.append(census_lines)
+    gate_lines = render_register_gate_denominator(register_gate)
+    if gate_lines:
+        out.append(gate_lines)
+```
+
+And `render_register_gate_denominator(None) -> ""`; `(0,0,0) -> the three lines`.
+
+Byte-identity tests: they call render_report without register_gate → "" → identical. 
+
+Now the requirement "an all-clean diff renders the line with N == 0 and no panic" — I'll satisfy it two ways: (a) a direct call `render_register_gate_denominator((0,0,0))` asserts the string contains `N` = 0 and doesn't panic; (b) ALSO assert the full path: `render_report` for an all-clean fixture WITH the gate threaded from a real scan renders the line with N=0. Hmm — (b) would then make the earlier byte-identity test... no, those tests pass register_gate=None explicitly (default), so they're fine. My new test can pass the gate. 
+
+Now, the render format. The task shows:
+
+```
+register-gate denominator: N WEAKENED hunks admitted by the gate;
+                            M of them removed a register literal;
+                            K of them removed a SPLIT-only guard
+```
+
+I'll render with the file's style (two-space indent, aligned). Something like:
+
+```
+  REGISTER-GATE DENOMINATOR (the population register-paid-to-empty is read over):
+    WEAKENED hunks admitted by the gate ......... N
+     ... whose removed side carries a register literal .. M
+     ... of those, SPLIT-only (Day-201 shape) ..... K
+```
+
+Hmm, the task gives explicit wording. I'll use the task's wording but with the file's indentation conventions. Let me write:
+
+```
+  register-gate denominator: N WEAKENED hunks admitted by the gate;
+                              M of them removed a register literal;
+                              K of them removed a SPLIT-only guard
+```
+
+with a trailing caveat line? Keep it to the three lines plus maybe one note line stating the removed-side limit ("the added side is out of scope"). The write-up requires the stated limit in ARCHITECTURE.md. I could put a short note in the rendered block too. Let me add one line: "`K` is a REMOVED-side reading: the added side is out of scope for the WEAKENED gate." Hmm, the task says render line verbatim-ish. I'll keep the three lines exactly as the task specifies (with `f"  register-gate denominator: {n} WEAKENED hunks admitted by the gate;"` etc.) and add nothing else to keep it tight. Actually a limit note in-band is valuable... but the block already has a long mode-disclosure convention. I'll add a fourth line only if concise:
+
+```
+  (K is a REMOVED-side reading: count_register_payoff's WEAKENED gate never looks at added lines.)
+```
+
+That's informative and matches the file's habit of in-band disclosure. I'll include it.
+
+Now self-tests. Let me look at the existing register-related self-tests (3120-3300) and the fixture builders to reuse.
+
+Let me read 3120-3300.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3110,3300p scripts/check_… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I have the fixtures. Note `split_payoff_diff` is a WEAKENED hunk that removes the split anti-vacuous guard — perfect for K: the removed side carries no register LITERAL though. Wait, K is about the register LITERAL on the removed side, not the anti-vacuous guard. Hmm:
+
+"K = the subset [of M] whose removed register line is only visible after joining the `-U0` hunk's lines (the Day-201 split shape, via the existing `hunk_carries_shape`/joined-line path)".
+
+So K requires M: a WEAKENED hunk that removes a register literal in split form. That's a compound fixture: a hunk that is WEAKENED (removes an assertion) AND removes a split register tuple.
+
+I need a fixture:
+```
+diff --git a/tests/module_size.rs b/tests/module_size.rs
+--- a/tests/module_size.rs
++++ b/tests/module_size.rs
+@@ -40,8 +40,4 @@
+-    (
+-        "src/commands_search.rs",
+-        4174,
+-    ),
+-    assert!(!REGISTERED_GIT_BYPASSES.is_empty());
++    // register emptied
+```
+Hmm, would that classify as WEAKENED? It removes an assertion line → S_ASSERTION_DELETED → WEAKENED. And the removed side carries a split register literal → M=1, K=1. 
+
+But also careful: the register-lines-only counter (`count_register_lines`) skips in-scope hunks, so this hunk contributes 0 there. Fine — and it means M (a WEAKENED hunk) and `register-lines-only` are disjoint, which is worth noting.
+
+Now: K must be 1 for the split fixture. And also I need the M case (non-split) fixture: a WEAKENED hunk removing a register literal on ONE line:
+```
+-    ("src/commands_search.rs", 4174),
++    ("src/commands_search.rs", 4307),
+```
+plus an assertion removal. E.g.
+
+```
+@@ -10,4 +10,2 @@
+-    ("src/commands_search.rs", 4174),
+-    assert!(!REGISTERED_GIT_BYPASSES.is_empty());
++    // ...
+```
+→ WEAKENED with removed single-line register literal → M=1, K=0 (dense matches). That's the near-miss: "a hunk removing a register literal that is not classified WEAKENED is excluded from M but still counted in a wider N".
+
+Wait — the near-miss in the task: "a hunk removing a register literal that is **not** classified `WEAKENED` is excluded from `M` but still counted in a wider `N`". Hmm, "still counted in a wider N"? N counts WEAKENED hunks only. So a non-WEAKENED hunk removing a register literal is excluded from both M and N. Reading it again: maybe they mean the diff has other WEAKENED hunks (so N ≥ 1) and the register-removing non-WEAKENED hunk isn't in M. I'll implement: a diff with one plain (non-WEAKENED, out-of-scope) register hunk + one WEAKENED hunk that removes a register literal → M counts only the WEAKENED one; and add a stronger assertion: a diff whose ONLY register-removing hunk is not WEAKENED (out of scope) → N=0, M=0 even though a register literal was removed. That's the sharp near-miss: "the gate is what selects, not the shape".
+
+Hmm, actually an out-of-scope register hunk (pure edit, no assertions) → classify returns None → not a finding → N=0, M=0. Good.
+
+Let me now write the tests:
+
+1. **anti-vacuous first**: `N >= 1 and M >= 1` on a fixture carrying a WEAKENED hunk removing a register literal (the one-line M fixture). Then:
+2. **split fixture**: K == 1.
+3. near-miss both directions.
+4. render assertions.
+
+Where to put them: near the register/split-shape block (~line 3270) so fixtures are nearby. I'll add a new block after the split-payoff census checks and before the near-miss guard, or after the census ADDITIVE tests. I think placing it right after the split-shape census checks (line ~3300) is most coherent, since it reuses the split fixtures and the register literal fixture.
+
+I need to construct the M fixture and the K fixture inline.
+
+M fixture (WEAKENED, removed one-line register literal):
+```python
+gate_m_diff = "\n".join([
+    "diff --git a/tests/module_size.rs b/tests/module_size.rs",
+    "--- a/tests/module_size.rs",
+    "+++ b/tests/module_size.rs",
+    "@@ -40,3 +40,1 @@",
+    '-    ("src/commands_search.rs", 4174),',
+    "-    assert!(!REGISTERED_GIT_BYPASSES.is_empty());",
+    "+    // register paid down to empty (#864)",
+])
+```
+Wait: does the register literal line `    ("src/commands_search.rs", 4174),` count as an "assertion line" / test-ish line? `is_assertion_line` looks for assert macros etc. The REGISTER_LITERAL_RE line is a tuple, not an assertion. But `is_test_ish_line`? Let's check `classify_assertion_change` more carefully — it uses `is_assertion_line` for r_asserts/a_asserts. Then what triggers WEAKENED? Let me read the rest of classify_assertion_change (lines 900-1000) to make sure a hunk that removes an assertion + a tuple → WEAKENED. Yes, S_ASSERTION_DELETED.
+
+Hmm, but careful: does the presence of the tuple line change `dedicated_test_file` handling? The file is tests/module_size.rs → dedicated test file → `is_assertion_line(ln, True, vocab)` is more permissive. Let me read is_assertion_line and the rest of classify to be safe.
+
+Also potential problem: in the M fixture, removed lines = the tuple + the assert line. `is_assertion_line` on the tuple line → probably False (it's not an assert macro; but in a dedicated test file, any line with `assert_eq!` etc... let me read). Let's read lines 900-1010.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 900,1010p scripts/check_a… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now, will the added comment line `+    // register paid down to empty (#864)` interfere? `is_assertion_line` for added — a comment, probably not. Let's check `is_assertion_line`: it likely uses vocab.assert_re / builtin patterns. Let me check quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def is_assertion_line" … ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. `PANICKY_RE` for dedicated test files — a tuple line isn't panicky. Fine.
+
+Now let me write the code. First, let me view lines 1180-1215 for exact context around REGISTER_LITERAL_RE comments, and decide placement of the denominator function — near count_register_payoff (1349).
+
+Let me now write:
+
+```python
+def register_gate_denominator(findings, hunks, vocab=None) -> tuple[int, int, int]:
+    """`(N, M, K)` -- the population `register-paid-to-empty` is read OVER, not a new counter.
+
+    WHY A DENOMINATOR AND NOT A COUNT (day 203). `register-lines-only` and
+    `register-paid-to-empty` are rendered as two bare integers, and a bare 0 cannot be told
+    apart from "the gate admitted nothing to look at" -- which is exactly what made the
+    day-201 counter repair invisible in the census for a whole session (2 and 0 before it,
+    2 and 0 after). The day-201 lesson states the required form of the number: "measure the
+    base rate, then restrict it by every condition on the path from the entry point to the
+    changed line, and quote it as a fraction over THAT set". So:
+
+      N -- hunks the classifier returned WEAKENED for, i.e. the population the payoff gate
+           admits. It equals the report's own `WEAKENED ..... N` line BY CONSTRUCTION and a
+           self-test pins the two together, so the denominator can never describe a
+           population the verdict counts disagree with.
+      M -- those of the N whose REMOVED side carries a register literal (the day-201
+           `dense-or-joined` pair, reused rather than re-spelled).
+      K -- the subset of M whose removed register literal is visible ONLY on the join --
+           the day-201 rustfmt split. K == 0 over an M > 0 denominator is the honest reading
+           this line exists to make sayable.
+
+    REMOVED SIDE ONLY, and the limit is stated rather than left to be discovered: the added
+    side is deliberately out of scope because `count_register_payoff`'s WEAKENED gate never
+    looks at added lines either. `M` and `register-lines-only` are DISJOINT by construction
+    -- that counter skips every hunk that produced a finding, and every hunk counted here
+    produced one.
+    """
+    n = m = k = 0
+    for f, h in _hunk_by_finding(findings, hunks):
+        if f.verdict != WEAKENED:
+            continue
+        n += 1
+        if not hunk_carries_shape(
+            h.removed, REGISTER_LITERAL_RE, REGISTER_LITERAL_JOINED_RE
+        ):
+            continue
+        m += 1
+        if not any(REGISTER_LITERAL_RE.search(ln) for ln in h.removed):
+            k += 1
+    return n, m, k
+```
+
+Hmm wait, `vocab` param — unused! That would be fine in Python but the "no definition without a consumer" rule and clean style... unused parameter is OK in Python (no lint). But better to omit it for clarity? `convention_census` calls fn(findings, hunks, vocab) uniformly. My function isn't in CONVENTION_COUNTERS, so I can omit vocab. But scan_diff will call it. I'll omit vocab — simpler and honest (no vocab dependence). Hmm, but for signature symmetry with the counters... I'll omit it and note why? Actually let me include it as a parameter but... no. Omit. Cleaner.
+
+Hmm, but wait: is there a lint in this repo for unused args in Python? No ruff config probably. Let me check .githooks/lint_evolve_heredocs.py — only heredoc lint for evolve.sh. Fine, omit.
+
+Then the renderer:
+
+```python
+def render_register_gate_denominator(gate) -> str:
+    """The register gate's DENOMINATOR, always rendered when a caller supplies one.
+
+    NOT GATED ON A NON-ZERO COUNT, and that is the difference between this and
+    `render_convention_census`: a zero is the thing that needs reading here, and a block
+    that speaks only when something fired would hide the case it exists for ("the gate
+    admitted N hunks and none of them carried the shape"). `None` -- a caller that did not
+    measure it, i.e. every pre-change caller -- renders NOTHING, byte-identically, which is
+    the whole regression surface of this addition. `(0, 0, 0)` is a MEASUREMENT and renders
+    its zeroes.
+    """
+    if gate is None:
+        return ""
+    n, m, k = gate
+    return "\n".join([
+        f"  register-gate denominator: {n} WEAKENED hunks admitted by the gate;",
+        f"                              {m} of them removed a register literal;",
+        f"                              {k} of them removed a SPLIT-only guard",
+        "",
+    ])
+```
+
+Hmm, the alignment of continuation lines depends on the length of `register-gate denominator: `. "  register-gate denominator: " is 2+26 = let me count: "register-gate denominator:" = 26 chars; plus 2 indent + 1 space = 29. So the continuation indent is 30 spaces. I'll just build with those spaces; better to compute:
+
+```python
+    lead = "  register-gate denominator: "
+    pad = " " * len(lead)
+```
+Then lines = [f"{lead}{n} WEAKENED hunks admitted by the gate;", f"{pad}{m} of them removed...", ...]. Cleaner and can't drift. And add the limit line? Let me add:
+
+```
+    f"{pad}(K is a REMOVED-side reading; the added side is out of scope for the gate.)"
+```
+Hmm, that adds a 4th line. Is it needed in-band? The task's write-up requires the limit stated in ARCHITECTURE.md. In-band is a bonus; the file prefers in-band disclosure (mode disclosure). I'll include a compact one. Hmm, but the task gave the exact three-line shape; adding a 4th line with the caveat is still "ONE census line" (a block). I'll include it — it matches the file's culture and the "stated rather than implied" rule. Actually, let me keep it exactly to the three lines plus a trailing empty-string separator, and put the limit in ARCHITECTURE.md + the function docstring. Hmm...
+
+I'll include the caveat line — the file's culture is strongly in-band disclosure, and the write-up says "the stated limit that K is a removed-side reading". In-band makes it read by anyone who sees the report. Decision: include as a fourth line worded compactly.
+
+Now render_report:
+
+```python
+def render_report(findings, commits, rust_hunks, test_hunks, window, max_findings=40,
+                  skipped_unknown_vocab=0, census=None, skipped_names=None,
+                  register_gate=None):
+```
+
+and after the census block:
+
+```python
+    gate_lines = render_register_gate_denominator(register_gate)
+    if gate_lines:
+        out.append(gate_lines)
+```
+
+Then scan_diff returns 6-tuple; `_run` threads it.
+
+Now, churn. Let me write a Python script to do the tuple-unpack edits? Risky. Let me instead do them manually with edit_file... 27 edits is a lot of tool calls. Better: use a Python script with a careful regex that only touches lines matching `^\s*([A-Za-z_][A-Za-z0-9_]*(?:,\s*[A-Za-z_][A-Za-z0-9_]*){4})\s*=\s*scan_diff\(` and appends `, _gate`. For multi-line calls (3896, 4015, 4076?) the assignment spans lines; the regex on the first line still works if the call starts on the same line: `rg_findings, _rg_rs, rg_test, rg_sk, _census = scan_diff(` — yes, the first line matches. Also `__gate` naming: use `_gate` for all; but in the tests I write I'll unpack explicitly. Also the `_tuple` helper: `f, rs, te, sk, _c = res` — needs a 6th. I'll handle that separately.
+
+Also line 1921's `_skipped` etc. Fine.
+
+Wait, but reusing `_gate` dozens of times is fine in Python (rebinding). But flake-style "unused variable" — no linter. OK.
+
+Hmm, hold on. Let me reconsider ONE final alternative that eliminates the churn entirely and is arguably cleaner: instead of appending to the tuple, have `scan_diff` return the denominator *inside* the census via a dict subclass... I keep going back and forth. Let me settle with a decision rule: which would a careful reader of this file prefer? The file's census docstring explicitly says: "So it is returned rather than re-derived by a caller that would have to re-parse the diff to get it". Returning the gate from scan_diff is exactly that pattern → consistent. The churn is mechanical. Go.
+
+Actually hmm, wait. There's ANOTHER consideration: the tuple-append breaks `_tuple` and 27 lines, and each of those lines is a *test* line. The repo's `check_assertion_weakening.py` check runs on commits (CI) and the archive records convention censuses — mechanical test edits are fine.
+
+BUT there's a real risk: what if a site unpacks with `*rest`? Let me check `_tuple(scan_diff(...))` — fine. And `pair_root[3]` — fine.
+
+Let me grep for any other pattern that unpacks scan_diff results indirectly, e.g. `for x in scan_diff(...)` — no.
+
+OK, and one more: functions that pass a scan result around, e.g. `nm_res = scan_diff(nm_text)` then `nm_res[3]` — fine.
+
+Let's do it. First, the smallest edit and the test... Actually the skill says write a test first if possible. I'll do the implementation then tests, but let me do the fixture test early. Given the size, let me implement in this order:
+1. Add `register_gate_denominator` + `render_register_gate_denominator`.
+2. Widen `scan_diff`.
+3. `render_report` param + append.
+4. `_run` threading.
+5. Mechanical unpack fixes.
+6. Self-tests.
+7. ARCHITECTURE.md.
+
+Let me look at lines 1180-1200 exact text for REGISTER_LITERAL comments to place the new function right after count_register_payoff.
+
+Actually placement: put `register_gate_denominator` right after `count_register_payoff` (line 1349-ish) since it uses the same shapes. And the renderer right after `render_convention_census`.
+
+Let me get exact text for edits.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1336,1360p scripts/check_… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me make the first edit — the denominator function:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (6 → 55 lines)
+                h.removed, REGISTER_ANTIVACUOUS_RE, REGISTER_ANTIVACUOUS_RE
+            )
+        )
+  + 
+  + 
+  + def register_gate_denominator(findings, hunks) -> tuple:
+  +     """`(N, M, K)` -- the population `register-paid-to-empty` is read OVER, not a counter.
+  + 
+  +     WHY A DENOMINATOR AND NOT A NEW COUNT (day 203). The census renders the register pair
+  +     as two bare integers, and a bare `0` cannot be told apart from "the gate admitted
+  +     nothing to look at" -- which is exactly what made the day-201 counter repair invisible
+  +     in the census for a whole session (2 and 0 before it, 2 and 0 after). The day-201
+  +     lesson states the required form of the number: "measure the base rate, then restrict it
+  +     by every condition on the path from the entry point to the changed line, and quote it
+  +     as a fraction over THAT set". So:
+  + 
+  +       N -- hunks the classifier returned WEAKENED for, i.e. the population the payoff gate
+  +            admits. It equals the report's own `WEAKENED ..... N` line BY CONSTRUCTION (both
+  +            count findings with that verdict), and a self-test pins the two together so a
+  +            denominator can never describe a population the verdict counts disagree with.
+  ... (35 more lines)
+ ✓ (1m 39s)
+                h.removed, REGISTER_ANTIVACUOUS_RE, REGISTER_ANTIVACUOUS_RE
+            )
+        )
+  + 
+  + 
+  + def register_gate_denominator(findings, hunks) -> tuple:
+  +     """`(N, M, K)` -- the population `register-paid-to-empty` is read OVER, not a counter.
+  + 
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now widen scan_diff. Its signature line and the return.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1424,1495p scripts/check_… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (53 → 70 lines)
+        """Return `(findings, rust_hunks_seen, test_hunks_examined, skipped_unknown_vocab,
+  -     convention_census)`.
+  +     convention_census, register_gate_denominator)`.
+    
+        The fourth number is SKIPPED_UNKNOWN_VOCABULARY: a hunk in a dedicated test file with
+        a real diff that this vocabulary could not read at all. It is counted here and summed
+  ···
+        applied to itself one day later, which is the point: the #835 argument was already
+        here and inlining still happened.
+    
+  -     The FIFTH element is the convention census and it is the ONE deliberate signature
+  +     The FIFTH element is the convention census and it was the ONE deliberate signature
+        widening in this tool's history. It was NOT derivable from the findings the way the
+        MOVED count is: `register-lines-only` counts hunks that produced NO finding at all,
+        and `whole-file-test-rename` vs `module-split` needs the hunk HEADER, which a `Finding`
+  ···
+        would have to re-parse the diff to get it -- and re-deriving would be the second
+        statement of a rule this file keeps refusing to write. It is PURELY ADDITIVE: no
+        verdict, no counter above it, and no rendered byte of the pre-existing report changes.
+  + 
+  ... (25 more lines)
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py.
+
+── Thinking ────────────────────────────────────────────────────────────────
+The sed output truncated "(5 more similar lines)". Let me do two smaller edits instead.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (2 → 2 lines)
+        """Return `(findings, rust_hunks_seen, test_hunks_examined, skipped_unknown_vocab,
+  -     convention_census)`.
+  +     convention_census, register_gate_denominator)`.
+ ✓ (1m 55s)
+        """Return `(findings, rust_hunks_seen, test_hunks_examined, skipped_unknown_vocab,
+  -     convention_census)`.
+  +     convention_census, register_gate_denominator)`.
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me continue where I left off. I need to:
+1. Update the docstring for the FIFTH element to mention the SIXTH
+2. Update scan_diff to return the 6th element
+3. Update all callers
+4. Add render line
+5. Add self-tests
+6. Run it
+
+Let me check the current state of the file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && sed -n 142… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now update the docstring line "The FIFTH element" and the return.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (9 → 18 lines)
+  -     The FIFTH element is the convention census and it is the ONE deliberate signature
+  +     The FIFTH element is the convention census and it was the ONE deliberate signature
+        widening in this tool's history. It was NOT derivable from the findings the way the
+        MOVED count is: `register-lines-only` counts hunks that produced NO finding at all,
+        and `whole-file-test-rename` vs `module-split` needs the hunk HEADER, which a `Finding`
+  ···
+        would have to re-parse the diff to get it -- and re-deriving would be the second
+        statement of a rule this file keeps refusing to write. It is PURELY ADDITIVE: no
+        verdict, no counter above it, and no rendered byte of the pre-existing report changes.
+  + 
+  +     The SIXTH element is the register gate's denominator `(N, M, K)` (day 203), widened by
+  +     the SAME argument one day's census later: `M` and `K` need the hunk's REMOVED lines,
+  +     which no `Finding` carries, so a renderer given only the findings could not compute
+  +     them -- and a caller that re-parsed the diff to get them would be re-running
+  +     `classify_assertion_change` to learn which hunks the gate admitted, i.e. the second
+  +     statement of a rule this file keeps refusing to write. It is ADDITIVE in the same
+  +     sense as the census: it changes no count and no verdict, and it is rendered only for a
+  +     caller that supplies it.
+        """
+ ✓ (1m 55s)
+  -     The FIFTH element is the convention census and it is the ONE deliberate signature
+  +     The FIFTH element is the convention census and it was the ONE deliberate signature
+        widening in this tool's history. It was NOT derivable from the findings the way the
+        MOVED count is: `register-lines-only` counts hunks that produced NO finding at all,
+        and `whole-file-test-rename` vs `module-split` needs the hunk HEADER, which a `Finding`
+  ···
+        would have to re-parse the diff to get it -- and re-deriving would be the second
+        statement of a rule this file keeps refusing to write. It is PURELY ADDITIVE: no
+  ... (11 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (3 → 11 lines)
+        findings, _ = reconcile_moved_tests(findings, hunks)
+        census = convention_census(findings, hunks, vocab)
+  -     return findings, rust_hunks, test_hunks, skipped_unknown_vocab, census
+  +     register_gate = register_gate_denominator(findings, hunks)
+  +     return (
+  +         findings,
+  +         rust_hunks,
+  +         test_hunks,
+  +         skipped_unknown_vocab,
+  +         census,
+  +         register_gate,
+  +     )
+ ✓ (1m 56s)
+        findings, _ = reconcile_moved_tests(findings, hunks)
+        census = convention_census(findings, hunks, vocab)
+  -     return findings, rust_hunks, test_hunks, skipped_unknown_vocab, census
+  +     register_gate = register_gate_denominator(findings, hunks)
+  +     return (
+  +         findings,
+  +         rust_hunks,
+  +         test_hunks,
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the renderer:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1615,1680p scripts/check_… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I'll add a render function for the register gate denominator: `render_register_gate_denominator(denominator) -> str` rendering the three-line block.
+
+Design: takes tuple `(N, M, K)`. Returns "" when denominator is falsy or None. Never prints a percentage. Renders:
+
+```
+register-gate denominator: N WEAKENED hunk(s) admitted by the gate
+    of which M removed a register literal (register-lines-only's in-scope twin)
+    of which K removed it SPLIT-only (the day-201 shape) -- visible only after joining
+```
+
+But rendering a zero percentage-guard: when M == 0, K's clause must not read as a clean reading. Let me make it explicit: "of which 0 removed it SPLIT-only" — fine, since N is printed.
+
+Also must state the removed-side limit. Let me write:
+
+```python
+def render_register_gate_denominator(denominator) -> str:
+    """..."""
+    if not denominator:
+        return ""
+    n, m, k = denominator
+    lines = [
+        "  register-gate denominator: "
+        f"{n} WEAKENED hunk(s) admitted by the gate;",
+        f"                              {m} of them removed a register literal;",
+        f"                              {k} of them removed a SPLIT-only guard.",
+    ]
+    ...
+```
+
+Hmm, the task specifies exactly that shape:
+
+```
+register-gate denominator: N WEAKENED hunks admitted by the gate;
+                            M of them removed a register literal;
+                            K of them removed a SPLIT-only guard
+```
+
+Good — use that literal shape. Add the removed-side limit line and note that K==0 over M>0 denominator is readable.
+
+When should it render? The census only renders when any(census.values()). For the denominator, N can be > 0 while census is all zero? Actually census includes register-payoff and register-lines; if N > 0, WEAKENED findings exist, but census-wise register-lines-only requires no finding (so 0), register-paid-to-empty may be 0, characterization-inversion may be 0... Actually a WEAKENED hunk with a normal broken assertion might yield census all-zero. So the denominator line should render whenever there is something to say: N > 0. But rendering with N==0 — the task's near-miss test says "an all-clean diff renders the line with N == 0 and no panic". Hmm: "an all-clean diff renders the line with N == 0 and no panic". So the line should render even with N == 0? That's in the self-test: "near-miss / both directions: ... and an all-clean diff renders the line with N == 0 and no panic".
+
+Hmm, that conflicts with byte-identical additivity for callers passing None. But if the caller supplies the denominator tuple (0,0,0), rendering "N=0" would mean every clean run prints a zero line — which would rewrite every existing reading (the same thing the census carefully avoids). 
+
+Resolution: render "" when the denominator is None (caller didn't supply), and when supplied, render the line only if N > 0... but then the "all-clean diff renders the line with N == 0" test fails.
+
+Let me re-read: "render asserted as a string a caller receives, in whichever modes the existing renderer tests use." and near-miss: "a hunk removing a register literal that is not classified WEAKENED is excluded from M but still counted in a wider N, and an all-clean diff renders the line with N == 0 and no panic".
+
+Hmm, "still counted in a wider N" — that's odd since N is WEAKENED hunks. Let me re-read the N definition: "N = hunks the classifier returned WEAKENED for on this range". So a non-WEAKENED hunk removing a register literal is NOT in N. The "wider N" phrasing in the near-miss bullet is loose. I'll interpret: the hunk is excluded from M, and M must be 0 there while the line still renders (because other WEAKENED hunks exist in that fixture, so N >= 1).
+
+And "an all-clean diff renders the line with N == 0 and no panic" — I'll interpret as: calling the render function directly with (0,0,0) returns a coherent string stating N=0, no exception. That is the natural "direct call" test pattern this file uses for zero denominators (cf. blindness_fraction_line's zero branch "tested by a direct call"). And in render_report, the line is emitted only when the tuple is supplied AND N>0 (or M>0/K>0) — preserving byte-identity for every existing reading and for all-clean runs... 
+
+Hmm, but then how does an all-clean real run get a readable 0? The whole point of the task is that `K == 0` over non-zero denominator is the honest reading. The task says "Report N, M, K for that range verbatim in the write-up, including if K == 0 — a zero over a non-zero denominator is the honest reading this task exists to make sayable." So the zero that matters is K==0 with N>0. N==0 means the gate admitted nothing — which the bare-zero problem is about... but printing "N=0" on every clean run would rewrite everything.
+
+Compromise: render_report emits the register-gate block when the denominator is supplied and `any(denominator)` — i.e., N>0 (M,K<=N so any() is equivalent to N>0). And when N==0 with the tuple supplied, render nothing (byte-identical, preserving additivity). Direct call with (0,0,0) returns a string stating N=0 — wait, that's inconsistent.
+
+Better: keep it simple and honest, and document the choice. `render_register_gate_denominator((0,0,0))` returns "" — no! The test explicitly says the all-clean diff renders the line with N == 0.
+
+Alternative interpretation that satisfies everything: render the line whenever the denominator tuple is SUPPLIED (not None), including all-zeros. Then the additivity regression surface is "a caller that passes no denominator (None)" → byte-identical. Existing callers (render_report's own callers in self-tests) mostly pass census positionally... but I control the self-test too.
+
+But the headline promise "no rendered byte of the pre-existing report changes" is about pre-change callers: `render_report(...)` without the new arg (default None) → byte-identical. That holds. And the main `_run` will always pass the denominator, so real runs over a range with zero WEAKENED hunks print `register-gate denominator: 0 ...`. Is that a rewrite of every existing published reading? Those readings were taken by earlier versions of the tool; the tool's output changing for future runs is unavoidable (the census line itself changed output when it landed). The census chose to render only non-zero to avoid rewriting the common case — the register-gate line is explicitly a *denominator*, whose entire purpose is to be readable as 0. So rendering always (when supplied) is defensible and is what the task's near-miss bullet asks for.
+
+Hmm, but then a foreign repo scan prints it always too. That's fine — it's three lines stating a small honest fact, and it's gated by the range.
+
+Wait — but there's a strong argument the other way: the census block prints nothing when all counts are zero, and the "census GATE: a pre-change caller's report never mentions the census" test asserts `"CONVENTION CENSUS" not in pre_change` where pre_change = render_report(empty_f, 0, empty_rs, empty_th, "FIXTURE") — no denominator arg → None → no register line. Good.
+
+And "census ADDITIVE: an ordinary diff's report is BYTE-IDENTICAL with the census passed" — that calls render_report(...ord_sk, _census) without denominator → None → byte-identical. Good.
+
+So: render when denominator is not None. Let me make the renderer:
+
+```python
+def render_register_gate_denominator(denominator) -> str:
+    if denominator is None:
+        return ""
+    n, m, k = denominator
+    ...
+```
+
+And render_report appends it when non-empty. Decision: `if denominator is None` → "". This makes the zero case sayable, which is the task's goal.
+
+Hmm, but hold on — there's a subtlety about the *unit* and about honesty: if K==0 and M==0 with N>0, the reading is "the gate admitted N hunks and none touched the register pair". Good.
+
+Actually wait. Let me reconsider once more whether to gate on N>0. The task's deliverable 2 says: "Emit, for the scanned range: register-gate denominator: N WEAKENED hunks admitted by the gate; ...". It says emit for the scanned range, unconditionally. Yes — always emit when supplied. I'll go with `None` → "".
+
+Now write the renderer with the removed-side limit stated.
+
+Let me place it right after render_convention_census.
+
+Then update render_report signature: add `register_gate=None` after `skipped_names=None` (append at end to avoid shuffling positional args in existing tests... but existing tests pass skipped_names positionally as the 9th arg. Adding at the end is safest).
+
+Actually careful: `render_report(findings, commits, rust_hunks, test_hunks, window, max_findings=40, skipped_unknown_vocab=0, census=None, skipped_names=None)`. Add `register_gate=None` at the end.
+
+Now let me write the code.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (6 → 46 lines)
+        )
+        lines.append("")
+        return "\n".join(lines)
+  + 
+  + 
+  + def render_register_gate_denominator(denominator) -> str:
+  +     """Render the register pair's DENOMINATOR `(N, M, K)`, or "" when it was not supplied.
+  + 
+  +     THE LINE THIS REPLACES WAS TWO BARE INTEGERS, and a bare `0` cannot be told apart from
+  +     "the gate admitted nothing to look at" -- the ambiguity that made the day-201 counter
+  +     repair invisible in the census for a whole session (2 and 0 before it, 2 and 0 after).
+  +     The day-201 lesson names the required form: "restrict it by every condition on the path
+  +     from the entry point to the changed line, and quote it as a fraction over THAT set".
+  +     `N` is that set (the population the payoff gate admits), `M` is the first condition on
+  +     the path (the removed side carries a register literal), and `K` is the second (that
+  +     literal is visible only on the join -- the day-201 rustfmt split).
+  + 
+  +     A ZERO IS RENDERED, and that is the whole point of the line rather than a slip. `K == 0`
+  +     over an `M > 0` denominator is a real reading -- "the gate looked at M register-removing
+  +     hunks and none of them needed the split reader" -- while the same `0` printed alone says
+  ... (23 more lines)
+ ✓ (1m 55s)
+        )
+        lines.append("")
+        return "\n".join(lines)
+  + 
+  + 
+  + def render_register_gate_denominator(denominator) -> str:
+  +     """Render the register pair's DENOMINATOR `(N, M, K)`, or "" when it was not supplied.
+  + 
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wire it into render_report:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def render_report" -A 1… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (3 → 4 lines)
+        census=None,
+        skipped_names=None,
+  +     register_gate=None,
+    ):
+ ✓ (1m 55s)
+        census=None,
+        skipped_names=None,
+  +     register_gate=None,
+    ):
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (3 → 12 lines)
+        census_lines = render_convention_census(census)
+        if census_lines:
+            out.append(census_lines)
+  + 
+  +     # The register pair's DENOMINATOR, immediately under the census that prints its two
+  +     # bare counts -- beside them, so no reading has to reconstruct the fraction by hand
+  +     # (the same reason `blindness_fraction_line` prints its derived number). Emitted
+  +     # whenever a caller supplies the tuple, INCLUDING an all-zero one: a suppressed zero
+  +     # is the exact ambiguity this line exists to remove.
+  +     gate_lines = render_register_gate_denominator(register_gate)
+  +     if gate_lines:
+  +         out.append(gate_lines)
+ ✓ (1m 56s)
+        census_lines = render_convention_census(census)
+        if census_lines:
+            out.append(census_lines)
+  + 
+  +     # The register pair's DENOMINATOR, immediately under the census that prints its two
+  +     # bare counts -- beside them, so no reading has to reconstruct the fraction by hand
+  +     # (the same reason `blindness_fraction_line` prints its derived number). Emitted
+  +     # whenever a caller supplies the tuple, INCLUDING an all-zero one: a suppressed zero
+  ... (4 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me continue. I need to wire the denominator into `_run` (the CLI) — both modes — and update all `scan_diff` call sites in the self-tests, plus add the new self-tests, then run everything.
+
+Let me check current state.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "scan_diff(" scripts/che… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to update every unpacking of `scan_diff`. Many use 5-tuples. There are `_tuple(res)` helper at line ~4064 which unpacks 5 and ignores c. Let me handle:
+
+- `_tuple(res)` → `f, rs, te, sk, _c, _rg = res`
+- All `X, Y, Z, W, V = scan_diff(...)` → add `, _rg`
+- Index accesses `pair_root[3]`, `pair_root[:4]` still work.
+- `_tuple(scan_diff(standard_idiom_diff)) == std_default` comparisons — fine as long as `_tuple` unpacks.
+
+Let me do a careful sed-based update. The patterns are of the form `= scan_diff(` preceded by 5 comma-separated names. Safer: use python to rewrite lines that contain `= scan_diff(` and count the LHS names.
+
+Also lines where `scan_diff` is passed directly to `_tuple(...)` — no unpacking needed.
+
+Let's write a small Python script to do this mechanically: for each line matching `^(\s*)([\w, ]+) = scan_diff\(` where LHS has 5 names, append `, _rg`. Careful with `f, rh, th, sk, c = scan_diff(text, vocab)` — that's inside the per-commit loop, where census `c` is summed. That one needs `_rg` too but I need the register gate summed per commit... Hmm.
+
+Wait — for `--per-commit` mode, what should the denominator be? The task says emit for the scanned range. In per-commit mode, census is summed over each commit's own scan. The denominator N is "hunks the classifier returned WEAKENED for on this range" — summing N over commits gives that. M and K likewise sum. So I should accumulate the denominator per commit too, mirroring the census summing.
+
+But careful: N must equal the WEAKENED count in the report. In per-commit mode, findings are accumulated and reconciled per commit; the report's WEAKENED count = sum of per-commit WEAKENED findings. And N = sum over commits of per-commit WEAKENED-hunk count. Since each commit's scan_diff does its own reconciliation, and `_hunk_by_finding` requires the finding's hunk to exist... potential mismatch if reconcile changes verdicts (MOVED). Actually if a finding is reconciled to MOVED, then `f.verdict != WEAKENED` in that commit's own `register_gate_denominator` call — consistent with the summed findings. Good.
+
+Hmm, but one subtlety: in per-commit mode findings get `f.path = f"{sha[:8]} {finding.path}"` AFTER scan_diff, which doesn't affect counts. Fine.
+
+Also there is line 2037: `findings, rust_hunks, test_hunks, _skipped, _census = scan_diff(git_diff_one_commit(sha))` inside some other function (row_depth / pairing?). Let me look at it.
+
+Also the main net mode at 2360 and 2397, plus stdin mode.
+
+Let me look at these regions.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2028,2045p scripts/check_… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me apply mechanical updates with a Python script for the self-test unpackings (leaving `_run` and the pairing function for manual edits).
+
+Let me write a script that handles lines matching `^(\s*)((?:\w+|_), (?:\w+|_), (?:\w+|_), (?:\w+|_), (?:\w+|_) = scan_diff\(`. That covers 5-name unpackings. I'll append `, _rg` to the LHS.
+
+Also `f, rh, th, sk, c = scan_diff(text, vocab)` in _run — handle separately.
+
+Let me do it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4125,4140p scripts/check_… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (31 lines) ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the _run wiring (stdin, per-commit accumulation, net) and the pairing caller:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (63 lines) ✓ (215ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The script aborted at step 1 because the pairing line was already rewritten by the earlier mechanical pass (it had 5 names `findings, rust_hunks, test_hunks, _skipped, _census`). Right — step 1's old text no longer exists. Good, that means the pairing caller already has `_rg`.
+
+Wait, did the mechanical pass rewrite it? Yes: `findings, rust_hunks, test_hunks, _skipped, _census = scan_diff(git_diff_one_commit(sha))` matches the pattern. So it's `..., _rg = scan_diff(git_diff_one_commit(sha))` now — line too long maybe but fine (not Rust).
+
+Hmm, but it's a long line (>88 chars). Python file, probably no lint. Let me check line length later.
+
+Also the net mode line got rewritten already too. Let me re-run the script starting from step 2, adapting.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "scan_diff(git_diff_one_… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line is 96 chars. Let me wrap it for consistency with the file's style (the file seems to keep lines ~88). Let me check if there's a line-length policy... The file has comments wrapping at ~88. Let me just wrap it.
+
+Now apply steps 2-5.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (69 lines) ✓ (107ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The stdin line was already rewritten by the mechanical pass (5 names → added `_rg`). The script aborted after applying steps 1..? Actually it applies sequentially and writes only at the end — so nothing was written. Wait, the failure was at line 28 which is the stdin block; steps 1 and 2 were applied in memory but not written. So the file is unchanged. Let me redo with correct old text: stdin line is `findings, rust_hunks, test_hunks, skipped, census, _rg = scan_diff(text, vocab)`.
+
+Let me redo all steps carefully.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (60 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (60ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "self-test\|args.self_te… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (149ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The mechanical rewrite missed the multi-line one at 4025 region. Let me find remaining 5-unpackings. Note: the denominator line renders even when N=M=K=0 — as designed.
+
+Let me find all remaining mismatched unpackings by grepping for `_census = scan_diff(` without `_rg`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "= scan_diff(" scripts/c… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (30ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me find all remaining 5-element unpacks. The regex earlier replaced single-line ones. Let me search for lines ending with "_census" on LHS with 5 names, plus multi-line ones like line 4025.
+
+Let me just find `= scan_diff(` occurrences with their LHS line, for any not already having `_rg`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "scan_diff(" scripts/che… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Only line 4025 needs fixing. Also check multi-line unpacks where the LHS is on one line and `scan_diff(` is on the next. Let me grep for lines that are `    <names> = scan_diff(` ... Actually my earlier grep `= scan_diff(` shows all. Only 4025. But there could be ones like:
+
+```
+    ex_findings, _, _, _, _census = scan_diff(extraction_diff)
+```
+Those were replaced (they matched the pattern). OK.
+
+Wait, but also cases where the assignment is multiline:
+```
+        conv_findings, conv_rs, _conv_test, _conv_sk, conv_census = scan_diff(fixture)
+```
+single-line, replaced.
+
+And what about the 5-element ones that ended with `_census = scan_diff(` on line 4025 spanning lines. Let me fix.
+
+Also grep for lines with `_census` at the end without `scan_diff` — e.g. `_census = scan_diff(`. Done.
+
+But wait: my regex rewrote only lines where LHS had exactly 5 comma-separated names and ` = scan_diff(...)` closed on the same line. Are there cases where the scan_diff call spans multiple lines with the unpack on one line? e.g. line 2812 `ex_findings, _, _, _, _census = ...` single-line. OK.
+
+Let me also check the tuple helper `_tuple` and any place doing `len()` or indexing like `pair_root[3]`.
+
+Fix 4025 now.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4023,4030p scripts/check_… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (99ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Self-tests pass. Now add the new self-tests for the denominator. Then run the real range.
+
+Let me add the self-tests in `run_self_tests`, near the census/split-shape block (around line 3450-3500). I need:
+1. anti-vacuous: fixture with WEAKENED hunk removing a register literal → N>=1, M>=1, K==0 (single-line form)
+2. split fixture → K == 1 (and M>=1, N>=1)
+3. near-miss: a hunk removing a register literal that is NOT WEAKENED excluded from M but counted in a wider N... hmm "still counted in a wider N" — N is WEAKENED hunks; a STRENGTHENED hunk removes a register literal → not in M. And it's counted in N? No — the task says "excluded from `M` but still counted in a wider `N`". Hmm, N is WEAKENED only. So a non-WEAKENED register-removing hunk is excluded from both N and M... unless we do a fixture with two hunks: one WEAKENED (contributing N and M) and one non-WEAKENED register-removing, asserting N == 1 (only the weakened one), M == 1. That is: the non-weakened one did not inflate N or M. And "still counted in a wider N" — maybe means that the total WEAKENED count in the report N is bigger... Let me implement a fixture with TWO WEAKENED hunks where only ONE removes a register literal: N == 2, M == 1. That directly tests the near-miss in both directions: M excludes the non-register WEAKENED hunk, and N includes it. That's the cleanest reading of "excluded from M but still counted in a wider N".
+
+Actually re-read: "a hunk removing a register literal that is not classified WEAKENED is excluded from M but still counted in a wider N". Hmm, that literally says the non-WEAKENED hunk is in N. But N is WEAKENED hunks by definition... unless "wider N" means "the report's WEAKENED count which is over the whole window". Confusing. I'll do both: 
+- fixture A: two WEAKENED hunks, one removing a register literal → N=2, M=1.
+- fixture B: one non-WEAKENED (STRENGTHENED) hunk removing a register literal → N=0, M=0 (excluded), and the census's `register-lines-only` doesn't count it either (it's in-scope). And the hunk IS seen by the scan (rust_hunks == 1) as an anti-vacuous check.
+
+That covers both directions honestly. Also "an all-clean diff renders the line with N == 0 and no panic" — already have empty diff; assert render contains the line with 0s.
+
+And: N equals the report's WEAKENED count — pin that.
+
+Where to put these? Right after the split-shape block (around line 3490-3500). Let me look at the exact area to insert.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3480,3520p scripts/check_… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll insert the denominator self-tests right after that census block:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (5 → 193 lines)
+            "census: ... and the mode disclosure travels with it in the SAME rendered block",
+            "BY MECHANISM" in ms_render and "--diff-filter=d" in ms_render,
+            ms_render,
+  +     )
+  + 
+  +     # -- THE REGISTER GATE'S DENOMINATOR (day 203) ----------------------------------------
+  +     # The census prints the register pair as two bare integers; this block pins the
+  +     # population they are read OVER. The near-miss order is deliberate: the anti-vacuous
+  +     # row comes first, because a `K == 1` assertion over an empty denominator would pass
+  +     # by agreeing with itself.
+  +     gate_path = "tests/gate.rs"
+  +     # (a) ANTI-VACUOUS: a WEAKENED hunk whose removed side carries a ONE-LINE register
+  +     # literal. `M >= 1` here is what licenses the `K == 0` on the next row.
+  +     gate_oneline_removed = "\n".join(
+  +         [
+  +             f"-    (\"{gate_path}\", 100),",
+  +             '-    assert_eq!(msg, "exact");',
+  +             '+    assert!(msg.contains("exa"));',
+  +         ]
+  +     )
+  ... (172 more lines)
+ ✓ (1m 57s)
+            "census: ... and the mode disclosure travels with it in the SAME rendered block",
+            "BY MECHANISM" in ms_render and "--diff-filter=d" in ms_render,
+            ms_render,
+  +     )
+  + 
+  +     # -- THE REGISTER GATE'S DENOMINATOR (day 203) ----------------------------------------
+  +     # The census prints the register pair as two bare integers; this block pins the
+  +     # population they are read OVER. The near-miss order is deliberate: the anti-vacuous
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (85ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The check compared `go_gate[0] == _go_census.get(CONVENTION_REGISTER_PAYOFF, 0)` — but N is the WEAKENED count, not the payoff count. My check is wrong: the payoff census is 0 here because the removed assertion is not a register anti-vacuous guard. Fix the check to compare against the WEAKENED verdict count in the report (which the render assertion already does) — compare N to the count of findings with WEAKENED.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (10 → 10 lines)
+        # the rendered report, which is the number every published reading quotes.
+        check(
+            "register GATE: N equals the report's own WEAKENED count, by construction",
+  -         go_gate[0] == _go_census.get(CONVENTION_REGISTER_PAYOFF, 0)
+  +         go_gate[0] == sum(1 for f in _go_f if f.verdict == WEAKENED)
+            and "WEAKENED ..................... 1" in render_report(
+                _go_f, 1, _go_rs, _go_th, "FIXTURE", 40, 0, None, None, go_gate
+            ),
+ ✓ (1m 55s)
+        # the rendered report, which is the number every published reading quotes.
+        check(
+            "register GATE: N equals the report's own WEAKENED count, by construction",
+  -         go_gate[0] == _go_census.get(CONVENTION_REGISTER_PAYOFF, 0)
+  +         go_gate[0] == sum(1 for f in _go_f if f.verdict == WEAKENED)
+            and "WEAKENED ..................... 1" in render_report(
+                _go_f, 1, _go_rs, _go_th, "FIXTURE", 40, 0, None, None, go_gate
+            ),
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (85ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Self-tests pass. Now run for real over HEAD~40..HEAD and report N/M/K. Also check that all existing counts are unchanged — compare output before/after? I can verify the counters didn't change by running the tool on the current tree vs git stash... Simpler: the only changed code paths are additive; but a real run should be compared to a real run from the previous version. Let me run on HEAD~40..HEAD now, then `git stash` the script change and run again and diff (excluding the new lines). But HEAD changes... Careful: the new lines are appended after the census; existing lines identical.
+
+Let's run.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (99ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+N=0, M=0, K=0 over HEAD~40..HEAD. That's the honest reading — but over a zero denominator it's vacuous for K. Let me find a range with N > 0 so the line is non-vacuous. Let me try a longer range, e.g. HEAD~240..HEAD, to report a range with N>0 and K possibly >0 (the dream milestone's hoped-for signal). Let's check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for r in 60 120 240; do echo "==… ✓ (189ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (64ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (64ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Shallow clone limits. Let me find a broader but reachable range, e.g. HEAD~130 or use `--from HEAD~140`. Let me try a few.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-list --count HEAD; for r… ✓ (253ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me focus. I need the real-run numbers. HEAD~40 works. Let me also try to find a range with actual WEAKENED hunks — maybe use `--per-commit` over HEAD~40..HEAD, or find a range with WEAKENED. Let's check git log count (53 commits). Try HEAD~53.
+
+Actually the task says report N, M, K for HEAD~40..HEAD. That gives N=0, M=0, K=0. Let me get a broader range to also show a non-zero denominator if possible. Let me check what the deepest reachable is.
+
+Let me also check per-commit mode over HEAD~40..HEAD.
+
+Also I need to do the positive control, update ARCHITECTURE.md, run cargo fmt/clippy/build/test, and commit. Time is limited — prioritize: ARCHITECTURE.md write-up, positive control, cargo checks, commit.
+
+Let me quickly gather numbers.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (280ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The reachable history has zero WEAKENED in the recent window. Let me find a range with WEAKENED to demonstrate a non-zero N. Let me scan all 52 commits in per-commit mode... that's only HEAD~52. Let me check if WEAKENED ever appears. Try `--from HEAD~52 --per-commit`.
+
+Actually, quicker: use the `--record`/pairing? Let me just try the whole reachable range in per-commit mode and see if WEAKENED > 0 anywhere.
+
+Actually a cheaper approach: `git diff HEAD~52..HEAD -- '*.rs'` and search for WEAKENED in the render. That's the net mode which gave 0. Hmm — net mode gave WEAKENED 0 over 52 commits but 71 rs hunks, 11 test hunks (STRENGTHENED 11). So genuinely zero WEAKENED in the reachable window.
+
+Let me check the graft boundary: `git log --oneline | tail`. The shallow clone. Let me just try deepening? That could be expensive. Let me check quickly with `git fetch --deepen 300`.
+
+Given the task explicitly says report the numbers for HEAD~40..HEAD "including if K == 0", N=0,M=0,K=0 is acceptable, but it's a weak result showing nothing. It would be much stronger to report a range with non-zero N. Let me try deepening once.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 180 git fetch --deepen 4… ✓ (1.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (127ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, `git fetch --deepen 400` seems to have only gotten a few more commits and changed the window semantics (rebased?). Actually rev-list count is 453 now.
+
+Interesting: WEAKENED 0 over HEAD~240..HEAD now. Let me try a deeper/longer range to find WEAKENED rows and a non-zero denominator. Let's try HEAD~450..HEAD.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (270ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm — WEAKENED 0 even over 450 commits, yet STRENGTHENED 11 earlier. Wait, in the net-mode over HEAD~40 the report showed STRENGTHENED 11. Let me check: over 450 commits, is STRENGTHENED > 0?
+
+Actually this is suspicious — net mode collapses. Hmm, `git diff HEAD~450..HEAD` squashes everything into one net diff, so removals that were added back cancel out. That's the known "net scan" semantics. So WEAKENED 0 in net mode is expected for old ranges.
+
+Let me use --per-commit over a long range to find real WEAKENED hunks. That could be slow (450 commits × git diff). Let's try HEAD~120 --per-commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 400 python3 scripts/chec… ✓ (350ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, wait. HEAD~40 net gave STRENGTHENED 11, but HEAD~120 per-commit gives WEAKENED 0. Let me check what the counts look like in the full render for HEAD~120 per-commit. Also, note the git deepen may have rewritten shallow state; HEAD~40 result may differ now.
+
+Wait — that's strange. Let me check the `--from HEAD~120 --to HEAD --per-commit` output in full.
+
+Hmm, `git_commit_shas` — maybe it needs deepening. But it reported 120 commits scanned.
+
+Let me just check HEAD~40 per-commit again in full.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (181ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+OK so this is the honest reading: over HEAD~40..HEAD, the register gate's denominator is N=0, M=0, K=0 — the gate admitted nothing, so `register-paid-to-empty .. 0` is uninformative there (it's the ambiguity this line exists to expose!).
+
+That's exactly the point of the task: the line now says "the 0 came from an empty denominator, not from a clean history."
+
+But the task wants the honest number reported. Let me try to find a window where N > 0 to also demonstrate the line's value. Let me search where WEAKENED exists. `--from HEAD~52` earlier gave 0. Let me use per-commit over a wide range and grep. Costly but let's try HEAD~250 per-commit with a timeout, printing only the summary.
+
+Actually — simpler: the ledger records WEAKENED commits. But let me just try wider per-commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 500 python3 scripts/chec… ✓ (640ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+WEAKENED is 0 across 260 commits per-commit. That's consistent with the ledger record: the one real WEAKENED event (7fc10e19) is not an ancestor of HEAD.
+
+So the honest report: over HEAD~40..HEAD, N=0, M=0, K=0 — the gate admitted nothing. And I now have a much larger denominator observation (N=0 over 260 commits) which makes the *readable* statement exact: `register-paid-to-empty .. 0` over these windows is 0 **because N = 0**, not because the histories are clean.
+
+That's a genuinely valuable finding and exactly what the task exists for.
+
+Now, I need a real-run case with N>0 to show M/K. Can I construct one? Not honestly from my history. But I should report it plainly. Hmm — but wait, could I check whether the added-side reason from Day 201 is right: "every hunk carrying the split shape in this window has it on the added side". Yes.
+
+Let me also verify the positive control: mutate `register_gate_denominator` to return (0,0,0) and confirm the gate tests redden by name; restore. Make it atomic.
+
+Then ARCHITECTURE.md write-up, cargo checks, commit.
+
+Let me do the positive control now.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (12 lines) ✓ (190ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Positive control run atomically: 7 tests reddened by name with the neuter in place, all green after restore, and 0 NEUTERED markers left.
+
+Now make sure the file itself has no `NEUTERED` marker (confirmed: `grep -c` = 0).
+
+Now update ARCHITECTURE.md. Find the entry for scripts/check_assertion_weakening.py.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "check_assertion_weakeni… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1060,1090p ARCHITECTURE.m… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md is big. Let me find the specific entry section for `check_assertion_weakening.py` — near line 580 there's the "Assertion-weakening detector" section, plus later Day-198/199/201 paragraphs. Let me find where the Day-201 paragraph lives, to append my Day-203 write-up right after it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^### \|^## " ARCHITECTU… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Day 201" ARCHITECTURE.m… ✓ (8ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to be very economical with tokens now. I still need to: append the write-up to ARCHITECTURE.md, run cargo fmt/clippy/build/test, and commit.
+
+Let me find the end of the check_assertion_weakening section in ARCHITECTURE.md — line 767 seems to be the Day 201 entry. Let me check what follows 767-768 to find where to append.
+
+Let me be brief. I'll find the next section header after 767 to insert before it.
+
+Actually simplest: append the write-up at the end of the check_assertion_weakening.py entry. Let me look at lines 768-772.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=768 && NR<=772 {printf … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I'll append the Day 203 paragraph at the end of line 767 (the Day 201 paragraph). I'll insert after line 767 with a newline. Let me write the paragraph using python to insert after line 767.
+
+Let me keep it concise but complete per the deliverable: the new line, measured N/M/K for the range, what K==0 means, the stated limit, and the positive control.
+
+Let me craft text and insert.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (33ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now fix main's per-commit accumulator and run the repo checks:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (18.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 39s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 25s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 24s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, my awk parse is off. Let me just grep for failures.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (2m 50s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, that sed didn't capture properly (only some lines matched) but importantly: no failures. Wait — "passed=71"? The cargo test output uses "test result: ok. 5941 passed; 0 failed". Let me just check the overall exit code and grep for "FAILED".
+
+Actually the first grep -v "0 failed" printed nothing → all test results had 0 failed. Good enough. Exit code 0.
+
+Let me verify total test count roughly and then confirm clippy/fmt pass and commit.
+
+Also check tests/neutered_guards.rs — no markers left (confirmed grep -c NEUTERED = 0). And module_size gate — I touched no src/. But I added ~190 lines to scripts/check_assertion_weakening.py — is there a size gate on scripts? tests/module_size.rs covers src modules. Fine.
+
+Let me run the full check sequence one more time and commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (18.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -4; echo …

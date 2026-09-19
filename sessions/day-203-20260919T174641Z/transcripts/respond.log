@@ -1,0 +1,608 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reviewing what my session actually did before deciding on each issue.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -12 && echo "-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/task_01.md 2>/d… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The session_plan files appear to have been cleaned up (deleted). Let me look at the commits in detail.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.4s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 0952e050 | head …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --all --onelin… ✓ (45ms)
+ ✓ (48ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the actual diffs of these two commits to understand what was done.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 0952e050 -- src/command…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 61f4a1c7 -- ARCHITECTUR… ✓ (6ms)
+ ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the actual diff of Task 2 in commands_spawn.rs more fully to see if it changed code or just added tests. The stat shows 73 lines added, mostly tests? Let me check the full diff.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.4s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 0952e050 -- src/command… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting: the output shows "(70 more similar lines)" — that's a truncation of the diff display by the tool. Let me get the raw diff with git show and pipe to cat with more lines. Actually there's an ellipsis in the output which is odd. Let me use `git show 0952e050 --unified=0` or write to a file.
+
+Actually the "..." with "(70 more similar lines)" seems to be the terminal display compressing similar lines. Let me use `git show ... > /tmp/diff.txt` then read.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 0952e050 > /tmp/t2.txt;… ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So Task 2 was about #902: the spawned worker route. It closed the `/spawn` door of the safe-mode hatch, but explicitly did NOT close #902 (the six project instruction files still ungated by default).
+
+The diff only added tests? Let me check: the stat says src/commands_spawn.rs +73 lines. From the diff, it seems the change was adding tests plus... wait, the commit message says "shape 1 was taken" — a `spawn_project_context_with` function. But the diff shows only test additions in the tests module? Let me confirm by checking if spawn_project_context_with already existed at HEAD.
+
+Let me check git diff of the commit against parent for non-test lines.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 0952e050 --numstat && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -S "spawn_proj… ✓ (13ms)
+ ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+OK so the Day 194 commit cd334354 did the actual fix (`spawn_project_context_with`). Day 203's Task 2 (0952e050) added tests only (73 lines) — the "link Day 194 traced and never observed". Let me verify what test was added and confirm the claim.
+
+Let me see the added lines only.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 0952e050^ 0952e050 -- s… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The output keeps collapsing. Let me get it with `--unified=100` maybe or use `git show | tail`. Actually the tool is truncating with "..." between similar lines. Let me write output to a file and read it with read_file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 0952e050^ 0952e050 -- s… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /tmp/t2d.txt ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. So Task 2 added one test `a_restricted_parent_confines_its_worker_through_the_real_global` — an end-to-end test of the Day 194 fix via the real global.
+
+Now let me understand the overall picture for the issues:
+
+1. **#902** — project instruction files read into every prompt with no gate. This session's Task 2 was a #902 *slice* (the `/spawn` worker door, closing the testing gap of the Day 194 fix). The issue itself explicitly says it is NOT closed. Partial progress → keep open with a comment.
+
+2. **#886** — `yoyo model list` is unrouted. Did I work on it? No. Skip unless something changed.
+
+3. **#881** — read-only sub-agent preset. No work. Skip.
+
+4. **#879** — composite safe mode `--restricted`. Hmm — did my session touch `--restricted`? Task 2 involved `--restricted` implying safe mode already exists. The issue #879 asks for `--restricted` as a composite flag. Let me check whether `--restricted` already exists in the codebase. `cli.rs` has `set_restricted` / `is_restricted` and `restricted_mode_effects` / `RESTRICTED_REMOVED_TOOLS` / `restricted_disallowed_tools` / `restricted_mode_note`. So #879 may already be largely implemented — maybe by a previous session (Day 198?). Let me check git log for when restricted_mode_effects landed.
+
+5. **#870** — counterfactual_green.py fix-loop population. No work this session. Skip.
+
+6. **#869** — /cd re-evaluates trust but reloads no other config. No work today. Skip? Possibly. Let me check if any of today's work relates. No.
+
+7. **#858** — skill-evolve gate defects. No work. Skip.
+
+8. **#738** — blind-round prediction mirror. No work. Skip.
+
+Let me verify #879 status: is `--restricted` already implemented?
+
+Also for the Task 1 commit — it's about the convention census register denominator (DREAM milestone), not clearly any of these issues. Might relate to #870? The census is `check_assertion_weakening.py` convention census, and #870 is about counterfactual_green.py. Task 1 gave the register pair an honest denominator — separate. Hmm, but "counterfactual_green.py" vs "check_assertion_weakening.py". #870 is about counterfactual_green.py's fix-loop population being 2 behavioural commits. Task 1 is about check_assertion_weakening.py's register-pair denominator. Related family (DREAM.md milestone) but not the same issue. Actually the census in #870 mentions counterfactual_green's census. Hmm — #868 made the fix-loop population visible. Task 1 is "Give the convention census an honest DENOMINATOR for the register pair". That's a different counter. It doesn't address #870's blocker (fix-loop population = 2). But it might be worth a brief mention? No — better to be honest: Task 1 doesn't address #870. #870's issue remains entirely open. Skip it? The rules say only comment when there's something real to say. I have nothing for #870.
+
+Let me check #879's actual state in the repo.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\-\-restricted" src/cl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "model" src/dispatch_sub… ✓ (6ms)
+ ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Big finding: #886 has been partially worked on in a previous session (Day 202: `think`, `teach`, `architect` added; and `yoyo model` routing seems to have landed in dispatch_sub.rs — `parse_model_subcommand`, `model_refusal_message`). So #886 might be partly resolved already. But not by *this* session's commits (Day 203 16:12). Let me check when the model subcommand landed.
+
+But the task says: "For EACH issue listed above, decide what to do: Fixed by your commits / Partial progress / Already resolved from a previous session / Won't fix / No progress".
+
+So for #886 — it may be already resolved from a previous session. Let me verify: does `yoyo model list` now route? Let me check the dispatch path.
+
+Also #879 — `--restricted` landed Day 191/197 (previous sessions), with the note correction Day 197. Is #879 fully done? The issue asks for: composite safe mode with monotonicity, env var form, help text. Let me check for help text and env var.
+
+Let me be careful and verify claims. Let me check:
+
+1. #886: is `yoyo model list` routed now?
+2. #879: is `--restricted` complete (help documented, env var)? Also sibling gap `permissions.blockReadsOutsideWorkingDirectories` / ask-once prompt for reads outside working dir — probably still open.
+
+Let me check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\"model\"" src/dispatc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -S "parse_mode… ✓ (6ms)
+ ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+- #886: `"model" => CommandRoute::Model` exists in dispatch.rs:223, and dispatch_sub.rs:377 has a `"model" =>` arm. So `model` IS now routed as a subcommand — the narrow fix (option 2) landed. Let me check when and whether the near-miss widening (option 1) is also done. `REPL_ONLY_MULTI_TOKEN_VERBS` = ["context","cost","provider","tokens"] — `model` isn't there but `model` is now a real routed subcommand so it doesn't need the near-miss. Let me check git log for when the routing landed.
+
+- #879: `--restricted` exists with a startup note; `YOYO_RESTRICTED` env form is explicitly deferred (cli.rs:1703 comment). So #879 is partially done from previous sessions; the env form and possibly read-side closure remain. Not this session's work though.
+
+Hmm. The task instruction: for each issue decide. Since the session's commits are only Task 1 (census denominator) and Task 2 (#902 slice), the honest mapping is:
+
+- #902: partial progress (Task 2 closed the /spawn worker door and added the missing end-to-end test). Comment + keep open.
+- #886: already resolved from a previous session? Let me verify the routing actually works today and when it landed.
+- #879: partially landed in previous sessions; env form deferred. Do I comment? Since I didn't work on it this session, and it's already partly implemented... "Already resolved from a previous session → comment saying so, then close it". Is it resolved? The core ask (`--restricted` composing primitives, monotonic, documented) appears to have landed across Days 191–197. But the env-var form (item 5) is deferred, and the sibling read-side gap is open. I should verify what's actually true before commenting. Let me look at the state carefully.
+
+Let me check both thoroughly.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.4s (2 ✓)
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -S '"model" =>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20 --all --gr… ✓ (17ms)
+ ✓ (66ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So #879 was worked across Days 187–197 (slices 1, 2, plus #888 documentation). Let me check what remains: the env-var form is deferred per cli.rs:1703 comment. Let me read that comment area and also check if issue #879 was already commented/closed — let's check gh issue state.
+
+Let me check the issue states on GitHub via gh.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 879 --repo yologde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1690,1715p' src/cli.rs ✓ (3ms)
+ ✓ (530ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+#879 is open with 3 comments, last being Day 197. So it has been worked across sessions but not this one. Since my session didn't touch it, do I comment? The rules: "Already resolved from a previous session → comment saying so, then close it" and "No progress and nothing useful to say → SKIP IT".
+
+#879 is partially implemented but has a deferred piece (env-var form) and sibling read-side gap. I did not work on it today. Should I skip? Hmm. Let me think about what's honest and useful.
+
+Actually, wait. I should focus: what did today's session (Day 203 16:12) actually accomplish? Two tasks:
+- Task 1: census register denominator (scripts/check_assertion_weakening.py) — DREAM milestone
+- Task 2: #902 slice — a test that drives the real global for the spawn safe-mode seam
+
+So the only issue with real progress is #902. Everything else: no work today.
+
+But there's a nuance: #902's Task 2 — the commit message says "MEASURE it, then route the parent's answer in" and describes the Day 194 fix. Wait — the Day 194 commit cd334354 did the fix. Day 203's task added the end-to-end test through the real global. Let me double check by reading the task file... but session_plan/task_02.md is deleted in working tree. Let me check git show for the deleted files.
+
+Actually wait — the working tree shows `D session_plan/task_02.md`. So the task files were deleted (cleanup at end of session?). Let me see if I can recover them from the commit 6dce00fc (session plan).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.7s (2 ✓)
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 6dce00fc --stat | head … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So Task 2's title is what the commit says; the fix itself presumably landed in Day 194 (cd334354). Let me check: was cd334354 the "Day 194" fix? Yes: "Day 194 (10:52): #902 slice — does `--safe-mode` reach the spawned worker, or is the hatch two-thirds true? (Task 2)". So that was Day 194, a previous session. But the commit today (Day 203 16:12) adds the test through the real global. Hmm wait, but the commit message from today says "The link Day 194 traced and never observed". So today's task closed an observable gap: a test that fails if the global is keyed wrong.
+
+Hmm, but this is confusing: today's commit 0952e050 mentions "#902 slice — the spawned worker's load_project_context() is a SECOND door..." with the same title as the Day 194 one? Let me compare the two commits' messages. 0952e050's message is short (only the title line). The big ARCHITECTURE.md text in the diff is from the Day 194 entry? No — the ARCHITECTURE.md diff at 0952e050 was 1 line changed (2 +1/-1). Actually git show 0952e050 included ARCHITECTURE.md with 1 line change. The long text I saw in the diff output earlier about "Day 194 (#902 slice)" was in the +added line of ARCHITECTURE.md? It appeared as part of `grep "^+"` output at line 16 — yes, one huge added line, presumably edited by 1 line replace.
+
+Hmm wait, `git diff 0952e050^ 0952e050 -- ARCHITECTURE.md` was 1+/1-. That's a modification of a long line. Interesting — so today's Task 2 modified the existing Day 194 ARCHITECTURE entry (that giant single-line paragraph) to record the new test.
+
+Let me verify what changed in that ARCHITECTURE.md line today.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 0952e050^ 0952e050 -- A… ✓ (35ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So today's Task 2 was a **test-only** slice: it added the end-to-end test through the real global (`the `--restricted` road`), reproducing Day 194's positive-control reading. Good. That is genuine progress on #902's *reach* half — but explicitly does not close #902.
+
+Now, was the direction of today's work: "MEASURE it, then route the parent's answer in". The task title said that but since Day 194 already routed it, today became "pin the `--restricted` road". Let me confirm what the new test actually asserts and whether the fix is at HEAD (spawn_project_context_with with safe_mode parameter) — yes, at line 488.
+
+Now, for the issue comments, my accurate picture:
+
+**#902**: Real progress today — the `--restricted` road through the real global is now pinned by a test; the `/spawn` worker door is closed (Day 194) and now observable. But the six instruction files remain ungated and `--safe-mode` is still opt-in. Keep open with a comment.
+
+**#886**: Already largely resolved? `model` IS routed now (dispatch.rs:223, dispatch_sub.rs:377 with `parse_model_subcommand`). And the near-miss guard widening landed per-verb for `think`, `teach`, `architect` (Day 202, #886 slice 2). But is #886 closed on GitHub? The docstring says "#886 stays OPEN". Let me check GitHub state and last comment date. If it's already been commented this session... no, comments come from previous sessions.
+
+Hmm — but I must be careful: should I comment on #886 saying "already resolved from previous session"? The docstring in REPL_ONLY_MULTI_TOKEN_VERBS says the residue is real and #886 stays open. Let me check whether that's still the intended state — check the GitHub issue's latest comments.
+
+Let me check states/comments of all issues to avoid re-commenting and to see what's already known.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 902 886 881 879 870 869… ✓ (4.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So all 8 issues are OPEN, with comments from previous sessions.
+
+Now I need to decide what to comment on this session. My session's work: Task 1 (census denominator for register pair — DREAM milestone) and Task 2 (#902 slice, test the `--restricted` road).
+
+Only #902 has a direct relation. But wait — is Task 1 related to #870? Task 1 is `scripts/check_assertion_weakening.py` convention census register denominator. #870 is about `counterfactual_green.py`'s fix-loop population. #868 (which made fix-loop population visible) mentioned the census. Hmm, let me check the issue_responses.md from the session plan to see what I intended to respond to. That file exists in commit 6dce00fc.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 6dce00fc:session_plan/i… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Excellent — this is the plan's dispositions. Note that the plan says #886 can be closed with a pointer to #936, and that the assessment verified it live. But `#936` isn't in today's listed issues... The task listing above only includes the issues from this session's list. #936 is mentioned in the plan.
+
+Wait, but the task says "Here are ALL the issues (community + self-filed) from this session" and lists 8: #902, #886, #881, #879, #870, #869, #858, #738. #936 isn't there. Hmm. But the plan says #886's residue is tracked in #936. Let me verify #936 exists.
+
+Anyway. The disposition for #886 from the plan: fixed and verified live today (assessment ran `./target/debug/yoyo model list` → routed). So it should be commented and closed, with a pointer to #936.
+
+Let me verify that claim myself before closing: run the binary or read the code. The code shows `model` routing exists. Let me verify live by building? The build status says PASSING. Running `./target/debug/yoyo model list` may require a network/config. Let me check if target/debug/yoyo exists.
+
+Actually, careful: the assessment phase ran it. Let me try to reproduce quickly.
+
+Also verify #936 exists.
+
+Let me also check what task_01.md says (the census denominator) — does it map to any issue? The plan says DREAM.md milestone, no issue. So no comment for that.
+
+So my final dispositions:
+- #902: comment (progress: the `/spawn` worker door is closed and now pinned through the real global — the `--restricted` road; the six instruction files still ungated). Keep open.
+- #886: comment + close (fixed, verified live; residue → #936).
+- #881, #879, #870, #869, #858, #738: no work this session → SKIP (silence).
+
+Hmm, but should I close #886? The plan says close. Let me verify the live behavior first. Let me check whether the binary is built and run it.
+
+Wait — careful about "close #886 with a pointer to #936" — but the near-miss guard docstring says "#886 stays OPEN" (line 206-212 about the residue). If I close #886 and #936 tracks the residue, that's consistent with the plan: the residue moved to its own issue.
+
+Let me check #936.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 936 --repo yologde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>&1; l… ✓ (5ms)
+ ✓ (393ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+#936 exists and explicitly says "Filed because #886 is being closed on its own defect". So closing #886 is intended.
+
+Let me verify live: run `./target/debug/yoyo model list` from a temp dir to avoid a billed turn. Careful: it might attempt network. The assessment ran it. Let's try with a timeout, from /tmp. Actually the binary might need a config. Let me just try.
+
+Also note: running `yoyo model list` in a dir might try to read project config etc. Let's run with a timeout of 30s.
+
+Actually careful: the binary could spend a billed LLM turn if it's still unrouted — but it's routed now so it prints the model table. Also, the environment: no API key needed for `model list`. Let me run.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && timeout 60 /home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoy… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed live: `yoyo model list` now routes and prints the model table with no billed LLM turn. So #886's defect is fixed (routed in a previous session, Day 187 per #936 — but the plan says "fixed and verified live today" during assessment; the routing landed earlier, and the near-miss widening for `think`/`teach`/`architect` landed Day 202).
+
+Wait: the routing of `yoyo model list` — when did it land? #936 says "minus `model` (routed, Day 187)". Hmm, but the issue #886 was filed Day 187 and says `model` isn't in ROUTED_SUBCOMMANDS... Let me check: `routed, Day 187`. And #886's last comment is Day 202 which says "That closes #886's five-verb class". Hmm, that comment is about the multi-token near-miss guard (think). So the routing fix and the guard are separate halves:
+1. Route `model` — landed Day 187/188?
+2. Widen the near-miss guard past 2 tokens for known-REPL-only verbs with closed vocabularies — Day 202 for think/teach/architect, and the four (context, cost, provider, tokens) were already in REPL_ONLY_MULTI_TOKEN_VERBS.
+
+So the issue is now resolved on both halves it can be resolved on, with the residue tracked in #936. The plan's disposition says close #886 pointing at #936.
+
+Let me double check the git history for when `"model" => CommandRoute::Model` landed vs the issue. Let's just check the commit.
+
+Actually, the important thing for my comment: what's actually true today, verified. I verified live: routed, prints table. And the near-miss widening: `yoyo model list` — is it now refused by the near-miss guard or routed? It's routed (the test above proves it). And `yoyo tokens`/`yoyo cost` multi-token forms are in REPL_ONLY_MULTI_TOKEN_VERBS. Let me verify a couple of live refusals to include a real receipt: `yoyo tokens abc`, `yoyo cost foo`. These would be refused (no billed turn) — let's test quickly.
+
+Also `yoyo do the thing` must remain a prompt — can't test without a billed turn; skip.
+
+Let me test `yoyo tokens foo` and `yoyo think high` (think high is arg-gated). Actually `yoyo think high` would be refused. Let me test to have receipts.
+
+Careful: these refusals print and exit without billing. Let's run with timeouts. But if the refusal doesn't fire, it would attempt a billed LLM turn and possibly hang/fail (no API key) — with timeout it's fine.
+
+Let me run them.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && for c in "tokens foo" "cost foo" "think high" "context foo"; do echo …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -S 'ROUTED_SUB… ✓ (19ms)
+ ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — verified live receipts:
+- `yoyo model list` → routed, prints table, no billed turn.
+- `yoyo tokens foo`, `cost foo`, `think high`, `context foo` → honest refusals naming `/verb` and the `-p` escape hatch, exit 2, zero tokens.
+- Residue: #936.
+
+Now, that's #886 resolved → comment + close.
+
+Now for #902, my real progress: Task 2 today added the end-to-end test through the real global (the `--restricted` road), reproducing Day 194's positive control; the /spawn worker door is closed. Let me verify the current state of the code: `spawn_project_context_with` and that both call sites route through it.
+
+Let me read commands_spawn.rs around 488-520 and the call sites, so my comment is grounded.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '470,525p' src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "is_safe_mode" src/cli_c… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, all grounded. Both call sites (857, 1009) route through `spawn_project_context()` → `spawn_project_context_with(is_safe_mode(), ...)`.
+
+Now let me verify the build/test state is green before claiming anything. The task says build status PASSING. Let me run a quick check of the specific test to have a receipt, plus clippy maybe. Actually running full cargo test takes a while. Let me at least run the new test and the spawn tests.
+
+Let me check git status first — there are uncommitted changes (journals, deleted session_plan files). That's the wrap-up state.
+
+Let me run: cargo test --lib commands_spawn::tests::a_restricted_parent... Actually the test name: `a_restricted_parent_confines_its_worker_through_the_real_global`. Let me run it.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 900 cargo test --lib com… ✓ (118ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 900 cargo test commands_… ✓ (333ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I was verifying the test suite. Let me continue efficiently. I need to check test results, then post comments/close issues.
+
+Let me check the specific test results from the previous run — it seems it filtered. Let me run the specific test names.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 cargo test --bin yoy… ✓ (157ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The test passes. Good. Now let me post the issue comments. I have 8 issues:
+
+1. **#902** — partial progress: Task 2 closed the spawned-worker door. Keep open. Comment.
+2. **#886** — verified live fixed (routed, no billed turn). Close.
+3. **#881** — no progress. SKIP (no comment).
+4. **#879** — no progress. SKIP.
+5. **#870** — no progress. SKIP.
+6. **#869** — no progress. SKIP.
+7. **#858** — no progress. SKIP.
+8. **#738** — no progress. SKIP.
+
+Wait — but for #738, the blind-round mirror... did I run a blind round this session? Let me quickly check dreams/experiments.jsonl for a round posted today. Actually the issue says one comment per round, posted before the first read of the target. If I ran a blind round today, I should post it. Let me check.
+
+Actually let me check the git log for today's session — two tasks, neither was a blind round. And the assessment. Let me quickly check .dream_last_run / dreams/experiments.jsonl tail.
+
+Let me be efficient - check if there was a blind round today.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -2 dreams/experiments.jsonl… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No blind round today (last round 97 on day 196). So #738: no progress, nothing new to say → SKIP.
+
+Now let me write the comments. Let me post them.
+
+For #902 — partial progress comment. Facts:
+- Task 2 (Day 203) took the slice #902 named and left unverified: `commands_spawn.rs`'s two direct `load_project_context()` call sites.
+- Measured: the door WAS open (branch A fired). `handle_spawn` (~:857) and `handle_spawn_bg` (~:1009) called `crate::cli::load_project_context()` directly, outside `cli.rs`'s `if !safe_mode` branch.
+- Fix: pure `spawn_project_context_with(safe_mode, load)` + thin `spawn_project_context()` holding the single global read (`cli_config::is_safe_mode()`), so no test writes SAFE_MODE and no new global was created.
+- Direction: narrows only.
+- Verified: `a_restricted_parent_confines_its_worker_through_the_real_global` passes (ran it just now: ok). Positive control reddened exactly 1 test.
+- What's still open: the four design questions (which predicate, refuse vs annotate in band, project_trust_grants), and the six instruction files still ungated by default in an ordinary run.
+
+Also I should mention the earlier slices (Day 188?). Actually #902 slices: Day 194 (cd334354) routed safe-mode... wait no, Day 194 commit was "does `--safe-mode` reach the spawned worker" — the ARCHITECTURE entry I read says Day 194 landed `spawn_project_context_with` and wired both call sites. Hmm, so Day 194 already did the routing. Then what did Day 203's Task 2 do?
+
+Looking at the diff: it added only a test (`a_restricted_parent_confines_its_worker_through_the_real_global`) + ARCHITECTURE.md + module_size. So Day 203's Task 2 was: the Day-194 fix's evidence was only pure-function tests and a source-level guard, neither of which touched the real global — so the `--restricted` road (which reaches `is_safe_mode()` via `main.rs` copying `Config.safe_mode`) was untested end-to-end. Day 203 added the test that drives the real global.
+
+So the honest framing for #902's comment: Day 194 (last session) opened and closed the door in code; today (Day 203) I added the gate that proves the `--restricted` road actually reaches it through the real global — because the two doors' evidence was pure-only and one of the two roads (`--restricted`) was untested.
+
+Let me be accurate. The commit message says "MEASURE it, then route the parent's answer in" — but the diff shows only tests added. And the ARCHITECTURE write-up says Day 194 did the routing. So today's contribution is the test/verification, not the routing. I must not over-claim. Let me verify by checking what cd334354 did.
+
+Actually the ARCHITECTURE line for Day 194 (quote from the Day 203 diff doesn't mention; but the Day-203 added text mentions "Day 194's own reading reproduced exactly"). Let me just check cd334354's stat quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show cd334354 --stat | tail … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: Day 194 (cd334354, Sep 10 — actually labeled Day 194) did the routing + pure tests. Day 203's Task 2 added the real-global gate.
+
+Note the dates: Day 194 was 2026-09-10, Day 203 is 2026-09-19. Fine.
+
+Now let me write the comments and post them. Also #886 close.
+
+Let me write #902's comment carefully and honestly.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have what I need. Let me post the two comments and close #886.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (16 lines) ✓ (910ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now #886: verified live fixed today. Close it.
+
+Evidence:
+- `./target/debug/yoyo model list` printed the model table, routed deterministically, no billed LLM turn (I ran this just now).
+- `tokens`, `cost`, `context` all give the honest refusal naming `/tokens` etc. and the `yoyo -p "..."` escape hatch.
+- `think high` is arg-gated.
+- The residue is tracked in #936.
+
+Wait, careful — the refusal for tokens/cost/context shows "/tokens is a REPL command — start yoyo and use: /tokens". That's the multi-token guard firing (since I passed "foo"). Actually would `yoyo tokens` (2 tokens) have fired before? Yes, the 2-token guard. Let me test `yoyo tokens` vs `yoyo tokens 5` to be sure the multi-token widening works... Actually the output above was for "tokens foo" (3 tokens), so the widened guard fired. Good — that's #886's fix (1) plus.
+
+Hmm, but actually the last comment on #886 says "That closes #886's five-verb class... `think` is taken". So it was already partially closed. Now the plan says #886 can be closed. Let me verify `context`/`cost`/`provider`/`tokens` in multi-token form all refuse — yes, I just did that above (except provider). Good.
+
+So close #886 with a comment pointing at #936.
+
+Let me draft it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && timeout 30 /home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoy… ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The escape hatch works (the `-p` path went through to the model — it started a run with provider deepseek). Actually it's running a billed turn which I should interrupt... it timed out at 30s, fine.
+
+All four REPL-only verbs refuse the multi-token shape, `model list` routes, `think high` arg-gated, escape hatch intact. Close #886.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (26 lines) ✓ (1.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the remaining six: #881, #879, #870, #869, #858, #738. None were touched this session. Per the rules, SKIP them — no comment.
+
+Wait, let me double check #870 — Task 1 was about the convention census / DREAM milestone denominator. #870 is about `counterfactual_green.py`'s fix-loop population being ungradeable. Task 1 was about `check_assertion_weakening.py`'s register-pair denominator. Related but different instrument. Did Task 1 help #870? #870 says "Option 3 is the only one that fits in a task: accept the limit and report the fix-loop arm as structurally unmeasurable, with the 11/117/88 split printed on every run." The last comment on #870 (Day 196) says "the fix-loop arm's signal-bearing tier is EXHAUSTED". So no, Task 1 didn't address #870.
+
+Hmm, but is there something real to say? Task 1 gave the census in `check_assertion_weakening.py` an honest denominator — the Day-201 lesson ("measure the base rate, quote it as a fraction over THAT set"). #870's option 3 is exactly that same shape, applied to `counterfactual_green.py`. That's a genuine, non-trivial connection: the reading landed today is `N=0` for the register pair, and the reason a non-zero denominator wasn't reachable is that WEAKENED requires an in-scope test-ish hunk. Hmm — but is that about #870? #870's problem is that the counterfactual method can't *see* src/ unit tests. The register-pair denominator work is in the static-diff instrument, not the counterfactual one.
+
+Honestly: I did not work on #870, and the connection would be speculative/marginal. The instruction says only comment when there's something REAL. I'd rather... hmm. Actually, there is one real thing: I could note that the denominator line's first reading (`N=0` over HEAD~40..HEAD and HEAD~240..HEAD) is a *measurement* relevant to #870's "how many hunk-level subjects does the WEAKENED gate admit" — but that's a different population (assertion-weakening hunks, not fix-loop commits). Overclaiming a connection is worse than silence.
+
+Decision: SKIP #870, #881, #879, #869, #858, #738.
+
+Let me double-check there's nothing in the session's journal/assessment that mentions working on any of these. Let me grep the journal for today's entry quickly.
+
+Actually, let me check whether #738's blind round happened and whether #858's skill-evolve counter ran (fcf78da1 "bump skill-evolve counter (2)"). The skill-evolve counter bump happened today — did skill-evolve produce new events for #858? #858 asks a human to adopt 4 fixes to skills/skill-evolve/SKILL.md. Last comment on #858 (Day 202) added a fifth defect. If skill-evolve ran today and produced something new... but the counter bump is on Day 203 (08:29 session, not mine). Let me check skills/_journal.md tail to see if there's a new event with new measurements that #858 should know about. If a sixth defect was measured today, that's real news worth posting. Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 -- skills/_… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There IS real news for #858. evt-0025 (today, Day 203) adds a **new** finding: the octal bug bit again, and — more importantly — evt-0025 identifies that the refine prediction (evt-0024) is *ungradeable by the loop forever*, and names a *third* method note: the step-7 snippet is ALSO poisoned by lexical sort (`sort -u | tail -1` mis-ranks above 999) and by cross-references in prose.
+
+#858 already has 4 comments and lists evt-0011b (octal, one-char fix `$((10#...))`). Today's evt-0025 note adds: the same snippet has a **third** defect (lexical sort). That's real, new, and directly relevant — but is it worth a comment? #858's list already covers octal + cross-reference (evt-0017). Today's note adds "sort -u is lexical, mis-ranks above 999". Hmm — that's a new instance of an already-filed family.
+
+Actually, more substantive: evt-0025 today says the **octal bug bit this cycle too** — meaning the bug is still uncorrected and actively causing mis-numbering (returned evt-0021 instead of evt-0025, and the agent had to use the corrected form). That reinforces #858's point but doesn't add new information beyond "still true."
+
+The instruction says don't post a second comment with "it's still true." But the previous comment on #858 was Day 202 and said "a fifth defect on the same snippet has now been measured, one day ago." So the pattern of adding new defect instances has been the practice. Today evt-0025 reveals a *sixth*? Let me count what #858 lists: evt-0008, evt-0011 (retire unreachable), evt-0011b (octal), evt-0012 (complaint_signals bare-word), evt-0014 (enumeration greps whole file). That's 5 issues in 4 events. Then Day 202's comment added "a fifth defect" — hmm, the table lists 5 rows. Day 202's comment says fifth defect on the same snippet.
+
+Today's addition would be: the step-7 numbering snippet has **two independent defects** (`sort -u` is lexical → mis-ranks past 999; and prose cross-references poison the match), and one of them is *new* — the lexical-sort half. And critically, the octal half **bit again today**, 10 days after being filed.
+
+Is that enough to justify a comment? It's real, measured, new (lexical sort mis-ranking is not in #858's table), and it strengthens the case for the one-char/one-line fix. I think a short, honest comment is warranted — but I should be careful: #858 says "Comment on each issue AT MOST ONCE" per session, and I haven't commented this session. Fine.
+
+But also — is this "yoyo working on the issue"? No. The rule says only comment when there's something REAL to say — a fix, progress, a decision, or a genuine question. A new measured defect instance on the exact snippet is real. The Day 202 session did exactly this and it's the reason #858 stays alive productively.
+
+Hmm, but there's a risk of noise. Let me weigh: the skill-evolve counter was bumped today by the 08:29 session, and evt-0025 landed. #858's whole thesis is "these are unfixed because only a human can edit the file." Today's evidence: the numbering snippet produced a WRONG number (evt-0021 instead of evt-0025) and the loop had to work around it — that's the bug actively malfunctioning in production, not just theoretically. That's genuinely new and actionable, and it's a 6th instance.
+
+I'll post a concise comment on #858. Not close it.
+
+Actually wait — let me double check: is the "sort -u lexical" bit really new? #858's evt-0011b row: "`n=$((${last#evt-} + 1))` parses `0015` as octal → emits `evt-0014`". The defect named is only octal. The lexical sort is the "last" computation, which is a *different* line of the same snippet (`grep -oE 'evt-[0-9]+' | sort -u | tail -1`). So yes — new, and it's the *upstream* half: even the octal fix is insufficient if `last` is wrong. evt-0017 filed the cross-reference half, evt-0011 the octal half. The lexical-sort half is new today.
+
+Hmm, but is it distinct from "evt-0017 cross-reference half"? evt-0017 = "the spec's own step-7 snippet, uncorrected — returns the highest event number by LEXICAL sort and is also poisoned by cross-references in prose (evt-0017 filed the cross-reference half)". Hmm, that sentence from evt-0023's note says "returns the highest event number by LEXICAL sort and is also poisoned by cross-references (evt-0017 filed the cross-reference half)". So the lexical-sort half was *noticed* but which event filed it? Unclear. So it may be partially filed.
+
+Given ambiguity, a cautious comment that reports the measured instance and attributes it as "either the missing half of evt-0017 or a sixth defect — the file itself is the only place with the sequence" is honest.
+
+Hmm. I'm at risk of over-investing. Let me make a decision: I'll post a short #858 comment because the evidence is fresh, measured today, and it's the only issue where I have genuinely new information. And skip the rest.
+
+Actually, let me reconsider once more. The task says: "If you didn't work on it and have nothing new, just move on." I have something new but it's not *my own* work — it's the skill-evolve loop's output (a different session, 08:29, which is still "me"). The value is real. I'll post it, concise.
+
+Let me get the exact text from the journal for evt-0025's method note and today's date. Already have it above: "the spec's step-7 snippet (`grep -oE 'evt-[0-9]+' | sort -u | tail -1`, then `$((last+1))`) returned **evt-0021** as the next event number today, not evt-0025 — `0024` is parsed as **octal** by bash arithmetic, and `sort -u` is lexical, so it also mis-ranks above 999."
+
+Also evt-0025 is a new meta-suggestion (a prediction that can never be graded) which is itself a 6th artifact for #858's "meta-suggestions filed, none adopted" ledger. Let me check how many meta-suggestions of skill-evolve exist and whether evt-0025 is adoptable-relevant. #858's core claim: 4 measured defects, 0 adopted in 7 days. Today is Day 203; #858 filed around Day ~186-190? Let's not overreach. I'll mention evt-0025's finding is a *new* meta-suggestion (the fifth in the ledger) that also lives only in the file. Hmm, keep it tight.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+One issue where I have genuinely new evidence: the skill-evolve numbering snippet mis-fired again today.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^## 2026-09" skills/_jo… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+evt-0025 is dated 2026-09-18T19:13Z, which is "yesterday" relative to today 2026-09-19. The Day 202 comment on #858 was posted... hmm. The journal entry evt-0025 landed in commit 96e35d28. Which session? "Day 203 (08:29): session wrap-up" is e16c18c3, and the bump counter fcf78da1 "Day 203: bump skill-evolve counter (2)". Let me check if evt-0025 landed before or after Day 202's #858 comment. Day 202 comment says "a fifth defect on the same snippet has now been measured, one day ago". If evt-0025 was filed 2026-09-18T19:13Z and Day 202's comment mentioned a defect measured "one day ago"... Let me check the Day 202 comment date and content to avoid duplicating.
+
+Let me view #858's comments.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 858 --repo yologde… ✓ (481ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Day 202's comment already covered the lexical-sort half (it quoted evt-0023's note verbatim, which contains "returns the highest event number by LEXICAL sort and is also poisoned by cross-references in prose"). So today's evt-0025 adds nothing new about the snippet — it's the same two halves, already filed and already commented yesterday.
+
+What IS new today: evt-0025 (2026-09-18T19:13Z — that's ~20h before now, after the Day-202 comment at 15:26 on 09-18? Actually the Day 202 comment is 2026-09-18T15:26:45Z, and evt-0025 is 2026-09-18T19:13Z — so evt-0025 is NEWER than the last comment). evt-0025's new content: a *new* meta-suggestion — "a prediction can name a signal outside my only stream" (evt-0024's refine is ungradeable forever). That's a **sixth** meta-suggestion filed with 0 adopted.
+
+Also: the octal/lexical snippet bit again in evt-0025 (it returned evt-0021 instead of evt-0025 — and this time not "nearly", it actually produced a wrong number, which the agent had to override). Day 202's comment said "it nearly mis-numbered". So there IS a real escalation: the snippet produced a *wrong answer* rather than a near-miss.
+
+Hmm, is that worth a comment? It's an incremental but genuine escalation ("nearly" → "did"), plus a new event (evt-0025) added to the filed-and-unadopted ledger. Day 202's session established this as the practice (comment when the count moves or a new instance lands). Today the count moved: meta-suggestions filed is now 6 in the ledger? Let me count meta-suggestion events: evt-0008, evt-0011, evt-0011b, evt-0012, evt-0014, evt-0016(?), evt-0017, evt-0018, evt-0022, evt-0023, evt-0025. Lots.
+
+I'll post a short comment that: (1) reports evt-0025 as the newest meta-suggestion and its finding, (2) reports the numbering snippet now returning a *wrong* number rather than a near-miss, 10 days after evt-0011b was filed, (3) reports the count/state, staying open. Keep it tight and honest. And note the two halves of the snippet were already filed (don't re-claim as new).
+
+Actually — careful about over-claiming: I should not re-state the table again. Keep short.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (22 lines) ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me double-check I haven't missed any issue where a real comment is warranted. Remaining: #881, #879, #870, #869, #738.
+
+- #881 (read-only sub-agent preset): last comment Day 199 answered step 0 (yoagent API question). Did I touch it? No. Skip.
+- #879 (composite safe mode): #879 landed over Days 187-197; the flag exists, documented. Today's Task 2 was about `--restricted` reaching the spawned worker — which IS clause A of #879 ("--restricted turns on whatever --safe-mode already turns on"). Hmm! Today's Task 2 proved that the `--restricted` road actually reaches the worker-confinement door. That's a real, relevant contribution to #879's clause A — the flag's promise verified end-to-end for the spawn path in the `--restricted` form specifically.
+
+Is that worth a comment on #879? The last comment (Day 197) was about disclosure honesty. Today's work is evidence that `--restricted`'s composition (clause A: safe mode) is enforced not just for the parent but for the workers it spawns, and the test drives the *global* via the `--restricted` road rather than the `--safe-mode` flag. That is genuinely new and relevant: #879's question 1/2/3 about which primitives compose, direction, monotonicity. Today's finding: the composition's reach now extends to spawned workers, and that road is tested.
+
+I think this is a legitimate, real progress note for #879 — it's the first *measured* evidence that the `--restricted` road (as opposed to the `--safe-mode` flag) reaches the spawn door. And it tells the human which clauses remain open (env var form, ignoring user config, blockReadsOutsideWorkingDirectories).
+
+Hmm, but is it too tangential? The issue is about a single flag composing primitives. Today's work did not move any of #879's four open clauses. It moved a *reach* question in #902's territory. Commenting on #879 risks being "I saw this" noise.
+
+Judgment: I'll skip #879. The work is #902's, and #879's open clauses are untouched; cross-posting the same fact to a second issue adds noise, and I already noted in #902's comment that `--restricted` reaches the global. Actually... hmm, one could argue #879's body explicitly says "Check whether `--safe-mode` already covers item 3" and today's test establishes exactly which global `--restricted` sets. That's small but real.
+
+I'll make the call: skip. Silence is better than noise, and the four design questions in #879 are what's blocking it, not evidence about reach.
+
+- #870: skip (no work; Task 1 was a different instrument).
+- #869: skip (no work).
+- #738: no blind round today (last round 97, Day 196). Skip.
+
+Let me verify the final state of the issues, and confirm build status is fine. Build status was PASSING per the prompt. I ran a test that passed.
+
+Let me do a final check listing.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 902 886 858 881 879 870… ✓ (4.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done. Here's my disposition for all 8 issues:
+
+## Commented + closed
+#886 — yoyo model list was unrouted and billed a turn. Verified live on the binary before closing: model list now prints the model table from the deterministic handler (no billed turn), all five residue verbs (tokens/cost/context/provider/think) give the honest refusal naming the /cmd and the -p escape hatch, and yoyo -p "tokens foo" still reaches the model — so the "must stay byte-identical" clause holds. Pointed at #936 for the 50-verb residue. Closed.
+
+## Commented, kept open
+#902 (seventh trust door) — this is where my session's Task 2 landed. The slice the issue named and left unverified (commands_spawn.rs's direct load_project_context() calls) was measured open and routed last session (cd334354); what today added is the gate that proves the fix is reachable from --restricted through the real global. Day 194's evidence was pure-function plus a weak source-level guard, both of which stay green on a tree where the worker still gets project context — and --restricted reaches is_safe_mode() by a different road than --safe-mode does. Added the test that drives it; re-ran it: 1 passed; 0 failed. Flagged clearly that the six instruction files are still ungated by default and all four design questions stay open.
+
+#858 (skill-evolve's gate) — new evidence, so worth saying: evt-0025 landed after my last comment (a sixth meta-suggestion, and a different kind — evt-0024's prediction is ungradeable by this loop ever), and the step-7 numbering snippet stopped nearly mis-firing and actually did: it returned evt-0021 instead of evt-0025, caught by hand. The evt-0011b fix is still one character and still not mine to make (origin: creator + core: true).
+
+## Skipped (no work, nothing new to say)
+#881, #879, #870, #869 — untouched this session; each needs its own design pass or instrument work, and I had no measurement to add. #738 — no blind round ran today (last is round 97, Day 196), so there is no prediction line to mirror; a comment would be noise.
+
+Build status was PASSING, and the test I added to commands_spawn.rs passes.
+
+  watch: no files changed this turn — skipping
+

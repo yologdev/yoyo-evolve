@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me evaluate this task. The task is to add a denominator line to the convention census in scripts/check_assertion_weakening.py, with self-tests, and to append to ARCHITECTURE.md, plus run a real range and report N/M/K.
+
+Let me check the diff elements:
+
+1. `register_gate_denominator(findings, hunks)` added - computes N, M, K. Reuses REGISTER_LITERAL_RE / REGISTER_LITERAL_JOINED_RE via hunk_carries_shape. Good.
+
+2. scan_diff returns sixth element. All call sites updated? Let me check for any missed call sites in the file. The tests use `_tuple` updated. Also pair_one_sha updated.
+
+3. render_register_gate_denominator added, render_report gains register_gate param.
+
+4. `_run` accumulates register_gate in per-commit mode and passes to render_report.
+
+5. Self-tests added.
+
+6. ARCHITECTURE.md updated with Day 203 entry including N/M/K readings.
+
+Let me verify claims: run the self-test and the real range. Let me be efficient.
+
+Let me check for any remaining `scan_diff(` call sites that weren't updated (would be a runtime error in --per-commit or wherever).
+
+Let me grep.
+
+Also verify the tests actually exercise the new code — run `python3 scripts/check_assertion_weakening.py --test`.
+
+Let me do focused checks.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "scan_diff(" scripts/che…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REGISTER_LITERAL_RE\s*=… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check the return type annotation of scan_diff (still 5 elements in the annotation - minor style, not a functional issue). Let me check lines 1423 and the doc.
+
+Also check lines 3828-3932 that call scan_diff but maybe without unpacking 6? Lines 3828, 3829, 3853, 3932 - let me check how they're used.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3825,3860p;3925,3945p' s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1420,1430p;2340,2440p' s… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The stdin mode: `findings, rust_hunks, test_hunks, skipped, census, register_gate = scan_diff(...)`. Note register_gate was initialized to [0,0,0] then reassigned to a tuple from scan_diff, and later `tuple(register_gate)` — fine.
+
+Now let me run the self test and the real range.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (64ms)
+ ✓ (102ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The line renders. The task says run `--self-test`; the actual flag might be `--test`. Let me check the argparse. Also run `--test`.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1; git diff -… ✓ (21ms)
+ ✓ (87ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Everything works. The `--self-test` flag doesn't exist; the file uses `--test`. The task asked for `--self-test` but the file's actual flag is `--test`; the task even says "confirm the names... follow the file, not this task file". The write-up in ARCHITECTURE says `--test` exits 0. Not a defect.
+
+Now, let me verify the deliverable requirements more:
+
+1. Reuse of regexes — yes, REGISTER_LITERAL_RE / _JOINED_RE via hunk_carries_shape. ✓
+2. One line, no new counter — ✓ no changes to counts.
+3. Self-tests wired into run_self_tests — yes, 14 rows added; run_self_tests still exits non-zero on failure (check function presumably raises). Let me verify `check` raises.
+4. Real run reported in ARCHITECTURE — yes, N=0/M=0/K=0 for HEAD~40..HEAD, and the superset readings.
+5. ARCHITECTURE.md entry — yes, added in the entry covering scripts/check_assertion_weakening.py.
+
+Potential issue: the task says the ARCHITECTURE addition should be in "the entry that covers scripts/check_assertion_weakening.py". The diff shows the new paragraph inserted after the Day 201 paragraph of check_assertion_weakening.py. Good.
+
+One thing: the render line prints the "REMOVED side only" detail lines without the `register-gate denominator:` prefix. Task description example showed only 3 lines; the extra 2 lines are an addition of the limit statement — that's fine and asked for in the write-up ("the stated limit").
+
+Check: does the count for register-lines-only change? The diff didn't touch convention_census or count_register_lines. The scan output showed register-lines-only 4. Good.
+
+Check forgotten_touchpoints: new function register_gate_denominator has consumers (scan_diff). New function render_register_gate_denominator has consumer render_report. scan_diff new return element consumed at all call sites — checked the ones unpacking 6. Also check the `_tuple` helper and pair_one_sha. Any call site that unpacks 5 still? Let me grep for `scan_diff(` results that unpack into 5 names... From the grep list, all appear to be 6 now, except `pair_root = scan_diff(...)` which uses indexing (fine, returns tuple). `two_names_scan[3]`, `nm_res[3]` — indexing. Good.
+
+Also check the `--pair-verdicts` path / run_pairing. pair_one_sha updated.
+
+Also there may be a call in `row_depth` or `run_pairing` elsewhere? grep only found those. Good.
+
+Return type annotation still says 5-element tuple — cosmetic, doesn't affect runtime.
+
+Also: does the diff touch product surface? It's a script (evolve tooling) — not product surface. N/A actually the task is evolve-kind and touches no product surface (scripts/ is internal). So product_surface: N/A or PASS. I'll say N/A since it touches no config defaults/CLI/wizard/startup.
+
+doc_sync: behavior change is a new census line in an internal script; docs updated in ARCHITECTURE.md (as required). Is ARCHITECTURE.md the right doc? Task explicitly says append ARCHITECTURE.md. PASS.
+
+Let me quickly verify `check` raises on failure and run_self_tests exits nonzero.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.6s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^def check\|def check("…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (7ms)
+ ✓ (89ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The positive control works (in-memory), exits 1, and 7 rows fail by name — consistent with the write-up's claim ("reddens 7 rows by name"). Note the write-up said "six gate rows and one render row"; I see exactly "SELF-TESTS FAILED (7)". Good — claim verified.
+
+Everything checks out. The deliverable is complete:
+- one rendered line, no counter changes
+- reuses regexes via hunk_carries_shape
+- self-tests wired into run_self_tests, anti-vacuous first, near-miss both directions, render asserted as string, no-tuple gate
+- real run N=0/M=0/K=0 reported in ARCHITECTURE
+- ARCHITECTURE entry appended
+
+Minor: scan_diff's return annotation still says 5 elements (cosmetic); the task asked to run `--self-test` but the flag is `--test` (file is authoritative, and the write-up correctly reports `--test`). Not failures.
+
+Note the diff also includes .yoyo/risk_weights.json which is unrelated bookkeeping — that's an evolve-loop artifact, not a scratch file; mention. Actually it's a stray change swept in. I'll mention as cleanup feedback, not fail.
+
+Write verdict.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.4s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 39s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md.
+
+PASS — judged against the task file and verified by execution, not the diff alone:
+
+• **Deliverable implemented**: one additive rendered line (`register-gate denominator: N/M/K`), a new pure `register_gate_denominator()` that reuses the existing `REGISTER_LITERAL_RE` / `REGISTER_LITERAL_JOINED_RE via hunk_carries_shape (no second regex copy), carried as a sixth additive scan_diff` return; no existing count or verdict touched.
+• **Real run**: --from HEAD~40 prints N=0 / M=0 / K=0 alongside an unchanged register-lines-only 4 and WEAKENED 0, matching ARCHITECTURE.md's recorded reading.
+• **Self-tests**: `--test` exits 0. I ran an atomic in-memory positive control (neuter → run → restore): the suite exits 1 with `SELF-TESTS FAILED (7)`, matching the write-up's claim, so the new rows discriminate rather than pass vacuously.
+• **Touchpoints**: all scan_diff( call sites unpack/index the sixth element; both new functions have consumers in this diff.
+• **Docs**: ARCHITECTURE.md (correct location, not CLAUDE.md) carries the new line, measured N/M/K, the zero-over-zero caveat, and the removed-side-only limit.
+• **Product surface**: N/A — internal scripts/ tooling only.
+
+Minor notes (not failures): the scan_diff return type annotation still lists five elements (cosmetic), the task's --self-test flag is actually --test in the file (write-up correctly uses --test), and an unrelated .yoyo/risk_weights.json update rode along.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
