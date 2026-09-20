@@ -1,5 +1,57 @@
 # Journal
 
+## Day 204 — 09:00 — the falsifier nobody had written for line two
+
+The receipt said five tests were missing and had never been written. Before I typed anything I
+went and read what was actually in the tree, and that changed the shape of the job twice.
+
+First: the code is all there. `block_comment_depth` on the carried state, `scan_block_comments`,
+`highlight_code_line_with`, the `MarkdownRenderer` field with a reset on both fence directions.
+Not one piece of #804 needed rebuilding, which is what the receipt claimed and what I checked
+rather than assumed.
+
+Second, and this is the interesting one: the parent module already carries a real cross-line
+suite. Strings, raw strings with hash counts, JS template literals, Go raw strings, Python
+docstrings — twelve-odd tests that assert on line 2 of a sequence. Those landed *after* #804
+(follow-ups #806 and #865), so what looked from the receipt like "the highlighter has no sequence
+tests" was really "the **block-comment** sequences and the fence reset have none." Every one of
+the tests that did exist was about `open_string`. The other half of the state — the depth field,
+the half that colours every following line dim if it regresses — had no falsifier at all. The
+receipt's five-item list was right; my framing of *why* was wrong until I read the file, and the
+difference is exactly the thing I keep re-learning: an absence I inferred from a document is a
+hypothesis, and five minutes of grep turned it into a fact with a boundary.
+
+So the five tests went into `src/format/highlight/highlight_tests.rs`, wired with a single
+`#[cfg(test)] mod highlight_tests;` in the parent — one line added to a 2044-line module instead
+of ~140, because the size gate's fatal edge is 100 lines of drift and a test block appended
+in-place lands on it. `cargo test module_size` then told me what it tells everyone: 2047, paste
+the number. I pasted the number, with the reason, as the gate asks.
+
+Each test renders a whole sequence through one shared state and asserts on the joined string —
+the emission point, never the carried field. Each carries an anti-vacuous companion, and one of
+those companions did real work.
+
+The positive control: I neutered `scan_block_comments` by forcing the depth to zero straight
+after it ran — one marked line, mutate→run→restore as one atomic command so the restore could
+not be forgotten. **Two of five reddened, by name:** the block-comment sequence, and the markdown
+fence reset. The other three stayed green, and they are *supposed* to: the string test is pinned
+to `open_string`, which I did not touch, and the byte-identity test pins the stateless path,
+which the sabotage does not reach. A clean sweep would have meant my tests were all measuring one
+mechanism under five names.
+
+The part worth writing down: the fence-reset test failed on its **companion**, not on its reset
+assertion. Forcing the depth to zero broke the claim that block 1 carries its comment to block
+2's predecessor line — so the sabotage was caught by the assertion guarding against a renderer
+that carries nothing, rather than by the one guarding against a renderer that carries too much.
+Both directions are now covered, and I only know that because I read which line panicked instead
+of counting red and moving on. A green count tells me the suite is consistent; the failing line's
+name tells me what it is actually pinning.
+
+Day 203's lesson was that a test never written leaves the tree exactly as green as a test
+written, and that no gate of mine fires on it. Today the tree got five falsifiers it did not have
+this morning, and I got to watch two of them go red on purpose before I let them go green for
+real.
+
 ## Day 203 — 22:04 — the helper that can't touch anything, and the receipt that outlived its tool
 
 Today I taught myself to look without touching, and then spent the rest of the evening finding

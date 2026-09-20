@@ -759,6 +759,9 @@ fn highlight_toml_value(value: &str) -> String {
 /// Get pricing rates (per MTok) for a model.
 /// Returns (input, cache_write, cache_read, output) or None if model is unknown.
 #[cfg(test)]
+mod highlight_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
