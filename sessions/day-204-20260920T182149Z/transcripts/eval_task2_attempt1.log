@@ -1,0 +1,106 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the diff against the task. Key checks:
+
+1. The audit test exists in src/format/cost.rs, #[ignore]d — yes.
+2. KNOWN_DIVERGENCES const with anti-rot guard — yes.
+3. skills/release/SKILL.md wired — yes.
+4. tests/module_size.rs register paste — yes.
+5. ARCHITECTURE.md entry — yes.
+
+Potential issues: the task says the test should compare `model_pricing(id)` for every model id the provider lists that resolves to Some. Implementation does that.
+
+The task said "Compare every model id the provider lists that model_pricing(id) resolves to Some(..)" — done.
+
+Task requirement 4: anti-vacuous asserted first: fetched provider must list at least 3 models and at least 3 compared. In the test, `assert!(vendor.len() >= 3)` is before audit_vendor_rows, and `compared.len() >= 3` after. Close enough — actually the compared check is after the comparison but asserted before the mismatch panic. Fine.
+
+Requirement 5: fail naming rows `id: table (a, b, c) vs models.dev (x, y, z)` — done.
+
+Step 2: register prints skipped ids — done.
+
+Anti-rot guard: `registered_divergences_still_diverge` — non-ignored, asserts non-empty, reason at least one sentence, still diverges. Done.
+
+Step 3: release SKILL.md gate + how to check. Done.
+
+Step 4: module_size register paste + ARCHITECTURE.md. Done.
+
+Now — possible issue: register entry. The task said tests/module_size.rs:316 is `("src/format/cost.rs", 2869)` and the diff is ~+80 lines. But the actual diff is +508 lines (much bigger). The entry was updated 2931 → 3439. Let me check whether 3439 is correct. Actually the register has MAX_MODULE_LINES and grace. The task said the tests are "mostly tests" — the diff added ~508 lines including 512 lines of tests, which is +508. Hmm, the file went from 2931 to 3439. That's a real growth. The gate allows REGISTER_DRIFT_GRACE_LINES = 100, so 2931 → 3439 is +508, past grace, meaning the register must be updated (actually past regrace = fatal, so it must be pasted). They pasted it. Build/tests pass per harness. But wait — does the module size gate check the registered number vs actual? Let me verify the actual line count of src/format/cost.rs.
+
+Actually the harness says Tests: PASS, which includes the module_size gate test. But let me double check the actual count, since the register entry is claimed 3439. Let me run wc -l quickly.
+
+Also: does the register gate have a rule that the registered value must not exceed the cap? Let me look at tests/module_size.rs. Actually the entry is a grandfathered oversized module list; the numbers are the file sizes at time of registration. There may be a check that the actual file size doesn't drift more than grace from registered. If actual is 3439 and registered is 3439, fine.
+
+Let me quickly verify: wc -l src/format/cost.rs, and check the size gate logic. Also verify the ignored test actually works — well, running it requires network. The task says to run it and record output. The evaluator has 10 min; could try running the ignored test maybe. But the harness said tests pass. Let me consider running `cargo test price_drift_audit -- --ignored --nocapture`. That requires building the test binary (already built?) and network. Might be worth one focused check. But time budget. Let me at least check line count and that the compile works.
+
+Actually a subtle concern: `assert_eq!(skipped, vec!["deepseek-v4-pro".to_string()])` in `audit_matches_the_vendored_reading_for_every_unregistered_row` — order of skipped comes from iteration over vendored rows sorted by id: ("deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro") — the const is already in sorted order, so skipped = ["deepseek-v4-pro"]. Good.
+
+Another: the vendored const's DeepSeek rows don't include `reasoning`; parser requires cost.input, output, cache_read. Fine.
+
+Potential mismatch: test `audit_vendor_rows` compares t_read for rows where table has cache_read 0.003 for deepseek-flash — matching vendored 0.003. Good.
+
+Now, does the table's `model_pricing("deepseek-v4-flash-vision-exp")` resolve? It contains "deepseek-v4-flash" so yes, returns (0.15, 0.0, 0.003, 0.60). Good.
+
+Now about the total number of compared rows in the online run: vendor has 4 rows, one skipped → 3 compared, matches task expectation.
+
+Let me do a focused check: line count and maybe run the ignored test if network is available. Let me check quickly.
+
+Also check that CLAUDE.md wasn't changed — the task says no CLAUDE.md change. Diff shows none. Doc sync: ARCHITECTURE.md updated, release skill updated. That's the doc requirement. product_surface: N/A? The task kind is product, and it adds a test + release ritual doc. Does it touch product surface (config defaults, CLI flags, wizard, startup)? No. So N/A is arguably right, but the instructions say N/A only if the diff touches no product surface. The diff touches no product surface (only tests, a skill doc, ARCHITECTURE.md). So N/A is fine. Hmm, but "product" kind... The release skill is not product surface per #448 definition. I'll mark N/A with explanation.
+
+Let me run quick checks.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/cost.rs && grep…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REGISTER_DRIFT_GRACE_LI… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Register paste matches actual count 3439. Tests pass per harness.
+
+Now let me do one focused check: run the ignored audit test offline? It needs network. Let me check if curl to models.dev works in this environment. Might be worth it but could take up to 60s. Let's try with a short timeout.
+
+Actually a more valuable check: run the non-ignored new tests to confirm they exercise the functions (harness already ran full suite — tests pass). The key uncertainty: does the ignored test actually work end-to-end? The task requires running it and recording output. Let me try quickly with a 30s budget.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 180 cargo test price_dri… ✓ (632ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to see the lib/bin test run output where the ignored test lives. Let me grep for the unit test binary output.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (713ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ignored audit test actually runs live, fetches models.dev, compares 3 rows, and passes. Excellent — real verification.
+
+Now check the release skill doc lines 101-117 updated — yes per diff. ARCHITECTURE.md entry added — yes. No CLAUDE.md change — consistent with task.
+
+Check forgotten touchpoints: new consts KNOWN_DIVERGENCES (used in audit_vendor_rows and the anti-rot test), MODELS_DEV_DEEPSEEK_2026_09_20 (used), MODELS_DEV_URL (used), UNAUDITED_DEEPSEEK_ARMS (used in test and print). New functions all used: price_cells_differ, audit_did_not_run_message, fetch_models_dev_json, parse_models_dev_deepseek, audit_vendor_rows. Consumers in same diff. Tests pass, so no dead code.
+
+Everything matches. Write verdict.
+
+One nuance: task said the register comment in module_size should extend the trailing comment with Day-204 reason — the diff adds new lines rather than extending the trailing comment, but the intent (paste the register with Day-204 reason) is satisfied. Minor.
+
+Verdict PASS.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 38s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+Key evidence, beyond reading the diff: I ran the ignored alarm (cargo test --bin yoyo price_drift_audit -- --ignored --nocapture) and it did real work against the network — fetched models.dev, compared exactly the three expected DeepSeek rows, reported deepseek-v4-pro as the admitted skipped divergence, printed the r1/v3 coverage limit and the cache_write skip, then passed. The register paste (3439) also matches wc -l src/format/cost.rs, so the module-size entry landed correctly.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

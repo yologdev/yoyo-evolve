@@ -1,0 +1,78 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the diff against the task. Let me check specific line numbers and content.
+
+Task requirements:
+1. src/format/cost.rs:187-189 split arm: `if model.contains("deepseek-r1")` alone with comment — done.
+2. Widen deepseek-flash arm with `|| model.contains("deepseek-v4-flash")` — done.
+3. Comments about ordering, residue — done.
+4. Tests — 4 sites: near-miss guard v4-flash → (0.15, 0.0, 0.003, 0.60) done; r1 untouched done; test_pricing_deepseek_v4_flash → 0.15/0.60 plus cache_read done; test_estimate_cost_deepseek_reasoner → id changed to "deepseek-r1", 2.74 kept — done. New assertion assert_ne! — done with unwrapping.
+5. Docs — table row added, sentences added — done.
+6. ARCHITECTURE.md Day 204 entry — done.
+7. module_size register paste 2869 → 2931 — done.
+
+Let me verify claims: the register says 2931 lines and build/tests pass. Let me quickly check the actual line count of cost.rs and confirm the register matches (a mismatch would be a warning, not fatal, but let me check).
+
+Also verify the new assert_ne! resides in test_pricing_deepseek_flash_is_priced_and_changes_nothing_else — the diff shows it's in a test after the near-miss guards. Let me peek at the actual file to confirm context.
+
+Let me do a focused check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/cost.rs && grep…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1655,1780p' src/format/c… ✓ (4ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All four test sites are handled. The register count 2931 matches actual wc -l of 2931. Docs updated. ARCHITECTURE.md Day 204 entry added.
+
+Let me quickly sanity check the behavior — run a focused test to confirm the pricing arm works. Actually build/tests pass already. But the task says try the feature if user-facing. The pricing table is user-facing; a quick targeted test run is cheap. Let me run `cargo test format::cost::tests::test_pricing_deepseek` quickly? That requires build; tests already pass per harness. I could skip. But it's a fast focused check. Let's just run the specific tests to confirm behavior (should be fast since already compiled).
+
+Also verify docs file has the row.
+
+Let me do one quick check: run the targeted tests and grep docs.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib format::cost 2>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '90,112p' docs/src/featur… ✓ (6ms)
+ ✓ (147ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The lib test target isn't found because it's a binary crate; run `cargo test --bin yoyo format::cost` instead. Not strictly necessary since harness reported PASS. Let me just do it quickly for evidence of behavior.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 240 cargo test --bin yoy… ✓ (147ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+109 tests pass. Let me verify the specific new tests are among them, e.g. grep names. Actually fine.
+
+Now check the new pricing behavior—I could write a quick check but tests cover it. Let me confirm the pricing function returns the right value via a quick check? The test test_pricing_deepseek_v4_flash asserts 0.15/0.003/0.60. That's evidence.
+
+All four Checked lines: intent_alignment PASS, forgotten_touchpoints PASS (no new definitions; comments and tests only; register count matches 2931 actual), doc_sync PASS (docs + ARCHITECTURE updated), product_surface PASS (product-kind change, corrects pricing literals—not a config default/wizard change; no #448 issue).
+
+Write verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 39s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md: PASS.
+
+• **intent_alignment: PASS** — the arm split, the widened `deepseek-flash` condition, all four retargeted test sites, and the single `assert_ne!` property assertion match the task; verified cargo test --bin yoyo format::cost → 109 passed, 0 failed.
+• **forgotten_touchpoints: PASS** — no new definitions added; register entry pasted as 2931, matching the actual wc -l of src/format/cost.rs.
+• **doc_sync: PASS** — docs table row + caveat sentences and the ARCHITECTURE.md Day-204 entry both landed in the diff.
+• **product_surface: PASS** — corrects a user-visible price literal, no default/flag/wizard/startup change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

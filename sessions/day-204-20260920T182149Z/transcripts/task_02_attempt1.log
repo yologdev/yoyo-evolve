@@ -1,0 +1,1015 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by looking at the task-relevant files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 850,960p src/format/cost.… ✓ (4ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Task 1 landed already. Let me look at the pricing table for DeepSeek.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "deepseek" src/format/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 300,330p tests/module_siz… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Task 1 landed. Let's look at the pricing table section and the tests module tail.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 175,240p src/format/cost.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,120p skills/release/S… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me see the actual release SKILL gate list lines 101-117 (the sed output got collapsed with "..."). Let me grep the file directly.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "" skills/release/SKILL.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "" tests/module_size.rs … ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check models.dev API to see the deepseek rows, and compare the table. Let me fetch it.
+
+Also check what deepseek models models.dev lists.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && curl -sS --m… (7 lines) ✓ (303ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "known_models_for_provid… ✓ (4ms)
+ ✓ (95ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now models.dev deepseek lists 4 models, and after the alias stripping, `deepseek-v4-pro` maps to table row. So compared ids: the test compares every model id the provider lists that `model_pricing(id)` resolves to `Some(..)`. All 4 resolve. So compared count = 4, well over 3.
+
+Wait — anti-vacuous says at least 3 models listed and at least 3 compared. We have 4 listed, 3 compared (v4-pro is admitted divergence, skipped — but is it "compared"? The requirement says "at least 3 must have been compared"). Hmm, ambiguous: skipped admitted divergences — do they count as compared? Let's count "compared" as ids that resolved and were checked against expectations (including registered divergence check). I'll record compared as those that model_pricing resolved (4), and within that the audit checks each against vendor — the registered one is reconciled offline in the other test. I'll make it: `compared` = ids whose table row resolved and which are not registered divergences → 3. And also the registered ones need to be counted somewhere. Let me just be careful to satisfy "at least 3 must have been compared": compared = 3 exactly (flash, v4-flash, vision-exp). Actually the literal spec: "the fetched provider must list at least 3 models and at least 3 must have been compared". So compared=3 works.
+
+Hmm, but if the registered divergence is skipped, then compared=3 works. Fine. But also should track skipped-registered names. Let me design:
+
+```rust
+const MODELS_DEV_DEEPSEEK_URL: &str = "https://models.dev/api.json";
+
+/// The vendored expectation for a KNOWN_DIVERGENCES row... 
+```
+
+Vendored expectation: for the anti-rot guard test `registered_divergences_still_diverge`, we need the vendor's expected value for deepseek-v4-pro as a const with fetch date. The test asserts the table's row for that id does NOT equal the vendor expectation (i.e. still diverges), and the reason is non-empty.
+
+Let me define:
+
+```rust
+/// models.dev's `deepseek` rows, vendored 2026-09-20 ... for the offline anti-rot guard
+const MODELS_DEV_DEEPSEEK_EXPECTED: &[(&str, f64, f64, f64)] = &[
+    ("deepseek-flash", 0.15, 0.6, 0.003),
+    ("deepseek-v4-flash", 0.15, 0.6, 0.003),
+    ("deepseek-v4-flash-vision-exp", 0.15, 0.6, 0.003),
+    ("deepseek-v4-pro", 0.435, 0.87, 0.003625),
+];
+```
+
+Tuple format (id, input, output, cache_read).
+
+Then the anti-rot test: for each registered divergence id, find it in MODELS_DEV_DEEPSEEK_EXPECTED, and assert the table row for that id differs in at least one cell (table tuple is (input, cache_write, cache_read, output)). And assert reasons non-empty and contain a space / sentence-ish (at least one real sentence).
+
+Wait but the anti-rot guard's claim is "each listed id does diverge from the vendored expectation". With vendored expectation static, the assertion "table != vendored" would be static too... but the spec says: "each listed id **does** diverge from the vendored expectation — so the exemption can only shrink. Vendor the expected value for that one id as a small const with the fetch date, since the offline test cannot fetch." Hmm, that's static; if the vendor's number moves to match the table, the vendored const has to be updated by a human — at which point the test fails and forces removal. OK. Also assert that no *other* id in the vendored table diverges (i.e., every non-registered row matches) — that's a nice offline near-miss guard that catches a table edit that breaks a flash row without network. Actually that's a good addition: the offline test can assert that all ids NOT in KNOWN_DIVERGENCES match their vendored expectation. That gives real value: a table edit that breaks a flash row reddens in the default suite too. But careful: if the table diverges deliberately later, the test fails — which is intended (drift alarm). Hmm, but the task says the offline part asserts only (a) and (b). Adding the offline full-comparison could be over-reach... but it makes the vendored const earn its keep and is honest. However, it risks: an intentionally-changed table row (e.g., a future task changes the table with a new reading) would fail the default suite — which is arguably the point of a drift alarm but the spec confines the alarm to the ignored test and CI must stay green. Hmm. If a future session changes the table legitimately (as task_01 just did), the offline assertion would red CI unless they also update the vendored const. That's actually exactly the desired coupling: updating the table requires updating the vendored expectation. But the release SKILL says the audit is manual. Risk of accidental red on our own repo... I'll be conservative and follow the spec: only assert the registered divergence still diverges against the vendored value, plus reason quality. Actually wait — for the anti-rot guard to be able to fail, we need something malleable. Table row (0.27, 0.0, 0.0, 1.10) vs vendored (0.435, 0.87, 0.003625): if someone "fixes" v4-pro to the vendor value, the test fails → forces removal from register. Good, that's the intended mechanism. Fine.
+
+Hmm, but also we need it to catch the case "the vendor moved to match" — that's the same code path (vendored const updated by human). OK.
+
+Now the audit test:
+
+```rust
+#[test]
+#[ignore = "network + vendor page; run before a release"]
+fn price_drift_audit_against_models_dev() {
+    let raw = fetch_models_dev_json().unwrap_or_else(|e| panic!("{}", audit_did_not_run_message(&e)));
+    ...
+}
+```
+
+Requirement 1: panic with a message that says in words that the audit did NOT run. Let's produce a pure helper `audit_did_not_run_message(err: &str) -> String` that is testable, containing "audit did NOT run" and the error. Wording precedent from check_assertion_weakening.py's could_not_check_message. Let me look at it briefly for wording.
+
+Also requirement: the parse function should be separable and testable? Let me make pure helpers:
+
+- `parse_models_dev_prices(json: &str) -> Result<Vec<(String, f64, f64, f64)>, String>` — returns (id, input, output, cache_read) for deepseek provider.
+- `diff_pricing_rows(table_id, table_row, vendor_row) -> ...`? Probably inline.
+
+To keep tests testable without network, I'll write a helper `models_dev_mismatches(vendor: &[(String,f64,f64,f64)]) -> (Vec<String> mismatches, Vec<String> compared, Vec<String> skipped)` as a pure function using model_pricing. Then tests can feed synthetic vendor rows and assert the mismatch formatting and the registered skip. That gives non-ignored unit coverage of the comparison logic — good, since the task says the ignore test is manual; but the pure helper can be tested offline. That's a strong design.
+
+Let me now check the `is_plain_output` conventions—not needed here (test only).
+
+Let's check existing test for the flash row and the module size cap for cost.rs. Also `REGISTER_DRIFT_GRACE_LINES`.
+
+Now write the code. Let me view the top of cost.rs for imports and see what's used (serde_json available?).
+
+Check Cargo.toml for serde_json.
+
+Also check whether the test module uses `std::process::Command` elsewhere / any existing `curl` usage. Fine.
+
+Let me check the exact line count budget: cost.rs currently 2931, cap registered 2931 with grace 100. We add ~150 lines including tests. That would be 3081, i.e. 150 over the registered count → beyond grace band (100) → migration gate fails? Let me check the module_size test logic.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.8s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,80p tests/module_size.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REGISTER_DRIFT_GRACE_LI… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Grace band is 100 lines. My addition ~150-200 lines would exceed it → fatal unless I paste the register in the same diff. The task instructs to paste the register line in the same diff (Step 4), which I'll do. Good — I'll do the paste at the end with the actual count.
+
+Now let me look at the existing tests near line 1719 for the flash row to place the new tests appropriately, and the top of cost.rs imports.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p src/format/cost.rs … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now write the code. Design:
+
+Constants + helpers placed near the top-level (non-test) or inside the test module? The task says the audit test inside the existing `#[cfg(test)] mod tests`. KNOWN_DIVERGENCES and vendored const — inside tests module is fine (they're only used by tests). But `#[cfg(test)]` code inside the file. I'll put them in the tests module to avoid dead-code in production.
+
+But wait: the model_size gate counts lines regardless.
+
+Let me write:
+
+```rust
+    // ---------------------------------------------------------------------
+    // Price drift alarm (#937, Day 204)
+    // ---------------------------------------------------------------------
+
+    /// models.dev's `deepseek` rows, vendored 2026-09-20, as
+    /// `(id, input, output, cache_read)` in USD per million tokens. Fetched by
+    /// hand from `https://models.dev/api.json` because the anti-rot guard below
+    /// must run in the DEFAULT (offline) suite.
+    const MODELS_DEV_DEEPSEEK_2026_09_20: &[(&str, f64, f64, f64)] = &[
+        ("deepseek-flash", 0.15, 0.60, 0.003),
+        ("deepseek-v4-flash", 0.15, 0.60, 0.003),
+        ("deepseek-v4-flash-vision-exp", 0.15, 0.60, 0.003),
+        ("deepseek-v4-pro", 0.435, 0.87, 0.003625),
+    ];
+
+    /// Audited-and-admitted divergences ... 
+    const KNOWN_DIVERGENCES: &[(&str, &str)] = &[(
+        "deepseek-v4-pro",
+        "models.dev prices V4-Pro at {0.435 in / 0.87 out / 0.003625 cache_read} (2026-09-20) against this table's (0.27, 1.10). Deliberately not fixed: one aggregator was read, the arm is shared with `deepseek-v3` (a different model's price, equally unverified), and the row is `providers.rs`'s DEFAULT for `provider = \"deepseek\"`, so changing it moves every user with no explicit model. Its own issue.",
+    )];
+```
+
+Hmm — the reason string will be checked for "at least one real sentence". Check: length >= some threshold and contains whitespace + a period. I'll assert len >= 80 and contains ' ' and ends with '.' or contains '. '.
+
+Helper for the audit:
+
+```rust
+    /// Parse `models.dev`'s payload into the `deepseek` provider's rows as
+    /// `(id, input, output, cache_read)`. Pure, so the audit's parse half is
+    /// testable offline...
+    fn parse_models_dev_deepseek(json: &str) -> Result<Vec<(String, f64, f64, f64)>, String> { ... }
+```
+
+Wait, but the spec says "at least 3 models must have been compared" as anti-vacuous inside the audit test. I'll compute compared inside a pure function too.
+
+Pure comparison function:
+
+```rust
+    /// The audit's whole comparison, with the fetch removed: feed it the vendor's
+    /// rows and it returns (mismatch lines, compared ids, registered-skipped ids).
+    fn audit_vendor_rows(
+        vendor: &[(String, f64, f64, f64)],
+    ) -> (Vec<String>, Vec<String>, Vec<String>) {
+        let registered: Vec<&str> = KNOWN_DIVERGENCES.iter().map(|(id, _)| *id).collect();
+        let mut mismatches = Vec::new();
+        let mut compared = Vec::new();
+        let mut skipped = Vec::new();
+        for (id, v_in, v_out, v_read) in vendor {
+            if registered.contains(&id.as_str()) {
+                skipped.push(id.clone());
+                continue;
+            }
+            let Some((t_in, _t_write, t_read, t_out)) = model_pricing(id) else {
+                continue;  // hmm - should this be visible?
+            };
+            compared.push(id.clone());
+            if (t_in - v_in).abs() > EPS || (t_read - v_read).abs() > EPS || (t_out - v_out).abs() > EPS {
+                mismatches.push(format!("{id}: table ({t_in}, {t_read}, {t_out}) vs models.dev ({v_in}, {v_read}, {v_out})"));
+            }
+        }
+        (mismatches, compared, skipped)
+    }
+```
+
+Hmm — "Compare every model id the provider lists that `model_pricing(id)` resolves to `Some(..)`". Note model_pricing uses substring matching, so which ids resolve? all 4.
+
+EPS: numbers like 0.003625 vs 0.003 — fine. Use 1e-9? Floating literal comparisons: 0.435 == 0.435 exactly as parsed from same decimal? Both are parsed from JSON string via serde to f64, and the table's literal 0.15. serde_json parses "0.15" to the same f64 as Rust literal 0.15. Safe. But to be safe use tolerance 1e-9 relative... use absolute 1e-9 for these magnitudes — fine.
+
+The skipped set printed on every run.
+
+Now the real test:
+
+```rust
+    #[test]
+    #[ignore = "network + vendor page; run before a release"]
+    fn price_drift_audit_against_models_dev() {
+        let json = fetch_models_dev_json().unwrap_or_else(|err| panic!("{}", audit_did_not_run_message(&err)));
+        let vendor = parse_models_dev_deepseek(&json).unwrap_or_else(|err| panic!("{}", audit_did_not_run_message(&err)));
+        // ANTI-VACUOUS, ASSERTED FIRST
+        assert!(vendor.len() >= 3, "...the fetch returned ...");
+        let (mismatches, compared, skipped) = audit_vendor_rows(&vendor);
+        println!(...compared ids...);
+        println!(...admitted divergences...);
+        println!("cache_write has no counterpart at models.dev (DeepSeek bills cache READS only) — skipped, not silently ignored");
+        assert!(compared.len() >= 3, "...");
+        if !mismatches.is_empty() { panic!(...) }
+    }
+```
+
+fetch helper:
+
+```rust
+    fn fetch_models_dev_json() -> Result<String, String> {
+        let out = std::process::Command::new("curl")
+            .args(["--max-time", "60", "--fail", "--silent", "--show-error", MODELS_DEV_URL])
+            .output()
+            .map_err(|e| format!("curl could not be spawned: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("curl exited {}: {}", out.status, String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        Ok(String::from_utf8(out.stdout).map_err(|e| format!("curl output was not UTF-8: {e}"))?)
+    }
+```
+
+audit_did_not_run_message:
+
+```rust
+    /// "could not check" must not read as "checked; clean" — the standing rule,
+    /// worded as `check_assertion_weakening.py`'s `could_not_check_message` is.
+    fn audit_did_not_run_message(err: &str) -> String {
+        format!(
+            "PRICE AUDIT DID NOT RUN — the table is UNVERIFIED against models.dev, which is not the same as checked and clean.\n\
+             fetch/parse failure: {err}\n\
+             Fix the network or the fetch, then re-run: cargo test price_drift_audit -- --ignored"
+        )
+    }
+```
+
+parse:
+
+```rust
+    fn parse_models_dev_deepseek(json: &str) -> Result<Vec<(String, f64, f64, f64)>, String> {
+        let root: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("models.dev payload was not JSON: {e}"))?;
+        let models = root.get("deepseek").and_then(|p| p.get("models")).and_then(|m| m.as_object())
+            .ok_or_else(|| "models.dev payload has no `deepseek.models` object — a renamed or moved provider is a FAILED audit, not an empty one".to_string())?;
+        let mut rows = Vec::new();
+        for (id, entry) in models {
+            let cost = entry.get("cost").and_then(|c| c.as_object())
+                .ok_or_else(|| format!("`deepseek.models.{id}` carries no `cost` object"))?;
+            let cell = |name: &str| -> Result<f64, String> {
+                cost.get(name).and_then(|v| v.as_f64())
+                    .ok_or_else(|| format!("`deepseek.models.{id}.cost.{name}` is missing or not a number"))
+            };
+            // `reasoning` is deliberately NOT read: it duplicates `output` for this
+            // provider, and comparing one fact twice would double-count it.
+            rows.push((id.clone(), cell("input")?, cell("output")?, cell("cache_read")?));
+        }
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(rows)
+    }
+```
+
+Note: requirement 3 says ignore the `reasoning` field — I should have a test that a `reasoning` cell differing does not create a mismatch. Good near-miss guard.
+
+Anti-rot test:
+
+```rust
+    #[test]
+    fn registered_divergences_still_diverge() {
+        // (a) the register is non-empty and every reason is a real sentence
+        assert!(!KNOWN_DIVERGENCES.is_empty(), "...");
+        for (id, reason) in KNOWN_DIVERGENCES {
+            assert!(reason.len() >= 80 && reason.contains(' ') && reason.ends_with('.'), "...");
+        }
+        // (b) each listed id still diverges from the vendored models.dev row.
+        for (id, _) in KNOWN_DIVERGENCES {
+            let vendored = MODELS_DEV_DEEPSEEK_2026_09_20.iter().find(|(vid, ..)| vid == id)
+                .unwrap_or_else(|| panic!("`{id}` is registered as a divergence but models.dev's vendored rows do not list it — the exemption names a model the vendor does not price, so it can never be checked"));
+            let (t_in, _, t_read, t_out) = model_pricing(id).expect("a registered divergence must still be priced by the table");
+            let (_, v_in, v_out, v_read) = *vendored;
+            assert!(
+                differs(t_in, v_in) || differs(t_read, v_read) || differs(t_out, v_out),
+                "`{id}` no longer diverges from its vendored models.dev row ... remove it from KNOWN_DIVERGENCES"
+            );
+        }
+    }
+```
+
+Careful with tuple order: MODELS_DEV const tuple is (id, input, output, cache_read). Table is (input, cache_write, cache_read, output).
+
+Now, will pattern `for (id, reason) in KNOWN_DIVERGENCES` compile? KNOWN_DIVERGENCES is `&[(&str,&str)]`, iterating gives `&(&str,&str)`; destructuring `for (id, reason) in KNOWN_DIVERGENCES` — with references you need `for &(id, reason) in ...` or pattern `(id, reason)` binds `&&str`? In Rust 2021, `for (id, reason) in KNOWN_DIVERGENCES.iter()` where iter yields `&(&str,&str)`: default binding modes make `id: &&str`, `reason: &&str`. That's fine for use in format/assert. `reason.len()` works, `reason.ends_with` works. And `format!("`{id}`")` works. And if I compare `vid == id` where vid: &&str and id: &&str... In `find(|(vid, ..)| vid == id)`: the closure param is `&(&str, f64, f64, f64)`, pattern `(vid, ..)` gives `vid: &&str`; `id: &&str` — `vid == id` compares `&&str == &&str` → works.
+
+Careful with clippy. Let me also handle `let (_, v_in, v_out, v_read) = *vendored;` — vendored is `&(&str,f64,f64,f64)`, so `*vendored` copies. Good.
+
+Also a helper `differs(a,b) -> bool { (a-b).abs() > 1e-9 }`. Actually name: `pricing_cells_differ`.
+
+Now also offline tests for the pure helpers:
+
+Test: a synthetic vendor row that matches passes (no mismatch), and the parse function on a minimal fixture returns rows; a renamed-field fixture errors (so the "vendor renames a field" case fails loudly); a `reasoning` field difference is ignored.
+
+Also the "compared must be >= 3" anti-vacuous — tested via audit_vendor_rows on synthetic data.
+
+Let me write tests:
+
+1. `price_audit_helper_matches_the_table_and_reports_mismatches` — feed `MODELS_DEV_DEEPSEEK_2026_09_20` converted to owned rows; assert mismatches empty, compared == 3, skipped == ["deepseek-v4-pro"]. Wait: v4-pro is skipped → compared = 3 (flash, v4-flash, vision-exp). Good. This is a strong offline test: it proves the vendored rows match the table for all non-registered ids — i.e., the offline equivalent of the audit. Nice, and it means a table edit breaking a flash row reddens by default. Good, that's real value, and consistent with the spec (spec only *required* (a)/(b) in the second test, but adding this is fine and honest... is it? "the exemption can only shrink" — plus this asserts today's numbers match, which is a drift alarm in CI as well. Hmm — risk: if the vendor moves and the table is legitimately updated, the vendored const must be updated. That's the coupling. I'll note in the doc comment that the vendored const is the offline half and must be re-fetched when a table edit lands. That's honest and useful.)
+
+Hmm, but wait — is this too clever? The spec explicitly said the offline test cannot fetch so vendor the expected value "for that one id". Using the same vendored table for all ids gives the default suite a genuine drift alarm at no extra cost, and the extra assertion is on rows we just verified match. I'll include it but keep it explicit and documented. Risk: task_01 landed and its fix is in the vendored rows. Verified by running.
+
+Actually hold on: there's a subtlety. `model_pricing` uses substring matching, and the vendored loop uses ids from models.dev. `deepseek-v4-pro` matches; `deepseek-flash` matches the widened arm; `deepseek-v4-flash` matches. Vision-exp: `deepseek-v4-flash-vision-exp` contains "deepseek-v4-flash" → matches widened arm. Good: (0.15, 0.0, 0.003, 0.60) matches vendor.
+
+2. `price_audit_parse_rejects_a_renamed_field_rather_than_reading_it_as_empty` — fixture missing cache_read → Err.
+3. `price_audit_ignores_the_reasoning_cell_because_it_duplicates_output` — fixture with equal input/output/cache_read but reasoning = 999.0 → parses and compares clean.
+4. `audit_vendor_rows_reports_a_mismatch_by_name_and_with_both_readings` — synthetic row for deepseek-flash with input 0.16 → mismatch naming id and both tuples; also anti-vacuous: the same id at the vendor's real number produces none.
+
+Also test `audit_did_not_run_message` says "did NOT run" and carries the error.
+
+Let me now check the number formatting in the mismatch string: `0.15` formats as "0.15", `0.003625` as "0.003625". Fine.
+
+Now the ignored test's println of compared ids — use `--nocapture` to view.
+
+Placement: at end of tests module, before the closing brace.
+
+Also check: does the crate compile tests with `serde_json`? Yes, dependency. Check Cargo.toml to be sure it's a normal dep not dev-dep — either works.
+
+Now regarding "the audit compare every model id the provider lists that model_pricing(id) resolves to Some" — my `audit_vendor_rows` pushes to compared only when resolved. Good.
+
+Also requirement: "at least 3 must have been compared" — with v4-pro skipped, compared == 3. OK, ≥3 satisfied.
+
+But hmm — what if a future edit adds a registered divergence for deepseek-flash → compared = 2 → anti-vacuous fails. That's a good failure mode (can't register away the whole audit).
+
+Let me write the code now. I need to also add the release SKILL lines and ARCHITECTURE entry.
+
+Let's check the ARCHITECTURE.md cost.rs section for format.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format/cost.rs" ARCHITE…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serde_json" Cargo.toml ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md lines are huge. Let me find the section header that covers `src/format/cost.rs` to append an entry.
+
+Let me search for a heading like "### src/format/cost.rs" or "## `src/format/cost.rs`".
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#" ARCHITECTURE.md | h… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^### \|^## " ARCHITECTU… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No per-file headings? Let me look at line 250+ structure to find the cost.rs section.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=240 && NR<=270 {print N… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format/cost.rs" ARCHITE… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==441' ARCHITECTURE.md | … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The cost.rs entry is huge single-line. I'll append a Day-204 sentence to that line (line 441). Let me get the full line 441 tail beginning to know where it starts ("- `format/cost.rs` — pricing..."). Since the file uses one giant line per bullet, appending text at the end of line 441 before the newline is the approach. I'll use python to append to that line.
+
+Also there may be a "day" ordering. Let me now write the code first.
+
+Let me now write the tests module addition. I'll append before the final `}` of the tests module (line 2931). Let me check the very end of the file — line 2931 is `}`. Yes, from the earlier sed the file ends with `}` closing tests mod.
+
+Now write the code block.
+
+Careful about clippy: `-D warnings`. Things like `&format!(...)`, `panic!` in a test (allowed since clippy allows panic in tests by default — `clippy::panic` isn't in default set). `expect` fine.
+
+Float comparison: clippy has `clippy::float_cmp` in pedantic (not default). Use abs diff anyway.
+
+For closure `cell`, clippy may complain about `redundant_closure`? No.
+
+Let's construct the text.
+
+Also: for `parse_models_dev_deepseek`, the closure capturing `cost` and `id` — returns Result. Fine.
+
+Now, note about `.ok_or_else(|| format!("`deepseek.models.{id}` ..."))` — `id` is `&String` from the iterator over the map: destructuring `for (id, entry) in models` where models: &serde_json::Map<String,Value> — the iterator yields (&String, &Value). So `id: &String`. `.clone()` gives String. Good.
+
+For the pure helper `audit_vendor_rows(vendor: &[(String, f64, f64, f64)])`.
+
+Let me instead accept `&[(String, f64, f64, f64)]`.
+
+Registered lookup: `KNOWN_DIVERGENCES.iter().any(|(rid, _)| *rid == id.as_str())`. Here `rid: &&str`, `*rid: &str`, `id.as_str(): &str`. Good.
+
+Now `model_pricing(id)` takes `&str`; `id: &String` → need `model_pricing(id.as_str())` or deref coercion works with `&String`? `model_pricing(id)` where id: &String — deref coercion applies for function args: yes, `&String` coerces to `&str`. Fine but I'll be explicit.
+
+Now write.
+
+Mismatch line format: `id: table (a, b, c) vs models.dev (x, y, z)` where for table a=input, b=cache_read, c=output (the three cells both sides carry). Good.
+
+Also the panic message:
+
+```
+panic!(
+    "PRICE DRIFT ALARM — {} row(s) disagree between the table and models.dev:\n{}\n\
+     This is a drift alarm, not a gate: read the vendor's pricing page and decide. \
+     Do NOT auto-patch the pricing constants, and do NOT edit this test's expectation to agree — \
+     a test that agrees with the table is vacuous against drift, because the table is what drifted (#937).",
+    mismatches.len(), mismatches.join("\n")
+);
+```
+
+Also print the coverage limit: which table arms models.dev does not list (deepseek-r1, deepseek-v3). Requirement 6: "Have the test print the ids it compared, so a reader can see the gap instead of inferring completeness." I'll print compared, registered-skipped, and the named unaudited arms (r1, v3) as a stated limit.
+
+For the unaudited names, I should derive? Hardcoding two ids in a println is a prose claim that can go stale. Better: a small const `UNAUDITED_DEEPSEEK_ARMS: &[&str] = &["deepseek-r1", "deepseek-v3"]` with a doc comment saying why, and print. And maybe assert it's non-empty. Hmm, is a const with only a println consumer a "definition without a consumer"? It has a consumer (the println). Fine — but is it worth it? The task says "print the coverage limit, don't imply it". A const makes it greppable. But then also a test could assert those ids are NOT listed by models.dev vendored rows (so the const can't quietly become wrong): if a future models.dev adds deepseek-v3, the vendored table will list it and the test fails telling us to audit it. Good anti-rot. But careful about vacuity — it's just a cross-check offline. I'll include it in the anti-rot test with a clear message.
+
+Hmm, keep it simpler: I'll add the const and assert in the anti-rot test that none of the unaudited arms appear in the vendored rows (i.e., they really are absent from the vendor, hence "audited by nothing"). And the reason field... no reason needed, a doc comment suffices.
+
+Let me write the code now.
+
+One more thing: does clippy complain about `&format!` usage or `println!` with positional args in tests? No.
+
+Also `#[ignore = "reason"]` requires Rust 1.61+. Fine.
+
+Now writing the block. I'll insert before the final `}` of the tests module. The file's last lines:
+
+```
+    #[test]
+    fn test_format_remaining_turns_zero() {
+        ...
+    }
+}
+```
+
+I'll edit with old_text being the tail unique portion.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll add the audit test module code.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (9 → 496 lines)
+            assert!(
+                output.contains("\x1b["),
+                "expected ANSI color code for zero remaining: {output}"
+  +         );
+  +     }
+  + 
+  +     // ---------------------------------------------------------------------
+  +     // The price drift alarm (#937, Day 204)
+  +     //
+  +     // The prior art is `yoagent-0.18.1/tests/price_audit.rs`, which exists
+  +     // because `claude_sonnet_5` carried Sonnet 4.6's rates ($3/$15 against the
+  +     // published $2/$10) from v0.9.0 through v0.16.5 — **18 tagged releases, 50%
+  +     // overstatement on every `cost_usd`**, "found by someone asking, not by any
+  +     // mechanism". The rules copied from it rather than re-invented: audit
+  +     // against models.dev, run it `#[ignore]`d before a release, and **never
+  +     // auto-update the constants** — a failure is a drift alarm that sends a
+  +     // human to the vendor's page, not a patch.
+  +     // ---------------------------------------------------------------------
+  + 
+  +     /// models.dev's `deepseek` provider rows, vendored by hand on **2026-09-20**
+  ... (473 more lines)
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs.
+
+── Thinking ────────────────────────────────────────────────────────────────
+The output earlier had "..." collapsed by the read tool. Let me read the actual end of the file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/format/cost.rs | ca… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (14 → 525 lines)
+            assert!(
+                output.contains("\x1b["),
+                "expected ANSI color code for zero remaining: {output}"
+  +         );
+  +     }
+  + 
+  +     // ---------------------------------------------------------------------
+  +     // The price drift alarm (#937, Day 204)
+  +     //
+  +     // The prior art is `yoagent-0.18.1/tests/price_audit.rs`, which exists
+  +     // because `claude_sonnet_5` carried Sonnet 4.6's rates ($3/$15 against the
+  +     // published $2/$10) from v0.9.0 through v0.16.5 — 18 tagged releases, 50%
+  +     // overstatement on every `cost_usd`, found by someone asking rather than by
+  +     // any mechanism. The rules copied from it rather than re-invented: audit
+  +     // against models.dev, run it `#[ignore]`d before a release, and never
+  +     // auto-update the constants — a failure is a drift alarm that sends a human
+  +     // to the vendor's page, not a patch.
+  +     // ---------------------------------------------------------------------
+  + 
+  +     /// models.dev's `deepseek` provider rows, vendored by hand on **2026-09-20**
+  ... (497 more lines)
+ ✓ (16.3s)
+            assert!(
+                output.contains("\x1b["),
+                "expected ANSI color code for zero remaining: {output}"
+  +         );
+  +     }
+  + 
+  +     // ---------------------------------------------------------------------
+  +     // The price drift alarm (#937, Day 204)
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to fix the two clippy errors. Let me check the current state.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3056,3064p src/format/cos… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (1 → 1 lines)
+  -             let mut cell = |name: &str| -> Result<f64, String> {
+  +             let cell = |name: &str| -> Result<f64, String> {
+ ✓ (16.2s)
+  -             let mut cell = |name: &str| -> Result<f64, String> {
+  +             let cell = |name: &str| -> Result<f64, String> {
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (5 → 5 lines)
+                ("deepseek-flash".to_string(), 0.15, 0.60, 0.004),
+                ("deepseek-flash".to_string(), 0.15, 0.61, 0.003),
+            ] {
+  -             let (mismatches, _, _) = audit_vendor_rows(&[row.clone()]);
+  +             let (mismatches, _, _) = audit_vendor_rows(std::slice::from_ref(&row));
+ ✓ (2m 21s)
+                ("deepseek-flash".to_string(), 0.15, 0.60, 0.004),
+                ("deepseek-flash".to_string(), 0.15, 0.61, 0.003),
+            ] {
+  -             let (mismatches, _, _) = audit_vendor_rows(&[row.clone()]);
+  +             let (mismatches, _, _) = audit_vendor_rows(std::slice::from_ref(&row));
+
+── Thinking ────────────────────────────────────────────────────────────────
+Clippy passed; tests ran. Let me run the full test suite to see the result.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (1m 34s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+As expected — need to paste the register. The task said +80 lines but my implementation is +511 lines (mostly tests). Update the register entry with Day-204 reason.
+
+Let me look at the register entry format and update it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 316,322p tests/module_siz… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 10 lines)
+  -     ("src/format/cost.rs", 2931), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     ("src/format/cost.rs", 3442), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     // Day 204 (#937 Task 2): 2931 -> 3442 (+511). The price drift alarm against
+  +     // models.dev — an `#[ignore]`d audit plus its offline arm and the
+  +     // `KNOWN_DIVERGENCES` register's anti-rot guard. Mostly tests (as with every
+  +     // emission-point guard here): the pure comparison `audit_vendor_rows` is
+  +     // covered by the DEFAULT suite, because an alarm whose only covered step was
+  +     // its `curl` would be mostly unverified. Pasted from what the gate printed,
+  +     // in the same diff as the growth, because a register edit cannot half-land
+  +     // while a growing file can.
+        // Day 204 (#937 Task 1): 2869 -> 2931 (+62), pasting the count in the same
+ ✓ (1m 55s)
+  -     ("src/format/cost.rs", 2931), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     ("src/format/cost.rs", 3442), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     // Day 204 (#937 Task 2): 2931 -> 3442 (+511). The price drift alarm against
+  +     // models.dev — an `#[ignore]`d audit plus its offline arm and the
+  +     // `KNOWN_DIVERGENCES` register's anti-rot guard. Mostly tests (as with every
+  +     // emission-point guard here): the pure comparison `audit_vendor_rows` is
+  +     // covered by the DEFAULT suite, because an alarm whose only covered step was
+  +     // its `curl` would be mostly unverified. Pasted from what the gate printed,
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 18s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Exit code 141 (SIGPIPE from grep head?). Let me re-run capturing to file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test > /tmp/testout.txt 2>… ✓ (1m 34s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green (exit=0). Now run the ignored audit test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test price_drift_audit -- … ✓ (646ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo price_drif… ✓ (657ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo price_drif… ✓ (603ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The audit passes: 3 rows compared (flash, v4-flash, v4-flash-vision-exp), and v4-pro skipped as admitted divergence. Wait — v4-pro is skipped but was it printed? The output was truncated in the middle ("... 2 more similar lines"). Let me get the full output.
+
+Also `deepseek-v4-flash-vision-exp` resolves via `model.contains("deepseek-v4-flash")`? contains("deepseek-v4-flash") — "deepseek-v4-flash-vision-exp" contains "deepseek-v4-flash" → yes. Good.
+
+Now let me record the full output.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo price_drif… ✓ (553ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The middle lines are truncated by the tool output display. Let me write to file and cat.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo price_drif… ✓ (635ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The output shows the audit passes: 3 rows compared, deepseek-v4-pro skipped as registered divergence. But the middle lines are elided by libtest's capture? Actually the lines show "... (2 more similar lines)" — that's my tool's truncation of similar lines, not libtest. Fine.
+
+Now: run the positive controls (atomic mutate→run→restore), then wire skills/release/SKILL.md, then ARCHITECTURE.md, then fmt/clippy, then commit.
+
+Let me do positive control 1: add a decimal digit to one flash row in the table, confirm the ignored run reddens naming that id; restore.
+
+The table row: `return Some((0.15, 0.0, 0.003, 0.60));` for deepseek-flash. Also `0.15` appears elsewhere. I'll use sed on the specific line number. Let me find the line.
+
+Do it atomically with a script: copy file, sed, run test, restore, run test again.
+
+Careful: the mutate must be restored even if the test fails. Use a shell script with trap.
+
+Positive control for the ignored test: it should redden naming deepseek-flash.
+
+Also control for the offline test (`audit_matches_the_vendored_reading_for_every_unregistered_row`) would also redden — that's fine.
+
+Then control 2: delete KNOWN_DIVERGENCES entry, confirm run reddens naming deepseek-v4-pro. But deleting the entry from the const... the const becomes empty — the `registered_divergences_still_diverge` test would fail on empty register. But we care about the ignored audit run. Actually with entry removed, `audit_vendor_rows` would no longer skip v4-pro → mismatch reported naming deepseek-v4-pro. Good.
+
+Let me write the mutate as: change `&[(` ... simpler: replace the string `"deepseek-v4-pro",` in the KNOWN_DIVERGENCES const with `"deepseek-v4-pro-REMOVED",`? That would make the register empty-ish... Actually replacing the id string makes the entry not match, so the audit would compare v4-pro → mismatch. But then `registered_divergences_still_diverge` would panic ("models.dev's vendored rows do not list it"). That's fine for the control — but the control target is the ignored audit run. Simpler: use python to remove the array element properly. Actually simplest surgical approach: change the const to `&[]` — but then it's `const KNOWN_DIVERGENCES: &[(&str, &str)] = &[];` and rust type inference fine. The audit would then not skip → reddens naming deepseek-v4-pro. 
+
+Let me do it with a python script for both controls, running serially as one atomic command each.
+
+Let's locate line numbers first.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "return Some((0.15, 0.0,… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Positive control 1, atomic: change line 232 `0.60` → `0.61`, run `cargo test --bin yoyo price_drift_audit -- --ignored`, then restore. Must be serial and atomic. Use a trap.
+
+Note: the mutate changes the table row shared by deepseek-v4-flash and flash aliases. The ignored run should redden naming deepseek-flash (and v4-flash, vision-exp).
+
+Write a shell script that does: cp, sed, run, capture, mv back, verify diff empty.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (11 lines) ✓ (26.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Positive control 1 reddened naming the ids, and restore worked (diff back to only my 511 insertions).
+
+Let me also verify the restore returned green (per the rule: restore and watch it pass). Run the ignored test again quickly — I already know it passes, but the control requires it post-restore as part of atomicy. Let me combine into control 2 which also runs after restore.
+
+Control 2: empty KNOWN_DIVERGENCES → reddens naming deepseek-v4-pro. Then restore and run both default+ignored to confirm green.
+
+For replacing the const with `&[]`, use python to replace the block from `const KNOWN_DIVERGENCES: &[(&str, &str)] = &[(` ... up to the closing `];`. Simpler: use sed to replace the id string `"deepseek-v4-pro",` with `"deepseek-v4-pro-zzz",`? No — then `registered_divergences_still_diverge` panics with a different message but the ignored audit would report the mismatch naming deepseek-v4-pro. That's acceptable but a less clean control (the entry technically still exists but names a nonexistent id — which is itself a registered-divergence failure mode). Cleaner: make the list empty via python regex substitution of the whole const body.
+
+Let me do it with python: read file, find the KNOWN_DIVERGENCES block by index of "const KNOWN_DIVERGENCES" and the following "];", replace with "const KNOWN_DIVERGENCES: &[(&str, &str)] = &[];".
+
+Careful about types: `&[]` with declared type is fine.
+
+But wait — does `audit_matches_the_vendored_reading...` use the register too? Yes; with empty register, v4-pro would be compared and mismatch. The offline test would redden too. Fine.
+
+Also UNAUDITED... unaffected.
+
+Run the control then restore, then run the full ignored test + default cost tests to confirm green.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (18 lines) ✓ (53.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both controls reddened naming the right ids, and the restore is green.
+
+Now Step 3: wire skills/release/SKILL.md Gate list and How to check.
+
+Add to Gate list (after "cargo fmt -- --check passes"):
+- `cargo test price_drift_audit -- --ignored` has been read, and every row it names is reconciled by reading the vendor's pricing page
+
+And in How to check:
+  cargo test price_drift_audit -- --ignored
+  # network + a vendor page; NOT part of CI (it is #[ignore]d on purpose).
+  # Any row it names is a DRIFT ALARM: go read the vendor's page and decide.
+  # Never edit the assertion to agree — a test that agrees with the table is vacuous against drift.
+
+Careful: skills/release/SKILL.md — is it protected? The safety rules protect IDENTITY.md, PERSONALITY.md, ECONOMICS.md, scripts/evolve.sh, scripts/format_issues.py, scripts/build_site.py, .github/workflows/. skills/release/SKILL.md isn't in that list. But wait — skills/ might be protected at runtime by the evolve harness. The task explicitly says to edit it. Hmm, there may be a gate. Let me check .yoyo.toml or evolve.sh for protected files list. Actually the task says Files: skills/release/SKILL.md is in scope. But if it's a "protected file" the harness may revert. Let me grep for protection lists quickly.
+
+Also check whether tests/integration.rs has a guard that skills' body must not be modified... unlikely.
+
+Let me check for a protected-file list including SKILL.md.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "PROTECTED\|protected_f… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2245,2300p scripts/evolve… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`skills/release/` is NOT protected (only self-assess, evolve, communicate, research). Good — safe to edit.
+
+Now edit skills/release/SKILL.md.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/skills/release/SKILL.md (17 → 29 lines)
+    - cargo clippy with zero warnings
+    - cargo fmt -- --check passes
+    - At least 10 tests exist
+  + - The price drift alarm has been READ — `cargo test price_drift_audit -- --ignored` —
+  +   and every row it names is reconciled **by reading the vendor's pricing page**,
+  +   never by editing the assertion (a test that agrees with the table is vacuous
+  +   against drift, because the table is what drifted)
+    - CHANGELOG.md exists and is current
+    - README.md accurately describes what you can do right now
+    
+  ···
+      cargo fmt -- --check && echo PASS
+      cargo test 2>&1 | grep "test result"
+      # must show at least 10 tests
+  +   cargo test price_drift_audit -- --ignored --nocapture
+  +   # NOT part of CI: it needs the network, so it is #[ignore]d on purpose and the
+  +   # default suite never runs it. A pass is not the point — READ it. It prints the
+  +   # ids it compared, the admitted divergences it skipped, and what it cannot
+  +   # reach at all (the arms models.dev does not list).
+  +   # Any row it NAMES is a DRIFT ALARM: read the vendor's pricing page, decide,
+  ... (2 more lines)
+ ✓ (2m 4s)
+    - cargo clippy with zero warnings
+    - cargo fmt -- --check passes
+    - At least 10 tests exist
+  + - The price drift alarm has been READ — `cargo test price_drift_audit -- --ignored` —
+  +   and every row it names is reconciled **by reading the vendor's pricing page**,
+  +   never by editing the assertion (a test that agrees with the table is vacuous
+  +   against drift, because the table is what drifted)
+    - CHANGELOG.md exists and is current
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 99,142p skills/release/SK… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now ARCHITECTURE.md — add a Day-204 entry under the `src/format/cost.rs` section (line 441's bullet). Let me find the end of that bullet and append.
+
+Let me see the very end of line 441 to append my text there.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==441' ARCHITECTURE.md | … ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Append my Day-204 entry to line 441, and also fix the sentence in that same bullet: "that is task_02's alarm, and **#937 stays open until both land**" — now both landed, so #937's two halves are done. I should record the superseded claim rather than erase: the task says "a short Day-204 entry ... what the alarm is, that it is #[ignore]d and release-ritual-wired, that it never auto-patches, the KNOWN_DIVERGENCES register with its anti-rot guard, and the coverage limit (r1/v3 audited by nothing)".
+
+I'll append a paragraph; the previous "task_02's alarm" sentence remains true as written (it was task_02's alarm, which has now landed). I'll note the landing.
+
+Let me write the text via python to avoid huge edit_file anchoring problems. Actually edit_file with old_text = "Register entry pasted `2869 → 2931` in the same diff (`cargo fmt` run first)." works.
+
+Keep it reasonably concise but honest: mention the audit, the ignore+release wiring, never auto-patch, the register with anti-rot guard, coverage limit, the positive controls run serially, and the stated limits (one aggregator; only DeepSeek audited; peak pricing unmodelled).
+
+Also mention the count guard: deleted 15-line version → 12-line version, and min 8.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/ARCHITECTURE.md (1 → 11 lines)
+    Register entry pasted `2869 → 2931` in the same diff (`cargo fmt` run first).
+  + 
+  + **Day 204 (#937 task 2 — the alarm; task 1 above was the literal fix).** A corrected literal restores the *same* silent-staleness state one repricing later, so the second half is a source of truth plus an alarm rather than better numbers. The prior art is copied rather than re-invented: `yoagent-0.18.1/tests/price_audit.rs` exists because `claude_sonnet_5` carried Sonnet 4.6's rates ($3/$15 against the published $2/$10) **from v0.9.0 through v0.16.5 — 18 tagged releases, 50% overstatement on… [yoyo: 1821 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The comparison is a pure function (`audit_vendor_rows`) and that split is the testability decision, not a style choice.** The `#[ignore]`d half is the `curl`; an alarm whose only *covered* step was its own fetch would be almost entirely unverified, so `audit_vendor_rows` takes the vendor rows as data and is exercised by the **default** suite. `parse_models_dev_deepseek` returns `Err` — never an empty `Ok(vec![])` — for a missing provider, a missing `models` object, a missing cost cell, or … [yoyo: 632 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **`KNOWN_DIVERGENCES` — the one registered divergence, with the anti-rot guard this repo's own rule demands.** models.dev prices `deepseek-v4-pro` at `{0.435, 0.87, 0.003625}` against the table's `(0.27, 1.10)`; it is admitted rather than fixed because one aggregator source was read, the arm is **shared with `deepseek-v3`** (a different model's price, equally unverified), and the row is `providers.rs`'s **default** for `provider = "deepseek"`, so changing it moves every user with no explicit m… [yoyo: 892 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Wired, because an alarm nothing runs is the defect this task exists to avoid.** `skills/release/SKILL.md`'s **"Gate (ALL must pass)"** list and its **"How to check"** block both gained the command: `cargo test price_drift_audit -- --ignored`, to be **read** — a pass is not the point — with any named row reconciled by reading the vendor's pricing page, never by editing the assertion. The release ritual is the only moment a price error actually matters, so that is where the alarm is placed; … [yoyo: 43 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Positive controls run rather than assumed, and serially**, each as one atomic `mutate → run → restore` so the restore could not be forgotten: (1) `0.60 → 0.61` on the `deepseek-flash` output cell reddens the ignored run **naming all three Flash aliases in both readings** (`deepseek-flash: table (0.15, 0.003, 0.61) vs models.dev (0.15, 0.003, 0.6)`); (2) emptying `KNOWN_DIVERGENCES` reddens it naming **`deepseek-v4-pro`** (`table (0.27, 0, 1.1) vs models.dev (0.435, 0.003625, 0.87)`); bot… [yoyo: 1685 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 54s)
+    Register entry pasted `2869 → 2931` in the same diff (`cargo fmt` run first).
+  + 
+  + **Day 204 (#937 task 2 — the alarm; task 1 above was the literal fix).** A corrected literal restores the *same* silent-staleness state one repricing later, so the second half is a source of truth plus an alarm rather than better numbers. The prior art is copied rather than re-invented: `yoagent-0.18.1/tests/price_audit.rs` exists because `claude_sonnet_5` carried Sonnet 4.6's rates ($3/$15 against the published $2/$10) **from v0.9.0 through v0.16.5 — 18 tagged releases, 50% overstatement on… [yoyo: 1821 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The comparison is a pure function (`audit_vendor_rows`) and that split is the testability decision, not a style choice.** The `#[ignore]`d half is the `curl`; an alarm whose only *covered* step was its own fetch would be almost entirely unverified, so `audit_vendor_rows` takes the vendor rows as data and is exercised by the **default** suite. `parse_models_dev_deepseek` returns `Err` — never an empty `Ok(vec![])` — for a missing provider, a missing `models` object, a missing cost cell, or … [yoyo: 632 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **`KNOWN_DIVERGENCES` — the one registered divergence, with the anti-rot guard this repo's own rule demands.** models.dev prices `deepseek-v4-pro` at `{0.435, 0.87, 0.003625}` against the table's `(0.27, 1.10)`; it is admitted rather than fixed because one aggregator source was read, the arm is **shared with `deepseek-v3`** (a different model's price, equally unverified), and the row is `providers.rs`'s **default** for `provider = "deepseek"`, so changing it moves every user with no explicit m… [yoyo: 892 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — I inserted newlines into the middle of a bullet line (line 441 is one long line in a bullet list). ARCHITECTURE.md line 441 is a bullet starting with "- `format/cost.rs` — ...". If I add raw newlines, the markdown becomes broken paragraphs (they'd be continuation lines of the same list item — that's acceptable markdown-wise, but the convention in this file is one long line per bullet). Hmm, does any gate check ARCHITECTURE.md formatting? Possibly `tests/doc_version_claims.rs` scans CLAUDE.md and src/*.rs only. And there may be an assertion-weakening checker on the commit diff — my ARCHITECTURE.md lines contain "**" etc. Hmm, the check_assertion_weakening.py scans diffs for test-shaped lines; ARCHITECTURE.md lines aren't Rust source, so fine.
+
+But the important thing: the file's style is one bullet = one line. Let me check whether I actually broke formatting. Let me look at what the file now looks like around 441-451.
+
+Actually, blank lines between paragraphs inside a bullet would split the list item into separate paragraphs but that's still part of the list item only if indented. My paragraphs start at column 0, so they'd become new top-level paragraphs, breaking the bullet list. That's ugly for a file that's read as prose, but arguably fine? Better to keep it as one line to match convention. Let me convert the inserted newlines back to spaces within those paragraphs so it stays a single bullet line.
+
+Let me check how the file renders now and then fix by joining lines with spaces.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=441 && NR<=452 {print N… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The bullets list is now interleaved with paragraphs. That matches some parts of the file (there are multi-line prose blocks elsewhere, e.g. lines 213, 217, 221, 223 are paragraphs between bullets). Actually looking at the earlier grep, lines 213-223 are paragraph-style entries starting with "**...". So this style already exists in the file. Fine — leave it.
+
+But the paragraphs are separated by blank lines — good.
+
+Now run fmt, clippy, build, test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (19.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && wc -l src/for… ✓ (10.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+cargo fmt shrank the file from 3442 to 3439 lines. I need to update the register to 3439, and the ARCHITECTURE text. Then run the full test suite, then commit.
+
+Also check header: earlier `wc -l src/format/cost.rs` was 2931 matching the register, so wc -l matches. Now 3439. Update register.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/("src\/format\/cost.rs… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — the ARCHITECTURE.md line 441 also says "Register entry pasted `2869 → 2931`" for task 1, that's fine.
+
+Now: does the module_size gate compare wc -l? 3439 = wc -l. Good.
+
+Run cargo fmt --check (the tests/module_size.rs change is a comment, fine), clippy, and the full test suite.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (2m 5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green. 17 test binaries ok, no failures.
+
+Note "2 ignored" — my new ignored test plus one other.
+
+Let me verify the ignored run once more post-fmt, and check neutered_guards test is happy (no NEUTERED markers left) — the full test suite included tests/neutered_guards.rs and it's green (17 binaries with ok).
+
+Let me re-run the ignored audit one final time to record the output post-fmt, then commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo price_drif… ✓ (641ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now committing.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (52ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed as c09152ca. Here's what landed and what I actually watched happen.
+
+## What shipped
+
+The alarm (src/format/cost.rs, in the existing #[cfg(test)] mod tests): price_drift_audit_against_models_dev, #[ignore]d on purpose, fetches https://models.dev/api.json via curl --max-time 60 --fail, parses ["deepseek"]["models"] with the existing serde_json, and compares the three cells both sides carry — table (input, cache_read, output) vs the vendor's — over every vendor id model_pricing resolves. cache_write is printed as skipped (no counterpart; DeepSeek bills reads only) and reasoning is never read (it duplicates output). It panics with a "DID NOT RUN … UNVERIFIED" message on fetch or parse failure, and its failure text says explicitly: read the vendor's page, do not auto-patch the constants, do not edit this test to agree.
+
+The register, with a shrink-only ratchet. KNOWN_DIVERGENCES admits deepseek-v4-pro (models.dev {0.435, 0.87, 0.003625} vs table (0.27, 1.10)) with a checkable reason, and registered_divergences_still_diverge (a non-ignored test) fails if the reason is not a real sentence, if the id is listed twice, if the table stops pricing it, or if it stops diverging — plus it is printed as skipped on every audit run rather than dropped silently.
+
+The offline arm, which is the testability decision rather than a style choice. The comparison is a pure function audit_vendor_rows driven by the vendored MODELS_DEV_DEEPSEEK_2026_09_20 const, so the comparison half is covered by the default suite — an alarm whose only covered step was its own curl would be nearly unverified. parse_models_dev_deepseek returns Err, never an empty Ok, for a missing provider/models/cost cell.
+
+Wired into `skills/release/SKILL.md` — both the "Gate (ALL must pass)" list and "How to check" gained cargo test price_drift_audit -- --ignored, with the instruction to read it, not just pass it.
+
+## Verification actually run
+
+• `cargo test` → green, 17 test binaries, no failures; the ignored audit never runs there, which is the point.
+• `cargo test price_drift_audit -- --ignored --nocapture → **green**, and I recorded the live output: compared 3 row(s): ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"], deepseek-v4-pro reported as the admitted skipped divergence, and the coverage limit printed (deepseek-r1, deepseek-v3` are **audited by nothing** — I confirmed both are absent from models.dev's listing). So task 1's correction is confirmed against the vendor, not just against its own literal.
+• **Positive controls, serially, each one atomic mutate → run → restore:** `0.60 → 0.61` on the flash output cell reddened it naming all three Flash aliases with both readings (`table (0.15, 0.003, 0.61) vs models.dev (0.15, 0.003, 0.6)); emptying KNOWN_DIVERGENCES reddened it naming deepseek-v4-pro`. Both restored to a byte-empty diff, green again.
+• `cargo clippy --all-targets -- -D warnings → clean (two errors found and fixed along the way: unused_mut on a closure, cloned_ref_to_slice_refs). cargo fmt then cargo fmt -- --check` → clean.
+• `tests/module_size.rs register pasted 2931 → 3439` in the same diff; the gate went fatal at +511 before I did, which is the gate working.
+
+## Limits, stated rather than implied
+
+One aggregator (models.dev can itself be wrong — hence a human decision, not a patch); DeepSeek-only population, and deepseek-r1/deepseek-v3 are audited by nothing; peak pricing unmodelled on both sides, so a correct row is still a lower bound. Not done and named: #937's option 3 (pushing non-Anthropic prices upstream into yoagent) needs a yoagent release first, and no user override was added — model_pricing_with already provides override > preset > table. No CLAUDE.md change, as specified.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

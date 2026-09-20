@@ -1,0 +1,751 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the exact code I need to change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 175,215p src/format/cost.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1660,1730p src/format/cos… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me see the full comment block lines 184-205 and the test block in full.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 182,206p src/format/cost.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1686,1740p src/format/cos… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The sed output truncated the comment lines ("... 8 more similar lines"). Let me read the exact lines with read_file to get full text.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+The sed output is eliding comment lines. Let me read the exact ranges.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:180..208  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/format/cost.rs | sed … ✓ (1ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check the .yoyo.toml lines 9-14 and models.dev data to verify (the task says it's already measured, but let me quickly verify .yoyo.toml). Actually the task gave the readings. I'll do a quick check of .yoyo.toml for honesty.
+
+Let me make the code changes first.
+
+Step 1: split the arm.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+Now the code edits. Step 1 — split the shared arm:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (14 → 42 lines)
+  -     if model.contains("deepseek-v4-flash") || model.contains("deepseek-r1") {
+  +     // `deepseek-r1` stands alone since Day 204. It used to share this arm with
+  +     // `deepseek-v4-flash`, which is a *different model* that merely matched the
+  +     // same `contains`. The split is not a re-pricing: this number is
+  +     // **deliberately left unchanged because it is unverifiable** — `deepseek-r1`
+  +     // is absent from models.dev's `deepseek` provider (fetched 2026-09-20), so
+  +     // there is no second reading to check the 0.55/2.19 against, and inventing
+  +     // one would be the confident-wrong-diagnosis move.
+  +     //
+  +     // Ordering is load-bearing and must not be "tidied": `deepseek-v4-flash`
+  +     // reaches neither this arm nor the `deepseek-v4-pro`/`deepseek-v3` arm above,
+  +     // because `contains` is false for those substrings against it. It falls
+  +     // through to the widened `deepseek-flash` arm below.
+  +     if model.contains("deepseek-r1") {
+            return Some((0.55, 0.0, 0.0, 2.19));
+        }
+        // `deepseek-flash` (V4.1-Flash) — the id the evolve loop runs on since
+        // 2026-09-15. Deliberately its own row: `contains` matching means a new
+        // distinct id needs its own arm, and a price silently borrowed from a
+        // neighbour is a number that lies (#848's `cost_usd: null` vs `0.0`).
+  ... (24 more lines)
+ ✓ (2m 10s)
+  -     if model.contains("deepseek-v4-flash") || model.contains("deepseek-r1") {
+  +     // `deepseek-r1` stands alone since Day 204. It used to share this arm with
+  +     // `deepseek-v4-flash`, which is a *different model* that merely matched the
+  +     // same `contains`. The split is not a re-pricing: this number is
+  +     // **deliberately left unchanged because it is unverifiable** — `deepseek-r1`
+  +     // is absent from models.dev's `deepseek` provider (fetched 2026-09-20), so
+  +     // there is no second reading to check the 0.55/2.19 against, and inventing
+  +     // one would be the confident-wrong-diagnosis move.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the tests. Let me update the four test sites.
+
+Site 1: `:1673-1688` test_estimate_cost_deepseek_reasoner — change id to "deepseek-r1".
+Site 2: `:1713-1716` near-miss guard for deepseek-v4-flash → (0.15, 0.0, 0.003, 0.60).
+Site 3: `:1718` deepseek-r1 stays.
+Site 4: `:2557-2562` test_pricing_deepseek_v4_flash.
+Plus one new assert_ne assertion in the test_pricing_deepseek_flash_is_priced_and_changes_nothing_else family.
+
+Let's check the estimate_cost test more precisely — it asserts cost 2.74. 0.55+2.19=2.74. With deepseek-r1 that's still 2.74 (cache_read 0 in the fixture usage, so fine).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (6 → 9 lines)
+  -         // deepseek-v4-flash: $0.55/MTok input, $2.19/MTok output
+  -         let cost = estimate_cost(&usage, "deepseek-v4-flash").unwrap();
+  +         // Pointed at the id this test is NAMED for since Day 204: `deepseek-r1`
+  +         // is the model whose row is $0.55/MTok input, $2.19/MTok output. It
+  +         // previously called `estimate_cost` with `deepseek-v4-flash`, which is a
+  +         // different model and (as of Day 204) a different price.
+  +         let cost = estimate_cost(&usage, "deepseek-r1").unwrap();
+            assert!(
+                (cost - 2.74).abs() < 0.001,
+  -             "deepseek-v4-flash cost: {cost}"
+  +             "deepseek-r1 cost: {cost}"
+            );
+ ✓ (2m 9s)
+  -         // deepseek-v4-flash: $0.55/MTok input, $2.19/MTok output
+  -         let cost = estimate_cost(&usage, "deepseek-v4-flash").unwrap();
+  +         // Pointed at the id this test is NAMED for since Day 204: `deepseek-r1`
+  +         // is the model whose row is $0.55/MTok input, $2.19/MTok output. It
+  +         // previously called `estimate_cost` with `deepseek-v4-flash`, which is a
+  +         // different model and (as of Day 204) a different price.
+  +         let cost = estimate_cost(&usage, "deepseek-r1").unwrap();
+            assert!(
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the near-miss guard block at the test_pricing_deepseek_flash_is_priced_and_changes_nothing_else. It has an ANTI-VACUOUS assertion that the fixture id is "deepseek-flash". Now the row's aliased. Let's update the v4-flash assertion.
+
+Note the comment above 1705 says "Every existing deepseek user reads these two rows, so they must be byte-identical". With v4-flash now moving, this comment needs adjustment.
+
+Also I need to add the assert_ne for the two ids' costs. The usage there... let me construct. The task says "Add one new assertion in the existing test_pricing_deepseek_flash_is_priced_and_changes_nothing_else family: estimate_cost for deepseek-v4-flash no longer equals the deepseek-r1 figure".
+
+Let me look at what fixtures exist in that test. The test currently doesn't use usage. I'll add a small usage and assert_ne. Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (14 → 35 lines)
+            // NEAR-MISS GUARD — the whole regression surface. Every existing deepseek
+  -         // user reads these two rows, so they must be byte-identical, asserted with
+  -         // whole-value equality rather than a `contains` (a discriminator tested
+  -         // only on the side that fires is vacuous green).
+  +         // user reads these rows, so the unchanged ones must be byte-identical,
+  +         // asserted with whole-value equality rather than a `contains` (a
+  +         // discriminator tested only on the side that fires is vacuous green).
+            assert_eq!(
+                model_pricing("deepseek-v4-pro"),
+                Some((0.27, 0.0, 0.0, 1.10))
+            );
+  +         // `deepseek-v4-flash` moved to the `deepseek-flash` row on Day 204 because
+  +         // the model id is an ALIAS of the row below it (same served model,
+  +         // V4.1-Flash) — NOT because the vendor repriced anything.
+            assert_eq!(
+                model_pricing("deepseek-v4-flash"),
+  -             Some((0.55, 0.0, 0.0, 2.19))
+  +             Some((0.15, 0.0, 0.003, 0.60))
+            );
+            assert_eq!(model_pricing("deepseek-v3"), Some((0.27, 0.0, 0.0, 1.10)));
+  ... (19 more lines)
+ ✓ (2m 11s)
+            // NEAR-MISS GUARD — the whole regression surface. Every existing deepseek
+  -         // user reads these two rows, so they must be byte-identical, asserted with
+  -         // whole-value equality rather than a `contains` (a discriminator tested
+  -         // only on the side that fires is vacuous green).
+  +         // user reads these rows, so the unchanged ones must be byte-identical,
+  +         // asserted with whole-value equality rather than a `contains` (a
+  +         // discriminator tested only on the side that fires is vacuous green).
+            assert_eq!(
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the anti-vacuous assertion at the top mentions the fixture id "deepseek-flash". That's still fine.
+
+Now site 4: test_pricing_deepseek_v4_flash at ~2557. Let me find its current line and update.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (7 → 11 lines)
+        #[test]
+        fn test_pricing_deepseek_v4_flash() {
+            assert!(model_pricing("deepseek-v4-flash").is_some());
+  -         let (inp, _, _, out) = model_pricing("deepseek-v4-flash").unwrap();
+  -         assert!((inp - 0.55).abs() < 0.001);
+  -         assert!((out - 2.19).abs() < 0.001);
+  +         // Day 204: this id is a legacy alias of `deepseek-flash` (V4.1-Flash), so
+  +         // its row now mirrors that one exactly — including the cache_read cell,
+  +         // which is the part the old 0.55/2.19 arm got wrong twice over.
+  +         let (inp, _, cache_read, out) = model_pricing("deepseek-v4-flash").unwrap();
+  +         assert!((inp - 0.15).abs() < 0.001);
+  +         assert!((cache_read - 0.003).abs() < 0.001);
+  +         assert!((out - 0.60).abs() < 0.001);
+        }
+ ✓ (2m 23s)
+        #[test]
+        fn test_pricing_deepseek_v4_flash() {
+            assert!(model_pricing("deepseek-v4-flash").is_some());
+  -         let (inp, _, _, out) = model_pricing("deepseek-v4-flash").unwrap();
+  -         assert!((inp - 0.55).abs() < 0.001);
+  -         assert!((out - 2.19).abs() < 0.001);
+  +         // Day 204: this id is a legacy alias of `deepseek-flash` (V4.1-Flash), so
+  +         // its row now mirrors that one exactly — including the cache_read cell,
+  ... (6 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+That succeeded without the auto-check warning this time (maybe truncated). Now let me run the tests to see if anything else breaks.
+
+Also I should check other tests referencing deepseek-v4-flash.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "deepseek-v4-flash\|dee… ✓ (308ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note `src/commands_info.rs:2626` "deepseek-v4-flash — covered by deepseek catch-all" — context window, unrelated to pricing. Fine.
+
+Now run the cost tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format::cost 2>&1 | t… ✓ (215ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format::cost 2>&1 | g… ✓ (166ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format::cost 2>&1 | g… ✓ (179ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 109 cost tests pass. Now update tests/module_size.rs register, docs, ARCHITECTURE.md.
+
+Let me look at the module_size.rs register entry.
+────────────────────────────────────────────────────────────────────────────────
+
+All cost tests pass. Now the module-size register and docs.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 310,325p tests/module_siz…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 85,110p docs/src/features… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+cost.rs grew from 2869 to 2925 (+56). Let me see the existing register entry's comment structure fully to append properly.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n tests/module_size.rs | se… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I'll update the register line 316 to the new count 2925 and append a Day-204 comment note. Let me check the file's exact current line count after my edits — 2925. But I still need to add a Day-204 note; I'll append to the register comment near line 316 or add after the Day 200 comment. Better: change the number and add a sentence.
+
+Let's edit line 316.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 7 lines)
+  -     ("src/format/cost.rs", 2869), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     ("src/format/cost.rs", 2925), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     // Day 204 (#937 Task 1): 2869 -> 2925 (+56), pasting the count in the same
+  +     // diff as the DeepSeek V4-Flash price-arm fix (the split plus the comments
+  +     // recording the two readings and the v4-pro/v3 residue). Pasted rather than
+  +     // left to the gate's grace-band warning, because a register edit cannot
+  +     // half-land while a growing file can.
+        // Day 200 (#929): 2790 -> 2869 (+79). Not this task's growth — `836c329e`
+ ✓ (1m 56s)
+  -     ("src/format/cost.rs", 2869), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     ("src/format/cost.rs", 2925), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     // Day 204 (#937 Task 1): 2869 -> 2925 (+56), pasting the count in the same
+  +     // diff as the DeepSeek V4-Flash price-arm fix (the split plus the comments
+  +     // recording the two readings and the v4-pro/v3 residue). Pasted rather than
+  +     // left to the gate's grace-band warning, because a register edit cannot
+  +     // half-land while a growing file can.
+        // Day 200 (#929): 2790 -> 2869 (+79). Not this task's growth — `836c329e`
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check the state — what's been done, what remains.
+
+Done:
+1. src/format/cost.rs — split arm + widen Flash arm + comments (done)
+2. tests in cost.rs — retarget 4 sites + new assert_ne (done)
+3. tests/module_size.rs register paste (done, but count needs verification since I added lines after)
+
+Remaining:
+- docs/src/features/cost-tracking.md — add row + sentence
+- ARCHITECTURE.md — Day 204 entry under src/format/cost.rs section
+- Run cargo fmt, clippy, build, test
+- Positive control
+- Commit
+
+Let me first check the current line count of cost.rs and verify tests pass.
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up. Let me check current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cost.rs" ARCHITECTURE.m… ✓ (8ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md is huge. I need to find the `src/format/cost.rs` section and add a Day 204 entry. Let me search for a dated entry marker pattern for cost.rs.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`format/cost.rs\`\|… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ARCHITECTURE.md has a bullet at line 441 for `format/cost.rs`, a huge single line ending with the Day 192 entry. I need to append a Day 204 entry to that bullet.
+
+Let me see the end of line 441 or whatever line it ends on. Let me check the line numbers around 441 and find where that bullet ends.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=441 && NR<=450 {printf … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line 441 is the `format/cost.rs` bullet (16283 chars) - the whole Day 192 entry is on line 441. I need to append to the end of that line a Day 204 entry.
+
+Let me get the tail of line 441.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '441p' ARCHITECTURE.md | … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I append the Day 204 entry to the end of line 441. I'll use a python script for a precise append, or edit_file with the tail text as old_text.
+
+Let me use edit_file with the last sentence as anchor.
+
+Actually, the last sentence ends with "the same undocumented-payment shape the #864 entry records as having gone stale for two consecutive sessions."
+
+I'll append after that.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/ARCHITECTURE.md (1 → 1 lines)
+  - the same undocumented-payment shape the #864 entry records as having gone stale for two consecutive sessions.
+  + the same undocumented-payment shape the #864 entry records as having gone stale for two consecutive sessions. **Day 204 (#937 Task 1) — the DeepSeek V4-Flash arm was billing the same served model two ways, and the expensive arm was the one the loop's own config reached.** One `if` served two ids: `if model.contains("deepseek-v4-flash") || model.contains("deepseek-r1")` at `:187` returned `(0.55, 0.0, 0.0, 2.19)`. `deepseek-v4-flash` is a **legacy alias** DeepSeek still accepts and serves as **… [yoyo: 4438 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 55s)
+  - the same undocumented-payment shape the #864 entry records as having gone stale for two consecutive sessions.
+  + the same undocumented-payment shape the #864 entry records as having gone stale for two consecutive sessions. **Day 204 (#937 Task 1) — the DeepSeek V4-Flash arm was billing the same served model two ways, and the expensive arm was the one the loop's own config reached.** One `if` served two ids: `if model.contains("deepseek-v4-flash") || model.contains("deepseek-r1")` at `:187` returned `(0.55, 0.0, 0.0, 2.19)`. `deepseek-v4-flash` is a **legacy alias** DeepSeek still accepts and serves as **… [yoyo: 4438 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the docs page:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n docs/src/features/cost-tr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/features/cost-tracking.md (4 → 16 lines)
+    |-------|-------|--------|
+    | DeepSeek Chat/V3 | $0.27/MTok | $1.10/MTok |
+    | DeepSeek Reasoner/R1 | $0.55/MTok | $2.19/MTok |
+  + | DeepSeek Flash (V4.1-Flash, incl. the `deepseek-v4-flash` legacy alias) | $0.15/MTok | $0.60/MTok |
+  + 
+  + Two things to read these numbers with. First, they are **off-peak** prices:
+  + DeepSeek doubles them on weekdays 01:00–04:00 and 06:00–10:00 UTC, so a cost
+  + yoyo reports for a DeepSeek session is a **lower bound** — during a peak window
+  + the true cost is up to 2x what is shown. Second, this table is a set of
+  + **hardcoded literals with no drift detection yet** (see #937): when a provider
+  + changes its prices, nothing here notices. `deepseek-v4-flash` (the id the evolve
+  + loop runs on) is a legacy name DeepSeek still serves as V4.1-Flash, so it is
+  + priced as `deepseek-flash`; `deepseek-r1`, `deepseek-v3` and `deepseek-v4-pro`
+  + are carried unchanged and, at the time of writing, have not been checked against
+  + a second source.
+ ✓ (1m 54s)
+    |-------|-------|--------|
+    | DeepSeek Chat/V3 | $0.27/MTok | $1.10/MTok |
+    | DeepSeek Reasoner/R1 | $0.55/MTok | $2.19/MTok |
+  + | DeepSeek Flash (V4.1-Flash, incl. the `deepseek-v4-flash` legacy alias) | $0.15/MTok | $0.60/MTok |
+  + 
+  + Two things to read these numbers with. First, they are **off-peak** prices:
+  + DeepSeek doubles them on weekdays 01:00–04:00 and 06:00–10:00 UTC, so a cost
+  + yoyo reports for a DeepSeek session is a **lower bound** — during a peak window
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now run the verification: cargo fmt, build, test, clippy.
+
+But there's a module-size gate — the register paste says 2925, but did I add lines after the wc? Let me check current wc after all edits. Earlier wc was 2925 after the test edits, and I haven't touched cost.rs since. So it should be 2925 still after fmt.
+
+Let me run fmt then wc then checks.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/format/co… ✓ (1.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+cargo fmt collapsed 3 lines → 2922. Need to update the register to 2922. Also my ARCHITECTURE.md says 2925 — need to correct that to 2922 too. Let me fix both.
+
+Actually let me double check: the register must match exactly. Let me update.
+────────────────────────────────────────────────────────────────────────────────
+
+cargo fmt collapsed 3 lines (the assert! I re-wrapped). Updating the register and the ARCHITECTURE.md figure to the real count:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/("src\/format\/cost.rs… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the full verification chain:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (10.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (2m 4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The grep summary is elided. Let me get the total pass/fail count cleanly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 24s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+5956 passed, 0 failed. Now clippy and fmt check.
+
+Then the positive control.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (18.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive control — one atomic mutate → run → restore:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (5 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The test output was empty? Odd — the grep found nothing. Probably because `cargo test` with multiple filters isn't allowed... Actually cargo test only accepts one filter arg; extra args are treated as... hmm, it may have errored. Let me re-run the positive control with a proper filter, or use the module filter.
+
+Let me redo it carefully.
+────────────────────────────────────────────────────────────────────────────────
+
+The test filter didn't match (cargo test takes one filter). Re-running the control properly:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (5 lines) ✓ (26.3s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to re-run the positive control and capture the full test output properly. The grep is being elided. Let me write output to a file instead.
+
+Current state: cost.rs should be restored. Let me verify first, then run the control capturing to a file.
+────────────────────────────────────────────────────────────────────────────────
+
+Let me verify state, then run the positive control capturing output to a file (the grep output keeps getting elided).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "NEUTERED" src/format/co… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, restored. Now run the positive control, writing output to a file so I can grep it reliably.
+────────────────────────────────────────────────────────────────────────────────
+
+Tree is clean and restored. Now the positive control, writing to files:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (5 lines) ✓ (26.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -E "FAILED|panicked at|test… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The positive control fired exactly as predicted: `test_pricing_deepseek_v4_flash` and the near-miss guard `test_pricing_deepseek_flash_is_priced_and_changes_nothing_else` both reddened by name, while `test_estimate_cost_deepseek_reasoner` (the r1 pin) stayed green (107 passed).
+
+Wait — interesting: with the neutralized condition, `deepseek-v4-flash` returns None entirely. Why? Because the old `deepseek-v4-flash || deepseek-r1` arm is gone (r1 alone now). So `deepseek-v4-flash` falls through... and there's a catch-all later that returns None? Actually it may fall to a deepseek catch-all that returns None. Anyway, the control works: it proves the widened condition is what prices v4-flash.
+
+Hmm, but note that the assertion `assert_ne!` I added (the property guard) did NOT fail under the control — because both would be None... Actually wait, `estimate_cost` for v4-flash would be None and r1 would be Some. `assert_ne!` comparing Option<f64> — None != Some(...) so it passes. That's worth noting: the assert_ne is a weak guard under this particular sabotage. But the near-miss guard caught it. That's fine; I should note this honestly in the write-up... Actually, let me think about whether the assert_ne adds value. It's the "property the bug violated" assertion. It holds in both directions. Under the control it passes vacuously (None vs Some). That's a limitation worth recording honestly.
+
+Actually, is it vacuous-green? It asserts the two costs differ. In the fixed state, they're Some(0.75) vs Some(2.74) — differ. Under the neutralized state, None vs Some(2.74) — differ. So the assertion is satisfied by "v4-flash is unpriced", which is a different failure. That's a genuine weakness. But the near-miss guard catches pricing absence. Hmm, but per my own lessons, a guard that passes by agreeing with a different condition is exactly the "vacuous green" shape.
+
+Let me strengthen it slightly: assert both are Some AND differ. That's cheap — I can do `assert_ne!(estimate_cost(...), estimate_cost(...))` plus an `is_some` on the v4-flash one. Actually the near-miss guard already asserts `model_pricing("deepseek-v4-flash") == Some(...)`. But the assert_ne in the *estimate_cost* domain is the one the task asked for.
+
+The task says: "Add one new assertion in the existing test_pricing_deepseek_flash_is_priced_and_changes_nothing_else family: estimate_cost for deepseek-v4-flash no longer equals the deepseek-r1 figure — i.e. assert the two ids' costs now differ... Keep it to a single assert_ne!-shaped line so cost.rs grows as little as possible".
+
+I've done that. But my own finding is that under the sabotage it stays green. I could tighten it to `assert_ne!` on the unwrapped values, which would panic if v4-flash is None — that makes the guard non-vacuous. Let me do that: unwrap both.
+
+Actually `.unwrap()` on estimate_cost would panic with a message if None. Let me use `.expect(...)` with a clear message. That is still "one assertion line" essentially, plus the usage fixture (which the task didn't anticipate but is needed).
+
+Hmm, the task said keep it to a single assert_ne!-shaped line. But I already added the usage fixture (8 lines) which the task apparently assumed was available... Looking at the test, there's already a `usage` in `test_estimate_cost_deepseek_flash_is_some_and_unknown_is_still_none` but not in the near-miss test. So I added one. That's fine.
+
+Let me make the assert non-vacuous by unwrapping. I'll change:
+
+```rust
+assert_ne!(
+    estimate_cost(&usage, "deepseek-v4-flash"),
+    estimate_cost(&usage, "deepseek-r1"),
+    "..."
+);
+```
+
+to use expect on the v4-flash side:
+
+```rust
+let flash = estimate_cost(&usage, "deepseek-v4-flash")
+    .expect("the alias must be priced — an unpriced id would satisfy assert_ne by absence");
+let r1 = estimate_cost(&usage, "deepseek-r1").expect("deepseek-r1 must stay priced");
+assert_ne!(flash, r1, "...");
+```
+
+That's 3 lines instead of 1 but it removes the vacuous-green hole, which is a real defect I verified by running the control. This is consistent with my lessons (day 191: absence assertions need an anti-vacuous companion; day 200: a missing/unpriced row satisfies guards by absence).
+
+I should then re-run the control to confirm the assert now also reddens. That's the disciplined move: the control showed the guard green under sabotage, so I fix the guard and re-run.
+
+Let me do it. Then re-run the control, then full chain, then commit.
+
+Let me look at the current text.
+────────────────────────────────────────────────────────────────────────────────
+
+The control fired exactly as predicted — but it also revealed something I should fix. Under the sabotage, my new assert_ne! stayed green (None ≠ Some(2.74)): it's satisfied by the alias being unpriced, which is a different failure. That's the vacuous-green shape. Let me close it:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/format/cost.rs | sed … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (16 → 25 lines)
+            // not cost the same. Before Day 204, `deepseek-v4-flash` silently rode
+            // `deepseek-r1`'s row, so this assertion is the regression guard for the
+            // defect itself rather than for either number.
+  +         //
+  +         // Both sides are UNWRAPPED rather than compared as `Option`s, and the
+  +         // positive control is why: a bare `assert_ne!` on the `Option`s stays
+  +         // green under a sabotage that leaves the alias *unpriced* (`None`
+  +         // differs from every price), i.e. it would be satisfied by a different
+  +         // failure than the one it names.
+            let usage = yoagent::Usage {
+                input: 1_000_000,
+                output: 1_000_000,
+  ···
+                cache_write: 0,
+                total_tokens: 0,
+            };
+  +         let flash = estimate_cost(&usage, "deepseek-v4-flash")
+  +             .expect("the alias must be priced, or `assert_ne!` below passes by absence");
+  +         let r1 = estimate_cost(&usage, "deepseek-r1")
+  +             .expect("deepseek-r1 must stay priced — the split must not unprice it");
+  ... (6 more lines)
+ ✓ (2m 24s)
+            // not cost the same. Before Day 204, `deepseek-v4-flash` silently rode
+            // `deepseek-r1`'s row, so this assertion is the regression guard for the
+            // defect itself rather than for either number.
+  +         //
+  +         // Both sides are UNWRAPPED rather than compared as `Option`s, and the
+  +         // positive control is why: a bare `assert_ne!` on the `Option`s stays
+  +         // green under a sabotage that leaves the alias *unpriced* (`None`
+  +         // differs from every price), i.e. it would be satisfied by a different
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/format/co… ✓ (1.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now 2931 lines. I need to update the register from 2922 to 2931, and ARCHITECTURE.md's "2869 -> 2922 (+53)" to "2869 -> 2931 (+62)" and the pasted figure.
+
+Then re-run the positive control to confirm the assert_ne now reddens too.
+
+Let me update the register and ARCHITECTURE.md.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/("src\/format\/cost.rs… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now re-run the positive control to confirm the tightened guard reddens too:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (5 lines) ✓ (27.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -E "^failures:$" -A 8 /tmp/… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, the failure list is the same 2 tests. My newly-tightened assertion is inside `test_pricing_deepseek_flash_is_priced_and_changes_nothing_else`, but the test fails EARLY at line 1744 (the `assert_eq!(model_pricing("deepseek-v4-flash"), Some(...))`) — before reaching my assert_ne. So the test reddens, but my assert_ne isn't the thing that fires because the earlier assertion short-circuits.
+
+That's acceptable: the test reddens by name. The assert_ne's non-vacuity is still an improvement (it can't pass by absence in a state where the earlier asserts pass). Let me verify the tightened assert is non-vacuous in a more targeted way: I could reason — if `model_pricing("deepseek-v4-flash")` returns Some(0.15...) then estimate_cost is Some(0.75); unwrapping gives a real number. So under the sabotage that leaves the row priced at r1's number (a more subtle sabotage: widening the condition but pointing at the wrong row)... Actually the more relevant sabotage for the original bug is "the arms are shared again" — i.e. v4-flash priced at 0.55/2.19. Under that sabotage, my assert_ne WOULD be the one to catch it (flash == r1 == 2.74 → assertion fails).
+
+Let me test that: sabotage by restoring the shared arm form. That directly reproduces the original bug and is the most meaningful control for my new assertion. Let me do it as one atomic command.
+
+Actually the task specified the control as "temporarily change the widened condition back to `model.contains("deepseek-flash")` only". I ran that — it reddens by name. Good, that's the required control, done.
+
+But I want to confirm my assert_ne is a real guard, not ceremony. Let me run the "shared arm restored" sabotage (the actual original bug) and check that the assert_ne fires (among others). This is cheap and it's the control that matters for the new assertion.
+
+Let me construct it: replace
+```
+    if model.contains("deepseek-r1") {
+```
+with
+```
+    if model.contains("deepseek-r1") || model.contains("deepseek-v4-flash") { // NEUTERED
+```
+That reproduces the pre-fix behavior exactly (v4-flash priced 0.55/2.19). Then the near-miss guard fails at 1744 (left Some((0.55,...)) vs right Some((0.15,...))) and my assert_ne would then... it's after, so short-circuits again. Hmm.
+
+To isolate the assert_ne, I'd need to comment out the earlier assert_eq. That's getting elaborate. 
+
+The honest framing: my assert_ne is a *property* guard positioned after the literal guards; in any state where the literals pass it is exercised. To show it's non-vacuous, I can mutate just the datum: make the r1 arm return 0.15/0.60/0.003... no, that's changing r1.
+
+Simplest targeted control for the assert_ne: temporarily change the r1 row to 0.15/0.003/0.60 (same as flash). Then literals... no, `model_pricing("deepseek-r1")` literal assertion at 1750 would fail first.
+
+OK. Alternative: move nothing, but run a targeted check that the assert is reachable and non-vacuous by mutating the *flash* row's output... same problem.
+
+Honestly, the cleanest way to demonstrate non-vacuity of the unwrap: the unwrap itself is an assertion (`expect`). If v4-flash is unpriced, `expect` panics with "the alias must be priced, or `assert_ne!` below passes by absence". That is strictly stronger than before. Whether it's reachable depends on test order, which is the nature of a sequential test body — the earlier literal guards cover the same property more precisely. So the honest statement is: the assert_ne is a *property* pin that in the current test body is a backstop behind the literal pins; the unwrap removes the one shape where it could have passed vacuously.
+
+I'll record that honestly in ARCHITECTURE.md rather than overclaiming. Let me verify the unwrap path fires though — I can do a quick targeted control: sabotage so that v4-flash is priced at the *correct* row but r1's arm also matches v4-flash... no.
+
+Let me do a genuinely simple one: temporarily change the widened condition so v4-flash is priced, but change the r1 arm's number... no, literal guard.
+
+I'll do this instead: temporarily disable the assert_eq literal at 1744 (with a NEUTERED marker) AND restore the shared arm — then the assert_ne must be the one to fire. Two-part control, still one atomic command. That proves the assert_ne works when it is the guard in play.
+
+Let me do that.
+────────────────────────────────────────────────────────────────────────────────
+
+The control reddens by name as required. But my tightened assert_ne! sits after the literal guards, so it short-circuited. Let me prove it isn't ceremony — sabotage the actual original bug with the earlier literal pin disabled, so the property assertion is the guard in play:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (19 lines) ✓ (26.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Excellent. The assert_ne fired with the exact receipt: `left: 2.74, right: 2.74` — "the alias and the reasoner are different models and must not share a price". That's the property guard proving it's not ceremony: it catches the ORIGINAL bug directly.
+
+Now let me also verify the unwrap path fires (v4-flash unpriced) — actually the first control (widened condition reverted) had v4-flash unpriced, and the expect message is there. Since the literal pin `assert_eq!(model_pricing("deepseek-v4-flash"), Some(...))` comes BEFORE it in the same test body, the test still fails by name. Fine.
+
+Now restore verified: 0 markers. Let me update ARCHITECTURE.md to record the assert_ne control accurately (the three-part evidence), and note the vacuity fix.
+
+Then run the full chain: build, test, clippy, fmt.
+
+Let me update the ARCHITECTURE.md paragraph — I need to correct the sentence about the positive control to include this finding. Let me find and amend the relevant sentence.
+────────────────────────────────────────────────────────────────────────────────
+
+The property assertion fired with the exact receipt left: 2.74, right: 2.74. Let me record that finding honestly in ARCHITECTURE.md:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/ARCHITECTURE.md (1 → 1 lines)
+  - **Positive control run rather than assumed, as one atomic mutate→run→restore:** reverting the widened condition to `model.contains("deepseek-flash")` alone reddens `test_pricing_deepseek_v4_flash` and the near-miss guard **by name** while the `deepseek-r1` pins stay green, and restoring returns a byte-empty diff.
+  + **Positive control run rather than assumed, as one atomic mutate→run→restore:** reverting the widened condition to `model.contains("deepseek-flash")` alone reddens `test_pricing_deepseek_v4_flash` and the near-miss guard **by name** while the `deepseek-r1` pins stay green, and restoring returns a byte-empty diff. **That control then found a hole in the new assertion, which is the part worth recording rather than the green:** written naively as `assert_ne!(estimate_cost(…v4-flash), estimate… [yoyo: 806 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (2m 24s)
+  - **Positive control run rather than assumed, as one atomic mutate→run→restore:** reverting the widened condition to `model.contains("deepseek-flash")` alone reddens `test_pricing_deepseek_v4_flash` and the near-miss guard **by name** while the `deepseek-r1` pins stay green, and restoring returns a byte-empty diff.
+  + **Positive control run rather than assumed, as one atomic mutate→run→restore:** reverting the widened condition to `model.contains("deepseek-flash")` alone reddens `test_pricing_deepseek_v4_flash` and the near-miss guard **by name** while the `deepseek-r1` pins stay green, and restoring returns a byte-empty diff. **That control then found a hole in the new assertion, which is the part worth recording rather than the green:** written naively as `assert_ne!(estimate_cost(…v4-flash), estimate… [yoyo: 806 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the full verification chain, in the order the task specifies:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== 1. BUILD ===" && cargo… ✓ (1m 24s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== 4. CLIPPY (explicit, l… ✓ (19.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green. Let me do a final sanity check: confirm the register line count matches the file exactly (2931), and check the final diff.
+
+Also let me verify the neutered_guards test passes (it's part of test suite, so yes — 17 test result: ok).
+
+Let me do the optional sanity run (#3 in the task): `./target/debug/yoyo -p` — that would cost API money. The task says "optional sanity". I'll skip the paid call; instead I can verify the pricing function directly via a test which I already did. Actually let me not spend money.
+
+Let me check the register matches exactly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "file: $(wc -l < src/format… ✓ (313ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Everything is verified. Let me do a final sanity check of the diff and commit.
+────────────────────────────────────────────────────────────────────────────────
+
+Everything is green. Let me do a final review of the diff, then commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/format/cost.rs | he… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Diff looks right. Now commit. Also I should sanity check the "verification step 3" — running yoyo with a one-liner — but that costs API money and isn't required (it's labeled "optional sanity"). Skip it.
+
+Commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (44ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed as a547b058. Here's what landed and what I verified.
+
+## The change
+
+`src/format/cost.rs` — two conditions changed, no arm reordered:
+
+• The shared arm if model.contains("deepseek-v4-flash") || model.contains("deepseek-r1") became the `deepseek-r1` arm alone, carrying a comment stating its 0.55/2.19 is deliberately left unchanged because it is unverifiable (deepseek-r1 is absent from models.dev's deepseek provider, so there is no second reading to check it against — not because it was re-checked).
+• The already-correct deepseek-flash arm was widened with || model.contains("deepseek-v4-flash"). Its comment now records the alias, the models.dev reading (2026-09-20: deepseek-flash, deepseek-v4-flash, deepseek-v4-flash-vision-exp all {0.15, 0.6, 0.003}), the 3.7x/3.65x overstatement that made this a bug, the ordering note, and the v4-pro/v3 residue as a named non-fix rather than a silent omission.
+
+Tests — four sites: the near-miss guard's deepseek-v4-flash row moved to (0.15, 0.0, 0.003, 0.60); model_pricing("deepseek-r1") was not touched and is now the guard that the split didn't drag r1 along; test_pricing_deepseek_v4_flash moved and gained the cache_read assertion; test_estimate_cost_deepseek_reasoner was repointed at the id it is named for ("deepseek-r1", expected 2.74 unchanged).
+
+Docs — new V4.1-Flash row in cost-tracking.md plus the off-peak and no-drift-detection caveats; a dated Day-204 entry in ARCHITECTURE.md; register pasted 2869 → 2931 in the same diff.
+
+## Verification
+
+cargo build clean · cargo test 5956 passed / 0 failed · cargo clippy --all-targets -- -D warnings clean · cargo fmt -- --check clean · module_size 28/28 with file and register both at 2931 · neutered_guards 9/9, zero markers in the tree.
+
+Positive control run, and it found a real hole — worth flagging rather than burying. The first mutate (reverting the widened condition) reddened exactly the two intended tests by name, deepseek-r1 pins green. But it also showed my new assert_ne! stayed green under it: comparing the Options, None != Some(2.74), so it was satisfied by the alias being unpriced — a different failure than the one it names. I unwrapped both sides with expect messages, then ran a second, narrower control reproducing the original bug (r1 arm re-absorbing v4-flash, literal pin disabled), which reddens with the receipt left: 2.74, right: 2.74 ... must not share a price. So the property assertion is a real guard, and that two-step is recorded in ARCHITECTURE.md rather than the green alone.
+
+Stated limits: only deepseek-v4-flash's row is corrected; deepseek-r1, deepseek-v3, deepseek-v4-pro keep unverified numbers; peak pricing unmodelled, so a correct row is still a lower bound. #937 stays open — this is the literal fix, task_02 is the alarm. I did not run the optional live `yoyo -p` sanity step, since it spends API budget for a number the tests already pin.
+
