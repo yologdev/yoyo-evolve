@@ -313,7 +313,15 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // and this file is the CLI dispatcher every subcommand route passes through.
     // The next task that has to grow this file should split it, not bump this.
     ("src/dispatch_sub.rs", 2162),
-    ("src/format/cost.rs", 2931), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+    ("src/format/cost.rs", 3439), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+    // Day 204 (#937 Task 2): 2931 -> 3439 (+508, the count after `cargo fmt`). The price drift alarm against
+    // models.dev — an `#[ignore]`d audit plus its offline arm and the
+    // `KNOWN_DIVERGENCES` register's anti-rot guard. Mostly tests (as with every
+    // emission-point guard here): the pure comparison `audit_vendor_rows` is
+    // covered by the DEFAULT suite, because an alarm whose only covered step was
+    // its `curl` would be mostly unverified. Pasted from what the gate printed,
+    // in the same diff as the growth, because a register edit cannot half-land
+    // while a growing file can.
     // Day 204 (#937 Task 1): 2869 -> 2931 (+62), pasting the count in the same
     // diff as the DeepSeek V4-Flash price-arm fix (the split plus the comments
     // recording the two readings and the v4-pro/v3 residue). Pasted rather than

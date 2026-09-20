@@ -104,6 +104,10 @@ Then run the four release steps (nothing skipped):
 - cargo clippy with zero warnings
 - cargo fmt -- --check passes
 - At least 10 tests exist
+- The price drift alarm has been READ — `cargo test price_drift_audit -- --ignored` —
+  and every row it names is reconciled **by reading the vendor's pricing page**,
+  never by editing the assertion (a test that agrees with the table is vacuous
+  against drift, because the table is what drifted)
 - CHANGELOG.md exists and is current
 - README.md accurately describes what you can do right now
 
@@ -115,6 +119,14 @@ Run this and every line must say PASS:
   cargo fmt -- --check && echo PASS
   cargo test 2>&1 | grep "test result"
   # must show at least 10 tests
+  cargo test price_drift_audit -- --ignored --nocapture
+  # NOT part of CI: it needs the network, so it is #[ignore]d on purpose and the
+  # default suite never runs it. A pass is not the point — READ it. It prints the
+  # ids it compared, the admitted divergences it skipped, and what it cannot
+  # reach at all (the arms models.dev does not list).
+  # Any row it NAMES is a DRIFT ALARM: read the vendor's pricing page, decide,
+  # and then correct the constants or the admitted-divergence register. Do not
+  # auto-patch, and do not edit the test to agree with the table.
 
 ## How to release
 1. Verify ALL gates above

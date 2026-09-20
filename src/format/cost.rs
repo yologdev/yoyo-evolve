@@ -2928,4 +2928,512 @@ mod tests {
             "expected ANSI color code for zero remaining: {output}"
         );
     }
+
+    // ---------------------------------------------------------------------
+    // The price drift alarm (#937, Day 204)
+    //
+    // The prior art is `yoagent-0.18.1/tests/price_audit.rs`, which exists
+    // because `claude_sonnet_5` carried Sonnet 4.6's rates ($3/$15 against the
+    // published $2/$10) from v0.9.0 through v0.16.5 — 18 tagged releases, 50%
+    // overstatement on every `cost_usd`, found by someone asking rather than by
+    // any mechanism. The rules copied from it rather than re-invented: audit
+    // against models.dev, run it `#[ignore]`d before a release, and never
+    // auto-update the constants — a failure is a drift alarm that sends a human
+    // to the vendor's page, not a patch.
+    // ---------------------------------------------------------------------
+
+    /// models.dev's `deepseek` provider rows, vendored by hand on **2026-09-20**
+    /// from <https://models.dev/api.json>, as `(id, input, output, cache_read)`
+    /// in USD per million tokens.
+    ///
+    /// Vendored rather than fetched because the default (offline) suite still
+    /// has to be able to check something: the two tests below that read it are
+    /// the no-network half, and they go stale *loudly* — a table edit that moves
+    /// an audited row reddens them until this const is re-fetched, which is the
+    /// coupling a drift alarm wants. `reasoning` is deliberately not vendored:
+    /// it merely duplicates `output` for this provider, and comparing one fact
+    /// twice would double-count it.
+    const MODELS_DEV_DEEPSEEK_2026_09_20: &[(&str, f64, f64, f64)] = &[
+        ("deepseek-flash", 0.15, 0.60, 0.003),
+        ("deepseek-v4-flash", 0.15, 0.60, 0.003),
+        ("deepseek-v4-flash-vision-exp", 0.15, 0.60, 0.003),
+        ("deepseek-v4-pro", 0.435, 0.87, 0.003625),
+    ];
+
+    /// The vendor's page the alarm is pointed at. One aggregator, stated as a
+    /// limit rather than implied: models.dev can itself be wrong, which is why a
+    /// failure sends a human to the vendor's page instead of patching anything.
+    const MODELS_DEV_URL: &str = "https://models.dev/api.json";
+
+    /// Table arms models.dev does **not** list, so the alarm audits them not at
+    /// all. Printed on every run rather than left for a reader to infer from the
+    /// compared-id list — a coverage limit that is only implied reads as
+    /// coverage. `deepseek-r1` and `deepseek-v3` were checked absent from the
+    /// provider's listing on 2026-09-20 (the anti-rot guard below re-checks that
+    /// against the vendored rows, so this list cannot quietly become wrong
+    /// without a red test).
+    const UNAUDITED_DEEPSEEK_ARMS: &[&str] = &["deepseek-r1", "deepseek-v3"];
+
+    /// Audited-and-admitted divergences: `(model id, why it is admitted)`.
+    ///
+    /// Every entry MUST carry a reason a reader can check, and MUST still
+    /// actually diverge — `registered_divergences_still_diverge` below fails if
+    /// the table ever moves to match the vendored reading, forcing the entry's
+    /// *removal* rather than letting this decay into a blanket exemption. That
+    /// guard exists because a gate satisfied by a registered exception is silent
+    /// in exactly the way a missing gate is; the remedy for a register is a
+    /// shrink-only ratchet, not a parser.
+    const KNOWN_DIVERGENCES: &[(&str, &str)] = &[(
+        "deepseek-v4-pro",
+        "models.dev prices V4-Pro at {input 0.435, output 0.87, cache_read 0.003625} (fetched 2026-09-20) against this table's (0.27, 1.10). Deliberately not fixed in the Day-204 alarm task: one aggregator source was read, the arm is shared with `deepseek-v3` (a different model's price, equally unverified), and the row is `providers.rs`'s DEFAULT for `provider = \"deepseek\"`, so changing it moves every user with no explicit model. Its own issue.",
+    )];
+
+    /// Two floats count as the same price when they are equal to a tolerance far
+    /// below any real repricing (a millionth of a dollar per million tokens).
+    fn price_cells_differ(a: f64, b: f64) -> bool {
+        (a - b).abs() > 1e-6
+    }
+
+    /// "Could not check" must not read as "checked; clean" — the standing repo
+    /// rule, worded the way `check_assertion_weakening.py`'s
+    /// `could_not_check_message` words it. A fetch or parse failure is NOT a
+    /// clean audit, and the message has to say so in words a human reads.
+    fn audit_did_not_run_message(err: &str) -> String {
+        format!(
+            "PRICE DRIFT AUDIT DID NOT RUN — the pricing table is UNVERIFIED against models.dev, \
+             which is not the same as checked and clean.\n\
+             fetch/parse failure: {err}\n\
+             Fix the network or the payload, then re-run: \
+             cargo test price_drift_audit -- --ignored --nocapture"
+        )
+    }
+
+    /// Fetch models.dev's catalogue. `curl` rather than a new dependency: the
+    /// audit is manual and `curl` is what this environment has.
+    fn fetch_models_dev_json() -> Result<String, String> {
+        let out = std::process::Command::new("curl")
+            .args([
+                "--max-time",
+                "60",
+                "--fail",
+                "--silent",
+                "--show-error",
+                MODELS_DEV_URL,
+            ])
+            .output()
+            .map_err(|e| format!("curl could not be spawned: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "curl exited {} ({})",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        String::from_utf8(out.stdout).map_err(|e| format!("curl's output was not valid UTF-8: {e}"))
+    }
+
+    /// Pull `["deepseek"]["models"]` out of the payload as
+    /// `(id, input, output, cache_read)`, sorted by id for stable output.
+    ///
+    /// A missing provider, a missing `models` object or a missing cost cell is an
+    /// **Err**, never an empty `Ok(vec![])`: a vendor that renames a field would
+    /// otherwise be read as "nothing to audit" and the run would pass green over
+    /// nothing — the exact shape this alarm exists to refuse.
+    fn parse_models_dev_deepseek(json: &str) -> Result<Vec<(String, f64, f64, f64)>, String> {
+        let root: serde_json::Value = serde_json::from_str(json)
+            .map_err(|e| format!("models.dev payload was not JSON: {e}"))?;
+        let models = root
+            .get("deepseek")
+            .and_then(|p| p.get("models"))
+            .and_then(|m| m.as_object())
+            .ok_or_else(|| {
+                "models.dev payload has no `deepseek.models` object — a moved or renamed \
+                 provider is a FAILED audit, not an empty one"
+                    .to_string()
+            })?;
+        let mut rows = Vec::new();
+        for (id, entry) in models {
+            let cost = entry
+                .get("cost")
+                .and_then(|c| c.as_object())
+                .ok_or_else(|| {
+                    format!("`deepseek.models.{id}` carries no `cost` object — field renamed?")
+                })?;
+            let cell = |name: &str| -> Result<f64, String> {
+                cost.get(name).and_then(|v| v.as_f64()).ok_or_else(|| {
+                    format!("`deepseek.models.{id}.cost.{name}` is missing or not a number")
+                })
+            };
+            // `reasoning` is deliberately neither read nor compared — it
+            // duplicates `output` for DeepSeek, and one fact compared twice is
+            // two chances to disagree over one number.
+            rows.push((
+                id.clone(),
+                cell("input")?,
+                cell("output")?,
+                cell("cache_read")?,
+            ));
+        }
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(rows)
+    }
+
+    /// The audit's whole comparison with the network removed: feed it the
+    /// vendor's rows and it returns `(mismatch lines, compared ids, registered-
+    /// and-skipped ids)`.
+    ///
+    /// Pure on purpose, so the comparison half is covered by the *default*
+    /// suite — the `#[ignore]`d half is the fetch, and an alarm whose only
+    /// tested step is its `curl` would be mostly unverified.
+    fn audit_vendor_rows(
+        vendor: &[(String, f64, f64, f64)],
+    ) -> (Vec<String>, Vec<String>, Vec<String>) {
+        let mut mismatches = Vec::new();
+        let mut compared = Vec::new();
+        let mut skipped = Vec::new();
+        for (id, v_in, v_out, v_read) in vendor {
+            // A registered divergence is admitted, but it is *named* in the
+            // skipped list so the exemption is visible on every run rather than
+            // silent — the whole defect a register is prone to.
+            if KNOWN_DIVERGENCES.iter().any(|(rid, _)| *rid == id.as_str()) {
+                skipped.push(id.clone());
+                continue;
+            }
+            // Ids the table does not price are not audited (and not counted as
+            // compared): the table's coverage is smaller than the vendor's, and
+            // saying so is cheaper than implying the reverse.
+            let Some((t_in, _t_write, t_read, t_out)) = model_pricing(id) else {
+                continue;
+            };
+            compared.push(id.clone());
+            // Three cells both sides carry. `cache_write` has NO counterpart —
+            // DeepSeek bills cache reads only — so it is skipped, and this is
+            // where that is stated rather than silently ignored.
+            if price_cells_differ(t_in, *v_in)
+                || price_cells_differ(t_read, *v_read)
+                || price_cells_differ(t_out, *v_out)
+            {
+                mismatches.push(format!(
+                    "{id}: table ({t_in}, {t_read}, {t_out}) vs models.dev ({v_in}, {v_read}, {v_out})"
+                ));
+            }
+        }
+        (mismatches, compared, skipped)
+    }
+
+    /// Drift alarm, not a gate. `#[ignore]`d on purpose: it needs the network, so
+    /// it must never decide CI — run it deliberately before a release (see
+    /// skills/release/SKILL.md, "Gate"). A failure here does NOT mean the vendor
+    /// moved: it means the table and models.dev disagree, and the human reading
+    /// it goes to the vendor's page and decides. It never rewrites the table, and
+    /// neither does anyone "fixing" it by editing this assertion to agree — a
+    /// test that agrees with the table is vacuous against drift, because the
+    /// table is what drifted (#937).
+    ///
+    /// Placement is forced, not taste: this is a **binary-only** crate
+    /// (`cargo test --lib` fails with "no library targets found in package
+    /// yoyo-agent"), so an integration test under `tests/` cannot call
+    /// `model_pricing` at all.
+    #[test]
+    #[ignore = "network + vendor page; run before a release"]
+    fn price_drift_audit_against_models_dev() {
+        let json = fetch_models_dev_json()
+            .unwrap_or_else(|err| panic!("{}", audit_did_not_run_message(&err)));
+        let vendor = parse_models_dev_deepseek(&json)
+            .unwrap_or_else(|err| panic!("{}", audit_did_not_run_message(&err)));
+
+        // ANTI-VACUOUS, ASSERTED FIRST: an empty or renamed payload must fail
+        // loudly rather than pass green over nothing.
+        assert!(
+            vendor.len() >= 3,
+            "models.dev's `deepseek` provider returned only {} rows — an empty or \
+             restructured payload is a FAILED audit, not a clean one",
+            vendor.len()
+        );
+
+        let (mismatches, compared, skipped) = audit_vendor_rows(&vendor);
+
+        // Both coverage facts printed, never implied: what was compared, and
+        // what the alarm cannot reach.
+        println!(
+            "price drift audit: compared {} row(s) against {MODELS_DEV_URL}: {compared:?}",
+            compared.len()
+        );
+        println!(
+            "price drift audit: admitted divergences, skipped by the comparison above \
+             (guarded by `registered_divergences_still_diverge`): {skipped:?}"
+        );
+        println!(
+            "price drift audit: COVERAGE LIMIT — {} is not listed by models.dev's `deepseek` \
+             provider, so the table's row(s) for it are audited by nothing",
+            UNAUDITED_DEEPSEEK_ARMS.join(", ")
+        );
+        println!(
+            "price drift audit: `cache_write` has no counterpart at models.dev (DeepSeek bills \
+             cache READS only) — skipped, not silently ignored"
+        );
+
+        assert!(
+            compared.len() >= 3,
+            "only {} row(s) were compared — a vendor listing that has shrunk (or ids the table \
+             no longer resolves) must fail loudly, not pass with nothing checked",
+            compared.len()
+        );
+
+        if !mismatches.is_empty() {
+            panic!(
+                "PRICE DRIFT ALARM — {} row(s) disagree between the pricing table and models.dev:\n  {}\n\
+                 This is a drift alarm, not a gate: read the vendor's pricing page and decide. \
+                 Do NOT auto-patch the pricing constants, and do NOT edit this test's expectation \
+                 to agree — a test that agrees with the table is vacuous against drift, because \
+                 the table is what drifted (#937).",
+                mismatches.len(),
+                mismatches.join("\n  ")
+            );
+        }
+    }
+
+    /// The offline arm of the alarm, and the reason the vendored const earns its
+    /// keep: every id models.dev lists that this table prices and does *not*
+    /// register as a divergence must match the vendored reading. A table edit
+    /// that moves one of those rows reddens here, without a network — so the
+    /// alarm has a reader even on the many sessions that never run the ignored
+    /// half.
+    #[test]
+    fn audit_matches_the_vendored_reading_for_every_unregistered_row() {
+        let vendored: Vec<(String, f64, f64, f64)> = MODELS_DEV_DEEPSEEK_2026_09_20
+            .iter()
+            .map(|(id, i, o, r)| ((*id).to_string(), *i, *o, *r))
+            .collect();
+        let (mismatches, compared, skipped) = audit_vendor_rows(&vendored);
+
+        // ANTI-VACUOUS: the comparison really ran over a non-empty set, and the
+        // one registered row really was skipped rather than silently dropped.
+        assert!(
+            compared.len() >= 3,
+            "the vendored fixture must exercise at least 3 rows, got {compared:?}"
+        );
+        assert_eq!(
+            skipped,
+            vec!["deepseek-v4-pro".to_string()],
+            "the registered divergence must be REPORTED as skipped, not vanish from the run"
+        );
+        assert!(
+            mismatches.is_empty(),
+            "the table disagrees with the vendored 2026-09-20 models.dev reading — re-fetch the \
+             vendor's page, decide, and update the table or the vendored const: {mismatches:?}"
+        );
+    }
+
+    /// The anti-rot guard on the exemption register. Two halves, both required: a
+    /// register that is empty or whose reasons are noise is a rubber stamp, and an
+    /// entry whose divergence has closed is a blanket exemption.
+    #[test]
+    fn registered_divergences_still_diverge() {
+        assert!(
+            !KNOWN_DIVERGENCES.is_empty(),
+            "an empty register means the exemption mechanism is unused — delete it rather than \
+             keep an untested hole"
+        );
+
+        for (id, reason) in KNOWN_DIVERGENCES {
+            // (a) a reason a reader can check, not a placeholder. A sentence's
+            // worth of prose is the cheapest mechanical floor for that.
+            assert!(
+                reason.len() >= 80 && reason.contains(' ') && reason.ends_with('.'),
+                "`{id}`'s admitted-divergence reason must be at least one real sentence: {reason:?}"
+            );
+
+            // (b) it must STILL diverge, so the register can only shrink.
+            let vendored = MODELS_DEV_DEEPSEEK_2026_09_20
+                .iter()
+                .find(|(vid, ..)| vid == id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "`{id}` is registered as a divergence but models.dev's vendored rows do \
+                         not list it — an exemption naming a model the vendor does not price can \
+                         never be checked, so it must be removed instead"
+                    )
+                });
+            let (_vid, v_in, v_out, v_read) = *vendored;
+            let (t_in, _t_write, t_read, t_out) = model_pricing(id).unwrap_or_else(|| {
+                panic!(
+                    "`{id}` is registered as an admitted divergence but the table no longer \
+                         prices it — the entry is stale, remove it"
+                )
+            });
+            assert!(
+                price_cells_differ(t_in, v_in)
+                    || price_cells_differ(t_read, v_read)
+                    || price_cells_differ(t_out, v_out),
+                "`{id}` no longer diverges from its vendored models.dev row ({v_in}, {v_read}, \
+                 {v_out}) — the exemption has closed, so REMOVE it from KNOWN_DIVERGENCES \
+                 rather than leaving a register entry that licenses nothing"
+            );
+
+            // And it must not be listed twice: two rows for one model would imply
+            // two divergences where there is one.
+            assert_eq!(
+                KNOWN_DIVERGENCES
+                    .iter()
+                    .filter(|(rid, _)| *rid == *id)
+                    .count(),
+                1,
+                "`{id}` is listed twice in KNOWN_DIVERGENCES"
+            );
+        }
+    }
+
+    /// The vendored const's own reach, so `UNAUDITED_DEEPSEEK_ARMS` cannot decay
+    /// into a stale claim: those ids really are absent from the vendor's listing.
+    /// If models.dev ever adds one, this fails and the arm becomes auditable.
+    #[test]
+    fn unaudited_arms_are_really_absent_from_the_vendored_reading() {
+        assert!(
+            !UNAUDITED_DEEPSEEK_ARMS.is_empty(),
+            "an empty coverage-limit list would make this test vacuous"
+        );
+        for id in UNAUDITED_DEEPSEEK_ARMS {
+            assert!(
+                !MODELS_DEV_DEEPSEEK_2026_09_20
+                    .iter()
+                    .any(|(vid, ..)| vid == id),
+                "models.dev now lists `{id}` — it is no longer unaudited, so drop it from \
+                 UNAUDITED_DEEPSEEK_ARMS and let the audit compare it"
+            );
+        }
+    }
+
+    /// The pure comparison, driven by synthetic vendor rows: it must name the
+    /// offending row and show BOTH readings, because a mismatch line that shows
+    /// one side cannot be acted on without opening three files.
+    #[test]
+    fn audit_vendor_rows_names_a_mismatch_with_both_readings() {
+        let matching = vec![("deepseek-flash".to_string(), 0.15, 0.60, 0.003)];
+        let (mismatches, compared, _) = audit_vendor_rows(&matching);
+        assert!(
+            mismatches.is_empty(),
+            "the table's flash row must match the vendor's real number: {mismatches:?}"
+        );
+        assert_eq!(compared, vec!["deepseek-flash".to_string()]);
+
+        // Near-miss sibling: one cent per MTok on the input cell is a mismatch,
+        // and the receipt carries the id and both readings.
+        let drifted = vec![("deepseek-flash".to_string(), 0.16, 0.60, 0.003)];
+        let (mismatches, compared, _) = audit_vendor_rows(&drifted);
+        assert_eq!(compared, vec!["deepseek-flash".to_string()]);
+        assert_eq!(
+            mismatches.len(),
+            1,
+            "one drifted cell, one row: {mismatches:?}"
+        );
+        assert!(
+            mismatches[0].starts_with("deepseek-flash: table ("),
+            "the row must name the id first: {}",
+            mismatches[0]
+        );
+        assert!(
+            mismatches[0].contains("vs models.dev ("),
+            "the row must show the vendor's reading too: {}",
+            mismatches[0]
+        );
+    }
+
+    /// A cache-read drift and an output drift are each a mismatch on their own —
+    /// the three compared cells are not decorative.
+    #[test]
+    fn audit_vendor_rows_compares_all_three_shared_cells() {
+        for row in [
+            ("deepseek-flash".to_string(), 0.15, 0.60, 0.004),
+            ("deepseek-flash".to_string(), 0.15, 0.61, 0.003),
+        ] {
+            let (mismatches, _, _) = audit_vendor_rows(std::slice::from_ref(&row));
+            assert_eq!(
+                mismatches.len(),
+                1,
+                "drift in {:?} must be reported: {mismatches:?}",
+                row
+            );
+        }
+    }
+
+    /// The registered divergence is skipped by the comparison — and reports
+    /// itself as skipped rather than disappearing, which is the whole point of
+    /// naming the exemption on every run.
+    #[test]
+    fn audit_vendor_rows_skips_a_registered_divergence_visibly() {
+        let (mismatches, compared, skipped) =
+            audit_vendor_rows(&[("deepseek-v4-pro".to_string(), 0.435, 0.87, 0.003625)]);
+        assert!(
+            mismatches.is_empty(),
+            "a registered row must not alarm: {mismatches:?}"
+        );
+        assert!(
+            compared.is_empty(),
+            "a registered row must not count as compared"
+        );
+        assert_eq!(skipped, vec!["deepseek-v4-pro".to_string()]);
+    }
+
+    /// Parsing: a renamed or dropped field is an Err, not an empty Ok — the
+    /// "could not check must not read as clean" rule applied to the parse half.
+    #[test]
+    fn price_audit_parse_fails_loudly_on_a_renamed_or_missing_field() {
+        let good = r#"{"deepseek":{"models":{"m1":{"cost":{"input":1.0,"output":2.0,"cache_read":0.1}}}}}"#;
+        let rows = parse_models_dev_deepseek(good).expect("the canonical shape must parse");
+        assert_eq!(rows, vec![("m1".to_string(), 1.0, 2.0, 0.1)]);
+
+        // Each failure shape: no provider, no models object, no cache_read cell,
+        // and a cell that is not a number. All must Err — a renamed field would
+        // otherwise go green.
+        for bad in [
+            r#"{"anthropic":{"models":{}}}"#,
+            r#"{"deepseek":{}}"#,
+            r#"{"deepseek":{"models":{"m1":{"cost":{"input":1.0,"output":2.0}}}}}"#,
+            r#"{"deepseek":{"models":{"m1":{"cost":{"input":1.0,"output":2.0,"cache_read":"free"}}}}}"#,
+        ] {
+            assert!(
+                parse_models_dev_deepseek(bad).is_err(),
+                "this payload must be a FAILED audit, not an empty one: {bad}"
+            );
+        }
+    }
+
+    /// `reasoning` duplicates `output` for DeepSeek, so a drifting `reasoning`
+    /// cell must change nothing — comparing one fact twice is two chances to
+    /// disagree over one number.
+    #[test]
+    fn price_audit_ignores_the_reasoning_cell_because_it_duplicates_output() {
+        let json = r#"{"deepseek":{"models":{"m1":{"cost":{"input":1.0,"output":2.0,"cache_read":0.1,"reasoning":999.0}}}}}"#;
+        let rows = parse_models_dev_deepseek(json).expect("the canonical shape must parse");
+        assert_eq!(
+            rows,
+            vec![("m1".to_string(), 1.0, 2.0, 0.1)],
+            "the reasoning cell must not be read as a fourth compared number"
+        );
+    }
+
+    /// The failure wording, pinned: `check_assertion_weakening.py`'s precedent is
+    /// that "could not check" must not read as "checked; clean", and this is the
+    /// string a human sees when the network is down.
+    #[test]
+    fn audit_did_not_run_message_says_not_checked_and_quotes_the_cause() {
+        let msg = audit_did_not_run_message("curl exited 6 (Could not resolve host)");
+        assert!(
+            msg.contains("DID NOT RUN"),
+            "the message must say the audit did not run: {msg}"
+        );
+        assert!(
+            msg.contains("UNVERIFIED"),
+            "and that the table is unverified, not clean: {msg}"
+        );
+        assert!(
+            msg.contains("Could not resolve host"),
+            "and carry the cause: {msg}"
+        );
+        assert!(
+            msg.contains("cargo test price_drift_audit -- --ignored"),
+            "and the exact command to re-run: {msg}"
+        );
+    }
 }
