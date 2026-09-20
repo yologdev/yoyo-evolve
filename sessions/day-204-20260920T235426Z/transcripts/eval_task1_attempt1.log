@@ -1,0 +1,258 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the diff against the task. Key checks:
+
+1. Does the diff implement what the task asked? Header change, doc freshness section, self-tests, ARCHITECTURE.md.
+
+Wait — the diff shows in `main()`:
+```python
+    module_spec, module_risk = collect_module_sizes(Path.cwd())
+    s = render_module_sizes(module_spec, module_risk)
+    module_unknown = bool(s) and (module_risk.scanned == 0 or not module_spec.ok)
++    if s:
++        sections.append(s)
+```
+Hmm, that means the original code had `if s: sections.append(s)` after module_unknown? Let me look at the actual file to check the ordering. The diff hunk shows the addition of `if s: sections.append(s)` before the doc_fresh block, and then the doc_fresh block ends with `if s: sections.append(s)`. Wait, the diff removes nothing, so the original had:
+
+```
+    module_spec, module_risk = collect_module_sizes(Path.cwd())
+    s = render_module_sizes(module_spec, module_risk)
+    module_unknown = bool(s) and (module_risk.scanned == 0 or not module_spec.ok)
+    if s:
+        sections.append(s)     <-- this line was... 
+```
+Hmm, the diff context after the added lines shows:
+```
++    if s:
++        sections.append(s)
++    # Day 204: ...
++    doc_fresh = collect_doc_freshness(Path.cwd())
++    s = render_doc_freshness(doc_fresh)
++    doc_fresh_unknown = bool(s) and doc_fresh.state == DOC_FRESH_COULD_NOT_CHECK
+     if s:
+         sections.append(s)
+```
+So the unchanged context at the end is `if s: sections.append(s)` — which is the module append. So the added `if s: sections.append(s)` is a duplicate! Wait no — let me reason. The hunk is:
+
+```
+     module_spec, module_risk = collect_module_sizes(Path.cwd())
+     s = render_module_sizes(module_spec, module_risk)
+     module_unknown = bool(s) and (module_risk.scanned == 0 or not module_spec.ok)
++    if s:
++        sections.append(s)
++    # Day 204: the age of ...
+...
++    doc_fresh_unknown = bool(s) and doc_fresh.state == DOC_FRESH_COULD_NOT_CHECK
+     if s:
+         sections.append(s)
+     # DREAM milestone reader: ...
+```
+
+Hmm, so the original had `module_unknown = ...` then `if s: sections.append(s)`. The added lines insert a first `if s: sections.append(s)` (appending the module section) then compute doc_fresh, then `if s: sections.append(s)` (appending the doc section). But that means the module section is appended TWICE? No wait — the added first `if s` appends module section, then `s` is reassigned to render_doc_freshness, and the trailing context `if s` appends doc section. So the module section is appended once (by the added duplicate? or the original?).
+
+Wait, actually, is the trailing `if s: sections.append(s)` the original line? Let me check the file directly. If the original had `module_unknown = ...` followed directly by `if s: sections.append(s)`, then adding lines before that original `if s` would place the doc computation between module_unknown and the append. The diff as shown adds a *new* `if s: sections.append(s)` plus doc block, and then the original `if s` remains. That'd be a double-append bug potentially... unless the original code was:
+
+```
+    module_unknown = bool(s) and (...)
+    doc_fresh...  no
+```
+
+Hmm. Let me just read the file.
+
+Actually wait — maybe there was an original `if s: sections.append(s)` right after module_unknown, and the patch adds a *duplicate* line. That would append module section twice. But then tests pass, and doubling output could be harmless-ish but is a real bug. Let me check the actual file.
+
+Let me read around main() in the current file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_module_sizes\|co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && git di… ✓ (8ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The working tree is clean — so the diff was committed. Let me check `git show --stat HEAD`.
+
+Now line 3485-3498: render_module_sizes at 3485, append at 3488, doc_fresh at 3494, append at 3498. So there's only one append per section in the current tree? Let's read 3478-3500.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3470,3500p' scripts/extr… ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — no double append; the module append was already there and the diff's added `if s: sections.append(s)` is a duplicate... wait. Let me re-read the diff hunk:
+
+```
+     module_unknown = bool(s) and (module_risk.scanned == 0 or not module_spec.ok)
++    if s:
++        sections.append(s)
++    # Day 204: ...
++    doc_fresh = collect_doc_freshness(Path.cwd())
++    s = render_doc_freshness(doc_fresh)
++    doc_fresh_unknown = bool(s) and doc_fresh.state == DOC_FRESH_COULD_NOT_CHECK
+     if s:
+         sections.append(s)
+```
+
+Hmm, the diff shows the added `if s: sections.append(s)` and then the context `if s: sections.append(s)`. But in the actual tree there are two appends at 3488 and 3498 — one after module_unknown and one after doc_fresh. So per the file, one append is for module, one for doc. So which one did the diff add? The diff shows addition of `if s:` right after module_unknown — so the patch adds BOTH a line duplicate... no. Actually the diff's context line `if s: sections.append(s)` after the added block is likely the original module append? No — the original was:
+
+```
+module_unknown = ...
+if s:
+    sections.append(s)   # module append
+```
+
+In the patched version we'd want:
+```
+module_unknown = ...
+if s:
+    sections.append(s)   # module append (unchanged)
+doc_fresh = ...
+s = render_doc_freshness(doc_fresh)
+doc_fresh_unknown = ...
+if s:
+    sections.append(s)   # doc append (added)
+```
+
+But the diff shows the added `if s` BEFORE the doc block, and the trailing context `if s`. That reads as though the original file had... hmm, unless the diff viewer reordered. Actually wait — maybe the original was:
+
+```
+module_unknown = ...
+# comment lines
+if s:
+    sections.append(s)
+```
+and the diff placed the new "if s" lines before doc_fresh... The diff as displayed is:
+
+```
++    if s:
++        sections.append(s)
++    # Day 204: ...
+```
+so a new `if s` append for module... then context `if s` for doc append. That'd be 2 module appends and no doc append? But the file shows appends at 3488 (module) and 3498 (doc). Given diff line numbers: the hunk header `@@ -3335,6 +3484,16 @@`. In new file, line 3484 starts the hunk. Lines: 3484 (`module_spec...`), 3485 (s=render_module_sizes), 3486 (module_unknown), 3487-3488 added if s: append, 3489-3493 comments, 3494 doc_fresh, 3495 s=render_doc, 3496 doc_fresh_unknown... wait the diff listed doc_fresh_unknown then context `if s:` then context `sections.append(s)`. Hmm, new-file numbering: 3487 `if s:`, 3488 `sections.append(s)`, 3489 comment, ... Actually the diff added lines are: if s, sections.append, 5 comment lines(?), doc_fresh, s=render, doc_fresh_unknown = 10 lines? Then context if s / sections.append at 3497-3498.
+
+Hmm, but then where's the module append? The added `if s: sections.append(s)` at 3487-3488 would be the module append, and the context `if s: sections.append(s)` at 3497-3498 the doc append. But the context line means it existed in the original file. That contradicts.
+
+Unless the original code was:
+```
+module_unknown = bool(s) and ...
+    if s:
+        sections.append(s)
+```
+with the append at a different indent? No.
+
+Let me just check git show of the previous version of this region.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD~1:scripts/extract_… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the original had the module append right after module_unknown, and the patch inserted the doc block between them — but diff display put `+ if s: sections.append(s)` as if new. Wait, but git's diff algorithm: original lines `if s:` / `sections.append(s)` appear once; new file has them twice (3487/3488 and 3497/3498). LCS-based diff will match the original's occurrence to one of them; the other is an addition. The display showed the addition before the doc block — meaning the original matched to the later one (3497/3498) and the module one was... hmm no. Let's recheck actual file: 3487-3488 vs 3497-3498. Which is the module append? Line 3485 `s = render_module_sizes`, 3486 module_unknown, 3487 `if s:` 3488 append → that's the module section appended. Then doc_fresh at 3494, render at 3495, doc_fresh_unknown at 3496, if s at 3497, append 3498 → doc section.
+
+So the file is correct: module appended once, doc appended once. The diff display ambiguity is fine — the "added" if s lines are the module ones (matching... whatever). Net: correct behavior. Let me verify by running the script and checking output.
+
+Actually wait — the displayed diff has the added `if s:` lines before the Day-204 comment and the *context* `if s:` after doc_fresh_unknown. But there are only 2 appends in the file and both exist. The diff's rendering, whatever it was, results in correct file. Good.
+
+Now let's verify:
+1. Run `python3 scripts/extract_trajectory.py --test` → exit 0.
+2. Run a normal run → check `## Doc freshness` present.
+3. Check the boundary/threshold semantics: task says "stale marker once the age crosses a named threshold". Implemented as `>` (stale iff age > 30). Task said "at and one day past" boundary tests — present.
+4. Check the file's header has been updated (yes).
+5. Check ARCHITECTURE.md updated under extract_trajectory.py notes (yes).
+6. No src/ change (diff stat: 3 files, no src). Good.
+7. Check that the parse regex handles real header. Let me run the test.
+
+Also check the doc-freshness section's placement and whether TOTAL_BYTE_CAP truncation might cut it. The task says stay small. Let's run.
+
+Also check `--test` output lists new case names.
+
+Also verify the order in main: does appending doc section before pairing etc. matter? Not for correctness.
+
+Let's run.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 CLAUDE_CODE_GAP.md && e… ✓ (4ms)
+ ✓ (89ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now run a normal run and inspect the rendered output for the `## Doc freshness` section, and whether the total cap truncates it.
+
+The script writes to YOYO_TRAJECTORY_OUT default `.yoyo/session_staging/trajectory.md`. Let me run without env to a temp output.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_TRAJECTORY_OUT=/tmp/traj_ev… ✓ (927ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The section renders and survives capping (line 27-28, mid-order). 
+
+Now check the "could not check" branch renders when file missing — tested in self-tests. Also check that the section isn't dropped from render — it printed.
+
+One potential issue: is the output written to the default path and injected? Not our concern.
+
+Another check: the task asked for the section to follow the file's existing section contract — render_* -> str, appended to sections in main. Done. It also introduced constants.
+
+forgotten_touchpoints: DocFreshness class used; all new constants used: GAP_DOC_REL_PATH (used in reason strings and render), DAY_COUNT_REL_PATH, GAP_DOC_VERIFIED_RE, DOC_STALE_AFTER_DAYS, DOC_FRESH_OK/STALE/COULD_NOT_CHECK — all used. `doc_fresh_unknown` is consumed in the unknown count subtraction. `re` is imported already presumably. Check `dataclass` import — used elsewhere in file (yes, class CiScan etc.). Let's confirm `from dataclasses import dataclass` exists and `re` imported. Tests passed so imports fine.
+
+Also, does the doc_fresh_unknown subtraction appear reasonable? Line 3545-ish. Yes.
+
+Also check that the tracker counts... not important.
+
+One more: the task said the threshold stale marker "once the age crosses a named threshold constant whose comment states why that number" — done with a comment.
+
+Doc-sync: This is evolve-kind, harness-side section; ARCHITECTURE.md updated (the project's convention; CLAUDE.md explicitly says new history goes into ARCHITECTURE.md, not CLAUDE.md). Also docs? The section is an internal harness artifact; docs/src likely not needed. The CLAUDE_CODE_GAP.md itself got the header note. I'd say doc_sync PASS.
+
+Product surface: touches no product surface (scripts/ harness + a doc). N/A or PASS. It's evolve-kind; the diff touches no config defaults, CLI flags, wizard, or startup. I'll say N/A... The rule: N/A only if the diff touches no product surface. It touches none → N/A is legal. But hmm, the harness-side trajectory script is arguably product-ish? It's used by evolve.sh. Actually product users could run extract_trajectory.py? It's a script for the evolve loop. I'll mark N/A with reason, or PASS. Safer: PASS? The check is "evolve-kind task touching product surface must be opt-in". Since it doesn't touch product surface, N/A fits. I'll use N/A with an explanation.
+
+Hmm, but note the header-marked claim in the "Reason" line: no issue. Fine.
+
+Also check the anti-vacuous / boundary tests present — yes.
+
+One last check: the task's verification says `git diff --stat` → exactly the three named files. Committed diff shows 3 files. 
+
+Let me also double check nothing in src/ changed (diff stat confirms). And no NEUTERED markers left in tree.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "NEUTERED\|SABOTAGE\|DO… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All good. Note: doc_fresh_unknown is defined and used. But is it used meaningfully in the health count line? Let's peek at that region quickly to confirm it's not dead.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3538,3556p' scripts/extr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Everything checks. Write the verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 34s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md.
+
+PASS — evidence:
+
+• `python3 scripts/extract_trajectory.py --test` → exit 0, "ALL PASSED", new `=== doc freshness self-tests ===` cases (anti-vacuous header-shape assertion, real-header parse, exact-30 vs 31 boundary, refusal paths, fresh-path near-miss).
+• Normal run → rendered artifact contains ## Doc freshness (the header, not the body) at line 27–28: header verified day-74, 130 day(s) old (repo is day 204) — STALE, past the 30-day threshold. The body has NOT been re-verified….
+• `CLAUDE_CODE_GAP.md header now states the stale snapshot, age, and outstanding body re-verification while keeping the historical Last verified: Day 74` line.
+• Committed diff (c4cb1e82) is exactly the three named files; no src/ change, no leftover sabotage markers. Module/doc section appends are each present exactly once.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

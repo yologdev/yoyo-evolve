@@ -1,0 +1,945 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the task-scope files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,12p' CLAUDE_CODE_GAP.m…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Last verified" . --inc… ✓ (12ms)
+ ✓ (83ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: zero readers in scripts/, src/, tests/. Let me look at the trajectory script's section contract.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.2s (2 ✓)
+
+Confirmed: zero readers of that header in scripts/, src/, tests/. Now let me study the trajectory script's section contract.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l scripts/extract_trajectory…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^def render_\|^def coll… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3170,3300p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2300,2360p' scripts/extr… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the section list end and self-tests structure.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3300,3420p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3416,3520p' scripts/extr… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the end of run_self_tests and a good model of an "unknown" section with a collect/render split plus a threshold, plus how self-tests are organized near the end. Let me look at render_pairing_coverage and collect_pairing_coverage as a good small model (with state constants).
+
+Also I need to see main()'s ending print of self-test results and the ordering of the sections; where to insert `## Doc freshness` section. Since data_sections counting matters, I need to handle the unknown state similarly.
+
+Let me look at lines 2857-2920 (pairing coverage) as a model.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2695,2720p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "return failures\|^if __… ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I understand enough. Let me design the implementation.
+
+I need:
+1. `GAP_DOC_REL_PATH = "CLAUDE_CODE_GAP.md"`, `DAY_COUNT_REL_PATH = "DAY_COUNT"` maybe. The age is computed against the repo's own day number — `DAY_COUNT` at repo root. So read DAY_COUNT.
+2. `DOC_STALE_AFTER_DAYS = <threshold>` with a stated reason.
+3. A parser for `Last verified: Day N (YYYY-MM-DD)`.
+4. `collect_doc_freshness(root: Path) -> DocFreshness` (I/O half).
+5. `render_doc_freshness(f) -> str` — at most ~4-8 lines.
+6. Section in main() with `doc_freshness_unknown` handling.
+7. Self-tests.
+
+Note: the task says don't hardcode a date. Age in days = current day - verified day. But careful: "compute the age against the repo's own day number — `DAY_COUNT` at the repo root reads `204` today; do not hardcode a date". So age = current_day - verified_day = 204 - 74 = 130 days. Good, matches "130 days ago".
+
+Threshold: what's a sensible named threshold with a reason? The task says: "print ... a stale marker once the age crosses a **named** threshold constant whose comment states why that number". 
+
+Let's pick `DOC_STALE_AFTER_DAYS = 30`. Reason? Hmm, needs a real reason. The repo runs ~3 sessions/day, and the planning loop reads this file every session when there are no issues. A doc whose verified-day claim is more than... Let me pick 30 with reason: "a month is longer than any of my other currency claims (CI run ages are graded in days, the pairing ledger in sessions); a snapshot older than 30 days has had ~90 sessions of drift and can be superseded by anything landed in that window." That's a stated reason.
+
+Actually — is there a repo precedent for a threshold? Let me check the risk/freshness. `EPISTEMIC_STALE_RE` etc. Let me check how other staleness thresholds are named in the repo. Not necessary. But maybe I should check if there's a consistent number. Let me grep for stale thresholds in scripts.
+
+Let me keep it simple and defensible: 30 days.
+
+Hmm, but also consider: maybe better to also derive from days. Fine.
+
+Where to insert the section in main()? Task says it should surface age where the planner already reads measured facts. Placement: these sections have an implicit sacrifice order under the cap. Doc freshness is short (~4 lines) and important. I'd place it near the module sizes / pairing coverage area — before the epistemic (which renders last and absorbs truncation). Let's insert right before the module-sizes section, or after. Actually the task says "≈4–8 rendered lines" and total byte cap 3072. Let's count current output size... Let me check the current rendered output.
+
+Let me be careful about data_sections count. If doc freshness renders a "could not check" line, it must not suppress the global no-data state, so I need `doc_freshness_unknown = bool(s) and f.state == COULD_NOT_CHECK` and subtract it.
+
+Now about the "stale marker" and normal case: The section renders in three states:
+- OK (fresh, within threshold): render the line with path, verified day, age, and "within threshold".
+- STALE: same plus a marker `(STALE — ...)`.
+- COULD NOT CHECK: "## Doc freshness: not checked — <reason>. This is NOT 'the doc is current'."
+
+Now, should it render when fresh? Following render_pairing_coverage's precedent: yes, print one short line even when fine — the point is the age is asked out loud every session.
+
+Let me write the code. Also self-tests must cover:
+- parsing the real header shape
+- age arithmetic on a fixture day pair
+- missing-file / unparseable path → "could not check" and not a clean line
+- threshold boundary (at and one day past)
+- anti-vacuous companions for absence assertions
+
+Let me now check the header shape parsing regex: `Last verified: Day 74 (2026-05-13)`. 
+
+Regex: `^Last verified:\s*Day\s+(\d+)` multiline.
+
+Let me now write the implementation. First let me draft the code block.
+
+```python
+# --- Doc freshness (the header a stale capability claim carries) ---
+
+# The planning loop reads this file when there are no community issues, so its
+# own age is trajectory data in the same sense the module-size gate is: a fact
+# about the repo that a later reader would otherwise have to remember to check.
+GAP_DOC_REL_PATH = "CLAUDE_CODE_GAP.md"
+DAY_COUNT_REL_PATH = "DAY_COUNT"
+
+# The header line the parser reads, e.g. `Last verified: Day 74 (2026-05-13)`.
+GAP_DOC_VERIFIED_RE = re.compile(r"^Last verified:\s*Day\s+(\d+)", re.MULTILINE)
+
+# Why 30: this repo runs ~3 sessions/day, so a month is ~90 sessions of drift
+# — longer than any other currency claim here is allowed to stand (CI runs are
+# graded in days, the pairing ledger in sessions), and short enough that the
+# Day-74 header that sat unread for 130 days would have been red on 101 of
+# them. A threshold with no stated reason is one the next reader re-inverts.
+DOC_STALE_AFTER_DAYS = 30
+
+DOC_FRESH_OK = "doc-fresh-ok"
+DOC_FRESH_STALE = "doc-fresh-stale"
+DOC_FRESH_COULD_NOT_CHECK = "doc-fresh-could-not-check"
+
+
+@dataclass
+class DocFreshness:
+    state: str
+    verified_day: int | None = None
+    current_day: int | None = None
+    reason: str = ""
+
+    @property
+    def age_days(self) -> int | None:
+        if self.verified_day is None or self.current_day is None:
+            return None
+        return self.current_day - self.verified_day
+```
+
+Wait — does the file use `dataclass`? Yes (`@dataclass class CiScan`). Let me check imports.
+
+Then:
+
+```python
+def classify_doc_freshness(gap_text: str, day_text: str) -> DocFreshness:
+    """Pure half: header + day counter -> a state. No I/O, no clock.
+
+    A header that does not parse is a REFUSAL, not a zero: a missing `Last
+    verified` line means the file makes a currency claim nothing can date, and
+    rendering that as "fresh" is the "could not check must not read as checked;
+    clean" defect this repo has now fixed in `collision_guard_skipped_message`
+    and `resolve_audit_dir`.
+    """
+    m = GAP_DOC_VERIFIED_RE.search(gap_text)
+    if m is None:
+        return DocFreshness(state=DOC_FRESH_COULD_NOT_CHECK, reason=f"no `Last verified: Day N` header in {GAP_DOC_REL_PATH}")
+    try:
+        verified = int(m.group(1))
+    except ValueError:
+        return DocFreshness(...)
+    ...
+```
+
+Hmm, `int(m.group(1))` with `\d+` can't fail. Keep it simple but rigorous — actually remove the try/except to avoid dead code (clippy isn't for python, but dead code is a smell). Actually `\d+` guarantees int(). So skip.
+
+current_day: parsed from DAY_COUNT. If DAY_COUNT unreadable/unparseable → could not check too ("cannot date the header without the repo's day counter").
+
+```python
+    day_m = re.search(r"\d+", day_text)  # maybe use fullmatch on stripped
+```
+
+DAY_COUNT contains "204\n". Use `day_text.strip()` and `.isdigit()`.
+
+```python
+def collect_doc_freshness(root: Path) -> DocFreshness:
+    """I/O half, at ONE call site. Two reads, nothing else."""
+    try:
+        gap_text = (root / GAP_DOC_REL_PATH).read_text(errors="replace")
+    except OSError as e:
+        warn(f"could not read {GAP_DOC_REL_PATH}: {e}")
+        return DocFreshness(state=DOC_FRESH_COULD_NOT_CHECK, reason=f"could not read {GAP_DOC_REL_PATH}")
+    try:
+        day_text = (root / DAY_COUNT_REL_PATH).read_text(errors="replace")
+    except OSError as e:
+        warn(f"could not read {DAY_COUNT_REL_PATH}: {e}")
+        return DocFreshness(state=DOC_FRESH_COULD_NOT_CHECK, reason=f"could not read {DAY_COUNT_REL_PATH}")
+    return classify_doc_freshness(gap_text, day_text)
+```
+
+Render:
+
+```python
+def render_doc_freshness(f: DocFreshness) -> str:
+    """At most 2 lines, header included. Renders on the FRESH path too, ...
+
+    THE STATED LIMIT IS IN THE RENDERED TEXT: this dates the header, never the
+    body — the rows below the header were last read on Day 74 and nothing here
+    re-verifies one of them.
+    """
+    if f.state == DOC_FRESH_COULD_NOT_CHECK:
+        return (
+            f"## Doc freshness: not checked — {f.reason}. "
+            f"This is NOT 'the gap analysis is current'."
+        )
+    line = (
+        f"{GAP_DOC_REL_PATH}: header verified day-{f.verified_day}, "
+        f"{f.age_days} day(s) old (day {f.current_day})"
+    )
+    if f.state == DOC_FRESH_STALE:
+        line += (
+            f" — STALE (>{DOC_STALE_AFTER_DAYS} days). The body has NOT been "
+            f"re-verified; re-read a row before trusting it."
+        )
+    else:
+        line += f" — within the {DOC_STALE_AFTER_DAYS}-day threshold."
+    return "## Doc freshness: the header, not the body" + "\n" + line
+```
+
+Hmm, header + line = 2 lines. But the task says "≈4–8 rendered lines" max — a cap, not a target. 2-3 lines is fine and better. Actually let me re-read: "stay small (≈4–8 rendered lines)". Fine, 3 lines is small.
+
+Hmm, but should the render include the header path? Let me simplify — the header should be a heading `## Doc freshness` and then content.
+
+Let's produce:
+```
+## Doc freshness (the header, not the body)
+CLAUDE_CODE_GAP.md: verified day-74, 130 day(s) old (day 204) — STALE, past the 30-day threshold. The body has NOT been re-verified; re-read a row before trusting it.
+```
+That's 2 lines. 
+
+Age negative? If verified day > current day (fixture?), age could be negative. That'd be weird. Maybe treat age < 0 as could-not-check? Hmm, a header dated in the future is a defect worth surfacing. But keep it simple: age is computed; if verified > current we could flag. Let's add: if age < 0 → reason "header names day N, ahead of the repo's day counter M" as could-not-check. Actually that's a nice honest touch. But it also adds a self-test case. Hmm, scope. The task lists required test cases; extra cases are fine. I'll include it because a negative age would otherwise render as "-5 day(s) old — within the threshold", which is a clean line about a nonsense claim. That's the exact defect class. Let me do it, cheap.
+
+Threshold boundary: stale if age > DOC_STALE_AFTER_DAYS (crosses). "at and one day past" → at exactly 30 it should be... "a stale marker once the age crosses a named threshold". Hmm, ambiguity. Let me define clearly: stale when `age_days > DOC_STALE_AFTER_DAYS`, i.e. "30 days old is within; 31 is stale". Or stale when `>=`. Task says "the threshold boundary (at and one day past)" must be tested — either convention is fine as long as tested and documented. I'll pick `>`, documented in the constant's comment: "a claim exactly N days old is still inside the window; N+1 crosses". Hmm, actually simpler reasoning: "age > threshold → stale" reads naturally as "older than 30 days".
+
+Let me set the constant comment to state it: "stale when age_days > DOC_STALE_AFTER_DAYS, i.e. a claim exactly this old is still inside the window."
+
+Now main() insertion. Let me insert after module sizes? Or before productivity? I'll insert right after the module-size section (both are "is the repo's own bookkeeping honest" checks) — actually the gap doc relates to what the planner reads when there are no issues, so it's priority-steering data. Let me put it after the module sizes block, before the productivity block. And add `doc_fresh_unknown` handling and subtract from data_sections.
+
+Let me look at exact code region for data_sections counting.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.5s (2 ✓)
+
+Now let me look at the exact main() regions I need to touch, and the dataclass/imports style.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' scripts/extract_t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3355,3390p' scripts/extr… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, `pairing_unknown` is computed but is it subtracted in data_sections? Let me see the full data_sections expression (lines 3385-3395).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3383,3400p' scripts/extr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3381,3390p' scripts/extr… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The bash tool is truncating similar lines ("... (4 more similar lines)"). Let me use read_file with offset to get the exact text.
+────────────────────────────────────────────────────────────────────────────────
+
+The bash output is collapsing similar lines. Let me read that region directly.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:3380..3394 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I have what I need. Let me make changes.
+
+### Step 1: CLAUDE_CODE_GAP.md header
+
+Current:
+```
+# Gap Analysis: yoyo vs Claude Code
+
+Last verified: Day 74 (2026-05-13)
+Last updated: Day 24 (2026-03-24) — major refresh on Day 38, ...
+```
+
+New header: keep the Day 74 fact, change the claim. Something like:
+
+```
+# Gap Analysis: yoyo vs Claude Code
+
+**This file is a stale snapshot, not a current assessment.** Its verification date is
+`Day 74 (2026-05-13)` — **130 days** before today (Day 204, 2026-09-20). Every row below was
+last read on Day 74 and is **unverified until re-read**: the ✅/❌ marks describe yoyo on
+Day 74, not yoyo now, and 130 days of work has landed since. Re-read a row (and the code it
+names) before you act on it; nothing in `scripts/`, `src/` or `tests/` re-derives this header.
+
+Last verified: Day 74 (2026-05-13)
+Last updated: Day 24 (2026-03-24) — ...
+
+**Deliberately still outstanding:** the whole 482-line body has *not* been re-verified since
+Day 74. Refreshing it is a project of its own, not a line edit — so it is left honestly stale
+rather than half-refreshed. The age of this header is now re-derived every session by
+`render_doc_freshness` in `scripts/extract_trajectory.py` (`## Doc freshness`).
+```
+
+That's good — states verified day, age in days, unverified-until-re-read, and the outstanding residue.
+
+Should I make the numbers frozen at day 204? Yes, since it's the header and it becomes stale again — but that's fine, the point is no longer claiming currency. Actually writing "130 days" frozen will itself go stale. Maybe better: state "as of Day 204 (2026-09-20) this header is 130 days old" — dated, so it reads as a historical statement. Hmm, but the mechanical section re-derives it. Let's phrase: "**as of Day 204 (2026-09-20) this is 130 days old**". That dates the claim.
+
+Let's write it.
+
+### Step 2: script code
+
+Insert the doc-freshness block before the module-sizes section, or after? Let me put it right before the `# --- Counterfactual pairing coverage` ... no. Better: put the code block after the module-sizes code (collect_module_sizes/render_module_sizes) and before the productivity block? Let me find where module sizes block ends and productivity begins.
+
+Actually order of definitions doesn't matter much; placement in main() matters. Let me place the code right after `render_module_sizes` function ends, before the productivity section. Let me find that boundary.
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me implement. First, Step 1 — the header.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE_CODE_GAP.md (4 → 17 lines)
+    # Gap Analysis: yoyo vs Claude Code
+  + 
+  + **This file is a stale snapshot, not a current assessment.** Its verification date is
+  + `Day 74` — **as of Day 204 (2026-09-20) that is 130 days ago**. Every row below was last
+  + read on Day 74 and is **unverified until re-read**: the ✅/❌ marks describe yoyo as it was
+  + on 2026-05-13, not as it is now, and a great deal of work has landed since. Re-read a row
+  + (and the code it names) before you act on it. Nothing in `scripts/`, `src/` or `tests/`
+  + re-derives this header for you — with one mechanical exception, added Day 204:
+  + `render_doc_freshness` in `scripts/extract_trajectory.py` reads the `Last verified:` line
+  + below and prints the age into the planner's `## Doc freshness` section each session.
+  + 
+  + **Deliberately still outstanding:** the body below has *not* been re-verified since Day 74.
+  + Refreshing it is a project in its own right, not a line edit, so it is left honestly stale
+  + rather than half-refreshed — a half-refreshed gap analysis is worse than a dated one.
+    
+    Last verified: Day 74 (2026-05-13)
+    Last updated: Day 24 (2026-03-24) — major refresh on Day 38, stats refresh on Day 50, Day 54, Day 59, Day 61, Day 63, Day 64, Day 67, Day 74
+ ✓ (1m 22s)
+    # Gap Analysis: yoyo vs Claude Code
+  + 
+  + **This file is a stale snapshot, not a current assessment.** Its verification date is
+  + `Day 74` — **as of Day 204 (2026-09-20) that is 130 days ago**. Every row below was last
+  + read on Day 74 and is **unverified until re-read**: the ✅/❌ marks describe yoyo as it was
+  + on 2026-05-13, not as it is now, and a great deal of work has landed since. Re-read a row
+  + (and the code it names) before you act on it. Nothing in `scripts/`, `src/` or `tests/`
+  + re-derives this header for you — with one mechanical exception, added Day 204:
+  ... (9 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, the header had a blank line after, then "This document tracks the feature gap...". Let me verify the result reads well.
+
+Also the "130 days ago" is now dated (as of Day 204). Good.
+
+Now step 2: the script. Find where the module-sizes block ends / productivity begins.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,22p' CLAUDE_CODE_GAP.m…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:2360..2382 ✓ (1ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The module-sizes block ends right before line 2388 `# --- Productivity cross-check ...`. Let me read that boundary.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:2382..2396 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll insert the doc-freshness block after the module-sizes renderer (line 2385).
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 153 lines)
+        return "\n".join(lines)
+  + 
+  + 
+  + # --- Doc freshness (the header a stale capability claim carries) ---
+  + #
+  + # The measured defect (Day 204): `CLAUDE_CODE_GAP.md` is exactly what the
+  + # planning loop reads when there are no community issues to steer priorities,
+  + # and its header asserted `Last verified: Day 74 (2026-05-13)` as a statement of
+  + # CURRENCY for 130 days — while `grep -rn "Last verified" scripts/ src/ tests/`
+  + # returned 0 hits. A self-fact with no re-derivation route cannot be
+  + # contradicted, only re-derived, and only if something re-derives it. So this
+  + # is the re-derivation route: the AGE, printed every session, not the body.
+  + #
+  + # What this does NOT do, stated rather than implied: it dates the HEADER only.
+  + # The rows under it were last read on Day 74 and nothing here re-verifies one
+  + # of them. That limit is written into the rendered text, not just here.
+  + 
+  + GAP_DOC_REL_PATH = "CLAUDE_CODE_GAP.md"
+  + # The repo's own day counter (`DAY_COUNT` at the root reads `204` today). The
+  + # age is current_day - verified_day; NO date is hardcoded here, because a date
+  ... (133 more lines)
+ ✓ (1m 22s)
+        return "\n".join(lines)
+  + 
+  + 
+  + # --- Doc freshness (the header a stale capability claim carries) ---
+  + #
+  + # The measured defect (Day 204): `CLAUDE_CODE_GAP.md` is exactly what the
+  + # planning loop reads when there are no community issues to steer priorities,
+  + # and its header asserted `Last verified: Day 74 (2026-05-13)` as a statement of
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wire it into main():
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 14 lines)
+        s = render_module_sizes(module_spec, module_risk)
+        module_unknown = bool(s) and (module_risk.scanned == 0 or not module_spec.ok)
+  +     if s:
+  +         sections.append(s)
+  +     # Day 204: the age of `CLAUDE_CODE_GAP.md`'s `Last verified:` header. Placed
+  +     # next to the module-size gate because it is the same kind of fact — the
+  +     # repo's own bookkeeping, aged out loud. Kept SHORT and mid-order on
+  +     # purpose: it is steering data and must survive TOTAL_BYTE_CAP, and the
+  +     # epistemic block renders last and absorbs truncation (Day 142).
+  +     doc_fresh = collect_doc_freshness(Path.cwd())
+  +     s = render_doc_freshness(doc_fresh)
+  +     doc_fresh_unknown = bool(s) and doc_fresh.state == DOC_FRESH_COULD_NOT_CHECK
+        if s:
+            sections.append(s)
+ ✓ (1m 23s)
+        s = render_module_sizes(module_spec, module_risk)
+        module_unknown = bool(s) and (module_risk.scanned == 0 or not module_spec.ok)
+  +     if s:
+  +         sections.append(s)
+  +     # Day 204: the age of `CLAUDE_CODE_GAP.md`'s `Last verified:` header. Placed
+  +     # next to the module-size gate because it is the same kind of fact — the
+  +     # repo's own bookkeeping, aged out loud. Kept SHORT and mid-order on
+  +     # purpose: it is steering data and must survive TOTAL_BYTE_CAP, and the
+  ... (6 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 2 lines)
+            - (1 if module_unknown else 0)
+  +         - (1 if doc_fresh_unknown else 0)
+ ✓ (1m 23s)
+            - (1 if module_unknown else 0)
+  +         - (1 if doc_fresh_unknown else 0)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (82ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Works. Now the self-tests. Let me find a good place in run_self_tests — near the end, before the final print. Let me look at the tail region around line where the last tests are (6170-6185+150 offset = shifted by ~155 lines now). Let me find the last test block.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the self-tests. Let me find a good insertion point.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "claims_by_day(\s*$\|===… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:6462..6502 ✓ (1ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I was inserting self-tests into run_self_tests(). Let me continue: add the doc freshness self-tests before the final print, then run the tests.
+
+Let me check the current state of the file first.
+────────────────────────────────────────────────────────────────────────────────
+
+I was mid-way through adding self-tests. Let me check current state and finish.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "doc-fresh\|collect_doc_… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need to add the self-tests before line 6496. Let me look at the exact text at 6494-6496 to anchor the edit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:6493..6499 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The anchor `{195: 0},\n    )\n\n    print(...)` — but `{195: 0},` may appear multiple times. Let me use a bigger unique anchor including the print.
+
+Now let me write the self-tests. Requirements:
+- parsing the real header shape
+- the age arithmetic on a fixture day pair
+- the missing-file / unparseable path returning `could not check` and NOT a clean line
+- the threshold boundary (at and one day past)
+- Anti-vacuous companion for absence assertions.
+
+Let me write them.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (2 → 119 lines)
+  +     print(f"\n=== doc freshness self-tests ===\n")
+  + 
+  +     # The REAL header shape, as it stands in CLAUDE_CODE_GAP.md today. This is
+  +     # the fixture for a pattern that reads SOURCE TEXT, so it is that file's
+  +     # own line rather than a spelling I typed (Day 201: a fixture I author
+  +     # encodes the LAYOUT my pattern expects, and agrees with it by
+  +     # construction). Asserted anti-vacuous FIRST, so a transcription slip that
+  +     # drops the header cannot make the refusal cases below pass by agreeing
+  +     # with themselves.
+  +     REAL_HEADER = "Last verified: Day 74 (2026-05-13)"
+  +     assert_true(
+  +         "fixture really carries the header shape (anti-vacuous)",
+  +         GAP_DOC_VERIFIED_RE.search(REAL_HEADER) is not None,
+  +     )
+  + 
+  +     # 1. The real header parses, and the age arithmetic is the day pair.
+  +     parsed = classify_doc_freshness(REAL_HEADER + "\n", "204\n")
+  +     assert_eq("real header parses to its verified day", parsed.verified_day, 74)
+  +     assert_eq("age is current_day - verified_day", parsed.age_days, 130)
+  + 
+  ... (99 more lines)
+ ✓ (1m 22s)
+  +     print(f"\n=== doc freshness self-tests ===\n")
+  + 
+  +     # The REAL header shape, as it stands in CLAUDE_CODE_GAP.md today. This is
+  +     # the fixture for a pattern that reads SOURCE TEXT, so it is that file's
+  +     # own line rather than a spelling I typed (Day 201: a fixture I author
+  +     # encodes the LAYOUT my pattern expects, and agrees with it by
+  +     # construction). Asserted anti-vacuous FIRST, so a transcription slip that
+  +     # drops the header cannot make the refusal cases below pass by agreeing
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Two issues: 
+1. `assert_true` signature — need to check. 
+2. Hardcoded "30-day threshold" and "inside the 30-day threshold" in test 6 — should use the constant. Let me fix that to use f-string with DOC_STALE_AFTER_DAYS.
+3. The `print(f"\n=== doc freshness self-tests ===\n")` has an unnecessary f prefix — harmless but let me clean.
+4. `Path("/nonexistent-...")` for missing file — but DAY_COUNT also missing, so it returns "could not read CLAUDE_CODE_GAP.md" reason. That's fine — but the test asserts GAP_DOC_REL_PATH in the render, which is satisfied.
+
+Wait — but there's a subtlety: in test 5 the missing-file check reads CLAUDE_CODE_GAP.md first, which fails → refusal. Good.
+
+Also the live test uses `Path(__file__).resolve().parent.parent` — scripts/ parent is repo root. Good.
+
+Let me fix the hardcoded 30.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def assert_true" script… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now fix the hardcoded threshold spelling in test 6:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (5 → 5 lines)
+        assert_true(
+            "a fresh header renders as inside the threshold",
+  -         "inside the 30-day threshold" in fresh_render
+  +         f"inside the {DOC_STALE_AFTER_DAYS}-day threshold" in fresh_render
+            and "STALE" not in fresh_render,
+        )
+ ✓ (1m 23s)
+        assert_true(
+            "a fresh header renders as inside the threshold",
+  -         "inside the 30-day threshold" in fresh_render
+  +         f"inside the {DOC_STALE_AFTER_DAYS}-day threshold" in fresh_render
+            and "STALE" not in fresh_render,
+        )
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/    print(f"\\n=== doc… ✓ (91ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All passed. The tail is collapsing output but I need to verify all 15 new cases listed. Let me grep for the doc freshness section output explicitly.
+
+I also want to run positive controls (mutate → run → restore) to prove the tests actually fire. Let me do that serially with markers.
+
+First, let me see the full doc freshness test output.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (88ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The harness collapses repeated "ok:" lines in tool output display. Let me force distinct output by piping through a filter that numbers lines, or use `grep -c "  ok:"`. Actually the collapsing is in the tool output rendering, not python. Let me use `awk` to print them with distinct prefixes.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (86ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+17 new cases. Now positive controls — mutate → run → restore, serially, as one atomic command, with a marker.
+
+Positive control 1: neuter `classify_doc_freshness`'s refusal to return OK — should redden the refusal tests.
+
+Let me do the atomic version. I'll use python to patch, run, and restore with git checkout of the file... but git checkout would lose my edits. Better: make a backup copy, mutate, run, restore from backup. All in one command.
+
+Let me do control 1: change the threshold comparison from `>` to `>=` — should redden "age exactly 30 is INSIDE the threshold".
+
+Actually a stronger control: neuter the refusal path. Let me do both in one atomic command each.
+
+Control A: neuter the refusal → reddens tests 7,10,11,12,13,14,15.
+Control B: flip `>` to `>=` → reddens test 5 (boundary).
+
+Let me run them.
+────────────────────────────────────────────────────────────────────────────────
+
+Now positive controls — mutate → run → restore, atomically and serially:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (17 lines) ✓ (201ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Control A: 4 failures, by name. Note the missing-file test 13 still passed because collect_doc_freshness returns its own refusal before reaching classify. Good — that's expected and it confirms the two refusal paths are separately covered.
+
+Now Control B: threshold `>` → `>=`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (8 lines) ✓ (199ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both controls fired by name and the tree is restored (grep count 0 for markers, ALL PASSED).
+
+Now run the script normally and verify the section reaches the rendered artifact.
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls fired by name; no markers left. Now verify the section reaches the rendered artifact:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_DAY=204 YOYO_TRAJECTORY_OUT… ✓ (923ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The section reaches the rendered artifact. Now let's check the byte budget — make sure the section survived capping and the total is under TOTAL_BYTE_CAP. The output above shows it present. Let me verify the file size.
+
+Also verify the trajectory.md output isn't capped in a way that drops it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -c -l .yo… (5 lines) ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Section present, no truncation, well within budget.
+
+Now Step 3: ARCHITECTURE.md per-file notes under `scripts/extract_trajectory.py`. Let me find that entry.
+────────────────────────────────────────────────────────────────────────────────
+
+Now Step 3 — the ARCHITECTURE.md record. Let me find the per-file entry.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^### \|^## " ARCHITECTU… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_trajectory" ARC… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md is huge, with per-file entries. Let me find the exact section for scripts/extract_trajectory.py. It doesn't seem to have a heading by that exact path. Let me search for a per-file heading pattern.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^## \|^### " ARCHITECTU… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`scripts/\|^\*\*Per… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to append the ARCHITECTURE.md record to the existing `scripts/extract_trajectory.py` bullet at line 1073. Let me do that surgically by appending to the end of that bullet... but bullets are giant multi-line paragraphs. Line 1073 is one bullet; line 1074 might be another. Let me check line numbers around 1073-1075.
+────────────────────────────────────────────────────────────────────────────────
+
+The ARCHITECTURE bullet for extract_trajectory.py is at line 1073. Let me find its end so I can append.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1073 && NR<=1076 {print… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, line 1074 is a *continuation* of line 1073? No — 1074 starts with `- **Day 203 (#919)...` which is a new bullet. My awk prints per-line; these are very long lines. So line 1073 is one huge bullet. I'll append my new record as a continuation of line 1073 by editing the end of that line. The line ends with something. Let me get the tail of line 1073.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==1073' ARCHITECTURE.md |… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line 1073 ends with "...actually reach operators." I'll append my new record to that line via edit_file using the tail as anchor.
+
+Let me write the ARCHITECTURE record. It must include:
+- what the section reads
+- the threshold and its reason
+- a superseded claim, recorded rather than erased: that CLAUDE_CODE_GAP.md's header asserted `Last verified: Day 74` as a statement of currency for ~130 days with zero readers of that line anywhere in scripts/, src/ or tests/.
+
+Let me construct the append text carefully. Keep it substantive but not absurdly long.
+
+I'll use edit_file with old_text = the ending sentence, new_text = same + my record.
+
+Careful: the sentence "Stderr is captured to `$SESSION_STAGING/trajectory.stderr.log` and surfaced (head -20) in the cron's stderr if non-empty, so `warn()` diagnostics actually reach operators." — is that unique in ARCHITECTURE.md? Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "diagnostics actually re… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/ARCHITECTURE.md (1 → 1 lines)
+  - Stderr is captured to `$SESSION_STAGING/trajectory.stderr.log` and surfaced (head -20) in the cron's stderr if non-empty, so `warn()` diagnostics actually reach operators.
+  + Stderr is captured to `$SESSION_STAGING/trajectory.stderr.log` and surfaced (head -20) in the cron's stderr if non-empty, so `warn()` diagnostics actually reach operators. **Day 204 — the `## Doc freshness` section, the first re-derivation route for `CLAUDE_CODE_GAP.md`'s header.** The file is exactly what the planning loop reads when there are no community issues, and its header carried a currency claim nothing anywhere re-derived. The section reads **one line and one file**: `GAP_DOC_VERIFIE… [yoyo: 3484 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 23s)
+  - Stderr is captured to `$SESSION_STAGING/trajectory.stderr.log` and surfaced (head -20) in the cron's stderr if non-empty, so `warn()` diagnostics actually reach operators.
+  + Stderr is captured to `$SESSION_STAGING/trajectory.stderr.log` and surfaced (head -20) in the cron's stderr if non-empty, so `warn()` diagnostics actually reach operators. **Day 204 — the `## Doc freshness` section, the first re-derivation route for `CLAUDE_CODE_GAP.md`'s header.** The file is exactly what the planning loop reads when there are no community issues, and its header carried a currency claim nothing anywhere re-derived. The section reads **one line and one file**: `GAP_DOC_VERIFIE… [yoyo: 3484 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check ARCHITECTURE.md size gate — is there a size check on ARCHITECTURE.md? Let me check if any test checks ARCHITECTURE.md size. Let's just run the full verification suite.
+
+Also I need to check: does the repo have a test that counts scripts/*.py lines or a module-size gate that includes scripts? tests/module_size.rs is for src/*.rs. Also there may be a check on CLAUDE.md size (past 40KB). I didn't touch CLAUDE.md. Good.
+
+Also: is there a lint on the ARCHITECTURE.md/CLAUDE.md backticked-symbol gate mentioned in memories? "A new gate over the backticked Rust symbols in CLAUDE.md" — that's CLAUDE.md not ARCHITECTURE.md. But let me check if tests validate ARCHITECTURE.md backticked symbols too. Let me search tests for ARCHITECTURE.
+
+Let me now run the required verification:
+1. python3 scripts/extract_trajectory.py --test → exit 0
+2. normal run → section present ✓ (done)
+3. cargo build && cargo test
+4. git diff --stat → exactly three files
+
+Also check for a CLAUDE.md/ARCHITECTURE doc gate.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ARCHITECTURE" tests/*.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (4ms)
+ ✓ (107ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, `git diff --stat` says ARCHITECTURE.md "3 +-" — I replaced 1 line with 1 line, but the +3/-1 could mean my new text was split? No — edit_file replaced one long line with one long line; the diff shows 3 insertions and 1 deletion? Hmm, maybe my new_text had a trailing newline causing a split. Let me check git diff for ARCHITECTURE.md.
+
+Actually my new_text ended with "\n" which may have introduced a blank line. Let me check.
+
+Also doc_version_claims.rs checks CLAUDE.md and ARCHITECTURE.md for version claims — my addition mentions "#832" and "#919" style issue numbers, plus "0.18.1"? No. But it checks "dependency claims". Let me look at what it looks for — could it flag something? Let's run cargo test to see.
+
+Let me first fix the ARCHITECTURE newline issue.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ARCHITECTURE.md | head … ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+My append introduced a blank line, splitting the bullet. I need to remove the trailing newline so my text joins the same line. Let me fix: remove the "\n" at the end of the added text, so line 1073 stays one line.
+
+The current file has the appended text followed by a newline then the original line ending created a blank line. Let me merge lines. I'll use python to join line 1073 and 1074 if 1074 is empty.
+
+Actually simpler: read the region and fix with python.
+────────────────────────────────────────────────────────────────────────────────
+
+The trailing newline split the bullet. Let me join it back.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (61ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now ARCHITECTURE.md is a clean 1-line-in/1-line-out. The grep -c "^+$" returned 0 (exit 1 because grep found nothing) — good, no blank added lines.
+
+Now run the full Rust verification.
+────────────────────────────────────────────────────────────────────────────────
+
+Clean single-line change now. Running the full Rust verification suite:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | tail… ✓ (1.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3; echo… ✓ (1m 23s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (2m 56s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green: 5965 passed, 0 failed. No failures, no panics.
+
+Now let me double check the specific gates that matter for my change:
+- tests/neutered_guards.rs passed (no markers left) ✓
+- tests/doc_version_claims.rs passed ✓
+- tests/module_size.rs passed ✓ (scripts aren't counted)
+
+Let me verify the neutered_guards test explicitly ran and the doc_version_claims test.
+
+Also let me confirm no NEUTERED marker anywhere.
+
+Then final: git diff --stat shows exactly 3 files ✓. Let me re-verify one more time plus check the rendered trajectory artifact is still present and contains the section.
+
+Also the task says: "Verify it actually reaches the rendered artifact: run the script the way the harness does and show the new section in your report". Done earlier but let me re-run after the final edits to be safe.
+
+One more consideration: the task says the section list in main() is built at ~line 3170. I inserted after module sizes. Fine.
+
+Let me also double-check the `data_sections` correct handling didn't break the "no trajectory data yet" test — cargo test passed, and trajectory self-tests passed.
+
+Let me also make sure `python3 scripts/extract_trajectory.py --test` exits 0 (done: exit 0).
+
+Let me run the final verification round and show output.
+
+Also should I clean up .yoyo/session_staging/trajectory.md? It's a generated artifact — is it gitignored? Let me check git status to make sure it doesn't appear as an untracked file that would get committed with `git add -A`. If it's not ignored, I should be careful. Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- markers ---"; grep -rn… ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+41 markers?! Let me check what those are. `tests/neutered_guards.rs` refuses to pass while a marker is in the tree — but cargo test passed. So these must be pre-existing occurrences, likely in comments documenting the rule (e.g., my docstring mentioning "NEUTERED POSITIVE CONTROL"? I wrote comments? No I didn't). Let me look.
+
+Actually ARCHITECTURE.md and the script might legitimately mention "NEUTERED" in prose (as I did in my ARCHITECTURE record: "marked `NEUTERED`"). Let me check what the guard actually scans and whether these are pre-existing (i.e., were they there before my change?).
+
+Let me grep with context.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "NEUTERED\|SABOTAGE\|DO… ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The gate only scans `.rs`, `.py`, `.sh` files under `src/`, `tests/`, `scripts/` — not `.md` files. And my diff added 0 markers (`grep -c` on added lines = 0). The 41 hits are all in ARCHITECTURE.md prose (which documents the rules using those words). Baseline on HEAD scripts/extract_trajectory.py = 0 markers, same as now.
+
+Confirmed by cargo test passing (neutered_guards is part of the suite).
+
+Now, one thing to verify: the task requires I show the `## Doc freshness` section present in the rendered output — done. Let me do a final clean re-run to capture the evidence, and confirm exit 0 and the section.
+
+Also note `.yoyo/session_staging/trajectory.md` is not showing in git status, so it's gitignored. Good.
+
+Let me do the final evidence run.
+────────────────────────────────────────────────────────────────────────────────
+
+Markers are all in ARCHITECTURE.md prose (the gate scans only .rs/.py/.sh); my diff added zero. Final evidence run:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== 1.… (4 lines) ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three steps verified. Committing:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (74ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The task is committed. Let me verify the state is clean and do a final check. Actually the work is complete — commit c4cb1e82. Let me just confirm the tree is clean and give the report.
+
+Let me do one final verification to be sure everything is in order.
+────────────────────────────────────────────────────────────────────────────────
+
+The work is committed. Let me do a final confirmation that the tree is clean and nothing is left over.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== git status ==="; git s… ✓ (49ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Task complete and committed as c4cb1e82. Tree clean, exactly the three named files, no src/ change.
+
+## What changed
+
+Step 1 — the header stops claiming currency (CLAUDE_CODE_GAP.md, header region only)
+
+The historical Last verified: Day 74 (2026-05-13) line is kept — not erased. What changed is the prose around it: a reader stopping after three lines now sees that the file is a stale snapshot, that Day 74 is 130 days before Day 204, that every row below is unverified until re-read, that no re-derivation route existed until this change, and a named line stating the outstanding residue (the whole body is still un-verified since Day 74). No table row was touched.
+
+Step 2 — the age is re-derived every session (scripts/extract_trajectory.py)
+
+A new ## Doc freshness section following the file's existing contract:
+• `GAP_DOC_REL_PATH = "CLAUDE_CODE_GAP.md", DAY_COUNT_REL_PATH = "DAY_COUNT"` — module constants, no inline literal, no hardcoded date
+• pure classify_doc_freshness(gap_text, day_text) -> DocFreshness; I/O at one call site in collect_doc_freshness(root), shelling nothing
+• `DOC_STALE_AFTER_DAYS = 30` with the reason in the comment: ~3 sessions/day makes 30 days (~90 sessions) longer than any other currency claim here is allowed to stand unanswered, and short enough that the Day-74 header would have been flagged on 101 of its 130 unread days. Boundary named: STALE iff age > 30
+• three states, none folded — missing file, non-numeric DAY_COUNT, unparseable header, and a header dated ahead of the counter all render not checked — <reason>. This is NOT 'the gap analysis is current'. and never a clean line
+• renders on the fresh path too (a section that goes quiet when healthy is indistinguishable from a deleted file)
+• the limit is in the rendered text: it dates the header, never the body, and it is a reader, not a gate
+• wired into main() mid-order beside the module-size gate, and counted in data_sections as doc_fresh_unknown so a refusal can't suppress the honest no-data state
+
+Step 3 — self-tests and the durable record
+
+17 new run_self_tests() cases, including the real header shape pulled from the file's own line, the day-pair arithmetic, the boundary at exactly 30 vs 31, and the refusal paths — with anti-vacuous companions asserting each fixture really carries the header shape and each refusal really renders, so a clean line can't be produced by an empty render.
+
+## Evidence
+
+| Check | Result |
+|---|---|
+| python3 scripts/extract_trajectory.py --test | exit 0, ALL PASSED, 17 new cases by name |
+| normal run → rendered artifact | ## Doc freshness (the header, not the body) / CLAUDE_CODE_GAP.md: header verified day-74, 130 day(s) old (repo is day 204) — STALE, past the 30-day threshold… — 2262 bytes, under both caps |
+| cargo fmt -- --check / clippy -D warnings / build / test | all green; 5965 passed, 0 failed |
+| git diff --stat | exactly ARCHITECTURE.md, CLAUDE_CODE_GAP.md, scripts/extract_trajectory.py; 0 files under src/ |
+
+Positive controls, run serially as atomic mutate→run→restore: neutering the refusal branch (returning a clean DocFreshness for a missing header) reddened 4 tests by name; flipping the boundary > to >= reddened exactly one — age exactly 30 is INSIDE the threshold — while every other doc-freshness test stayed green. Both restored; grep for markers added by my diff returns 0.
+
+## The honest limitation
+
+This dates the header. It does not re-verify a single row of the 482-line body, and nothing fails or reverts when the section says STALE — it is a reader surface, so whether it changes anything still depends on a planner reading it. That residue is stated in the file's own header, in the rendered text, in the code comment, and as a superseded claim in ARCHITECTURE.md, rather than left implied.
+
+## Reverted / abandoned
+
+Nothing. No failed attempts requiring a revert this session. The one mid-course correction was cosmetic: my first ARCHITECTURE.md append introduced a stray blank line that split the extract_trajectory.py bullet; I joined it back to a single-line change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
