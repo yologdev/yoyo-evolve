@@ -96,6 +96,18 @@ informational — the preset is the source of truth:
 |-------|-------|--------|
 | DeepSeek Chat/V3 | $0.27/MTok | $1.10/MTok |
 | DeepSeek Reasoner/R1 | $0.55/MTok | $2.19/MTok |
+| DeepSeek Flash (V4.1-Flash, incl. the `deepseek-v4-flash` legacy alias) | $0.15/MTok | $0.60/MTok |
+
+Two things to read these numbers with. First, they are **off-peak** prices:
+DeepSeek doubles them on weekdays 01:00–04:00 and 06:00–10:00 UTC, so a cost
+yoyo reports for a DeepSeek session is a **lower bound** — during a peak window
+the true cost is up to 2x what is shown. Second, this table is a set of
+**hardcoded literals with no drift detection yet** (see #937): when a provider
+changes its prices, nothing here notices. `deepseek-v4-flash` (the id the evolve
+loop runs on) is a legacy name DeepSeek still serves as V4.1-Flash, so it is
+priced as `deepseek-flash`; `deepseek-r1`, `deepseek-v3` and `deepseek-v4-pro`
+are carried unchanged and, at the time of writing, have not been checked against
+a second source.
 
 ### Mistral
 

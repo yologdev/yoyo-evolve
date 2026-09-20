@@ -313,7 +313,12 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // and this file is the CLI dispatcher every subcommand route passes through.
     // The next task that has to grow this file should split it, not bump this.
     ("src/dispatch_sub.rs", 2162),
-    ("src/format/cost.rs", 2869), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+    ("src/format/cost.rs", 2931), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+    // Day 204 (#937 Task 1): 2869 -> 2931 (+62), pasting the count in the same
+    // diff as the DeepSeek V4-Flash price-arm fix (the split plus the comments
+    // recording the two readings and the v4-pro/v3 residue). Pasted rather than
+    // left to the gate's grace-band warning, because a register edit cannot
+    // half-land while a growing file can.
     // Day 200 (#929): 2790 -> 2869 (+79). Not this task's growth — `836c329e`
     // (Day 199 Task 2, the deepseek-flash pricing row) landed the lines without
     // re-pasting, so the gate had been printing a warning nobody re-derived.

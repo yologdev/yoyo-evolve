@@ -184,7 +184,19 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     if model.contains("deepseek-v4-pro") || model.contains("deepseek-v3") {
         return Some((0.27, 0.0, 0.0, 1.10));
     }
-    if model.contains("deepseek-v4-flash") || model.contains("deepseek-r1") {
+    // `deepseek-r1` stands alone since Day 204. It used to share this arm with
+    // `deepseek-v4-flash`, which is a *different model* that merely matched the
+    // same `contains`. The split is not a re-pricing: this number is
+    // **deliberately left unchanged because it is unverifiable** — `deepseek-r1`
+    // is absent from models.dev's `deepseek` provider (fetched 2026-09-20), so
+    // there is no second reading to check the 0.55/2.19 against, and inventing
+    // one would be the confident-wrong-diagnosis move.
+    //
+    // Ordering is load-bearing and must not be "tidied": `deepseek-v4-flash`
+    // reaches neither this arm nor the `deepseek-v4-pro`/`deepseek-v3` arm above,
+    // because `contains` is false for those substrings against it. It falls
+    // through to the widened `deepseek-flash` arm below.
+    if model.contains("deepseek-r1") {
         return Some((0.55, 0.0, 0.0, 2.19));
     }
     // `deepseek-flash` (V4.1-Flash) — the id the evolve loop runs on since
@@ -192,12 +204,28 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // distinct id needs its own arm, and a price silently borrowed from a
     // neighbour is a number that lies (#848's `cost_usd: null` vs `0.0`).
     //
+    // Day 204 widened this arm to take **its own alias**: `deepseek-v4-flash` is
+    // a legacy name DeepSeek still accepts and serves as V4.1-Flash, per
+    // `.yoyo.toml` and models.dev (`deepseek-flash`, `deepseek-v4-flash` and
+    // `deepseek-v4-flash-vision-exp` carry the identical row {0.15, 0.6, 0.003},
+    // fetched 2026-09-20). Reading it off the old 0.55/2.19 arm overstated every
+    // session's `cost_usd` by 3.7x on input and 3.65x on output — the fix is
+    // here, not there.
+    //
     // These are the issue's **off-peak** numbers. DeepSeek doubles them on
     // weekdays 01:00–04:00 and 06:00–10:00 UTC, so this table is the LOWER
     // bound: during a peak window the true cost is up to 2x what is reported
     // here. Stated in the entry because a reader assuming peak (or assuming
     // this is an average) would be reading a different number than it is.
-    if model.contains("deepseek-flash") {
+    //
+    // RESIDUE, not an oversight: the `deepseek-v4-pro`/`deepseek-v3` arm above
+    // shares one row between two ids the same way, and models.dev prices
+    // `deepseek-v4-pro` at {0.435, 0.87} against this table's (0.27, 1.10) — a
+    // *larger* divergence. It is not fixed here: only one aggregator source was
+    // read for it, `deepseek-v3`'s own row is a different model's price and
+    // equally unverified, and it is the default arm for `provider = "deepseek"`,
+    // so changing it moves every user with no explicit model. Its own issue.
+    if model.contains("deepseek-flash") || model.contains("deepseek-v4-flash") {
         // (input, cache_write, cache_read, output) per MTok — cache read is the
         // $0.003/1M cache-HIT price; cache_write is 0.0 because DeepSeek bills
         // only for reads, matching the two rows above.
@@ -1679,12 +1707,12 @@ mod tests {
             cache_write: 0,
             total_tokens: 0,
         };
-        // deepseek-v4-flash: $0.55/MTok input, $2.19/MTok output
-        let cost = estimate_cost(&usage, "deepseek-v4-flash").unwrap();
-        assert!(
-            (cost - 2.74).abs() < 0.001,
-            "deepseek-v4-flash cost: {cost}"
-        );
+        // Pointed at the id this test is NAMED for since Day 204: `deepseek-r1`
+        // is the model whose row is $0.55/MTok input, $2.19/MTok output. It
+        // previously called `estimate_cost` with `deepseek-v4-flash`, which is a
+        // different model and (as of Day 204) a different price.
+        let cost = estimate_cost(&usage, "deepseek-r1").unwrap();
+        assert!((cost - 2.74).abs() < 0.001, "deepseek-r1 cost: {cost}");
     }
 
     #[test]
@@ -1703,19 +1731,49 @@ mod tests {
         );
 
         // NEAR-MISS GUARD — the whole regression surface. Every existing deepseek
-        // user reads these two rows, so they must be byte-identical, asserted with
-        // whole-value equality rather than a `contains` (a discriminator tested
-        // only on the side that fires is vacuous green).
+        // user reads these rows, so the unchanged ones must be byte-identical,
+        // asserted with whole-value equality rather than a `contains` (a
+        // discriminator tested only on the side that fires is vacuous green).
         assert_eq!(
             model_pricing("deepseek-v4-pro"),
             Some((0.27, 0.0, 0.0, 1.10))
         );
+        // `deepseek-v4-flash` moved to the `deepseek-flash` row on Day 204 because
+        // the model id is an ALIAS of the row below it (same served model,
+        // V4.1-Flash) — NOT because the vendor repriced anything.
         assert_eq!(
             model_pricing("deepseek-v4-flash"),
-            Some((0.55, 0.0, 0.0, 2.19))
+            Some((0.15, 0.0, 0.003, 0.60))
         );
         assert_eq!(model_pricing("deepseek-v3"), Some((0.27, 0.0, 0.0, 1.10)));
+        // Untouched by the Day-204 split: r1 keeps its own (unverifiable) number.
         assert_eq!(model_pricing("deepseek-r1"), Some((0.55, 0.0, 0.0, 2.19)));
+
+        // The property the bug VIOLATED: two ids that are different models must
+        // not cost the same. Before Day 204, `deepseek-v4-flash` silently rode
+        // `deepseek-r1`'s row, so this assertion is the regression guard for the
+        // defect itself rather than for either number.
+        //
+        // Both sides are UNWRAPPED rather than compared as `Option`s, and the
+        // positive control is why: a bare `assert_ne!` on the `Option`s stays
+        // green under a sabotage that leaves the alias *unpriced* (`None`
+        // differs from every price), i.e. it would be satisfied by a different
+        // failure than the one it names.
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let flash = estimate_cost(&usage, "deepseek-v4-flash")
+            .expect("the alias must be priced, or `assert_ne!` below passes by absence");
+        let r1 = estimate_cost(&usage, "deepseek-r1")
+            .expect("deepseek-r1 must stay priced — the split must not unprice it");
+        assert_ne!(
+            flash, r1,
+            "the alias and the reasoner are different models and must not share a price"
+        );
 
         // The new row: the issue's OFF-PEAK numbers. Cache read is the cache-HIT
         // price; a peak-window run costs up to 2x this.
@@ -2556,9 +2614,13 @@ mod tests {
     #[test]
     fn test_pricing_deepseek_v4_flash() {
         assert!(model_pricing("deepseek-v4-flash").is_some());
-        let (inp, _, _, out) = model_pricing("deepseek-v4-flash").unwrap();
-        assert!((inp - 0.55).abs() < 0.001);
-        assert!((out - 2.19).abs() < 0.001);
+        // Day 204: this id is a legacy alias of `deepseek-flash` (V4.1-Flash), so
+        // its row now mirrors that one exactly — including the cache_read cell,
+        // which is the part the old 0.55/2.19 arm got wrong twice over.
+        let (inp, _, cache_read, out) = model_pricing("deepseek-v4-flash").unwrap();
+        assert!((inp - 0.15).abs() < 0.001);
+        assert!((cache_read - 0.003).abs() < 0.001);
+        assert!((out - 0.60).abs() < 0.001);
     }
 
     #[test]
