@@ -136,6 +136,13 @@ enum LockViolation {
     /// A register entry whose reason is empty or whitespace-only. An unnamed debt
     /// wearing a name is not a name.
     EmptyReason { path: String, context: String },
+    /// A register entry naming the **chokepoint file itself**. The chokepoint is exempt by
+    /// definition, so such an entry exempts nothing and can never be paid down — the
+    /// "now lives in `src/sync_util.rs`" half of #901's second ratchet case. Without this
+    /// branch it was **silent**: the occurrence loop skips the chokepoint, and the ratchet
+    /// below found the chokepoint occurrence still present, so the entry read as live debt
+    /// forever.
+    RegisterNamesChokepoint { path: String, context: String },
 }
 
 impl LockViolation {
@@ -178,6 +185,16 @@ impl LockViolation {
                  The reason is the only part of the entry a human can act on — an unnamed debt \
                  wearing a name is not a name. Write why this cannot route through sync_util."
             ),
+            LockViolation::RegisterNamesChokepoint { path, context } => format!(
+                "REGISTERED_INLINE_BODIES entry (\"{path}\", \"{context}\", ...) names \
+                 {CHOKEPOINT_FILE} itself.\n     \
+                 That file IS the chokepoint and is exempt by definition, so this entry \
+                 exempts nothing and can NEVER be paid down — a permanent permission wearing \
+                 a debt's clothes.\n     \
+                 Fix: delete that line from tests/lock_recovery_chokepoint.rs. If the copy \
+                 this entry was written for has moved INTO the chokepoint, the entry is \
+                 already spent — that is the ratchet working, not a loss."
+            ),
         }
     }
 }
@@ -191,6 +208,16 @@ fn classify(occurrences: &[Occurrence], register: &[(&str, &str, &str)]) -> Vec<
     for (path, context, reason) in register {
         if reason.trim().is_empty() {
             out.push(LockViolation::EmptyReason {
+                path: (*path).to_string(),
+                context: (*context).to_string(),
+            });
+        }
+        // A register entry that names the chokepoint exempts nothing — see the variant doc.
+        // Checked here, in the register loop, because the occurrence loop below `continue`s
+        // past the chokepoint and the ratchet finds the chokepoint occurrence still present,
+        // so this case was silent before.
+        if *path == CHOKEPOINT_FILE {
+            out.push(LockViolation::RegisterNamesChokepoint {
                 path: (*path).to_string(),
                 context: (*context).to_string(),
             });
@@ -388,6 +415,26 @@ fn write_limits(occurrences: &[Occurrence], files: usize) {
     let _ = err.flush();
 }
 
+/// The anti-vacuous rule, extracted as a **pure** function so it can be pinned without a
+/// filesystem walk.
+///
+/// Returns the refusal when the scan saw **zero** helper definitions anywhere under `src/` —
+/// including the three inside [`CHOKEPOINT_FILE`], which must exist. A scan that finds nothing
+/// and passes is this defect wearing the opposite sign, and it is the quieter one: it reports a
+/// clean tree in exactly the situation where the tree was never read.
+fn no_definitions_seen_refusal(count: usize) -> Option<String> {
+    if count > 0 {
+        return None;
+    }
+    Some(format!(
+        "REFUSAL, not a clean tree: the scan found ZERO `fn` definitions of any of the three \
+         lock-recovery helper names anywhere under src/ — including inside {CHOKEPOINT_FILE}, \
+         which contains all three by construction. Either the walk is broken, the test-region \
+         truncation blanked a production half, or the helpers were renamed. A scanner that \
+         finds nothing must not report a pass."
+    ))
+}
+
 #[test]
 fn no_unnamed_lock_recovery_duplicate_exists() {
     let (occurrences, files) = collect_occurrences();
@@ -411,6 +458,16 @@ fn no_unnamed_lock_recovery_duplicate_exists() {
          saw {chokepoint_defs}. Either the scanner is broken or a helper was renamed — \
          either way this is a REFUSAL, not a clean tree"
     );
+    // The same rule through the pure half (#901), so a scan that saw ZERO definitions
+    // anywhere — the chokepoint included — refuses in its own words rather than tripping the
+    // `files > 50` assertion above, which a broken-but-non-empty walk would still satisfy.
+    let all_defs = occurrences
+        .iter()
+        .filter(|o| o.kind == OccurrenceKind::Definition)
+        .count();
+    if let Some(refusal) = no_definitions_seen_refusal(all_defs) {
+        panic!("{refusal}");
+    }
 
     let violations = classify(&occurrences, REGISTERED_INLINE_BODIES);
     assert!(
@@ -502,6 +559,129 @@ mod tests {
             v.iter()
                 .any(|x| matches!(x, LockViolation::EmptyReason { .. })),
             "whitespace-only reason must be fatal: {v:?}"
+        );
+    }
+
+    #[test]
+    fn a_register_entry_naming_the_chokepoint_is_fatal_and_not_silent() {
+        // #901's second ratchet case, the "or now lives in `src/sync_util.rs`" half, which
+        // was SILENT: the occurrence loop skips the chokepoint and the ratchet saw the
+        // chokepoint occurrence still present, so such an entry read as live debt forever —
+        // a permanent permission wearing a debt's clothes.
+        let found = vec![occ(
+            CHOKEPOINT_FILE,
+            "lock_or_recover",
+            OccurrenceKind::Definition,
+        )];
+        let v = classify(&found, &[(CHOKEPOINT_FILE, "lock_or_recover", "why")]);
+        assert!(
+            v.iter()
+                .any(|x| matches!(x, LockViolation::RegisterNamesChokepoint { .. })),
+            "an entry naming the chokepoint must be fatal: {v:?}"
+        );
+        let msg = v
+            .iter()
+            .find(|x| matches!(x, LockViolation::RegisterNamesChokepoint { .. }))
+            .expect("branch present")
+            .message();
+        assert!(msg.contains(CHOKEPOINT_FILE), "names the file: {msg}");
+        assert!(msg.contains("exempts nothing"), "states why: {msg}");
+        // The near-miss that matters: an ordinary entry for a NON-chokepoint occurrence must
+        // stay silent, or this branch would fire on every legitimate line of the register.
+        let ordinary = vec![occ("src/a.rs", "f", OccurrenceKind::InlinedBody)];
+        assert!(
+            classify(&ordinary, &[("src/a.rs", "f", "why")]).is_empty(),
+            "an ordinary register entry must stay silent"
+        );
+    }
+
+    #[test]
+    fn a_scan_that_finds_no_definition_at_all_is_a_refusal_not_a_pass() {
+        // The anti-vacuous rule pinned PURELY, so it cannot pass by agreeing with itself:
+        // a classifier handed an empty definition set must fail by name. The integration
+        // test below asserts the same property against the real tree by anchoring on the
+        // three definitions inside the chokepoint; this row is the same rule with the
+        // anchor removed, which is what makes it the genuinely anti-vacuous half — there is
+        // nothing left for it to agree with.
+        let v = classify(&[], &[]);
+        assert!(
+            v.is_empty(),
+            "the classifier itself reports no violation — that is the trap the CALLER must catch: {v:?}"
+        );
+        let refusal = no_definitions_seen_refusal(0).expect("zero definitions must refuse");
+        assert!(
+            refusal.contains("REFUSAL"),
+            "an empty definition scan must refuse, not report a clean tree: {refusal}"
+        );
+        // The near-miss: the ONE definition going red is not a refusal — the rule is
+        // `count == 0`, and a classifier that refused on any non-zero count would fire on
+        // the three legitimate chokepoint definitions on every green run.
+        assert!(
+            no_definitions_seen_refusal(3).is_none(),
+            "three definitions seen is a healthy scan, not a refusal"
+        );
+    }
+
+    #[test]
+    fn a_registered_entry_that_vanished_is_fatal_in_both_its_forms() {
+        // The ratchet's two shapes in one table: the site is GONE, and the site MOVED into
+        // the chokepoint. Both must fire, and they must not share a message — a reader has
+        // to be able to tell "delete this line, the debt is paid" from "this line exempts
+        // nothing".
+        let paid = classify(&[], &[("src/gone.rs", "f", "why")]);
+        let moved = classify(
+            &[occ(
+                CHOKEPOINT_FILE,
+                "lock_or_recover",
+                OccurrenceKind::Definition,
+            )],
+            &[("src/gone.rs", "f", "why")],
+        );
+        assert!(
+            paid.iter()
+                .any(|x| matches!(x, LockViolation::RegisteredDebtPaid { .. })),
+            "a vanished site must fire the ratchet: {paid:?}"
+        );
+        assert!(
+            moved
+                .iter()
+                .any(|x| matches!(x, LockViolation::RegisteredDebtPaid { .. })),
+            "a site that moved to another file is still a vanished site: {moved:?}"
+        );
+        let moved_back = classify(
+            &[occ(
+                CHOKEPOINT_FILE,
+                "lock_or_recover",
+                OccurrenceKind::Definition,
+            )],
+            &[(CHOKEPOINT_FILE, "lock_or_recover", "why")],
+        );
+        assert!(
+            moved_back
+                .iter()
+                .all(|x| !matches!(x, LockViolation::RegisteredDebtPaid { .. })),
+            "a site that moved INTO the chokepoint must not ALSO be reported as paid — that \
+             entry is caught by the chokepoint branch, with a different remedy: {moved_back:?}"
+        );
+    }
+
+    #[test]
+    fn the_definition_register_ships_empty_and_that_is_the_terminal_state() {
+        // #901: "Register ships EMPTY — that is a legitimate terminal state ... The
+        // anti-vacuous branch is on the DEFINITION scan, never on the register."
+        // Pinned here as a property of the CLASSIFIER, because the one built-in pressure
+        // in the other direction is the inlined-body register, whose own test asserts
+        // NON-emptiness (it ships 5 measured sites). Those two must not be confused: an
+        // empty DEFINITION register is correct, an empty BODY register would be a broken
+        // scan.
+        let defs_only = vec![occ(
+            CHOKEPOINT_FILE,
+            "lock_or_recover",
+            OccurrenceKind::Definition,
+        )];
+        assert!(
+            classify(&defs_only, &[]).is_empty(),
+            "zero private definitions + empty register is the terminal state, not a failure"
         );
     }
 
