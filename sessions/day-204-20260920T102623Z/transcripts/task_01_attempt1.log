@@ -1,0 +1,1253 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by re-reading the shipped code to confirm what's actually in the tree before writing tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/highlight.rs &&… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The existing tests at lines 1434+ seem to cover some of this. Let me read those test sections and the core functions.
+
+Wait — the task says five missing emission-point tests over a SEQUENCE. But there's already a `mod tests` with tests that use `highlight_code_line_with` across lines. Let me read them carefully. Lines 1420-1650.
+────────────────────────────────────────────────────────────────────────────────
+
+Interesting — there are already cross-line tests in the tree. Let me read them closely before writing anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/highlight.rs:1385..1665 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's already substantial cross-line testing. Let me look at the rest of the file for block comment tests, and whether the five required tests exist. Let me search for block comment span tests and markdown fence reset.
+
+Let me look at the whole test module structure to see what's covered. Especially:
+1. Block comment opened line1, closed mid-line3 — need to check
+2. Near-miss one-line /* ... */ no leak
+3. Unterminated string literal spanning lines (exists — rust_string_spanning_lines...)
+4. Markdown fence reset
+5. Stateless single-line byte-identical
+
+Let me grep test names.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1664,2044p' src/format/h… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me see the actual content of those tests around block comments and fences. Let me grep for block comment tests in general.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_\|fn [a-z_]*(" … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There are NO tests for block comment spanning lines! Let me check by grepping for block_comment tests.
+
+Actually test at line 1524 is `block_comment_opener_inside_a_multiline_string_is_inert`. And the python docstring ones. Are there any tests for a `/* ... */` spanning multiple lines? Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/\*\|/\*\*\|assert.*co… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: **no test renders a `/* … */` spanning multiple lines**. Contract confirmed — the code exists but the five tests are missing (or mostly missing).
+
+Let me check each of the five:
+1. Block comment opened line 1, closed mid-line-3 → **missing**
+2. Near-miss one-line `/* … */` no leak → **missing**
+3. Unterminated string literal spanning lines → **partially exists** (`rust_string_spanning_lines_keeps_continuation_line_as_string`, `python_docstring_...`). But the task says "An unterminated string literal spanning lines: line 2 is string-coloured, and the delimiter class is the one the code actually models — assert the class, not merely 'not plain'". Hmm, there are tests asserting `assert_eq!(l2, format!("{GREEN}{cont}{RESET}"))`. But it asks for a new test in the new file. I'll write one that asserts the class explicitly via `open_string` enum? Wait — "the delimiter class is the one the code actually models — assert the class, not merely 'not plain'". Hmm, at the emission point, the colour is GREEN for strings regardless of delimiter class. Let me look at how `open_string` is modelled.
+
+Actually, hold on. Let me check whether `HighlightState` has `open_string` of type `StringDelim`. Task says shipped code is `HighlightState { block_comment_depth }` — but the tree has `open_string` too. Task description mentions only block_comment_depth but the shipping includes more (from #806, #865). The task says "If any of them is actually missing, STOP and say so" — referring to scan_block_comments, highlight_code_line_with, stateless wrapper, MarkdownRenderer field + fence reset. All exist presumably. Let me verify.
+
+Now: test 4 Markdown fence reset. Let me check the MarkdownRenderer for the state field and fence reset.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fence\|highlight_state\… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+MarkdownRenderer isn't in mod.rs at that grep. Let me search across src.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "struct MarkdownRendere… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' src/format/markdo… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All code exists. Now let's look at line 613-670 in markdown.rs to see how render_line works, so I can write the fence-reset test.
+
+Also, the `mod tests` in highlight.rs has `render_full` helper. Let me check how tests render through MarkdownRenderer — I need to reach it from the new child module. `render_full` is presumably private to highlight.rs's test mod. From `highlight/highlight_tests.rs`, `use super::*;` gives access to highlight.rs items but not the test mod's helpers. I can construct `MarkdownRenderer::new()` directly — is it accessible? `super::*` in highlight_tests.rs refers to `crate::format::highlight`. Does highlight.rs import MarkdownRenderer? Let's check the `use super::*` at top of highlight.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/format/highli… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Everything is present. `use super::*;` in highlight.rs imports from `src/format/mod.rs` — which includes `MarkdownRenderer` presumably (pub use markdown::*). Let me confirm the child module can see `MarkdownRenderer` via `use super::*;` (highlight.rs has `use super::*` which brings format::* into scope; a glob-import is not re-exported by another glob unless `pub use`... Actually `use super::*;` in highlight.rs is a private import, so `highlight_tests.rs`'s `use super::*;` will bring in highlight.rs's public items only, not its private imports. Hmm. But Rust does allow `use super::*` to import names that are visible in the parent module... it imports the *public* items of the parent module and items visible to the child? Actually glob imports bring in all items *visible* from that path. For a child module, all parent items are visible including private ones. But `use` declarations are also items — a private `use` in the parent is visible to child modules. Let me just test it: write a failing test using `MarkdownRenderer` and see.
+
+Actually the safest: in highlight_tests.rs, `use super::*;` plus `use crate::format::MarkdownRenderer;`.
+
+Let me check the module_size register and where the file register is. Also check `tests/module_size.rs` rules for new files — a new file must not exceed cap (default?). Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GRANDFATHERED_OVERSIZED… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,360p' tests/module_s… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So `src/format/highlight.rs` is registered at 2044 and currently at 2044. Adding one line (`#[cfg(test)] mod highlight_tests;`) pushes to 2045 → drift +1, within grace (100), so it warns, not fatal. The task says apply the gate's printed remedy if the gate names it. Actually with +1 drift it's fine (warning). But the register should perhaps be updated to 2045? The gate's rules: if over cap and drift within grace → warn. Adding +1 → 2045. That's within register 2044+100. So warn. But my task says "apply its own printed remedy — paste the line it prints". Let me just run it after the edit and see.
+
+Hmm, actually let me check the gate logic: for grandfathered modules, is drift measured from register value? Let me read the test rules.
+
+Let me just do the edit and run the test.
+
+Now, the new file `src/format/highlight/highlight_tests.rs` — but wait: highlight.rs is `src/format/highlight.rs` with a submodule `highlight_lang`. There's `src/format/highlight_lang.rs`, not a directory. If I declare `mod highlight_tests;` inside `src/format/highlight.rs`, Rust looks for `src/format/highlight/highlight_tests.rs`. Yes.
+
+Hmm, but highlight.rs already has `mod tests` inline at 762. Adding a child module file is fine.
+
+Now let me check the max module lines for a *new* file: 2000, no issue.
+
+Alternatively, I could put the tests inside the existing `mod tests` in highlight.rs — but the task explicitly says prefer child-module per line budget. Adding ~200 lines inline would be 2245 → drift +201 > 100 → fatal. So child module it is.
+
+Now write the five tests. I need to understand the rendering semantics for block comments.
+
+Let me read the block comment scanner and highlight_code_line_with fully.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/highlight.rs:130..260 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/highlight.rs:288..428 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now I understand the semantics:
+- Comment segments: `{DIM}text{RESET}`
+- Str segments: `{GREEN}text{RESET}`
+- Code: highlight_normalized.
+
+Test 1: rust, lines:
+- line1: `let x = 1; /* start` → Comment opened at end. Output: code for `let x = 1; `, then `{DIM}/* start{RESET}`.
+- line2: `still in the comment` → whole line comment: `{DIM}still in the comment{RESET}`.
+- line3: `done */ let y = 2;` → comment up to and including `*/`, then code. Output: `{DIM}done */{RESET}` + highlight_normalized("rust", " let y = 2;").
+
+Hmm careful: seg_start after close is i (index just past `*/`). So comment segment = `done */`. Then code = ` let y = 2;`.
+
+I'll join with "\n" and assert on the joined string. Hmm, but joining per-line outputs — the assertion: for line2 the whole line is comment-coloured. I can assert `rendered.contains(&format!("{DIM}still in the comment{RESET}"))` and for line 3 `rendered.contains(&format!("{DIM}done */{RESET}"))` and that `let` is highlighted as keyword after. Anti-vacuous: `assert_ne!(rendered, source)`.
+
+But wait — the "emission point" requirement: "Each must assert on the rendered output of a whole sequence (join the per line results through the shared state, then assert on the joined string)". So I should build a helper `render_seq(lang, lines) -> String` that joins with "\n" and returns; then assert on that joined string. Good.
+
+Also "each must carry an anti-vacuous companion assertion (e.g. assert_ne!(rendered, source) or that the same lines rendered with state cleared differ)".
+
+For test 1, a good anti-vacuous: render the same lines but with a fresh state per line (stateless) → line 2 would NOT be comment-coloured. So `assert_ne!(joined, stateless_joined)`. Plus `assert_ne!(joined, source)`.
+
+Test 2 near-miss: one-line `/* … */` — line1: `let x = 1; /* one-line */ let y = 2;`, line2: `let z = 3;`. Assert line 2 is NOT comment-coloured and is byte-identical to `highlight_code_line("rust", "let z = 3;")`. Whole-value equality: assert_eq!(render_seq(...), expected joined? Hmm. For a whole-string assert_eq I'd need the exact expected. I can compute expected as: `format!("{}\n{}", <line1 expected>, highlight_code_line("rust","let z = 3;"))` — but that's tautological-ish since line1 expected is computed. Better: assert the second line's rendering equals the stateless rendering exactly, and assert the whole string equals the stateless whole string (since the one-line comment closes, both lines are code-only → the entire output should be byte-identical to stateless render of the same lines). That's a strong whole-value `assert_eq!`. 
+
+Test 3: unterminated string spanning lines. Task: "line 2 is string-coloured, and the delimiter class is the one the code actually models — assert the class, not merely 'not plain'". So for rust `let s = "a` line 2 `still "inside?` ... Let's do: line1 `let s = "start`, line2 `fn not code {`, line3 `end"; let x = 1;`. Assert line 2 render == `{GREEN}fn not code {{{RESET}` exactly (whole-value). And "the delimiter class is the one the code actually models" — assert `st.open_string == Some(StringDelim::...)`. Hmm at emission point we shouldn't assert state only. But we can assert the class by choosing which delimiter: Rust `"` → `StringDelim::Quote`? Let me check the StringDelim enum.
+
+Hmm "assert the class, not merely 'not plain'" — I think it means assert the exact colour class (GREEN string) rather than just "differs from plain". And also for a raw string the class is Raw. Let me look at StringDelim.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub enum StringDelim" -… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "enum StringDelim" -A 2… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_refactor.rs:105..140 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. For test 3, "assert the class, not merely 'not plain'" — I'll assert that the carried state's `open_string` is `Some(StringDelim::Normal)` and importantly that the *emission* is GREEN and that after the closer the state is `None`. But to make it "the class the code actually models" in a meaningful way at the emission point, I can render two lines and assert the exact expected `{GREEN}...{RESET}` string — GREEN is the string class in the renderer (which is the StringDelim-driven class). Hmm.
+
+Better idea: make the test discriminate between delimiter classes at the emission point: render the SAME continuation line under two different carried delims and assert both are string-coloured identically... no.
+
+I think what's meant: assert the exact colour class used for a string run (`GREEN`), i.e. `assert_eq!(line2, format!("{GREEN}...{RESET}"))` — whole-value equality against the string class, not `assert_ne!(line2, line2_without_colour)`. And additionally assert the carried class is `StringDelim::Normal` (that's a check of "the class the code actually models"). I'll do both: the emission-point whole-value equality (primary) plus a state-class assertion as a companion (the task says assert the class).
+
+Actually re-read: "line 2 is string-coloured, and the delimiter class is the one the code actually models — assert the class, not merely 'not plain'". I read this as: the assertion should name the string colour class explicitly (GREEN), rather than merely asserting "not plain". So `assert_eq!(l2, format!("{GREEN}cont{RESET}"))` satisfies it. I'll also add `assert_eq!(st.open_string, Some(StringDelim::Normal))` as the "class the code models" evidence.
+
+Hmm but the task says assertions must be at the emission point. State assertions as companions are fine (the #806 tests do that).
+
+Test 4: Markdown fence reset. Sequence rendered as two fenced blocks where the first leaves state open. E.g. input:
+```
+```rust
+let x = 1; /* open
+```
+```rust
+let y = 2;
+```
+```
+Hmm, need to render through MarkdownRenderer, whose output includes dim fences. Assert the second block's first line starts clean, i.e. it's not comment-coloured; it should equal `highlight_code_line("rust", "let y = 2;")`.
+
+Actually wait — the first block leaves state open, then the closing fence line resets state. So second block first line must be clean. If reset were missing, `let y = 2;` would render as `{DIM}let y = 2;{RESET}` (whole line comment) since depth carried.
+
+Anti-vacuous: assert the rendering differs from the comment-coloured version — i.e., `assert!(!out.contains(&format!("{DIM}let y = 2;{RESET}")))`. Hmm, that's a negative. Better: assert the output contains `highlight_code_line("rust","let y = 2;")` — i.e. the clean emission. And to be anti-vacuous, assert the first block's opened-comment line IS comment-coloured somewhere (so we know state really was open and the renderer really colours). That's a strong anti-vacuous companion: `assert!(out.contains(&format!("{DIM}{RESET}")))`... hmm weak.
+
+Let's do: `assert!(out.contains(&format!("{DIM}let x = 1; /* open{RESET}")) )` — careful, line1 is `let x = 1; /* open` → code segment `let x = 1; ` then comment `/* open`. So output `...{DIM}/* open{RESET}`. And `let` highlighted.
+
+So:
+- assert out contains `{DIM}/* open{RESET}` → proves the comment state actually opened and coloured (anti-vacuous).
+- assert out contains the clean highlight of `let y = 2;` → proves reset.
+
+But is `highlight_code_line("rust","let y = 2;")` reachable? Yes, pub in highlight.rs, and `use super::*` gives it.
+
+Hmm, careful: does `render_delta` + `flush` process the whole input correctly with fences? The existing `render_full` helper does that. In my new module I'll write my own `render_md(input)` helper.
+
+Also there's a subtlety: the *closing fence* resets state too. To test fence-OPEN reset specifically, I'd want... the sequence: block 1 with unclosed comment, then fence close, then fence open, then line. Both close and open reset. Either way the test asserts the second block's first line starts clean. Good enough; the doc says reset on both.
+
+Test 5: the stateless single-line entry point is byte-identical. Call the stateless wrapper on lines individually and assert each equals the pre-change output for a line with no cross-line construct — a whole-string `assert_eq!`. So: pick a sequence of lines with no cross-line construct (e.g. `fn main() {`, `let x = 1;`, `}`) and assert `highlight_code_line("rust", l) == <expected>` for each. What's "pre-change output"? We don't have the old code. We can assert equality with `highlight_normalized`? Not accessible? It's private fn in highlight.rs — `use super::*` in child module gives access to private parent items. Yes! child modules can access private items of the parent.
+
+Hmm but "pre-change output" — the pre-#804 code was `highlight_normalized`. Actually the stateless path already returns highlight_normalized for non-block-comment languages. So assert `highlight_code_line(lang, line) == highlight_normalized(norm, line)` — that's a real claim: the stateless wrapper is byte-identical to the per-line highlighter. But careful: normalize_lang mapping. `highlight_code_line("rust", line)` → normalize → supports block comments → goes through scan_block_comments, and if one Code segment covering whole line → returns highlight_normalized(norm, line). So equality holds. But for a line containing `/* ... */` it wouldn't. So use lines with no cross-line construct.
+
+Also assert something about a sequence: the task says each test must be over a sequence of ≥2 lines. So iterate over 3 lines.
+
+Hmm "assert each equals the pre-change output for a line with no cross-line construct — a whole-string assert_eq!, the discipline this repo uses for every 'unchanged default' claim."
+
+I think comparing against a hardcoded expected string is the strongest form of "pre-change output". Let me instead do: for each line, assert_eq!(highlight_code_line("rust", line), expected_hardcoded). That's brittle but truly pins bytes. Hmm, I'd need to know the exact ANSI for e.g. `let x = 1;`. Let me just compute it: I can write a tiny test to print. Actually simpler and defensible: assert byte-identity between the stateless entry point and the stateful one carrying a CLEARED state (i.e., a fresh state each line), plus assert equality with `highlight_normalized`. Hmm, but `highlight_normalized` is the actual pre-change implementation, so `assert_eq!` on the whole string against it is exactly "byte-identical to the pre-change output". That's honest and not tautological in a harmful way — it's a real whole-string equality pinning that the stateless wrapper adds nothing.
+
+Hmm, but is it vacuous? `highlight_code_line` literally calls `highlight_code_line_with` with fresh state, which for a code-only line returns `highlight_normalized`. So it's near-tautological. But the value is: it guards against the fast-path `segments.len()==1 && Code` condition changing. If someone made scan_block_comments always return a Comment segment, this would redden. And test 5's stated purpose is "the stateless single-line entry point is byte-identical" — an unchanged-default claim.
+
+To strengthen, also compare against a hardcoded expected for one line. Let me do the hardcoded one to make it a genuine byte pin. I'll write the expected using the consts (GREEN, BOLD_CYAN, RESET are in scope via `super::*`).
+
+Let me check what `let x = 1;` renders as — keywords `let` in BOLD_CYAN, number 1 in YELLOW. I'll verify by running a quick test.
+
+Better approach: write the tests, run, and let failures tell me exact expected strings. But I should be careful to not write self-agreeing tests. I'll hardcode based on printed actual output — that's how a byte pin is written. That's fine (the existing tests do exactly this).
+
+Plan for test 5:
+```rust
+#[test]
+fn stateless_single_line_entry_point_is_byte_identical_on_a_clean_sequence() {
+    let lines = ["fn main() {", "    let x = 1;", "}"];
+    // anti-vacuous: the sequence really does render with colour
+    let mut stateful = String::new();
+    let mut st = HighlightState::default();
+    for l in lines { ... }
+    for l in lines {
+        assert_eq!(highlight_code_line("rust", l), highlight_normalized("rust", l));
+    }
+    // and a hardcoded byte pin for the middle line
+    assert_eq!(highlight_code_line("rust", "    let x = 1;"), format!("    {BOLD_CYAN}let{RESET} x = {YELLOW}1{RESET};"));
+}
+```
+Hmm — I need to verify exact formatting: does the number 1 get YELLOW with the `;` outside? And leading whitespace preserved. Let me just run and see.
+
+Wait: is `highlight_normalized` accessible from the child module? It's a private `fn` in highlight.rs. Child modules (`mod highlight_tests` inside highlight.rs) can access private items of ancestors. Yes — privacy in Rust is "visible in the defining module and its descendants". Good.
+
+Also `SegmentKind` is private — accessible from child too.
+
+Now let me also double-check: is there already a test asserting the whole-sequence join for block comments? I searched and found none. Good.
+
+Now about the "anti-vacuous" requirement: each test must carry one. Test 3 (string span) already has strong whole-value equality — but is it anti-vacuous? If the renderer coloured nothing, line 2 would be raw and the assert_eq to `{GREEN}...{RESET}` would fail. So it's inherently anti-vacuous. But I'll add `assert_ne!(l2, cont)` explicitly for clarity? The task says "each must carry an anti-vacuous companion assertion". I'll add them all.
+
+Let me now check the tests/module_size register file and the neutered_guards test.
+
+Let me now write the file.
+
+First, check whether `#[cfg(test)] mod highlight_tests;` inside highlight.rs works and whether there's any existing `highlight` directory.
+
+src/format/highlight_lang.rs exists as a sibling; is there a `src/format/highlight/` dir? Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls src/format/ && ls -d src/form… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`grep -rn "mod tests"` returned nothing? Exit code 2 came from ls. Let me re-run grep.
+
+Actually sed printed "mod tests {" at line 762 earlier. The combined command's exit code was from `ls`. Fine.
+
+There's no `src/format/highlight/` directory. So I need to create `src/format/highlight/highlight_tests.rs`.
+
+Wait — Rust 2018+: `mod highlight_tests;` inside `src/format/highlight.rs` looks for `src/format/highlight/highlight_tests.rs`. Yes, for a non-mod.rs file, the submodule directory is `highlight/`. Confirmed by the task's note.
+
+Now, let me write the test file.
+
+Let me first check what GREEN etc. are — defined in format/mod.rs as consts. `use super::*;` in the child module of highlight.rs: `super` = highlight module. `use super::*` imports all items *visible* in highlight module... Glob import imports public items? Actually `use path::*` imports all *public* items of that module plus, if you have access, private ones? No — glob imports respect visibility: from a child module, private items of the ancestor ARE accessible. Rust reference: "use declarations ... glob imports bring all *visible* items into scope". Items visible from the child's location include the parent's private items. I'm fairly confident this works (the task says "Inside the new file, `use super::*;` reaches the state machine directly").
+
+But highlight.rs itself does `use super::*;` (from format/mod.rs) — that's a *private* re-import in highlight. When highlight_tests does `use super::*` (super = highlight module), does it get the names highlight imported privately? Glob imports do re-export names brought in by `use` if they're visible. Since highlight's `use super::*` is private, it's still visible to descendants of highlight. So GREEN, DIM, RESET, MarkdownRenderer should be reachable. I'll verify by compiling.
+
+Let's write. I'll define a helper:
+
+```rust
+/// Render a whole sequence of lines through one shared `HighlightState`, joined with
+/// `\n` — the emission point a caller of `highlight_code_line_with` actually receives.
+fn render_seq(lang: &str, lines: &[&str]) -> (String, HighlightState) {
+    let mut st = HighlightState::default();
+    let mut out = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        if i > 0 { out.push('\n'); }
+        out.push_str(&highlight_code_line_with(lang, l, &mut st));
+    }
+    (out, st)
+}
+```
+
+Hmm returning state may cause unused warnings in some tests. Better to return just the String and have a separate variant that also returns state where needed. I'll make two helpers: `render_seq` returns String, `render_seq_state` returns (String, HighlightState). But then `render_seq` unused... no, both used.
+
+Actually simpler: `render_seq` returns String and I call `render_seq_state` in the tests that need state. Both will be used.
+
+Hmm — careful about "no definition without its consumer".
+
+Now tests:
+
+Test 1:
+```rust
+#[test]
+fn block_comment_opened_on_line_one_closes_mid_line_three() {
+    let (rendered, st) = render_seq_state(
+        "rust",
+        &["let x = 1; /* open", "still inside", "done */ let y = 2;"],
+    );
+    let source = "let x = 1; /* open\nstill inside\ndone */ let y = 2;";
+
+    // Emission point: line 2 is comment-coloured in full.
+    assert!(
+        rendered.contains(&format!("\n{DIM}still inside{RESET}\n")),
+        "line 2 must be comment-coloured in full: {rendered:?}"
+    );
+    // Line 3: the segment BEFORE the close is comment, the segment after is code.
+    assert!(
+        rendered.contains(&format!("{DIM}done */{RESET}")),
+        "the pre-close segment is comment-coloured: {rendered:?}"
+    );
+    assert!(
+        rendered.contains(&format!("{BOLD_CYAN}let{RESET} y = {YELLOW}2{RESET};")),
+        "code after the closer is highlighted again: {rendered:?}"
+    );
+    assert!(st.block_comment_depth == 0, "the comment closed");
+
+    // Anti-vacuous: the same lines rendered with the state reset per line do NOT
+    // comment-colour line 2 — so the assertions above are about carried state.
+    let stateless: Vec<String> = [...].join("\n");
+    assert_ne!(rendered, stateless);
+    assert_ne!(rendered, source, "the renderer emits colour");
+}
+```
+
+Hmm `st.block_comment_depth == 0` → clippy prefers assert_eq!. Use assert_eq!.
+
+For stateless: `vec!["let x = 1; /* open", "still inside", "done */ let y = 2;"].iter().map(|l| highlight_code_line("rust", l)).collect::<Vec<_>>().join("\n")` — but wait, highlight_code_line on line 3 "done */ let y = 2;" — at depth 0, `*/` is ordinary code. So it renders as code. And line 2 "still inside" renders as code. So stateless != rendered. Good.
+
+Test 2:
+```rust
+#[test]
+fn one_line_block_comment_does_not_leak_state_into_the_next_line() {
+    let lines = ["let x = 1; /* one-line */ let y = 2;", "let z = 3;"];
+    let rendered = render_seq("rust", &lines);
+    let stateless = lines.iter().map(|l| highlight_code_line("rust", l)).collect::<Vec<_>>().join("\n");
+    // Whole-value equality: a comment that closed on line 1 leaves line 2 byte-identical.
+    assert_eq!(rendered, stateless, "state must not leak past a closed one-line comment");
+    // Anti-vacuous: and the source really does carry a block comment to be opened...
+    assert!(rendered.contains(&format!("{DIM}/* one-line */{RESET}")), "{rendered:?}");
+    assert_ne!(rendered, "let x = 1; /* one-line */ let y = 2;\nlet z = 3;");
+}
+```
+And also assert line 2 is not dim-wrapped. The whole-string assert_eq covers it.
+
+Test 3:
+```rust
+#[test]
+fn unterminated_string_spanning_lines_colours_the_continuation_line() {
+    let (rendered, st) = render_seq_state("rust", &["let s = \"start", "fn not_code() {", "end\"; let x = 1;"]);
+    let cont = "fn not_code() {";
+    assert!(rendered.contains(&format!("\n{GREEN}{cont}{RESET}\n")), ...);
+    // The delimiter class the code actually models is the plain-quote one.
+    // (checked before the closer)
+}
+```
+But the helper renders all 3 lines and returns final state (None after close). I need the mid state. Let me restructure: for this test, render lines[0] and lines[1] first, check state, then render line 3. Hmm — but requirement "assert on the rendered output of a whole sequence".
+
+Alternative: make render_seq_state return the per-line outputs? Let me define `render_lines(lang, lines) -> (Vec<String>, HighlightState)`? Then join for emission-point assertions and index for state checks. Actually the state after line 2 — I can check by rendering only the first two lines in a separate call. Two calls is fine and both are sequences.
+
+Simpler: helper `render_seq_with_state` that returns `(String, HighlightState)` for the FULL sequence; and for the mid-state check use a second short sequence. That's clean:
+
+```rust
+let full = render_seq("rust", &["let s = \"start", "fn not_code() {", "end\"; let x = 1;"]);
+assert!(full.contains(&format!("\n{GREEN}fn not_code() {{{RESET}\n")));
+assert!(full.contains(&format!("{GREEN}end\"{RESET}")), "the closer ends the string run");
+assert!(full.contains(&format!("{BOLD_CYAN}let{RESET} x = {YELLOW}1{RESET};")));
+
+// The delimiter class the code models: the carried field is the plain-quote one,
+// not a raw/backtick/triple-quote variant.
+let (_, mid) = render_seq_state("rust", &["let s = \"start", "fn not_code() {"]);
+assert_eq!(mid.open_string, Some(StringDelim::Normal), "...");
+assert_eq!(mid.block_comment_depth, 0);
+```
+
+Wait, does `{` inside a GREEN string run get escaped in the format string? `format!("...{{{RESET}")` — I need `{{{` to produce `{`. In the string `{GREEN}fn not_code() {{{RESET}` → `{GREEN}` is a placeholder, then `fn not_code() `, then `{{` → literal `{`, then `{RESET}`. So `"{{{RESET}"` = `{{` (escaped `{`) then `{RESET}` placeholder. Yes correct.
+
+Hmm careful: the whole continuation line — is it exactly `{GREEN}fn not_code() {{{RESET}`? The scan: line 2 with open_string Some(Normal) → close_open_string(chars,0,Normal) → looks for unescaped `"`. There is none → None → returns only = [push_string_run(0..len)] → one Str segment covering the whole line. push_string_run for Normal delim... let me check push_string_run to see if it wraps whole line in GREEN.
+
+Let me check whether it emits `{GREEN}{text}{RESET}` exactly.
+
+Test 4 (markdown fence reset):
+```rust
+#[test]
+fn markdown_fence_boundary_resets_carried_comment_state() {
+    let input = "```rust\nlet x = 1; /* open\n```\n```rust\nlet y = 2;\n```\n";
+    let out = render_markdown_full(input);
+    // anti-vacuous: the first block really did enter comment state and colour it
+    assert!(out.contains(&format!("{DIM}/* open{RESET}")), "...");
+    // the second block's first line starts clean
+    assert!(out.contains(&highlight_code_line("rust", "let y = 2;")), "...");
+    assert!(!out.contains(&format!("{DIM}let y = 2;{RESET}")), "...");
+}
+```
+Hmm: `highlight_code_line("rust","let y = 2;")` = `{BOLD_CYAN}let{RESET} y = {YELLOW}2{RESET};`. Would that substring also appear in `{DIM}let y = 2;{RESET}`? No, because in the dim case there's no BOLD_CYAN. Good. But a stronger, non-substring assertion would be better. The fence lines themselves are dimmed. Let me instead render the second block alone and compare... hmm.
+
+Actually a cleaner approach for test 4: assert the exact tail. Let me just build: rendering input should give something; I'll assert `out.ends_with(...)`. Let me be pragmatic: assert that the output contains the clean render and does not contain the comment-coloured render of `let y = 2;`, plus assert the first block's open-comment line is comment-coloured (proving state was genuinely open in the same render).
+
+Also, the closing fence line is `{DIM}```{RESET}`. The output for the whole input would be:
+`{DIM}```rust{RESET}\n` + `let x = 1; ` code + `{DIM}/* open{RESET}` + `\n` + `{DIM}```{RESET}\n` + `{DIM}```rust{RESET}\n` + clean `let y = 2;` + `\n` + `{DIM}```{RESET}`... 
+
+Hmm, does render_delta add newlines? Let me just run and print in a scratch test to see, then pin exact strings. That's the honest way.
+
+Test 5:
+```rust
+#[test]
+fn stateless_entry_point_is_byte_identical_on_a_clean_sequence() {
+    let lines = ["fn main() {", "    let x = 1;", "}"];
+    ...
+}
+```
+assert_eq!(highlight_code_line("rust", l), highlight_normalized("rust", l)) for each; plus a hardcoded pin for the middle line.
+
+Hmm, is `highlight_normalized` the right "pre-change output"? The pre-change stateless function was `highlight_code_line` implemented directly. Now it delegates. Comparing to `highlight_normalized` is comparing to the same bytes. I think also adding a hardcoded expected makes it a real byte pin. And an anti-vacuous: assert the pins are not the raw source (`assert_ne!(highlight_code_line("rust","    let x = 1;"), "    let x = 1;")`).
+
+Let me write a scratch test first to get exact bytes. Actually better: write the file with my best guesses, run, and fix from failures. Let me use a temporary approach: I'll write a small test that prints. Hmm, simpler: write the tests with `assert_eq!` against computed expected from the sum of parts... no.
+
+Cleanest: run a tiny rust test that prints the renderings. I can add a temporary test with `println!` and `--nocapture`. Let me instead just write the tests and iterate on failures — failures show actual vs expected.
+
+Let's write the file now.
+
+One more consideration: `render_seq_state` returning `(String, HighlightState)` — if some test uses only the String, I'd use `render_seq`. Fine.
+
+Also need `StringDelim` in scope in the test file: highlight.rs has `use crate::commands_refactor::{close_open_string, raw_string_open, StringDelim};` — private use, visible to child. So `super::*` may bring it. Or I add `use crate::commands_refactor::StringDelim;` explicitly. I'll add explicitly to be safe... but that may trigger unused_import if glob already imports it? No — explicit import shadows glob; if both provide the same name, explicit wins and it's not an error. But clippy might not complain. Actually a duplicate import of the same item via glob + explicit is fine.
+
+Hmm, careful: `use super::*;` where super is highlight, and highlight has private `use crate::commands_refactor::StringDelim`. Glob-importing a private re-import from a descendant — allowed. To avoid ambiguity issues, I'll just rely on `use super::*;` and additionally `use crate::format::MarkdownRenderer;`? No, MarkdownRenderer is likely in scope via highlight's `use super::*` (format::*). Let me just try `use super::*;` alone first, compile, and add imports if needed.
+
+Let me check push_string_run to confirm GREEN wrapping.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn push_string_run" -A … ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I was in the middle of reconnaissance. I've confirmed the shipped code exists:
+- `HighlightState { block_comment_depth, open_string }`
+- `scan_block_comments`
+- `highlight_code_line_with` (stateful)
+- `highlight_code_line` (stateless wrapper)
+- `MarkdownRenderer` field `code_highlight_state` + fence reset
+
+Now I need to write the 5 tests in a new file `src/format/highlight/highlight_tests.rs` and add one line to `src/format/highlight.rs`.
+
+Wait — careful. `mod highlight_tests;` declared inside `src/format/highlight.rs` resolves to `src/format/highlight/highlight_tests.rs`. Yes, that's how Rust module paths work: for a non-root module file `src/format/highlight.rs`, submodule `highlight_tests` resolves to `src/format/highlight/highlight_tests.rs`. Correct.
+
+But hold on — is the directory `src/format/highlight` colliding with the file `src/format/highlight.rs`? Rust 2018 allows both `src/format/highlight.rs` and `src/format/highlight/` directory coexisting. Yes that's fine — that's the standard non-mod.rs style.
+
+Now the tests. Let me think about what I need to verify about behavior before writing assertions. Key risk: my assumed exact output strings might not match. Let me plan tests conservatively but still at the emission point.
+
+Test 1: Block comment opened on line 1, closed mid-line-3.
+- line1 = "let x = 1; /* start" → code segment "let x = 1; " highlighted normally + comment "/* start" dim. state.block_comment_depth == 1.
+- line2 = "still commenting" → whole line dim: `format!("{DIM}still commenting{RESET}")`.
+- line3 = "*/ let y = 2;" → comment segment "*/" dim, then code " let y = 2;" highlighted normally → contains BOLD_CYAN "let", YELLOW "2".
+Join them and assert.
+
+Wait, careful: on line 3 when depth>0 and we find `*/`: `state.block_comment_depth -= 1;` then i += 2; if depth == 0 → push Comment segment seg_start..i. seg_start=0 so Comment(0, 2) = "*/". Then seg_start=2. Then scanning rest as code. At end, seg_start=2 < len → push Code(2, len). Good.
+
+So out3 starts with `{DIM}*/{RESET}` then `{highlight_normalized("rust", " let y = 2;")}`.
+
+Hmm, does highlight_normalized handle leading space? trimmed = "let y = 2;" not a comment. Then it does the general highlighting on the whole line " let y = 2;". Should contain BOLD_CYAN let and YELLOW 2.
+
+Let me actually just run a quick test to check outputs rather than guessing. I'll write the test file then run it and adjust based on actual output. But better: write a small scratch test first? Actually simplest: write the real tests, run them, and inspect failures for actual output. That's normal iterative workflow.
+
+Let me be careful about DIM and GREEN etc. — they're `Color` constants that implement Display presumably. In existing tests they use `format!("{GREEN}{cont}{RESET}")`. And `GREEN.0` used for find. So they're a tuple struct with Display. Good, since `use super::*` in the test module inside highlight.rs gives access. In my new file, `use super::*;` where super = the `highlight` module (format::highlight). And `super::*` from there includes `use super::*` of highlight.rs? No — glob imports don't re-export. `use super::*` in highlight_tests (child of format::highlight) imports items from `format::highlight` module namespace, which includes the glob-imported names? Actually in Rust, `use super::*;` imports all *public* items of the parent module, and glob imports of the parent are... hmm. Glob-importing a module brings in its *public* items including those brought in by `use` declarations only if they are `pub use`. `use super::*` in highlight.rs is a private import, so it is NOT re-exported.
+
+Hmm wait — but visibility: items imported with plain `use` are private by default, so a child module glob-importing `super::*` would not get them... Actually, private imports ARE visible to child modules through path `super::NAME`? Rust: a `use` declaration creates a binding with the given visibility (private by default = visible in the current module and its descendants). So `use super::*` in the parent creates private bindings visible to the parent module and descendants, and glob import `use super::*` in a descendant DOES pick them up because the binding is visible in that scope (privacy allows descendants to access private items of ancestors). Yes — this is the standard pattern; e.g. `commands_risk_epistemic_tests.rs` does exactly this. Let me verify by peeking at that file and how it's declared.
+
+Also need: `HighlightState`, `highlight_code_line_with`, `highlight_code_line`, `SegmentKind` (needed? For test 3 I want to assert the delimiter class — I can use `StringDelim`). `StringDelim` is imported in highlight.rs via `use crate::commands_refactor::{close_open_string, raw_string_open, StringDelim};` — private import, visible to descendants. Good.
+
+`MarkdownRenderer` — is it in scope in highlight.rs? `use super::*` from `format` module where `mod markdown;` is declared, and markdown's `MarkdownRenderer` is pub... `use super::*` in highlight.rs brings in `MarkdownRenderer`? Only if `format` module re-exports it. Let me check mod.rs: it probably has `pub use markdown::MarkdownRenderer;` or `mod markdown; pub use ...`. Let me check. Also need `render_delta` and `flush` methods which are pub.
+
+Let me check mod.rs exports.
+
+Let's do the checks quickly and then write the file.
+
+Plan:
+1. Check `src/format/mod.rs` for `MarkdownRenderer` re-export and `mod markdown;`.
+2. Check the precedent test file declaration pattern.
+3. Write `src/format/highlight/highlight_tests.rs`.
+4. Add `#[cfg(test)] mod highlight_tests;` to highlight.rs.
+5. cargo test, fix.
+6. module_size test.
+7. positive control.
+8. clippy/fmt, commit, journal.
+
+Note: the task says add exactly one line to highlight.rs. But highlighting.rs is registered at 2044 lines exactly. Adding 1-2 lines → 2045-2046, drift +1/+2, within grace 100 but warn. Task says only if the gate asks for register line, apply its remedy. A warning may print. Let me see: the gate warns when over the cap by ≤ grace... Actually let me read the gate logic to know whether adding lines produces a failure. Registered value 2044 = current actual. Adding 2 lines makes actual 2046, drift +2 → within REGISTER_DRIFT_GRACE_LINES → warning not failure, per the comments. The task says only apply remedy "if the gate names this file as a register problem". A warning is arguably naming. Hmm. The task says "If the gate names this file as a register problem, apply its own printed remedy — paste the line it prints". Let me run the test and see what it prints. If it prints a remedy requiring a register update, I'll paste it (that's the documented remedy and permissible per task: "tests/module_size.rs (only if the size gate asks for its register line)").
+
+Actually careful — there might be a separate test `test_every_grandfathered_module_is_registered_at_its_actual_size` that fails on any drift. Let me check the gate's tests. Let me look at the file around the assertions.
+
+Let me proceed.
+
+Also: the new file itself must be under 2000 lines — trivially yes.
+
+One more consideration: does the module_size gate count only files in src/? It scans `src/**/*.rs` probably. New file is small, fine.
+
+Let me now look at mod.rs and module_size details.
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up where I left off. I've confirmed the shipped code exists; now checking module visibility and the size gate before writing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod \|^pub use \|^pub … ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`mod markdown;` + `pub use markdown::*;` in format/mod.rs, and highlight.rs does `use super::*;` → so `MarkdownRenderer` is in scope in highlight.rs and thus in `highlight_tests` via `use super::*`. 
+
+`src/main.rs:70: mod commands_risk_epistemic_tests;` — wait, that's declared in main.rs, not a nested module. The file is `src/commands_risk_epistemic_tests.rs`. Hmm, the task said "a `mod` declared inside a non-root file resolves to the same-named directory — the `src/main_tests.rs` / `commands_risk_epistemic_tests.rs` sibling pattern is the precedent". Whatever — my approach is sound for a nested submodule.
+
+Actually careful: `mod highlight_tests;` inside `src/format/highlight.rs` — Rust 2018: for a module `highlight` defined at `src/format/highlight.rs`, a submodule `highlight_tests` looks for `src/format/highlight/highlight_tests.rs`. Yes.
+
+Let me check the `MarkdownRenderer` public API: `new()`, `render_delta(&mut self, chunk: &str) -> String`, `flush(&mut self) -> String`. From the existing helper `render_full`: `r.render_delta(input)` then `r.flush()`. Good.
+
+Now check the module_size gate tests to know whether drift warns or fails.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '380,520p' tests/module_s… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. So drift ≤ 100 = warning. But the task says apply the remedy if the gate says so. Let me just run the test after the edit and see what it prints — if it prints a remedy line, paste it.
+
+Now let me write the test file. First, let me sanity check the actual rendered output of a few scenarios by writing the tests and running. But to reduce iterations, let me quickly probe with a temporary test binary? Simpler: write the file with assertions I'm confident about, using `contains` where I'm unsure and `assert_eq!` where I'm confident.
+
+Let me think carefully about each test's expected output.
+
+### Test 1: block comment open line1, close mid line3
+```rust
+let mut st = HighlightState::default();
+let l1 = highlight_code_line_with("rust", "let x = 1; /* open", &mut st);
+assert_eq!(st.block_comment_depth, 1);
+// l1 = highlight_normalized("rust","let x = 1; ") + DIM+"/* open"+RESET
+let l2 = highlight_code_line_with("rust", "still inside", &mut st);
+assert_eq!(l2, format!("{DIM}still inside{RESET}"));
+assert_eq!(st.block_comment_depth, 1);
+let l3 = highlight_code_line_with("rust", "*/ let y = 2;", &mut st);
+assert!(l3.starts_with(&format!("{DIM}*/{RESET}")), ...);
+assert!(l3.contains(&format!("{BOLD_CYAN}let{RESET}")));
+assert_eq!(st.block_comment_depth, 0);
+let joined = format!("{l1}\n{l2}\n{l3}");
+assert_ne!(joined, "let x = 1; /* open\nstill inside\n*/ let y = 2;");  // anti-vacuous
+```
+Also assert l2 is fully dim (whole line) — that's the emission point claim.
+
+Wait: `highlight_normalized("rust", "let x = 1; ")` — the segment Code is chars 0..11 = "let x = 1; " . Does it highlight "let"? Yes BOLD_CYAN. So l1 contains `{BOLD_CYAN}let{RESET}`.
+
+Hmm, but is `let` highlighted as a keyword in the rust keyword list? Existing test `test_highlight_rust_keywords` asserts `BOLD_CYAN let`. Good.
+
+### Test 2: near-miss one-line /* */
+```rust
+let mut st = HighlightState::default();
+let l1 = highlight_code_line_with("rust", "let a = 1; /* done */ ", &mut st);
+assert_eq!(st.block_comment_depth, 0);
+assert!(l1.contains(&format!("{DIM}/* done */{RESET}")));
+let l2 = highlight_code_line_with("rust", "let b = 2;", &mut st);
+assert!(!l2.contains(DIM.0));  // hmm DIM is Color; DIM.0 is &str
+```
+Better: assert `l2 == highlight_code_line("rust", "let b = 2;")` — the stateless baseline, proving no state leaked. Plus assert it does not contain DIM. Actually `assert_eq!(l2, format!(...))`? Let's assert equality with the stateless render AND that it doesn't contain `{DIM}`. Anti-vacuous: `assert!(l1.contains(&format!("{DIM}/* done */{RESET}")), "...")` — that's a positive on line 1 which proves the renderer does colour. Plus we can add anti-vacuous: assert_ne!(l2, format!("{DIM}let b = 2;{RESET}")) — i.e. line 2 is NOT dim, so a never-decrementing depth would fail. That's exactly the regression.
+
+Note DIM is a Color struct with Display and .0 as &str it seems (used as `GREEN.0` in find). Let me confirm Color definition: `pub struct Color(pub &'static str)` probably. Check.
+
+### Test 3: unterminated string spanning lines
+Task says: `"` opened at line 1, closed at line 3; line 2 is string-coloured, and the delimiter class is the one the code actually models — assert the class, not merely "not plain".
+
+Wait — but the existing test `rust_string_spanning_lines_keeps_continuation_line_as_string` already covers plain `"` spanning. Hmm. The task's 5 tests: test 3 is "An unterminated string literal spanning lines (`"` opened at line 1, closed at line 3)". Note the existing test at 1433 does exactly that. But the task's requirement is emission-point over a sequence with anti-vacuous companion. Hmm, it partially duplicates. That's fine — the task says write all five; duplication with existing tests is acceptable (we can't delete). But I should make test 3 add value: assert the delimiter CLASS via `state.open_string == Some(StringDelim::Normal)` — i.e., the class the code actually models — since Rust is the only language whose plain `"` is carried across lines, and non-Rust resets. That's the "class, not merely not plain" requirement. I'll assert `state.open_string == Some(StringDelim::Normal)` on line 1 and line 2, and `None` after line 3. Plus that line 2 is GREEN-wrapped whole, plus anti-vacuous that the same line via stateless wrapper differs.
+
+Hmm, careful: for line 1 `let s = "start {` — the scan sees `"` at index 8, opens a normal string, no closer, sets open_string = Some(Normal), i = len. seg_start was 0 with code segment... Let's trace: chars: `let s = "start {`. At i=8, chars[i] == '"'. Let's check the code: the generic quote branch (line ~275-290 region). Let me read lines 259-292 to see the plain-quote branch.
+
+I read up to 290 earlier partially. Let me read 259-292.
+
+Actually I saw at 255: triple quotes branch. Then 259-290 unknown. Let me read it.
+
+### Test 4: Markdown fence reset
+```rust
+let mut r = MarkdownRenderer::new();
+let input = "```rust\nlet x = 1; /* open\n```\n```rust\nlet y = 2;\n```\n";
+let out = r.render_delta(input); // + flush
+```
+Requirement: "A sequence rendered as two fenced blocks where the first leaves state open: the second block's first line must start clean."
+
+Hmm — the interesting case: the first block's last line leaves `/*` open, then the closing fence resets state. Then second block's first line "let y = 2;" must be code (BOLD_CYAN let), not dim.
+
+But wait — does the closing fence itself reset? Yes: render_line resets `code_highlight_state` on any fence line. So after ```` ``` ```` close, state reset. Then second block first line renders clean.
+
+Careful about how render_delta processes — it's streaming with buffering and per-line handling. The existing `render_full` helper does render_delta then flush. I'll use the same approach.
+
+Assertion: out contains the second block's `let y = 2;` highlighted BOLD_CYAN, i.e. contains `format!("{BOLD_CYAN}let{RESET}")` twice (both blocks) — and NOT the dim version of the second line. Better: count occurrences? Use `out.matches(&format!("{BOLD_CYAN}let{RESET}")).count() == 2`.
+
+And assert the first block's second line IS comment-coloured: `out.contains(&format!("{DIM}/* open{RESET}"))`? Line 1 of block 1 is "let x = 1; /* open" → code segment + DIM "/* open". Hmm the last line of block1 must leave state open. Let's make block 1 two lines:
+```
+```rust
+let x = 1; /* open
+still inside
+```
+```
+Wait, but the fence reset happens on the closing fence line — so it doesn't matter whether state was open. Actually to make the test meaningful: block 1 leaves state OPEN (unclosed /*), and the second block's first line must start clean. Yes.
+
+But hold on — is the reset needed for this? Without the reset, the second block's first line would be comment-coloured (dim). With reset, it's code. Good — that's the fence-reset falsifier.
+
+Also need anti-vacuous: assert `out` for the in-block sequence makes "still inside" dim (`out.contains(&format!("{DIM}still inside{RESET}"))`), proving the renderer does carry state within a block. That's the companion.
+
+Additionally, markdown render_delta may transform lines. Let me be careful: render_delta with a multi-line string — does it handle newlines and call render_line per line? Presumably yes. Let me just test empirically.
+
+Hmm, risk: the markdown renderer's streaming may behave oddly with the whole input in one delta. The existing helper `render_full` uses one render_delta call, used in existing tests with multi-line fences (e.g. `test_highlight_json_through_markdown` with "```json\n{\"name\": \"yoyo\"}\n```\n"). So multi-line in one delta works.
+
+### Test 5: stateless single-line entry point byte-identical
+"Call the stateless wrapper on a sequence's lines individually and assert each equals the pre-change output for a line with no cross-line construct — a whole-string `assert_eq!`."
+
+Hmm. The stateless wrapper `highlight_code_line` is the pre-change output by definition. So: for a sequence of lines with no cross-line construct, `highlight_code_line(lang, line)` (stateless) == `highlight_code_line_with(lang, line, &mut fresh_state)` (stateful, state never carried). Whole-string assert_eq.
+
+But "the pre-change output" — how do we pin that independently? Day-173's #804 change is what introduced state. The honest pin: for each line, stateful-with-fresh-state == stateless. That's what the existing `rust_same_line_string_is_unchanged_by_the_carried_state` does for a string line.
+
+To make it stronger/anti-vacuous: assert the outputs actually contain colour (assert_ne!(out, line)) so a renderer that returns plain can't pass. And assert that after the whole sequence the state is default (nothing carried) — because none of the lines have a cross-line construct. Let me use lines:
+- "fn main() {" 
+- "    let x = 1;"
+- "}" 
+For each: assert_eq!(highlight_code_line_with(lang, line, &mut st), highlight_code_line(lang, line)) and assert_ne!(out, line) for the lines that get colour (line 1 has fn keyword; line 2 has let; line 3 "}" maybe just plain). Careful: line 3 "}" rendered might be exactly "}" if no colour added. Then assert_ne! would fail. So only assert_ne for lines with keywords. Better: collect joined output and assert it differs from source.
+
+Also assert `st.block_comment_depth == 0 && st.open_string.is_none()` after all lines.
+
+Hmm, does `highlight_code_line` for "}" return "}"? Possibly plain. Fine.
+
+Also maybe include a line with `// comment` and one with a string to make the byte-identity claim load-bearing: for a stateless call, a line with a one-line `/* */`—no. Let's include:
+- "fn main() {"
+- "    let x = 1; // note"
+- "}"
+And a second group with a same-line string: `let s = "hi";`.
+
+Now let me read lines 259-292 for the plain-quote branch, then check Color definition, then write.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/highlight.rs:259..294 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note: for an unclosed plain `"`, the segment kind at end: seg_start=0 < len, state.block_comment_depth==0 → Code segment covering whole line. So the whole line is rendered as code (with the string highlighted green up to end by the per-line highlighter). Good — on line 2, we come in with open_string = Some(Normal), and `close_open_string(chars, 0, Normal)` returns None for a line with no `"`, so returns only a Str segment covering everything → `{GREEN}{line}{RESET}`. Matches existing test.
+
+Now Color definition and DIM.0 usage.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct Color" -A 12… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Important: Color's Display returns empty string when colour is disabled! So `format!("{DIM}...")` renders as just the text when COLOR_DISABLED. The existing tests are fine either way since they use the same formatting on both sides. But a test like `assert!(!l2.contains(DIM.0))` would use the raw escape which is always present in `.0` — that's a real check independent of colour enabled state. Better to use `.0` for negative assertions to be colour-agnostic... hmm, actually with color disabled, output has no escapes and `format!("{DIM}x{RESET}")` == "x". Existing tests rely on symmetrical formatting. 
+
+For my anti-vacuous assertions (assert_ne!(out, line)), if colour is disabled, out == line for a plain line! E.g. `format!("{DIM}still inside{RESET}")` == "still inside" when colour disabled. So assert_ne! would FAIL when colour is disabled. Hmm!
+
+Is colour enabled in tests? `color_enabled()` checks NO_COLOR env and the process-global COLOR_DISABLED flag. Tests in this repo use `enable_quiet`, `disable_color` etc. Many existing tests do `assert!(out.contains(&format!("{GREEN}'hi'{RESET}")))` which passes trivially if colours are disabled (contains of a substring of itself — "hi'" etc.). Hmm, actually with colour disabled `format!("{GREEN}'hi'{RESET}")` = `'hi'` and out = `const s = 'hi';` so contains passes. So those tests are colour-agnostic and pass either way. Some tests would be vacuous under disabled colour.
+
+Are colours enabled during `cargo test`? Tests run in parallel threads in one process. `COLOR_DISABLED` is a global AtomicBool. Is it set anywhere by tests? Let me grep for `disable_color` in tests. There's `color_enabled_from_env()`. Let me check how COLOR_DISABLED is initialized.
+
+Actually `color_enabled()` — let me read it. Line ~249-270: "This is the only reader of the process-global COLOR_DISABLED state". So there's a static COLOR_DISABLED initialized from env at first use probably (NO_COLOR). In CI, NO_COLOR is probably not set. But we can't assume.
+
+To be safe: my tests should be robust. Options:
+- For anti-vacuous assertions, compare against the raw escape bytes using `.0` and `RESET.0`, e.g. `assert!(out.contains(&format!("{DIM}\u{1b}[0m")))`. Hmm.
+- Or force colour on in each test? There may be an `enable_color`. Let me check: `disable_color` exists; is there an enable? Let me grep.
+
+Simplest robust approach: make assertions on the *structure* using `.0` (raw escapes) only in the positive/anti-vacuous direction, and guard with the actual colour state... complicated.
+
+Alternative: use `Color::enabled()`? Not present.
+
+Hmm, let me check how existing tests handle this. `test_highlight_json_through_markdown` asserts `out.contains(&format!("{CYAN}\"name\"{RESET}"))`. Under disabled colour this is `out.contains("\"name\"")` → true. So it's a weak assertion either way but never a false failure.
+
+For my anti-vacuous `assert_ne!(rendered, source)`: under disabled colour, a fully-comment-coloured line renders byte-identically to the source line → assert_ne! fails. That's a problem only if colour is disabled in the test process.
+
+Let me check what `color_enabled()` does and whether tests set NO_COLOR/disable color globally. Let me look.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '240,300p' src/format/mod… ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Under `cfg(test)`, `color_enabled()` is pinned to `true`. So in unit tests, colours are always emitted. So `assert_ne!(rendered, source)` works, and `format!("{DIM}...{RESET}")` includes real escapes.
+
+So my tests in `src/format/highlight/highlight_tests.rs` (a unit test module inside the crate, compiled with cfg(test)) get colour enabled.
+
+Now let me write the file. I'll write it, add the mod line, and run.
+
+Test file content:
+
+```rust
+//! Emission-point tests for the cross-line highlighter (#804).
+//!
+//! ...
+
+use super::*;
+
+/// Join per-line renders into one string so every assertion below is made on what a
+/// sequence of lines actually emits, not on one line in isolation.
+fn render_lines(lang: &str, lines: &[&str]) -> (String, HighlightState) {
+    let mut st = HighlightState::default();
+    let parts: Vec<String> = lines
+        .iter()
+        .map(|l| highlight_code_line_with(lang, l, &mut st))
+        .collect();
+    (parts.join("\n"), st)
+}
+```
+
+Test 1:
+```rust
+#[test]
+fn block_comment_spanning_three_lines_ends_mid_line() {
+    let (out, st) = render_lines(
+        "rust",
+        &["let x = 1; /* open", "still inside", "*/ let y = 2;"],
+    );
+    let lines: Vec<&str> = out.split('\n').collect();
+    // line 2 is comment-coloured in full
+    assert_eq!(lines[1], format!("{DIM}still inside{RESET}"), "got {out:?}");
+    // line 3: the segment before the close is comment-coloured, after it is not
+    assert!(lines[2].starts_with(&format!("{DIM}*/{RESET}")), "got {:?}", lines[2]);
+    assert!(lines[2].contains(&format!("{BOLD_CYAN}let{RESET}")), "code resumes past the close: {:?}", lines[2]);
+    // the opener line begins as code
+    assert!(lines[0].starts_with(&format!("{BOLD_CYAN}let{RESET}")), "got {:?}", lines[0]);
+    assert!(lines[0].ends_with(&format!("{DIM}/* open{RESET}")), "got {:?}", lines[0]);
+    assert_eq!(st.block_comment_depth, 0);
+    // anti-vacuous
+    assert_ne!(out, "let x = 1; /* open\nstill inside\n*/ let y = 2;");
+}
+```
+
+Careful: `lines[0].starts_with(&format!("{BOLD_CYAN}let{RESET}"))` — highlight_normalized("rust", "let x = 1; ") presumably emits `{BOLD_CYAN}let{RESET} x = ...`? Let me check the per-line highlighter's output ordering: does the bold-cyan wrap the keyword including trailing space? Existing test: `test_highlight_rust_keywords` asserts `out.contains(&format!("{BOLD_CYAN}let{RESET}"))` for "    let mut x = 42;" — so `{BOLD_CYAN}let{RESET}` exactly, without space. Good. starts_with should hold. But safer to use `contains` for the start-of-line claim plus a separate check that the DIM part starts at the right position. Actually to be precise about "the segment before the close is comment-coloured and the segment after is not" — starts_with DIM"*/" and contains BOLD_CYAN let covers both. I'll use starts_with but if it fails I'll adjust to contains.
+
+Hmm, one concern: does `{DIM}*/{RESET}` come first with nothing before? seg_start=0 → Comment(0,2) → yes, out starts with DIM"*/"RESET. Good.
+
+Test 2 (near-miss one-line):
+```rust
+#[test]
+fn one_line_block_comment_does_not_leak_state_to_the_next_line() {
+    let mut st = HighlightState::default();
+    let l1 = highlight_code_line_with("rust", "let a = 1; /* done */ ", &mut st);
+    assert_eq!(st.block_comment_depth, 0, "a closed comment leaves no depth");
+    assert!(l1.contains(&format!("{DIM}/* done */{RESET}")), "got {l1:?}");
+    let l2 = highlight_code_line_with("rust", "let b = 2;", &mut st);
+    assert_eq!(l2, highlight_code_line("rust", "let b = 2;"), "line 2 must be the stateless render");
+    assert!(!l2.contains(DIM.0), "line 2 is not comment-coloured: {l2:?}");
+    assert!(l2.contains(&format!("{BOLD_CYAN}let{RESET}")), "line 2 is highlighted as code: {l2:?}");
+    // anti-vacuous: the renderer really does colour comments, so a depth that never
+    // decremented would show up as a dim line 2 rather than as agreement.
+    assert_ne!(l2, format!("{DIM}let b = 2;{RESET}"));
+}
+```
+Wait: `l1.contains(&format!("{DIM}/* done */{RESET}"))` — after "/* done */" comes " " (trailing space) then end. The scanner: at i where `/` `*` found → push Code(0, i), seg_start=i, depth=1, i+=2. Then continues, finds `*/` at some index j → depth 0, i=j+2, push Comment(seg_start, i) = "/* done */". seg_start = i. Then " " remains → at end seg_start < len → push Code(i, len) = " ". highlight_normalized("rust", " ") → hmm, what does it do with a space? Possibly returns " " plain. So l1 = highlight_normalized("rust","let a = 1; ") + DIM"/* done */"RESET + " ". So contains works. Good.
+
+Test 3 (unterminated string, assert class):
+```rust
+#[test]
+fn unterminated_string_carries_the_delimiter_class_across_lines() {
+    let mut st = HighlightState::default();
+    let l1 = highlight_code_line_with("rust", "let s = \"start {", &mut st);
+    assert_eq!(st.open_string, Some(StringDelim::Normal), "the carried delimiter class is the plain-quote one");
+    let line2 = "fn not_really_code() {";
+    let l2 = highlight_code_line_with("rust", line2, &mut st);
+    assert_eq!(l2, format!("{GREEN}{line2}{RESET}"));
+    assert_eq!(st.open_string, Some(StringDelim::Normal), "line 2 does not close it");
+    let l3 = highlight_code_line_with("rust", "end\"; let y = 2;", &mut st);
+    assert!(l3.starts_with(&format!("{GREEN}end\"{RESET}")), "got {l3:?}");
+    assert!(l3.contains(&format!("{BOLD_CYAN}let{RESET}")));
+    assert_eq!(st.open_string, None);
+    // anti-vacuous: the same three lines rendered statelessly are *not* one string run
+    let stateless = [
+        highlight_code_line("rust", "let s = \"start {"),
+        highlight_code_line("rust", line2),
+        highlight_code_line("rust", "end\"; let y = 2;"),
+    ].join("\n");
+    let stateful = [l1, l2, l3].join("\n");
+    assert_ne!(stateful, stateless, "carrying the open string must change line 2");
+    assert_ne!(l2, line2);
+}
+```
+Careful about `l3.starts_with(&format!("{GREEN}end\"{RESET}"))`: closes at the `"` → push_string_run(segments, chars, 0, end, delim, norm) where end = index after the closing quote. So Str segment = `end"` → `{GREEN}end"{RESET}`. Yes matches existing test's assertion.
+
+Test 4 (markdown fence reset):
+```rust
+#[test]
+fn markdown_fence_resets_the_carried_state_between_blocks() {
+    let input = "```rust\nlet x = 1; /* open\nstill inside\n```\n```rust\nlet y = 2;\n```\n";
+    let out = render_full(input);
+    // within the first block the state IS carried — the companion that keeps the
+    // reset assertion from passing on a renderer that carries nothing at all.
+    assert!(out.contains(&format!("{DIM}still inside{RESET}")), "got {out:?}");
+    assert!(out.contains(&format!("{DIM}/* open{RESET}")), "got {out:?}");
+    // the second block's first line starts clean
+    assert_eq!(out.matches(&format!("{BOLD_CYAN}let{RESET}")).count(), 2, "...");
+    assert!(!out.contains(&format!("{DIM}let y = 2;{RESET}")), "second block must not inherit the comment state: {out:?}");
+}
+```
+Need `render_full` helper (defined in the existing tests mod, not accessible). So define my own here:
+```rust
+fn render_markdown(input: &str) -> String {
+    let mut r = MarkdownRenderer::new();
+    let mut out = r.render_delta(input);
+    out.push_str(&r.flush());
+    out
+}
+```
+Is `MarkdownRenderer` accessible via `use super::*` in highlight_tests? super = format::highlight, which does `use super::*;` (format's glob). format has `pub use markdown::*;` so MarkdownRenderer is in format's namespace publicly. And highlight.rs's private `use super::*` binding is visible to descendants. So yes.
+
+Hmm — does `out.matches(...).count() == 2`? First block line 1 "let x = 1; /* open" is code segment with `let` → BOLD_CYAN let. Second block's "let y = 2;" → BOLD_CYAN let. So 2. But I should verify empirically.
+
+Test 5 (stateless byte-identity):
+```rust
+#[test]
+fn stateless_entry_point_is_byte_identical_for_a_sequence_with_no_cross_line_construct() {
+    let lines = ["fn main() {", "    let s = \"hi\"; // note", "}", "    let n = 1;"];
+    let mut st = HighlightState::default();
+    let mut stateful = Vec::new();
+    for line in lines {
+        let with_state = highlight_code_line_with("rust", line, &mut st);
+        let stateless = highlight_code_line("rust", line);
+        assert_eq!(with_state, stateless, "line {line:?} changed for single-line callers");
+        stateful.push(with_state);
+    }
+    let joined = stateful.join("\n");
+    assert_eq!(st.block_comment_depth, 0);
+    assert_eq!(st.open_string, None);
+    // anti-vacuous: the sequence really is coloured, so "unchanged" is not "unrendered"
+    assert_ne!(joined, lines.join("\n"));
+    assert!(joined.contains(&format!("{BOLD_CYAN}fn{RESET}")));
+    assert!(joined.contains(&format!("{GREEN}\"hi\"{RESET}")));
+}
+```
+
+Now, `StringDelim` needs PartialEq — yes it derives it. And Debug. Good. `open_string` field is pub. Good.
+
+Note: `use super::*;` in the new file — will `StringDelim` be in scope? highlight.rs does `use crate::commands_refactor::{close_open_string, raw_string_open, StringDelim};` — private use bindings visible to descendants and glob-imported by `use super::*`? Glob imports import names *visible from that location* — private items of the parent module are accessible to children, and glob import does bring them in. I believe yes. If not, I'll add an explicit `use crate::commands_refactor::StringDelim;`.
+
+Also `HighlightState`, `highlight_code_line`, `highlight_code_line_with` are pub in highlight module → imported via glob. Good.
+
+Now also `mod tests` already exists in highlight.rs — adding `#[cfg(test)] mod highlight_tests;` is separate, fine. Where to put it? At the end of the file, near the existing test module. Let me put it right before `#[cfg(test)] mod tests {` or at end. Simplest: append at the end of file after the tests module's closing brace? That could confuse. I'll put it just before `#[cfg(test)] mod tests {`.
+
+Now module_size: highlight.rs goes from 2044 → 2046 (+2 for the two lines: `#[cfg(test)]` and `mod highlight_tests;`). Registered 2044, drift +2 → warning. Task says apply the gate's printed remedy if it names this file. Let's see what the test prints. If it warns, the printed line presumably is the register line. The task says "If the gate names this file as a register problem, apply its own printed remedy — paste the line it prints into GRANDFATHERED_OVERSIZED_MODULES." Hmm — updating the register to 2046 in the same commit. That's allowed explicitly ("tests/module_size.rs (only if the size gate asks for its register line)").
+
+But wait: is there a test that asserts the register entry equals actual exactly, which would fail (not warn)? Let me check `grandfathered_module_may_shrink_while_still_over_cap` and others. Let me grep the test names to see behavior for GrewPastCeiling: "warn". And there's a test that stderr is empty when nothing violates? Let me check for a test asserting the violation list is empty for the real repo. Let me look at test names.
+
+Actually, the day-183 comment said "it warned rather than failed" — meaning `src_modules_respect_the_size_gate` passes with a warning to stderr. And the memory shows past failures of that test at specific lines. Let me just run it and see.
+
+Hmm, but there might be a separate test that pins the register as exact (e.g. `test_register_entries_are_exact`). Let me grep.
+
+Let me write the file now and run tests.
+
+One more: new file `src/format/highlight/highlight_tests.rs` — will `module_size` gate scan it? It scans src recursively presumably; file is ~150 lines, fine.
+
+Also `cargo fmt` will format the new file.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have what I need. Writing the five emission-point tests in the new child module.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write src/format/highlight/highlight_tests.rs (267 lines) ✓ (1m 24s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The auto-check ran but the file isn't wired in yet (`mod highlight_tests;` missing), so the new file isn't compiled. Let me add the mod line.
+
+Wait, also the auto-check reports failures? Let me add the mod line and run tests.
+────────────────────────────────────────────────────────────────────────────────
+
+The new file isn't wired in yet. Adding the single mod line to the parent.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/highlight.rs (3 → 6 lines)
+    /// Returns (input, cache_write, cache_read, output) or None if model is unknown.
+  + #[cfg(test)]
+  + mod highlight_tests;
+  + 
+    #[cfg(test)]
+    mod tests {
+ ✓ (2m 10s)
+    /// Returns (input, cache_write, cache_read, output) or None if model is unknown.
+  + #[cfg(test)]
+  + mod highlight_tests;
+  + 
+    #[cfg(test)]
+    mod tests {
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib format::highlig… ✓ (151ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test highlight 2>&1 | tail… ✓ (186ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The "highlight" filter matched 0 tests in the lib? The first part of output was truncated. Let me run with the module path filter properly: `cargo test --bin yoyo highlight` maybe. The crate is a binary (no lib target). Tests in src/ compile as part of the bin. Let me run `cargo test --bin yoyo highlight`.
+
+Actually, unit tests in the bin target: `cargo test --bin <name>`. Let me find the bin name.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "name = \|\[\[bin\]\]\|\… ✓ (151ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 5 new tests pass on the first run. That's suspicious — I should verify they're actually meaningful, which is exactly what the positive control is for. Let me now run the module_size gate.
+────────────────────────────────────────────────────────────────────────────────
+
+All five pass. Now the size gate.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (191ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The gate names the file and prints its remedy. Task says apply its own printed remedy: paste `("src/format/highlight.rs", 2047)`.
+
+Hmm, but the task also says at Step 1: "Prefer the child-module shape, which also inherits `super::` visibility" and "only if the size gate asks for its register line". The gate asked (a warning with an explicit remedy line). The task says: "If the gate names this file as a register problem, apply its own printed remedy — paste the line it prints into GRANDFATHERED_OVERSIZED_MODULES."
+
+So paste `("src/format/highlight.rs", 2047)`. Let me add a day-comment explaining why (repo convention: entries carry a comment). I'll follow the existing style and add a brief note. But careful: adding lines to tests/module_size.rs is fine.
+
+Let me check the exact current line 332 content and the convention of comments near it.
+
+Current: `    ("src/format/highlight.rs", 2044),` at line 332 with a preceding comment block. I'll replace with 2047 and add a short comment line above naming Day 204 (#804) and why.
+
+Actually, careful about ordering/convention: the register appears to be alphabetically sorted with comments *above* each entry (the comment above line 332 belongs to highlight.rs). Let me read the surrounding lines to place my note correctly.
+────────────────────────────────────────────────────────────────────────────────
+
+The gate named the file and printed its remedy. Applying it as instructed.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '318,336p' tests/module_s… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '324,333p' tests/module_s… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read tests/module_size.rs:324..334 ✓ (0ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ edit tests/module_size.rs (2 → 7 lines)
+        // from fatal, so the *next* task here is the split, not another entry.
+  -     ("src/format/highlight.rs", 2044),
+  +     // Day 204 (#804): 2044 -> 2047, +3 from the one-line `#[cfg(test)] mod
+  +     // highlight_tests;` declaration plus its blank line. The five sequence tests
+  +     // themselves live in `src/format/highlight/highlight_tests.rs` (the child-module
+  +     // trick) precisely so this file does not absorb ~140 test lines and cross the
+  +     // fatal edge — this is the smallest form of the remedy, not a second drift.
+  +     ("src/format/highlight.rs", 2047),
+ ✓ (1m 25s)
+        // from fatal, so the *next* task here is the split, not another entry.
+  -     ("src/format/highlight.rs", 2044),
+  +     // Day 204 (#804): 2044 -> 2047, +3 from the one-line `#[cfg(test)] mod
+  +     // highlight_tests;` declaration plus its blank line. The five sequence tests
+  +     // themselves live in `src/format/highlight/highlight_tests.rs` (the child-module
+  +     // trick) precisely so this file does not absorb ~140 test lines and cross the
+  +     // fatal edge — this is the smallest form of the remedy, not a second drift.
+  +     ("src/format/highlight.rs", 2047),
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the full check suite, plus formatting.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && git diff --stat && … ✓ (3.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+cargo fmt didn't change anything major. Now clippy + build + test. Note the task says clippy at the end specifically.
+
+Let me run the full check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && ca… ✓ (16.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 46s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The grep pattern didn't work well due to output trimming. Let me look for failures explicitly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 21s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No failures. Exit marker 1 is because grep found nothing. Let me confirm the overall test run passed cleanly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -3; echo … ✓ (2m 40s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green: 17 test-result groups all ok, no failures.
+
+Now the positive control: make `scan_block_comments` always report depth 0 (or make the state's depth never persist). Tests 1 and 4 must fail by name. Run as ONE atomic mutate→run→restore command, with the sabotage marked NEUTERED.
+
+The cleanest single-line sabotage: at the end of `scan_block_comments`, force `state.block_comment_depth = 0;` before returning. But there are two return points (`return only;` for open_string, and the final `segments`). Better: sabotage inside the depth-carrying path.
+
+Actually the simplest reliable sabotage that makes depth never persist: in `highlight_code_line_with`, after `let segments = scan_block_comments(norm, &chars, state);` add `state.block_comment_depth = 0; // NEUTERED ...`. But that's a two-line insert. That would make depth never carried — test 1 fails (line 2 not comment-coloured) and test 4 fails (fence reset test — actually test 4 asserts first block carries it; with depth never persisting, "still inside" won't be dim → test 4 fails).
+
+Let me do the atomic mutate→run→restore with a sed command. The requirement: sabotage line marked with NEUTERED/DO NOT COMMIT so tests/neutered_guards.rs enforces restore.
+
+Approach: insert a line right after the `let segments = scan_block_comments(...)` line in highlight_code_line_with. Let me find the exact text.
+
+Line 382: `    let segments = scan_block_comments(norm, &chars, state);`
+
+I'll insert after it: `    state.block_comment_depth = 0; // NEUTERED POSITIVE CONTROL — DO NOT COMMIT`
+
+And run `cargo test --bin yoyo highlight_tests` to see which tests fail by name. Then restore with git checkout? No — git checkout would wipe my new file since it's untracked... Actually git checkout -- src/format/highlight.rs would restore the committed version, removing my mod line too. Safer: use sed to remove the exact line, or use a backup copy.
+
+Best practice per the project: mutate→run→restore as one atomic command. I'll copy the file to a temp backup, mutate, run, restore from backup, then verify the restore (diff against backup empty + test green).
+
+Let me build the atomic command carefully. Also verify tests/neutered_guards.rs would catch a leftover — I'll confirm the restore happened by grepping.
+
+Let me write it as a single bash command.
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now the positive control — one atomic mutate→run→restore.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (11 lines) ✓ (25.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The output truncated the test names. I need to know exactly which 2 failed by name. Let me re-run the positive control but capture the failure names clearly. The restore already happened, so I need to redo mutate→run→restore. This time redirect output to a file and grep for the failure list.
+
+Since it's a file-mutating control, run it serially (which I am). Let me redo.
+────────────────────────────────────────────────────────────────────────────────
+
+Two failed — I need their exact names. Re-running the control serially, capturing the failure list.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (8 lines) ✓ (25.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Exactly the two named by the task: test 1 and test 4. And the other three stayed green — meaning the sabotage reached only the depth-carrying path, which is exactly the claim. Restore verified byte-identical.
+
+Now confirm the tree is green after restore, and confirm neutered_guards passes.
+
+Then commit and journal.
+
+Let me run the final full suite: fmt check, clippy, build, test.
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly tests 1 and 4 failed by name; the other three stayed green. Restore verified byte-identical. Final full verification:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (3m 35s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+All checks are green: fmt, clippy, build, 17 test binaries all ok, neutered_guards ok (no NEUTERED markers left). Now write the journal entry and commit.
+
+Let me check the journal format quickly, then commit.
+
+Actually, let me be efficient given time budget. Check git status, write journal entry, commit.
+────────────────────────────────────────────────────────────────────────────────
+
+Everything green: fmt, clippy, build, all 17 test binaries ok, neutered_guards ok (no leftover markers). Now the journal entry and commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 journals/JOURNAL.md && … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The journal is in reverse-chronological order (newest at top)? Let me check the head of the file.
+
+Actually, tail shows Day 0 at the bottom, Day 3, etc. So newest at top. Let me check the head.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -25 journals/JOURNAL.md ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me write the journal entry at the top (after "# Journal"). Keep in the voice. Then commit.
+
+Also need to bump DAY_COUNT to 204? The commit message says Day 204. DAY_COUNT is 203. Hmm — other sessions likely handle this. The task says don't work on anything else. DAY_COUNT is likely maintained by the evolve script or a session-wrap step. Let me check whether it's part of the pattern... it's a small file at repo root. It says "203". Given the session is Day 204, updating it seems in-scope-ish but the task says only this task. The evolve.sh likely does it. I'll leave it alone — not my task, and modifying it wasn't requested. Actually, hmm. Let me check git log to see if DAY_COUNT is usually bumped in task commits.
+
+Let me be efficient — I'm running low on budget. Let me check quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 -- DAY_COUN… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — DAY_COUNT is bumped by a separate "update day counter" commit, not by task commits. Leave it.
+
+Now write the journal entry at the top of JOURNAL.md, then commit.
+
+Let me write it honestly, in voice. Include: what I did, which tests reddened under sabotage, the surprise (the tree already had 12+ cross-line tests in the parent module — so the "missing" tests were narrowed to block-comment sequences + fence reset), the size gate remedy, the positive control.
+
+Key honest facts:
+- Re-read the shipped code first: HighlightState{block_comment_depth, open_string}, scan_block_comments, highlight_code_line_with, MarkdownRenderer.code_highlight_state + reset on both fence directions — all present.
+- The parent module turns out to already have a substantial cross-line suite (strings, raw strings, backticks, python docstrings) — added after #804 by #806/#865. So the genuinely missing half was the block-comment sequences and the fence reset.
+- New file src/format/highlight/highlight_tests.rs, wired with one line.
+- 5 tests, all sequence-based (≥2 lines), all with anti-vacuous companions.
+- Size gate printed its own remedy: 2047. Applied.
+- Positive control: forced depth to 0 after scan → exactly 2 reddened by name: block_comment_spanning_lines... and markdown_fence_resets...
+
+Wait — important detail on test 4: under sabotage, which assertion failed was the *companion* line (block 1 carries it to its second line), not the reset assertion. That's worth noting honestly: the reset test caught the sabotage via its anti-vacuous companion, meaning both directions are covered — a renderer that carries nothing fails there. Good.
+
+Also note: test 3 (unterminated string) and test 5 (stateless byte-identity) and test 2 (one-line comment) stayed green under that sabotage, which is correct — they're pinned to different mechanisms (open_string and the stateless/complement path). Should say that plainly, not present it as a clean sweep.
+
+Now write.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit journals/JOURNAL.md (2 → 54 lines)
+    # Journal
+  + 
+  + ## Day 204 — 09:00 — the falsifier nobody had written for line two
+  + 
+  + The receipt said five tests were missing and had never been written. Before I typed anything I
+  + went and read what was actually in the tree, and that changed the shape of the job twice.
+  + 
+  + First: the code is all there. `block_comment_depth` on the carried state, `scan_block_comments`,
+  + `highlight_code_line_with`, the `MarkdownRenderer` field with a reset on both fence directions.
+  + Not one piece of #804 needed rebuilding, which is what the receipt claimed and what I checked
+  + rather than assumed.
+  + 
+  + Second, and this is the interesting one: the parent module already carries a real cross-line
+  + suite. Strings, raw strings with hash counts, JS template literals, Go raw strings, Python
+  + docstrings — twelve-odd tests that assert on line 2 of a sequence. Those landed *after* #804
+  + (follow-ups #806 and #865), so what looked from the receipt like "the highlighter has no sequence
+  + tests" was really "the **block-comment** sequences and the fence reset have none." Every one of
+  + the tests that did exist was about `open_string`. The other half of the state — the depth field,
+  + the half that colours every following line dim if it regresses — had no falsifier at all. The
+  + receipt's five-item list was right; my framing of *why* was wrong until I read the file, and the
+  ... (34 more lines)
+ ✓ (1m 20s)
+    # Journal
+  + 
+  + ## Day 204 — 09:00 — the falsifier nobody had written for line two
+  + 
+  + The receipt said five tests were missing and had never been written. Before I typed anything I
+  + went and read what was actually in the tree, and that changed the shape of the job twice.
+  + 
+  + First: the code is all there. `block_comment_depth` on the carried state, `scan_block_comments`,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (2m 43s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, wait — clippy and build finished without recompiling? Because the journal change is a .md file, no recompile needed. Good. And the test grep found no failures; 17 ok binaries.
+
+All green. Now commit.
+
+Note: I need to check that the new file is tracked by git — commit uses git add -A so fine. Also verify no NEUTERED markers: verified earlier (0). neutered_guards passed.
+
+Commit now.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (58ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed. Done.
+
+## What I did
+
+Verified before building. Re-read the shipped #804 code: HighlightState::block_comment_depth, scan_block_comments, highlight_code_line_with, MarkdownRenderer.code_highlight_state + fence-open/close reset — all present. Nothing needed rebuilding, as the receipt claimed.
+
+One correction to the task's framing, found by reading rather than trusting. The parent module does already carry a substantial cross-line suite (plain/raw strings, JS templates, Go raw strings, Python docstrings) — those landed in follow-ups #806/#865. Everything that existed was pinned to open_string; the block-comment depth half and the fence reset had no falsifier at all. The five-item list was right; the reason it was needed was narrower than the receipt said.
+
+The five tests live in src/format/highlight/highlight_tests.rs (new), wired with exactly one #[cfg(test)] mod highlight_tests; in the parent — 3 lines added to a 2044-line module instead of ~140, keeping clear of the gate's 100-line fatal edge. Each renders a whole sequence through one shared state, asserts on the joined string (emission point), and carries an anti-vacuous companion.
+
+Size gate: it printed its own remedy (2047); I pasted that, with the reason, as instructed.
+
+Positive control, one atomic mutate→run→restore (marked NEUTERED, restore verified byte-identical, neutered_guards green): forcing block_comment_depth to 0 after scan_block_comments reddened 2 of 5, by name —
+• `block_comment_spanning_lines_colours_line_two_and_ends_mid_line_three`
+• `markdown_fence_resets_carried_comment_state_between_blocks`
+
+The other three stayed green and should (they pin open_string and the stateless path, which that sabotage does not touch). Notably, the fence test failed on its anti-vacuous companion, not its reset assertion — so both directions are covered. If none had reddened I'd have said so rather than committed ceremony.
+
+Checks: cargo fmt -- --check, cargo clippy --all-targets -- -D warnings (run last, after the final edit), cargo build, and cargo test — all 17 test binaries green, no failures. Journal entry written at the top of journals/JOURNAL.md. Commit 2e35173a.
+
+One thing I did not touch: DAY_COUNT still reads 203 — git history shows that's bumped by a separate "update day counter" commit, not by task commits.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/2 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/format/highlight/highlight_tests.rs, src/format/highlight.rs
+

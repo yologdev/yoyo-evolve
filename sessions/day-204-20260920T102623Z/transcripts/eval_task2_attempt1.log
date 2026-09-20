@@ -1,0 +1,252 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the actual diff and the current state of the repo. The task asked for a new file `tests/sync_util_chokepoint.rs` as the whole task. The diff instead modifies `tests/lock_recovery_chokepoint.rs` and ARCHITECTURE.md, and does NOT create `tests/sync_util_chokepoint.rs`.
+
+Key question: did the task's premise hold? The diff claims that the gate already exists (Day 193 `abe6b932`) as `tests/lock_recovery_chokepoint.rs`, so the correct action was to close gaps rather than create a second gate. Let me verify that claim: does `tests/lock_recovery_chokepoint.rs` exist and gate the sync_util routing by resolving definitions?
+
+Also the task said: "Files: tests/sync_util_chokepoint.rs (new — the whole task)". The diff didn't create it. But if the premise is stale, the evaluator's job is to judge against the task description. Hmm. Let me verify facts first.
+
+Let me check git log, the file existence, and whether the classifier resolves definitions.
+
+Let me be efficient. Run some checks.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && ls tests…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD && git diff… ✓ (9ms)
+ ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The task explicitly said the deliverable is `tests/sync_util_chokepoint.rs` (new — the whole task). The diff created no such file. Instead it modified an existing gate. The justification: the premise was stale — the gate already exists (Day 193, `tests/lock_recovery_chokepoint.rs` = the sync_util lock-recovery chokepoint gate).
+
+Let me verify the existing gate actually does what #901 asks: key on the three function names, resolve definitions, register, both directions, anti-vacuous, limit via raw stderr. Let me look at the file.
+
+Also check whether the "Done means" criteria are satisfied by the existing gate + repairs. Key items:
+1. gate exists and is green with empty register — need to check whether the definition register is empty. Note: the existing gate has `REGISTERED_INLINE_BODIES` which ships 5 sites (inlined bodies), and the definition register... Let's read.
+
+Also point 5 of the task: the limit printed on every passing run via raw stderr — does the existing gate already do that? The commit message says "the raw-stderr limit block on every passing run says so ... the census line and all four LIMITS rows".
+
+Point 6: truncation at `#[cfg(test)]` + column-0 mod marker.
+
+Let me read the test file.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l tests/lock_recovery_chokep…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "lock_or_recover" tests… ✓ (6ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the existing gate is `tests/lock_recovery_chokepoint.rs`, which is the sync_util lock-recovery chokepoint gate. It exists since Day 193 (abe6b932). Let me verify that with git log.
+
+The #901 issue premise: `grep -rn "lock_or_recover" tests/` returns nothing — but now it returns matches, because the file exists. Let me verify when tests/lock_recovery_chokepoint.rs was created.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --follow -- te…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 280,480p tests/lock_recov… ✓ (5ms)
+ ✓ (41ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the pre-existing gate `tests/lock_recovery_chokepoint.rs` (Day 193, abe6b932 — which IS an ancestor of HEAD, since the check printed... wait, the merge-base check: exit code 1 for the whole command block? The output showed the log of abe6b932 but not "abe6b932 is ancestor of HEAD". Hmm, actually the exit code 1 was from the first part (git log --follow | tail -5 maybe exit... no). Actually the "&&" chain: `git log --oneline --follow -- tests/lock_recovery_chokepoint.rs | tail -5 && echo ---- && git log --oneline -3 abe6b932 | head -3 && echo ---- && git merge-base --is-ancestor abe6b932 HEAD && echo ...`. Output shows only two commits in the first log (edbe7358, 0b3d2df5) — using --follow, tail -5. Then ---- and the abe6b932 log. Then exit code 1 means merge-base --is-ancestor failed → abe6b932 is NOT an ancestor of HEAD? That's odd. Wait, exit code 1 reported at top. Hmm, but the "----" for the second echo wasn't printed either... Actually the output ends after the three abe6b932 lines, no second "----". So `git log --oneline -3 abe6b932 | head -3` succeeded, then `echo ----` should print... unless head -3 caused SIGPIPE? No.
+
+Hmm, exit code 1. Let me just re-run the ancestry check.
+
+Also: the gate adds the definition register? The task requires a register entry ("src/path.rs", "why this copy is deliberate") for non-chokepoint definitions. The existing gate has REGISTERED_INLINE_BODIES for inlined bodies. Does it have a separate register for definitions? The commit says "empty definition register is pinned". Let me check: classify takes `register: &[(&str,&str,&str)]` and it's called once with REGISTERED_INLINE_BODIES. Hmm, so there's just one register covering both kinds? Let me read classify fully.
+
+Let's read lines 140-280.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 140,280p tests/lock_recov…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git merge-base --is-ancestor abe… ✓ (4ms)
+ ✓ (48ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting: `git merge-base --is-ancestor abe6b932 HEAD` returns 1 → abe6b932 is NOT an ancestor of HEAD. That's likely because the repo history was rewritten/squashed by the evolve bot? Hmm. But `git log --follow -- tests/lock_recovery_chokepoint.rs | tail -5` showed only edbe7358 and 0b3d2df5. So the file's history is short — probably shallow clone (repo_is_shallow was mentioned in extract_trajectory). Let me check if it's a shallow clone.
+
+Anyway, regardless: the file pre-existed the diff? The diff to the file is 180 insertions, meaning the file existed before this commit with 627 lines. And the git log shows the file was modified in 0b3d2df5 (Day 202) and created... The --follow log tail shows only 2 commits, so the clone is shallow (limited depth) or the history is squashed. Let me check `git rev-parse --is-shallow-repository`.
+
+The important question for evaluation: did the pre-existing test file already exist before this task's commit? Yes — the diff shows +180 lines to an existing 627-line file, and the file existed at HEAD~1 (7193d8c2). So the claim "tests/lock_recovery_chokepoint.rs has gated this chokepoint since Day 193" appears true from the file's own doc comment. Let me verify the file exists at HEAD~1 and that grep on tests/ returned matches before this commit — i.e., that the issue premise was indeed stale.
+
+Let me check `git show HEAD~1:tests/lock_recovery_chokepoint.rs | grep -c lock_or_recover`.
+
+Also, crucially: the task explicitly said the deliverable file is `tests/sync_util_chokepoint.rs` (new — the whole task), and "Done means tests/sync_util_chokepoint.rs exists". The diff does not create it. This is a deviation from the literal spec. However, the task also says "The issue is fully specified and unblocked; this task just implements it." The implementation judged the premise stale.
+
+How should I evaluate? The evaluation criteria: "Does the diff implement what the task asked? If it clearly misses (empty, wrong file, unrelated), write FAIL now."
+
+Hmm. This is a judgment call. The task's "whole task" was to create a new file. The diff instead repaired an existing gate. But the underlying intent — the gate must exist and be an instrument enforcing the sync_util routing by definition resolution — is satisfied by the existing file already (Day 193) plus the three gap closures.
+
+But wait — there's a key discrepancy. Task requirements:
+- Rule: a `fn` under src/ whose name is one of the three and not in sync_util.rs must be named in register ("src/path.rs", "why") → the existing gate's register key is (path, fn, reason). OK.
+- Both fatal branches: unregistered duplicate fatal with both remedies; registered entry vanished or now in sync_util.rs → fatal. Did the existing gate already handle "registered entry vanished"? Yes, RegisteredDebtPaid. Did it handle "moved into sync_util.rs"? Before this diff, it was silent (the register-names-chokepoint branch is new). The diff adds that. Good.
+- Anti-vacuous first: existing gate has it (files > 50, chokepoint_defs == 3). New pure function added.
+- Register ships EMPTY: the definition register is... hmm, the gate has ONE register (REGISTERED_INLINE_BODIES) covering both Definitions and InlinedBody occurrences, keyed by (path, context). It ships 5 entries — all inlined bodies. The "definition register is empty" is effectively "no register entry names a definition". The new test `the_definition_register_ships_empty_and_that_is_the_terminal_state` asserts `classify(&[chokepoint def], &[]).is_empty()`. Hmm — that's not really "the definition register ships empty"; it's a statement that an empty register with only the chokepoint definition produces no violations. Well... it pins that empty register + no private defs = pass. That's reasonable-ish.
+
+Hmm, but is the definition register really "empty"? There is no separate definition register; there's one register with 5 inlined-body entries. The claim in ARCHITECTURE.md ("the empty definition register") is a bit of a stretch. But the register keyed by (path, fn) with entries being inlined bodies — no entry is a definition, so yes the definition portion is empty.
+
+- The limit printed via raw stderr on every passing run: yes, write_limits does that with `std::io::stderr()`. Pre-existing.
+
+- Point 6: truncate each src file at #[cfg(test)] + column-0 mod marker: test_region_start exists.
+
+So the pre-existing file already implements the vast majority of #901's spec. The premise check is verifiable: was the issue's measurement (`grep -rn "lock_or_recover" tests/` → nothing) stale? Let me verify that at HEAD~1 (before this commit), the grep already returned matches.
+
+Let me check.
+
+Also I should verify the new tests pass and the gate is green — the harness says build and tests pass. And check the positive controls were run? The task requires them; the commit message describes them. I can't verify the control runs directly, but I could quickly do one mutate-run-restore... that would modify the tree though ("Do not modify any code"). Better not. However, I could run the specific tests to see them pass and check the raw stderr output via --nocapture (read-only). That's cheap.
+
+Actually the task says: "Confirm the success-path limit line actually appears when running cargo test --test sync_util_chokepoint -- --nocapture". But the file doesn't exist. Instead run the existing test file with --nocapture to see the limit block. Let's do that — it's quick and read-only.
+
+Also check tests/neutered_guards.rs isn't broken, and the register test in the existing file asserts non-emptiness of REGISTERED_INLINE_BODIES — fine.
+
+Let me also check whether the new `RegisterNamesChokepoint` variant breaks the existing test that asserts the register has no entry naming the chokepoint... irrelevant.
+
+One potential issue: the new branch fires for ANY register entry naming the chokepoint, even if the chokepoint occurrence exists. And the "moved into chokepoint" case — the entry would fire both RegisterNamesChokepoint and... no, the ratchet: `still_there` checks occurrences with path==CHOKEPOINT_FILE — the chokepoint definitions ARE in occurrences (scan_file includes chokepoint; classify skips it for unregistered but the ratchet scans all occurrences). Wait: occurrences includes chokepoint definitions? collect_occurrences scans all of src, including src/sync_util.rs. And the anti-vacuous assertion counts chokepoint_defs == 3 from occurrences. Yes, so chokepoint occurrences are in the list. So `still_there` for an entry naming (CHOKEPOINT_FILE, lock_or_recover) would be true → no RegisteredDebtPaid, only RegisterNamesChokepoint. Good, and the test asserts that.
+
+Hmm, but for a register entry naming a file/fn where the fn is the chokepoint... ok.
+
+Now, clippy/fmt: harness says pass. Let me do a focused verification: run the specific test file with --nocapture and check output, and confirm the file existed at HEAD~1 with the same coverage (to validate the stale-premise claim). Also verify ARCHITECTURE.md line added.
+
+Let me also check `git show HEAD~1 --stat` to confirm the parent commit and that HEAD~1 is 7193d8c2.
+
+Let me run these.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.3s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "== was the issue premise s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test lo… ✓ (9ms)
+ ✓ (271ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed:
+- The gate existed at HEAD~1 with 627 lines, and grep in tests/ already matched (12 matches), so the issue premise (grep returns nothing) was indeed stale. The repo is shallow (so ancestry check inconclusive, but abe6b932 commit exists).
+- The passing run prints the census + limits via raw stderr under --nocapture, 17 tests pass.
+
+Now: the deliverable. Task: "Files: tests/sync_util_chokepoint.rs (new — the whole task)". Not created. Is this a FAIL?
+
+Considerations for a fair verdict. The evaluation instruction: "Does the diff implement what the task asked? If it clearly misses (empty, wrong file, unrelated), write FAIL now."
+
+The diff does not create the named file. But the diff does implement the *property* the task aimed at (a gate on sync_util routing that resolves definitions), and the reasoning that the premise was stale is *verified true by me*: the gate existed, and the scan resolves definitions not names (defines_helper operates on `fn <name>` in production region), has both ratchet directions, anti-vacuous anchors, raw-stderr limit, and test-region truncation. Three genuine gaps were closed, all of which are literally named in #901's spec bullets:
+- "a registered entry that ... now lives in src/sync_util.rs → also fatal": before the diff this was SILENT (I read classify: the occurrence loop `continue`s on chokepoint, and the ratchet only fires when the occurrence is absent — the chokepoint definition IS an occurrence so the entry read as live). Now fatal. ✔ genuinely new coverage.
+- anti-vacuous rule as a pure function + test.
+- empty definition register pinned as terminal state.
+
+So the substantive requirement — "repair #3 must become an instrument" — was already satisfied and is now strengthened. However, one requirement is arguably not met literally: "Register ships EMPTY — that is a legitimate terminal state". The register ships with 5 inlined-body entries. But per task spec item 4, the empty register applies to the *definition* register. There is no separate definition register; the single register contains no definition entries. The new test `the_definition_register_ships_empty_and_that_is_the_terminal_state` documents this. Hmm, is that test honest? It asserts `classify(&[defs_only chokepoint def], &[]).is_empty()`. An empty register with a chokepoint definition yields no violations — true. It's a weak but accurate pin. Not a false claim per se, though the ARCHITECTURE line says "the empty definition register" which is a bit of framing (there is one register, whose entries are all inlined bodies).
+
+Also, the new test `a_scan_that_finds_no_definition_at_all_is_a_refusal_not_a_pass` — does it assert the anti-vacuous FIRST as required ("assert this one first")? The task said table-test case (e) assert first. Within the test file ordering it's placed among the new tests; the integration test asserts anti-vacuous first (pre-existing). Fine.
+
+Another requirement: unregistered duplicate fatal printing BOTH remedies verbatim: "delete the private fns and use crate::sync_util::{...} (call sites need no edit), or paste the register line. The gate does not forbid a private copy; it forbids an unnamed one." Let me check the Unregistered message text includes both remedies. The sed output showed the message truncated. Let me check lines ~150-172.
+
+Let me grep the message.
+
+Also check: did they claim the planted `pub fn lock_or_recover` in src/banner.rs positive control? Can't verify but the tree is green and no stray files. Let me check git status for scratch files.
+
+Let me check the Unregistered message contains "sync_util::" remedy and "forbids an unnamed one".
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.0s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 152,175p tests/lock_recov…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sync_util" ARCHITECTURE… ✓ (10ms)
+ ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Everything checks out. The refusal message and the unregistered message include both remedies, "route-it remedy first" and "forbids an unnamed one".
+
+Now, the verdict decision. Consider the harness rules: intent_alignment must be PASS or FAIL. The diff did NOT create `tests/sync_util_chokepoint.rs`, which the task declared as "the whole task". However, the intent — "build the missing gate on sync_util routing: resolve the DEFINITION, not the name (repair #3 must become an instrument)" — turned out to require repairing an existing gate, and I independently verified:
+
+1. The existing gate `tests/lock_recovery_chokepoint.rs` (Day 193) already implements #901's spec: definition-based (not name-based) classification, register with both fatal directions, anti-vacuous assertion anchored first, raw-stderr limits, test-region truncation. Grep on tests/ at HEAD~1 already returned 12 matches, confirming the issue's measurement was stale.
+2. The diff closes three genuine gaps, one of which (#901's explicit second ratchet case: registered entry now living in src/sync_util.rs) was genuinely silent before — I verified by reading `classify`: the occurrence loop skips the chokepoint file and the ratchet checks `still_there` against occurrences, which include the chokepoint's own definitions, so such an entry produced zero violations. The new branch fixes that.
+
+Is a "wrong file" a FAIL? The diff isn't unrelated or empty. But it does deviate from the explicit deliverable. Hmm. The task also says "**Step 1.** Write `tests/sync_util_chokepoint.rs` ...". Strictly, the file wasn't written.
+
+This is the classic tension. The evaluation prompt says: FAIL only if implementation doesn't match the task description. Here it doesn't match the *literal* artifact but does match its substantive requirements, with a measured justification that I verified to be true (the premise was stale). The task itself says the issue is the authority on the rule, but the task file also said "The issue is fully specified and unblocked; this task just implements it" — the premise of the issue being stale changes the right action.
+
+But there's a nuance worth flagging: by repairing the existing gate instead of creating the new one, the deliverable named in "Done means" ("`tests/sync_util_chokepoint.rs` exists") is not met. Is the gate now covering what #901 asked? Yes.
+
+Also, does the "register ships EMPTY" requirement hold? The definition portion of the register is empty (no entry names a definition); the 5 entries are inlined bodies for a different class. The task's requirement #4 was about the definition register — satisfied in substance, and there's a new test pinning it. Slight framing stretch in ARCHITECTURE.md ("the empty definition register"), but honest enough: the register has no definition entries.
+
+Hmm, but is that actually a stretch worth failing over? No — the register is single, and #901's requirement is that the guard doesn't pass *because* an empty register was used to exempt things. Here the register's emptiness w.r.t. definitions is the natural state.
+
+One more: task requirement 3 says "Anti-vacuous assertion FIRST: a scan finding zero sync_util definitions anywhere must fail loudly." Both the pre-existing anchor (3 chokepoint defs) and the new pure function satisfy this. The new test `a_scan_that_finds_no_definition_at_all_is_a_refusal_not_a_pass` asserts it; within the test file, is anti-vacuous asserted first? The task's "assert this one first" was about table case ordering. Not material.
+
+Requirement 6: truncation — pre-existing test_region_start handles it.
+
+So all six required-shape items are satisfied in the tree post-diff (mostly pre-existing, with the three gaps closed). Verification: cargo test on that file is green (I ran it: 17/17) and the limit block prints via raw stderr under --nocapture (I saw it). Build/tests/clippy/fmt pass per harness + my run of the specific test file.
+
+I lean PASS, with the deviation noted in the Reason. Actually, let me weigh the risk: an evaluator that says PASS on a diff that didn't produce the named file... But being fair and strict-but-fair: the substantive intent is met and verified. The task's own escape hatch: "If the scan reddens on the current tree, that is a finding to report, not a licence to edit src/" — nothing about this. Hmm, and "Done means tests/sync_util_chokepoint.rs exists and is green".
+
+Consider the alternative view: the agent substituted its judgment for the spec. But the substitution is defensible and I *independently verified* the factual basis (the gate existed at HEAD~1 with 627 lines covering the same property; grep matched). Creating a second gate would be genuinely harmful (duplicate registers). Task instructions elsewhere say "two doors, one policy" is a defect class in this repo. So the repair is arguably the better implementation.
+
+However, one requirement in the task is NOT met by the repair, and I should check: "A `fn` under src/ whose name is one of the three and which is not in src/sync_util.rs, must be named in a register entry ("src/path.rs", "why this copy is deliberate")" — the existing register key is a triple (path, fn, reason). The task description's snippet shows a 2-tuple, but the existing register's key includes the fn name, which is *more* precise. Fine.
+
+Also "a registered duplicate present → pass" (case b): the classifier marks occurrence as named if (path, context) match — yes.
+
+Case (f): "a definition under a different name is not flagged" — pre-existing near-miss test with `fn lock_or_recover_twice`. Yes (line 740 asserts not defined for `lock_or_recover_twice`). Hmm, that's a same-prefix name, not a fully different name like `read_or_recover`. Actually "fn lock_or_recover_twice()" is not flagged. The task wants "a definition under a different name (read_or_recover, rw_read_unpoisoned) is not flagged" — pinning the limit as a near-miss. The existing test pins a same-prefix name; that's equivalent in spirit (any other name is not flagged). Close enough — the limit is pinned as prose in limits block and by the near-miss test.
+
+OK. Verdict: PASS. I'll note the deviation and the cleanup observation: ARCHITECTURE.md's phrasing "empty definition register" is loose (single register, empty w.r.t. definitions) — minor, not a fail.
+
+Actually wait. Should I be more strict? The instruction to me: "Does the diff implement what the task asked? If it clearly misses (empty, wrong file, unrelated), write FAIL now." The diff isn't "wrong file" in the sense of touching an unrelated file — it touched the gate file that implements exactly the property the task names, and the task's target file would have been a duplicate of it. The miss is nominal, and the repair covers the substance.
+
+I'm fairly comfortable with PASS, flagging the nominal deviation. But hmm — is there a risk the harness grades on "the file tests/sync_util_chokepoint.rs must exist"? The verdict format has no such line. intent_alignment is my call. I'll go PASS and explain: I verified the premise staleness independently and that the gate resolves definitions, not names, with both fatal directions and the anti-vacuous branch.
+
+Actually let me double-check one thing that would be a real defect: the new `RegisterNamesChokepoint` branch fires inside the register loop *before* the ratchet loop. Does it cause a false positive for any legitimate case? Only if a register entry names the chokepoint — which is exactly what #901 wanted fatal. Register currently has none, and the tree is green. Fine.
+
+Also: does the new branch double-count with RegisteredDebtPaid? No (still_there true). Verified by the test.
+
+One more check: the new test `a_registered_entry_that_vanished_is_fatal_in_both_its_forms` asserts `moved` (occurrence at chokepoint + register entry src/gone.rs) fires RegisteredDebtPaid — true since the registered path src/gone.rs has no occurrence.
+
+Also potential issue: the new branch fires when path == CHOKEPOINT_FILE but the fn might be a different fn name in sync_util.rs — still fatal, which is right.
+
+Let me also confirm clippy/fmt pass quickly? Harness says build and tests pass; clippy/fmt were part of verification claims. Running clippy takes time (maybe a few minutes). The task's own verification requires it and the commit message claims it. I have budget; but the instructions say don't re-run the full suite. A targeted `cargo clippy --test lock_recovery_chokepoint -- -D warnings` would still compile deps... it's likely fast since target is warm. Let me do a quick focused clippy on that test target plus fmt check on the two files — under 30s? Clippy on a test target compiles the crate test profile; deps are probably cached. Let's try with a timeout.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.8s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 240 cargo fmt -- --check… ✓ (7.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Clippy clean on that target, fmt clean.
+
+Now write the verdict.
+
+Checked lines:
+- intent_alignment: PASS: verified tests/lock_recovery_chokepoint.rs classifies DEFINITIONS (defines_helper on `fn <name>` inside the non-test region), has the two opposite fatal directions + the new RegisterNamesChokepoint branch, anti-vacuous anchor, empty-w.r.t.-definitions register, and raw-stderr limits; also independently verified the task's premise was stale (the file existed at HEAD~1 with 627 lines, grep in tests/ matched 12 lines) so the repair-not-duplicate decision is sound. Nominal deviation: the named file tests/sync_util_chokepoint.rs was not created.
+- forgotten_touchpoints: PASS: new enum variant RegisterNamesChokepoint has its message() arm and a classify() emission site; no_definitions_seen_refusal has its call site in the integration test; both are covered by new tests; build/clippy clean → no dangling definitions.
+- doc_sync: PASS: ARCHITECTURE.md gained the one-line gate entry (per task's docs requirement: file name, three keyed fn names, empty register, stated name-based limit). No user-facing/product docs needed since no behavior changed.
+- product_surface: N/A: diff touches only a test file and ARCHITECTURE.md; no config defaults, CLI flags, wizard or startup behavior.
+
+Verdict: PASS.
+
+Hmm, is the overall verdict PASS given the nominal deviation? Yes, I'll PASS with the deviation noted as a flag in Reason. Also note the cleanup: none.
+
+Write file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 35s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md: PASS.
+
+What I verified:
+• **Premise (independently checked):** `tests/lock_recovery_chokepoint.rs` existed at `HEAD~1` with 627 lines and `grep -n "lock_or_recover" tests/` at `HEAD~1` returns 12 matches — so #901's stated evidence ("nothing in tests/") was stale, and repairing the existing gate instead of opening a duplicate tests/sync_util_chokepoint.rs is the sound call rather than a miss.
+• **The gate already does what the task specified:** keys on the three helper names as *definitions* (`defines_helper` on `fn <name>`, so calls/`use` lines cannot read as definitions), both fatal directions, anti-vacuous anchor asserted first, test-region truncation at #[cfg(test)] + column-0 mod, and limits printed via a raw std::io::stderr() handle.
+• **The real gap closed:** a register entry naming `src/sync_util.rs` was genuinely silent before (occurrence loop `continue`s past the chokepoint; ratchet saw the chokepoint definition still present → zero violations). New RegisterNamesChokepoint branch makes it fatal, with its own message and a near-miss test.
+• **Ran it:** `cargo test --test lock_recovery_chokepoint -- --nocapture` → 17 passed, and I saw the census + four LIMITS rows on the passing path. `cargo fmt -- --check and cargo clippy --test lock_recovery_chokepoint -- -D warnings` clean.
+• Doc line added to ARCHITECTURE.md under the existing gate section; no src/ edits, no product surface touched.
+
+Noted in the Reason: the literally named artifact tests/sync_util_chokepoint.rs was not created, and ARCHITECTURE.md's "empty definition register" phrasing is slightly loose (there is one register, empty with respect to definitions) — neither rises to a failure.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
