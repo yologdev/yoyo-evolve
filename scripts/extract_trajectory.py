@@ -2385,6 +2385,155 @@ def render_module_sizes(spec: ModuleGateSpec, risk: ModuleRisk) -> str:
     return "\n".join(lines)
 
 
+# --- Doc freshness (the header a stale capability claim carries) ---
+#
+# The measured defect (Day 204): `CLAUDE_CODE_GAP.md` is exactly what the
+# planning loop reads when there are no community issues to steer priorities,
+# and its header asserted `Last verified: Day 74 (2026-05-13)` as a statement of
+# CURRENCY for 130 days — while `grep -rn "Last verified" scripts/ src/ tests/`
+# returned 0 hits. A self-fact with no re-derivation route cannot be
+# contradicted, only re-derived, and only if something re-derives it. So this
+# is the re-derivation route: the AGE, printed every session, not the body.
+#
+# What this does NOT do, stated rather than implied: it dates the HEADER only.
+# The rows under it were last read on Day 74 and nothing here re-verifies one
+# of them. That limit is written into the rendered text, not just here.
+
+GAP_DOC_REL_PATH = "CLAUDE_CODE_GAP.md"
+# The repo's own day counter (`DAY_COUNT` at the root reads `204` today). The
+# age is current_day - verified_day; NO date is hardcoded here, because a date
+# typed into this script would be the same defect one file over.
+DAY_COUNT_REL_PATH = "DAY_COUNT"
+
+# The header line this reads, e.g. `Last verified: Day 74 (2026-05-13)`.
+GAP_DOC_VERIFIED_RE = re.compile(r"^Last verified:\s*Day\s+(\d+)", re.MULTILINE)
+
+# Why 30: this repo runs ~3 sessions/day, so 30 days is ~90 sessions of drift —
+# longer than any other currency claim here is allowed to stand unanswered (CI
+# runs are graded in days, the pairing ledger in sessions), and short enough
+# that the Day-74 header above would have been flagged on 101 of the 130 days it
+# sat unread. Boundary, stated because "crosses" is otherwise ambiguous: STALE
+# when `age_days > DOC_STALE_AFTER_DAYS`, i.e. a claim exactly this old is still
+# inside the window and one day past it is not.
+DOC_STALE_AFTER_DAYS = 30
+
+DOC_FRESH_OK = "doc-fresh-ok"
+DOC_FRESH_STALE = "doc-fresh-stale"
+DOC_FRESH_COULD_NOT_CHECK = "doc-fresh-could-not-check"
+
+
+@dataclass
+class DocFreshness:
+    state: str
+    verified_day: int | None = None
+    current_day: int | None = None
+    reason: str = ""
+
+    @property
+    def age_days(self) -> int | None:
+        if self.verified_day is None or self.current_day is None:
+            return None
+        return self.current_day - self.verified_day
+
+
+def classify_doc_freshness(gap_text: str, day_text: str) -> DocFreshness:
+    """Pure half: the doc's text + the day counter -> a state. No I/O, no clock.
+
+    A header that does not PARSE is a refusal, never a zero: with no `Last
+    verified: Day N` line there is nothing to date, and rendering that as
+    "fresh" is the "could not check" must-not-read-as-"checked; clean" defect
+    that `collision_guard_skipped_message` and `resolve_audit_dir` already fix
+    elsewhere in this repo.
+
+    A header dated AFTER the repo's day counter is also a refusal rather than a
+    negative age: `-5 day(s) old — within the 30-day threshold` would be a clean
+    line about a claim that cannot be true.
+    """
+    m = GAP_DOC_VERIFIED_RE.search(gap_text)
+    if m is None:
+        return DocFreshness(
+            state=DOC_FRESH_COULD_NOT_CHECK,
+            reason=f"no `Last verified: Day N` header in {GAP_DOC_REL_PATH}",
+        )
+    verified = int(m.group(1))
+    day_text = day_text.strip()
+    if not day_text.isdigit():
+        return DocFreshness(
+            state=DOC_FRESH_COULD_NOT_CHECK,
+            reason=f"{DAY_COUNT_REL_PATH} is not a day number ({day_text[:20]!r})",
+        )
+    current = int(day_text)
+    if verified > current:
+        return DocFreshness(
+            state=DOC_FRESH_COULD_NOT_CHECK,
+            reason=(
+                f"{GAP_DOC_REL_PATH} claims day-{verified}, ahead of the repo's "
+                f"day-{current} counter"
+            ),
+        )
+    state = (
+        DOC_FRESH_STALE
+        if current - verified > DOC_STALE_AFTER_DAYS
+        else DOC_FRESH_OK
+    )
+    return DocFreshness(state=state, verified_day=verified, current_day=current)
+
+
+def collect_doc_freshness(root: Path) -> DocFreshness:
+    """I/O half, at ONE call site. Two reads, nothing else.
+
+    Shells NOTHING — no `cargo`, no `gh`, no network (#832).
+    """
+    try:
+        gap_text = (root / GAP_DOC_REL_PATH).read_text(errors="replace")
+    except OSError as e:
+        warn(f"could not read {GAP_DOC_REL_PATH}: {e}")
+        return DocFreshness(
+            state=DOC_FRESH_COULD_NOT_CHECK,
+            reason=f"could not read {GAP_DOC_REL_PATH}",
+        )
+    try:
+        day_text = (root / DAY_COUNT_REL_PATH).read_text(errors="replace")
+    except OSError as e:
+        warn(f"could not read {DAY_COUNT_REL_PATH}: {e}")
+        return DocFreshness(
+            state=DOC_FRESH_COULD_NOT_CHECK,
+            reason=f"could not read {DAY_COUNT_REL_PATH}",
+        )
+    return classify_doc_freshness(gap_text, day_text)
+
+
+def render_doc_freshness(fresh: DocFreshness) -> str:
+    """Two lines at most, header included.
+
+    Renders on the FRESH path too, following `render_pairing_coverage`'s
+    precedent rather than `render_module_sizes`': the whole point is that this
+    number is asked out loud every session instead of asked nowhere at all, and
+    a section that goes quiet when healthy is indistinguishable from a section
+    whose file was deleted.
+
+    THE STATED LIMIT IS IN THE RENDERED TEXT: this dates the header, never the
+    body. And it is a READER, not a gate — nothing fails or reverts on STALE.
+    """
+    if fresh.state == DOC_FRESH_COULD_NOT_CHECK:
+        return (
+            f"## Doc freshness: not checked — {fresh.reason}. "
+            f"This is NOT 'the gap analysis is current'."
+        )
+    line = (
+        f"{GAP_DOC_REL_PATH}: header verified day-{fresh.verified_day}, "
+        f"{fresh.age_days} day(s) old (repo is day {fresh.current_day})"
+    )
+    if fresh.state == DOC_FRESH_STALE:
+        line += (
+            f" — STALE, past the {DOC_STALE_AFTER_DAYS}-day threshold. The body "
+            f"has NOT been re-verified; re-read a row before trusting it."
+        )
+    else:
+        line += f" — inside the {DOC_STALE_AFTER_DAYS}-day threshold."
+    return "## Doc freshness (the header, not the body)\n" + line
+
+
 # --- Productivity cross-check (claimed successes vs observed task commits) ---
 #
 # The measured defect (Day 196): SEVEN consecutive sessions produced zero
@@ -3337,6 +3486,16 @@ def main() -> int:
     module_unknown = bool(s) and (module_risk.scanned == 0 or not module_spec.ok)
     if s:
         sections.append(s)
+    # Day 204: the age of `CLAUDE_CODE_GAP.md`'s `Last verified:` header. Placed
+    # next to the module-size gate because it is the same kind of fact — the
+    # repo's own bookkeeping, aged out loud. Kept SHORT and mid-order on
+    # purpose: it is steering data and must survive TOTAL_BYTE_CAP, and the
+    # epistemic block renders last and absorbs truncation (Day 142).
+    doc_fresh = collect_doc_freshness(Path.cwd())
+    s = render_doc_freshness(doc_fresh)
+    doc_fresh_unknown = bool(s) and doc_fresh.state == DOC_FRESH_COULD_NOT_CHECK
+    if s:
+        sections.append(s)
     # DREAM milestone reader: is every UNEARNED counterfactual verdict paired
     # with an assertion-direction scan? `--pair-verdicts` is a HAND-RUN mode,
     # so without this nothing in the loop notices when a new UNEARNED row
@@ -3386,6 +3545,7 @@ def main() -> int:
         - (1 if provider_unknown else 0)
         - (1 if usage_unknown else 0)
         - (1 if module_unknown else 0)
+        - (1 if doc_fresh_unknown else 0)
         - (1 if pairing_unknown else 0)
         - (1 if productivity_unknown else 0)
     )
@@ -6331,6 +6491,123 @@ src/commands_config.rs
             ]
         ),
         {195: 0},
+    )
+
+    print("\n=== doc freshness self-tests ===\n")
+
+    # The REAL header shape, as it stands in CLAUDE_CODE_GAP.md today. This is
+    # the fixture for a pattern that reads SOURCE TEXT, so it is that file's
+    # own line rather than a spelling I typed (Day 201: a fixture I author
+    # encodes the LAYOUT my pattern expects, and agrees with it by
+    # construction). Asserted anti-vacuous FIRST, so a transcription slip that
+    # drops the header cannot make the refusal cases below pass by agreeing
+    # with themselves.
+    REAL_HEADER = "Last verified: Day 74 (2026-05-13)"
+    assert_true(
+        "fixture really carries the header shape (anti-vacuous)",
+        GAP_DOC_VERIFIED_RE.search(REAL_HEADER) is not None,
+    )
+
+    # 1. The real header parses, and the age arithmetic is the day pair.
+    parsed = classify_doc_freshness(REAL_HEADER + "\n", "204\n")
+    assert_eq("real header parses to its verified day", parsed.verified_day, 74)
+    assert_eq("age is current_day - verified_day", parsed.age_days, 130)
+
+    # 2. The live file and the live day counter, end to end. If this ever stops
+    #    finding a header, the section has gone silent — which is the defect.
+    live = collect_doc_freshness(Path(__file__).resolve().parent.parent)
+    assert_true(
+        "the live CLAUDE_CODE_GAP.md header is READ (not refused)",
+        live.state in (DOC_FRESH_STALE, DOC_FRESH_OK)
+        and live.verified_day is not None,
+    )
+
+    # 3. Threshold boundary, named exactly: STALE iff age > threshold.
+    #    Let T = DOC_STALE_AFTER_DAYS, so day 0 + T is INSIDE and day 0 + T + 1
+    #    is OUTSIDE. Asserting both sides, because a rule that fires on >= would
+    #    still pass a one-sided test.
+    at = classify_doc_freshness("Last verified: Day 0", str(DOC_STALE_AFTER_DAYS))
+    past = classify_doc_freshness(
+        "Last verified: Day 0", str(DOC_STALE_AFTER_DAYS + 1)
+    )
+    assert_eq(
+        f"age exactly {DOC_STALE_AFTER_DAYS} is INSIDE the threshold",
+        at.state,
+        DOC_FRESH_OK,
+    )
+    assert_eq(
+        f"age {DOC_STALE_AFTER_DAYS + 1} is STALE",
+        past.state,
+        DOC_FRESH_STALE,
+    )
+
+    # 4. Missing header / unreadable inputs REFUSE, and the refusal does NOT
+    #    read as a clean line. The absence assertions carry their own
+    #    anti-vacuous companion (the refusal string really is present), so
+    #    "clean" cannot be satisfied by an empty render.
+    no_header = classify_doc_freshness("# Gap\n\nLast updated: Day 3\n", "204")
+    assert_eq(
+        "no `Last verified:` line is a refusal",
+        no_header.state,
+        DOC_FRESH_COULD_NOT_CHECK,
+    )
+    bad_day = classify_doc_freshness(REAL_HEADER, "not-a-day")
+    assert_eq(
+        "a non-numeric DAY_COUNT is a refusal",
+        bad_day.state,
+        DOC_FRESH_COULD_NOT_CHECK,
+    )
+    future = classify_doc_freshness("Last verified: Day 300", "204")
+    assert_eq(
+        "a header dated ahead of DAY_COUNT is a refusal, never a negative age",
+        future.state,
+        DOC_FRESH_COULD_NOT_CHECK,
+    )
+    refused = render_doc_freshness(no_header)
+    assert_true(
+        "the refusal really renders (anti-vacuous for the two lines below)",
+        "not checked" in refused and GAP_DOC_REL_PATH in refused,
+    )
+    assert_true(
+        "a refusal never renders a clean line",
+        "day(s) old" not in refused and "inside the" not in refused,
+    )
+    assert_true(
+        "a refusal says explicitly it is not a clean bill",
+        "NOT 'the gap analysis is current'" in refused,
+    )
+
+    # 5. A missing file on disk takes the same refusal path as a missing header.
+    missing = collect_doc_freshness(Path("/nonexistent-yoyo-doc-freshness-dir"))
+    assert_eq(
+        "a missing CLAUDE_CODE_GAP.md is a refusal, not a clean line",
+        missing.state,
+        DOC_FRESH_COULD_NOT_CHECK,
+    )
+    missing_render = render_doc_freshness(missing)
+    assert_true(
+        "the missing-file refusal really renders (anti-vacuous)",
+        "not checked" in missing_render and GAP_DOC_REL_PATH in missing_render,
+    )
+    assert_true(
+        "the missing-file case does not render as current",
+        "day(s) old" not in missing_render,
+    )
+
+    # 6. The near-miss guard that matters: byte-identical spelling of a healthy
+    #    claim through both the classifier and the renderer, so the common case
+    #    is pinned rather than merely untouched.
+    fresh = classify_doc_freshness("Last verified: Day 200", "204")
+    fresh_render = render_doc_freshness(fresh)
+    assert_eq(
+        "a fresh header renders the header, not the body, as its scope",
+        fresh_render.splitlines()[0],
+        "## Doc freshness (the header, not the body)",
+    )
+    assert_true(
+        "a fresh header renders as inside the threshold",
+        f"inside the {DOC_STALE_AFTER_DAYS}-day threshold" in fresh_render
+        and "STALE" not in fresh_render,
     )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")

@@ -1,5 +1,18 @@
 # Gap Analysis: yoyo vs Claude Code
 
+**This file is a stale snapshot, not a current assessment.** Its verification date is
+`Day 74` — **as of Day 204 (2026-09-20) that is 130 days ago**. Every row below was last
+read on Day 74 and is **unverified until re-read**: the ✅/❌ marks describe yoyo as it was
+on 2026-05-13, not as it is now, and a great deal of work has landed since. Re-read a row
+(and the code it names) before you act on it. Nothing in `scripts/`, `src/` or `tests/`
+re-derives this header for you — with one mechanical exception, added Day 204:
+`render_doc_freshness` in `scripts/extract_trajectory.py` reads the `Last verified:` line
+below and prints the age into the planner's `## Doc freshness` section each session.
+
+**Deliberately still outstanding:** the body below has *not* been re-verified since Day 74.
+Refreshing it is a project in its own right, not a line edit, so it is left honestly stale
+rather than half-refreshed — a half-refreshed gap analysis is worse than a dated one.
+
 Last verified: Day 74 (2026-05-13)
 Last updated: Day 24 (2026-03-24) — major refresh on Day 38, stats refresh on Day 50, Day 54, Day 59, Day 61, Day 63, Day 64, Day 67, Day 74
 
