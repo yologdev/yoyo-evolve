@@ -1094,14 +1094,12 @@ fn parse_model_config(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| default_model_for_provider(&provider));
 
-    // Warn if model isn't in the known list for first-party providers
-    let known = known_models_for_provider(&provider);
-    if !known.is_empty() && !known.contains(&model.as_str()) {
-        eprintln!(
-            "{YELLOW}warning:{RESET} Unknown model '{model}' for provider '{provider}'. \
-             Known models: {}. Proceeding anyway (custom models are valid).",
-            known.iter().take(5).copied().collect::<Vec<_>>().join(", ")
-        );
+    // Warn if model isn't known for this provider. The check goes through
+    // `providers::model_is_known_for_provider` — the same resolution rule the
+    // model-config path uses — rather than a second rule over the same input
+    // (#941: a prefix-resolved fleet id used to warn about itself every turn).
+    if let Some(warning) = unknown_model_warning(&provider, &model) {
+        eprintln!("{warning}");
     }
 
     // --fallback <provider>: fallback provider if primary fails
@@ -1122,6 +1120,25 @@ fn parse_model_config(
         fallback_provider,
         fallback_model,
     }
+}
+
+/// The `Unknown model` warning for a genuinely unknown id, or `None` when it is
+/// known — the returned string is exactly what the caller prints. "Known" is
+/// `providers::model_is_known_for_provider`, the rule the config path uses
+/// (#941). The wording is unchanged: this is about *when* it fires.
+pub(crate) fn unknown_model_warning(provider: &str, model: &str) -> Option<String> {
+    if crate::providers::model_is_known_for_provider(provider, model) {
+        return None;
+    }
+    let known = known_models_for_provider(provider);
+    if known.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{YELLOW}warning:{RESET} Unknown model '{model}' for provider '{provider}'. \
+         Known models: {}. Proceeding anyway (custom models are valid).",
+        known.iter().take(5).copied().collect::<Vec<_>>().join(", ")
+    ))
 }
 
 /// Parse the `--editor-model` flag value, trimming whitespace and rejecting
@@ -2863,6 +2880,72 @@ directory ({e}); this run is trusted, later runs will not be."
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #941 — the warning consults the *preset* resolution rule, not a second
+    /// exact-match rule over the same id. Asserted at the emission point: the
+    /// string a caller receives is the exact string the call site prints.
+    #[test]
+    fn test_prefix_resolved_fleet_ids_do_not_warn_but_unknown_ones_still_do() {
+        // Control: the listed base id was already silent before this fix.
+        assert_eq!(unknown_model_warning("anthropic", "claude-fable-5"), None);
+
+        // (id, provider, must_warn). Rows 1-5 carry a suffix the literal list
+        // does not hold, one per prefix family `anthropic_preset` backs; row 6
+        // is a near-miss of the same shape; row 7 is that id under another
+        // provider, which must keep warning — the preset table is Anthropic's,
+        // so silencing it would widen into #942's territory.
+        let rows = [
+            ("claude-fable-5-1", "anthropic", false),
+            ("claude-opus-5-1", "anthropic", false),
+            ("claude-opus-4-8-1", "anthropic", false),
+            ("claude-sonnet-5-1", "anthropic", false),
+            ("claude-haiku-4-5-1", "anthropic", false),
+            ("claude-fable-9", "anthropic", true),
+            ("claude-fable-5-1", "deepseek", true),
+        ];
+        for (id, provider, must_warn) in rows {
+            // ANTI-VACUOUS on every silent row: the id really is preset-resolved
+            // and really is absent from the literal list, so a `None` proves the
+            // preset lookup did the work rather than a pasted-in list entry.
+            if !must_warn {
+                assert!(
+                    crate::agent_builder::anthropic_preset(id).is_some(),
+                    "{id} must be preset-resolved or this row tests nothing"
+                );
+                assert!(
+                    !known_models_for_provider(provider).contains(&id),
+                    "{id} must NOT be in the literal list or the fix is untested here"
+                );
+            }
+            let got = unknown_model_warning(provider, id);
+            assert_eq!(
+                got.is_some(),
+                must_warn,
+                "{id} under {provider}: expected warning={must_warn}, got {got:?}"
+            );
+        }
+
+        // The wording for genuinely unknown ids stays byte-identical.
+        assert_eq!(
+            unknown_model_warning("anthropic", "claude-fable-9"),
+            Some(format!(
+                "{YELLOW}warning:{RESET} Unknown model 'claude-fable-9' for provider \
+                 'anthropic'. Known models: claude-opus-5, claude-fable-5, claude-opus-4-8, \
+                 claude-sonnet-5, claude-opus-4-7. Proceeding anyway (custom models are valid)."
+            ))
+        );
+        assert_eq!(
+            unknown_model_warning("deepseek", "claude-fable-5-1"),
+            Some(format!(
+                "{YELLOW}warning:{RESET} Unknown model 'claude-fable-5-1' for provider \
+                 'deepseek'. Known models: deepseek-flash, deepseek-v4-pro, deepseek-v4-flash. \
+                 Proceeding anyway (custom models are valid)."
+            ))
+        );
+        // A provider with no list stays silent, so a wider rule cannot start
+        // shouting at `custom`/`openrouter` users.
+        assert_eq!(unknown_model_warning("openrouter", "whatever"), None);
+    }
 
     /// True if `flag` appears in `text` as a whole token — neither side may be a
     /// character that would make it part of a longer flag.

@@ -135,6 +135,34 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
     }
 }
 
+/// Whether `model` is a **known** id for `provider`.
+///
+/// One matching rule, consulted by every surface that asks "is this id known?"
+/// — the startup warning (`cli::unknown_model_warning`) and the model-config
+/// path (`agent_builder::anthropic_preset`) must not disagree, because they
+/// take the same input. #941: `--model claude-fable-5-1` resolved to the Fable
+/// preset and priced correctly, while the warning used an *exact* list match
+/// and told the user the model was unknown on every turn.
+///
+/// The rule is the union of two sources: the provider's own suggested list, or
+/// — **for `anthropic` only** — the fleet preset table, which is prefix-matched
+/// so a dated or suffixed id (`claude-haiku-4-5-20251001`, `claude-fable-5-1`)
+/// resolves. The prefix list is never copied here; it is read through the same
+/// lookup `create_model_config` uses, so the next rename cannot make the two
+/// rules drift apart again.
+///
+/// The provider scoping is the half that matters: a Claude id under
+/// `provider = "deepseek"` is **not** known and must keep warning. The presets
+/// are Anthropic's, so resolving them under another provider would trade the
+/// false positive this fixes for a false negative in its place.
+pub fn model_is_known_for_provider(provider: &str, model: &str) -> bool {
+    let known = known_models_for_provider(provider);
+    if !known.is_empty() && known.contains(&model) {
+        return true;
+    }
+    provider == "anthropic" && crate::agent_builder::anthropic_preset(model).is_some()
+}
+
 /// Get the default model for a given provider.
 pub fn default_model_for_provider(provider: &str) -> String {
     match provider {
