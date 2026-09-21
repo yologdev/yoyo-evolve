@@ -311,7 +311,34 @@ if [ "$HEAD_BEFORE" != "$HEAD_AFTER" ]; then
     fi
     echo "dream: diff scope OK ($(echo "$CHANGED_FILES" | wc -l | tr -d ' ') file(s), all in allow-list)"
     GASP_OUTCOME="dreamed: $(echo "$CHANGED_FILES" | paste -sd ', ' - | cut -c1-120)"
+else
+    # A cycle that commits nothing is a FAILED cycle, and until this branch it
+    # reported success. The exit status was the only evidence and it was never
+    # read: $exit_code is echoed above and then dropped, so the trap stamped the
+    # cooldown, pushed it, and the step went green with nothing written.
+    #
+    # Measured 2026-09-21 — census, run ids and durations in ARCHITECTURE.md,
+    # "Dream layer": six cycles did this. Five exited 0; the sixth exited 124
+    # and also committed nothing. The transcripts show real work first (17 tool
+    # calls on 2026-08-01, 14 on 08-16) and then a turn that ended before the
+    # write-and-commit step. So the honest line is NOT "it never ran" — it ran
+    # and never wrote, and saying otherwise points the reader at the API key.
+    #
+    # Deliberately narrow: this changes VISIBILITY only. The cooldown is still
+    # stamped and still takes the full window, because the invisibility was the
+    # real cost — six weeks of these went unnoticed, and every one of them
+    # reported success — and because a shortened retry under a daily cron is how
+    # one wasted week turns into seven. A human who wants the slot back re-runs
+    # the workflow by hand: `workflow_dispatch` sets FORCE_RUN=true, which
+    # bypasses the gate.
+    GASP_OUTCOME="failed: agent wrote nothing (exit $exit_code)"
+    echo "dream: NOTHING COMMITTED — the cycle did not deliver" >&2
+    echo "  the agent exited $exit_code; its transcript is above. The usual shape is a" >&2
+    echo "  turn that ended before the write-and-commit step, not a provider error —" >&2
+    echo "  read the tail of the transcript before suspecting the key or the model." >&2
+    [ "${GITHUB_ACTIONS:-}" = "true" ] && \
+        echo "::error::dream: cycle produced no commit (agent exit $exit_code)"
+    exit 1
 fi
-[ -z "$GASP_OUTCOME" ] && GASP_OUTCOME="no-op (no dream change this cycle)"
 
 echo "dream: cycle complete"
