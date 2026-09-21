@@ -186,7 +186,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 202: 7276 -> 7272, a 4-line shrink this task caused — the three
     // inline `match hook.phase` blocks (`project_hook_refusal_message`, the
     // test `hook()` helper) now read `HookPhase::as_str`, the single source.
-    ("src/cli.rs", 7272), // Day 199: #924 — parse_args grew a config-injecting seam (parse_args_with_config) plus its source-level delegation guard. Pasted from what the gate printed.
+    ("src/cli.rs", 7299), // Day 205: #920 — `auto_discover_skills` gained the project-skill symlink-escape refusal (the gate's own reading; only the *call site* lives here, the logic is in config_paths.rs). Pasted from what the gate printed. Day 199: #924 — parse_args grew a config-injecting seam (parse_args_with_config) plus its source-level delegation guard.
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.

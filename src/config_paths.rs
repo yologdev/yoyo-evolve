@@ -537,6 +537,158 @@ permissions.allow and shell hooks.\n  Pass --trust-project to allow them for one
     )
 }
 
+// === Project-local skills: does discovery follow a symlink out of the root? ===
+// (Day 205, #920 re-plan — measured, not assumed.)
+//
+// `gate_project_skills` (`.yoyo/skills/`, #897) keys the trust boundary on
+// **provenance**: which directory offered the skill, not where it lives. Nothing in
+// the path between that gate and the loader resolved a link, so a project-local
+// `.yoyo/skills/<name>` that IS a symlink to a directory outside the project was
+// read, and its body became instructions in the model's context — from a directory
+// the user never answered a question about. Measured at the emission point in a
+// scratch tree (three readings, all in the tests below): untrusted refused (a),
+// **trusted loaded from outside the root (b)**, in-project symlink loads (c).
+//
+// The predicate is therefore "escapes the canonicalized project root", never "is a
+// symlink": (c) is a legitimate shape and refusing it would break real users.
+//
+// Why this lives here rather than in `commands_spawn`: that module's
+// `check_worktree_path_escape` is private to it, and it walks *not-yet-created*
+// components to avoid canonicalizing paths that do not exist. A skill directory
+// exists by the time we look at it (we just read its `SKILL.md`), so the honest
+// shape here is one canonicalize plus one `starts_with` — a deliberate parallel,
+// not a third path resolver with its own vocabulary.
+
+/// Cap on an interpolated path in [`skill_escape_refusal_message`].
+///
+/// The target is chosen by whoever authored the project-local symlink, i.e. it is
+/// repository-authored text on its way to a terminal. Cut on a **char** boundary
+/// (#250), never a raw byte index, with the cut marked in band.
+const SKILL_ESCAPE_PATH_MAX_BYTES: usize = 200;
+
+/// Why a project-local skill directory was refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SkillEscape {
+    /// The directory resolved to a real path outside the project root.
+    Outside { resolved: std::path::PathBuf },
+    /// The directory could not be resolved at all — refused rather than assumed
+    /// safe, because "could not check" must not read as "checked; inside"
+    /// (`dir_is_trusted` follows the same rule one function away).
+    Unresolvable { base_dir: std::path::PathBuf },
+}
+
+/// Whether `base_dir` escapes `canon_root`. `None` means "inside the root".
+///
+/// Three directions, and the middle one is the near-miss control rather than an
+/// afterthought: a real directory inside the root (`None`), an in-project symlink
+/// whose target is *also* in-project (`None` — not an escape, and refusing it would
+/// be a false positive), and a link resolving outside the root (`Outside`).
+pub(crate) fn skill_dir_escape(
+    base_dir: &std::path::Path,
+    canon_root: &std::path::Path,
+) -> Option<SkillEscape> {
+    match std::fs::canonicalize(base_dir) {
+        Ok(resolved) => {
+            if resolved.starts_with(canon_root) {
+                None
+            } else {
+                Some(SkillEscape::Outside { resolved })
+            }
+        }
+        Err(_) => Some(SkillEscape::Unresolvable {
+            base_dir: base_dir.to_path_buf(),
+        }),
+    }
+}
+
+/// Split loaded project-local skills into the ones inside the project root and the
+/// ones that escaped it (or could not be resolved).
+///
+/// `canon_root: None` means the project root itself could not be resolved, so the
+/// comparison is inapplicable and **nothing is filtered** — the loader behaves
+/// exactly as it did before this check existed. Stated rather than implied: that is
+/// the one branch where the check cannot run, and it is a pathological state (a
+/// deleted or unreadable cwd) rather than a quiet default.
+///
+/// This takes a `SkillSet`'s vector rather than a source directory because the
+/// escape is per-entry: `.yoyo/skills/` can itself be real while one child is a
+/// link out, and a source-level check would miss exactly that case.
+pub(crate) fn partition_escaped_skills(
+    skills: Vec<yoagent::skills::Skill>,
+    canon_root: Option<&std::path::Path>,
+) -> (Vec<yoagent::skills::Skill>, Vec<(String, SkillEscape)>) {
+    let Some(root) = canon_root else {
+        return (skills, Vec::new());
+    };
+    let mut kept = Vec::with_capacity(skills.len());
+    let mut refused = Vec::new();
+    for skill in skills {
+        match skill_dir_escape(&skill.base_dir, root) {
+            None => kept.push(skill),
+            Some(reason) => refused.push((skill.name, reason)),
+        }
+    }
+    (kept, refused)
+}
+
+/// The stderr block shown when `.yoyo/skills/` offered a skill whose directory
+/// resolves outside the project root.
+///
+/// A **refusal with a named reason**, never a silent filter: a skill that quietly
+/// fails to load is the quietest failure this project owns, and a caller handed an
+/// absence invents a workaround instead of reporting it.
+///
+/// Mirrors `project_skill_refusal_message`: glyph-free under `plain` (marker *and*
+/// em dash), every interpolated name sanitized, and the caller drops the whole
+/// block under `--quiet`.
+pub(crate) fn skill_escape_refusal_message(
+    refused: &[(String, SkillEscape)],
+    plain: bool,
+) -> String {
+    let marker = if plain { "" } else { "⚠ " };
+    let dash = if plain { ", " } else { " — " };
+    let bullet = if plain { "  - " } else { "  • " };
+    let suffix = if plain { "..." } else { "…" };
+
+    let shown = |p: &std::path::Path| {
+        crate::cli::sanitize_for_display(&crate::format::safe_truncate_with_suffix(
+            &p.to_string_lossy(),
+            SKILL_ESCAPE_PATH_MAX_BYTES,
+            suffix,
+        ))
+    };
+
+    let listed = refused
+        .iter()
+        .map(|(name, reason)| {
+            let detail = match reason {
+                SkillEscape::Outside { resolved } => {
+                    format!("resolves outside this project to {}", shown(resolved))
+                }
+                SkillEscape::Unresolvable { base_dir } => {
+                    format!("could not be resolved ({})", shown(base_dir))
+                }
+            };
+            format!(
+                "{bullet}{} {dash}{detail}",
+                crate::cli::sanitize_for_display(name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let count = refused.len();
+    let noun = if count == 1 { "skill" } else { "skills" };
+    format!(
+        "{marker}A project-local .yoyo/skills/ offered {count} {noun} whose directory is not \
+inside this project. yoyo did not load {}:\n{listed}\n  A skill's body becomes instructions in \
+the model's context, and the project's own directory chain is what you trusted{dash}not wherever \
+a link points.\n  Move the skill into the project (or copy it) and it loads normally; an \
+in-project symlink is unaffected.",
+        if count == 1 { "it" } else { "them" }
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1098,5 +1250,263 @@ continue_on_silence = true\nwait_for_reset = true\nquiet = true\n",
             trust_declined_message(true).is_ascii(),
             "plain output must be glyph-free"
         );
+    }
+
+    // === #920: does `.yoyo/skills/` discovery follow a symlink out of the root? ===
+    //
+    // The three readings the probe was written to produce, at the emission point
+    // (the skill list a caller receives), on a scratch tree — never this repo:
+    //   (a) project **untrusted** → refused by `gate_project_skills` before any load
+    //       (pinned in `cli.rs`'s `gate_project_skills_refuses_only_the_project_source_and_only_when_untrusted`,
+    //       untouched), so this check is unreachable in that state;
+    //   (b) project **trusted** → the loader DID follow the link out of the root
+    //       (`symlink_escape_is_a_real_reading_not_an_assumption` below), so the
+    //       guard is required, not speculative;
+    //   (c) **near-miss**: an in-project symlink loads and must keep loading — the
+    //       predicate is "escapes the root", never "is a symlink".
+
+    use yoagent::skills::SkillSet;
+
+    #[cfg(unix)]
+    fn write_skill(dir: &std::path::Path, name: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: d\n---\n\nbody of {name}\n"),
+        )
+        .unwrap();
+    }
+
+    /// The reading that licenses the guard: on the **trusted** path — the one the
+    /// provenance gate lets through — the loader really does read a skill whose
+    /// directory resolves outside the project root, and reports its `SKILL.md` at
+    /// the outside path. If this ever stops being true the guard is dead weight and
+    /// this failing test is how that is discovered.
+    #[cfg(unix)]
+    #[test]
+    fn symlink_escape_is_a_real_reading_not_an_assumption() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().join("project");
+        let skills_dir = root.join(".yoyo/skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        let outside = tmp.path().join("outside/escapee");
+        write_skill(&outside, "escapee");
+        std::os::unix::fs::symlink(&outside, skills_dir.join("escapee")).unwrap();
+
+        let (set, errors) = SkillSet::load_dir_resilient(&skills_dir, "project");
+        assert!(errors.is_empty(), "a well-formed skill must not error");
+        assert_eq!(set.len(), 1, "the loader followed the link — reading (b)");
+        let canon_root = root.canonicalize().unwrap();
+        assert!(
+            !set.skills()[0].file_path.starts_with(&canon_root),
+            "the loaded body must come from OUTSIDE the project root, else there is \
+             nothing to guard: {}",
+            set.skills()[0].file_path.display()
+        );
+    }
+
+    /// (b) guarded: the escaping skill is refused **by name and target**, and a
+    /// sibling that really lives in the project still loads.
+    #[cfg(unix)]
+    #[test]
+    fn escaping_project_skill_is_refused_while_in_project_siblings_still_load() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().join("project");
+        let skills_dir = root.join(".yoyo/skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        write_skill(&skills_dir.join("local"), "local");
+        let outside = tmp.path().join("outside/escapee");
+        write_skill(&outside, "escapee");
+        std::os::unix::fs::symlink(&outside, skills_dir.join("escapee")).unwrap();
+
+        let canon_root = root.canonicalize().unwrap();
+        let (set, _) = SkillSet::load_dir_resilient(&skills_dir, "project");
+        // Anti-vacuous: the fixture really does contain the thing under test, so a
+        // guard that refused nothing cannot pass this test by agreeing with itself.
+        assert!(
+            set.skills().iter().any(|s| s.name == "escapee"),
+            "fixture must load the symlinked skill before the guard is applied"
+        );
+
+        let (kept, refused) = partition_escaped_skills(set.skills().to_vec(), Some(&canon_root));
+        let kept_names: Vec<&str> = kept.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            kept_names,
+            vec!["local"],
+            "the in-project sibling must survive"
+        );
+        assert_eq!(refused.len(), 1, "exactly one skill escapes: {refused:?}");
+        assert_eq!(refused[0].0, "escapee");
+        match &refused[0].1 {
+            SkillEscape::Outside { resolved } => {
+                assert!(
+                    resolved.starts_with(outside.canonicalize().unwrap()),
+                    "the refusal must name where it actually resolved: {}",
+                    resolved.display()
+                );
+            }
+            other => panic!("expected Outside, got {other:?}"),
+        }
+    }
+
+    /// (c) the near-miss control: a symlink from one in-project directory to
+    /// another in-project directory is **not** an escape. Refusing it would be a
+    /// false positive that breaks real users, which is why the predicate is
+    /// "escapes the root" and not "is a symlink".
+    #[cfg(unix)]
+    #[test]
+    fn in_project_symlink_is_not_an_escape_and_still_loads() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().join("project");
+        let skills_dir = root.join(".yoyo/skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        let inside = root.join("real/insider");
+        write_skill(&inside, "insider");
+        std::os::unix::fs::symlink(&inside, skills_dir.join("insider")).unwrap();
+
+        let canon_root = root.canonicalize().unwrap();
+        let (set, _) = SkillSet::load_dir_resilient(&skills_dir, "project");
+        assert_eq!(set.len(), 1, "fixture must load the in-project symlink");
+        assert!(
+            set.skills()[0].base_dir.starts_with(&canon_root),
+            "an in-project symlink resolves inside the root"
+        );
+
+        let (kept, refused) = partition_escaped_skills(set.skills().to_vec(), Some(&canon_root));
+        assert_eq!(kept.len(), 1, "reading (c): it must keep loading");
+        assert!(refused.is_empty(), "not an escape: {refused:?}");
+    }
+
+    /// A skill directory that cannot be resolved is refused rather than assumed
+    /// safe — the same direction `dir_is_trusted` takes for an unresolvable
+    /// directory. Cross-platform: no symlink needed.
+    #[test]
+    fn unresolvable_skill_dir_is_refused_not_assumed_safe() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let missing = root.join("gone/ghost");
+        let skill = yoagent::skills::Skill {
+            name: "ghost".to_string(),
+            description: "d".to_string(),
+            file_path: missing.join("SKILL.md"),
+            base_dir: missing.clone(),
+            source: "project".to_string(),
+        };
+        let (kept, refused) = partition_escaped_skills(vec![skill], Some(&root));
+        assert!(kept.is_empty());
+        assert_eq!(
+            refused,
+            vec![(
+                "ghost".to_string(),
+                SkillEscape::Unresolvable {
+                    base_dir: missing.clone()
+                }
+            )]
+        );
+    }
+
+    /// The one branch where the check cannot run: an unresolvable project root
+    /// leaves the comparison inapplicable and **nothing is filtered**, so the
+    /// loader behaves byte-identically to before the guard existed.
+    #[test]
+    fn unknown_project_root_filters_nothing() {
+        let skill = yoagent::skills::Skill {
+            name: "anywhere".to_string(),
+            description: "d".to_string(),
+            file_path: std::path::PathBuf::from("/somewhere/SKILL.md"),
+            base_dir: std::path::PathBuf::from("/somewhere"),
+            source: "project".to_string(),
+        };
+        let (kept, refused) = partition_escaped_skills(vec![skill], None);
+        assert_eq!(kept.len(), 1);
+        assert!(refused.is_empty(), "no root, no verdict: {refused:?}");
+    }
+
+    /// The refusal names the skill, where it resolved, and what to do — glyph-free
+    /// under plain output, like its three siblings.
+    #[test]
+    fn skill_escape_refusal_message_names_skill_target_and_remedy() {
+        let refused = vec![(
+            "escapee".to_string(),
+            SkillEscape::Outside {
+                resolved: std::path::PathBuf::from("/elsewhere/escapee"),
+            },
+        )];
+        let msg = skill_escape_refusal_message(&refused, false);
+        for needle in [
+            "escapee",
+            "/elsewhere/escapee",
+            "Move the skill into the project",
+            ".yoyo/skills/",
+        ] {
+            assert!(msg.contains(needle), "{needle:?} must appear in: {msg}");
+        }
+        assert!(
+            msg.contains("did not load it"),
+            "a refusal must say nothing was loaded: {msg}"
+        );
+        assert!(
+            msg.contains("in-project symlink is unaffected"),
+            "the near-miss must be named, or a user with a legitimate in-project \
+             link cannot tell whether they hit it: {msg}"
+        );
+        assert!(
+            skill_escape_refusal_message(&refused, true).is_ascii(),
+            "plain output must be glyph-free (marker AND em dash)"
+        );
+        // The singular/plural agreement, pinned rather than eyeballed.
+        let two = skill_escape_refusal_message(
+            &[
+                (
+                    "a".to_string(),
+                    SkillEscape::Unresolvable {
+                        base_dir: std::path::PathBuf::from("/gone/a"),
+                    },
+                ),
+                (
+                    "b".to_string(),
+                    SkillEscape::Outside {
+                        resolved: std::path::PathBuf::from("/elsewhere/b"),
+                    },
+                ),
+            ],
+            true,
+        );
+        assert!(two.contains("2 skills"), "{two}");
+        assert!(two.contains("did not load them"), "{two}");
+        let one = skill_escape_refusal_message(&refused, true);
+        assert!(
+            one.contains("1 skill") && one.contains("did not load it"),
+            "{one}"
+        );
+    }
+
+    /// Both interpolated strings are repository-authored — the skill name comes
+    /// from a directory the project wrote and the target from a link it authored —
+    /// so both are sanitized, and the path is capped on a **char** boundary (never
+    /// a raw byte index, #250).
+    #[test]
+    fn skill_escape_refusal_message_sanitizes_names_and_caps_the_target() {
+        // Anti-vacuous: prove the fixtures really carry the hostile byte, so a
+        // transcription slip cannot make the test pass by agreeing with itself.
+        let hostile_name = "sk\u{1b}[31mill";
+        assert!(hostile_name.as_bytes().contains(&0x1b));
+        let long_target = format!("/outside/{}/tail", "é".repeat(SKILL_ESCAPE_PATH_MAX_BYTES));
+        let refused = vec![(
+            hostile_name.to_string(),
+            SkillEscape::Outside {
+                resolved: std::path::PathBuf::from(&long_target),
+            },
+        )];
+        let msg = skill_escape_refusal_message(&refused, false);
+        assert!(
+            !msg.as_bytes().contains(&0x1b),
+            "a control byte from a project-authored name must not reach the terminal"
+        );
+        assert!(
+            !msg.contains(&long_target),
+            "a pathological target must be capped, not pasted whole"
+        );
+        assert!(msg.contains('…'), "the cut must be marked in band: {msg}");
     }
 }

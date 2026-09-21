@@ -14,6 +14,16 @@ You can pass multiple skill directories:
 yoyo --skills ./skills --skills ./my-custom-skills
 ```
 
+### Where skills are found automatically
+
+Without any flag, yoyo reads three directories, **lowest precedence first** (a skill of the same name in a later directory wins):
+
+1. `~/.config/yoyo/skills/` — where `/skill install` puts things
+2. `~/.yoyo/skills/` — your own global skills
+3. `.yoyo/skills/` — **project-local**
+
+The first two are yours. The third is authored by whatever repository you are standing in, so it is gated by trust — see the `--trust-project` note in [Permissions](permissions.md). If a project-local skill directory is a **symlink that resolves outside the project** (for example `.yoyo/skills/name -> /elsewhere/name`), yoyo refuses that project's `skills/` source and says so, naming the skill and where it resolved. A skill's body becomes instructions in the model's context, and the directory chain you trusted is the project's, not wherever a link points. A symlink that stays **inside** the project is not affected.
+
 ## What is a skill?
 
 A skill file is a markdown file with YAML frontmatter. It contains instructions, rules, or context that the agent should follow. For example:

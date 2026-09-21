@@ -521,6 +521,14 @@ fn auto_discover_skills(skills: &mut SkillSet) -> usize {
         }
     }
 
+    // #920 (Day 205): the project source above is keyed on *provenance*, and nothing
+    // between that gate and this load resolved a link — so a project-local
+    // `.yoyo/skills/<name>` that IS a symlink out of the project was read from a
+    // directory the user never answered a question about. Whole-source, not
+    // per-entry: `SkillSet` has no way to drop a loaded skill. Three readings +
+    // rationale: ARCHITECTURE.md, `config_paths.rs`.
+    let canon_project_root = std::fs::canonicalize(".").ok();
+
     for source in gated.sources {
         if !source.dir.is_dir() {
             continue;
@@ -533,6 +541,25 @@ fn auto_discover_skills(skills: &mut SkillSet) -> usize {
                 "{YELLOW}warning:{RESET} skipping malformed skill in {}: {e}",
                 source.warn_target
             );
+        }
+        // Only the project source: `~/.yoyo/skills/`, the install dir and `--skills`
+        // dirs are the user's own. `partition_escaped_skills` filters nothing when the
+        // project root itself cannot be resolved.
+        if source.label == PROJECT_SKILL_LABEL {
+            let (_, escaped) = crate::config_paths::partition_escaped_skills(
+                set.skills().to_vec(),
+                canon_project_root.as_deref(),
+            );
+            if !escaped.is_empty() {
+                if !is_quiet() {
+                    let msg = crate::config_paths::skill_escape_refusal_message(
+                        &escaped,
+                        crate::format::is_plain_output(),
+                    );
+                    eprintln!("{YELLOW}{msg}{RESET}");
+                }
+                continue;
+            }
         }
         if !set.is_empty() {
             sources.push(source.display);
