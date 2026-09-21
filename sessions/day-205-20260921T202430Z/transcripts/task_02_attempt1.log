@@ -1,0 +1,1220 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by examining the current state of the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && cargo te…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "continue_on_silence\|wa… ✓ (4ms)
+ ✓ (197ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the existing shapes for continue_on_silence and wait_for_reset, and the restricted-mode helpers.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 40,130p src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2180,2320p src/cli.rs ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's look at the restricted mode section (around 1690-1900) — helpers and notes, and the call site at 2524.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1690,1900p src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2490,2545p src/cli.rs ✓ (5ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Search where `let restricted = args.iter()` is at :2524.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.4s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restricted" src/cli.rs … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me see line 2540-2560, 2600-2650, and the deferred doc comment 1731-1745, and the tests around 5690+ for help documentation.
+
+Also I need the `resolve_cost_threshold` shape with env — but the task says copy the two-source OR shape used by continue_on_silence/wait_for_reset (call site reads both sources, ORs). But it also says "The env value is read once per process through the same seam the other two-source flags use". Those use `std::env::var` at the call site... Actually for continue_on_silence it's `args.iter().any(...) || parse_from_config(...)` then set a OnceLock. So the "read once" is via the OnceLock setter. I'll add a pure `restricted_from_sources(flag: bool, env: Option<&str>) -> bool` and a call site that reads env once.
+
+Let me look at details.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2540,2560p src/cli.rs && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1655,1750p src/cli.rs ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The tool output truncates lines ("... (32 more similar lines)") — hmm, that's the read_file-style? Actually bash output showed with "... (N more similar lines)" — that's a truncation applied by the harness to long similar lines? Weird. Let me try grep with context to see full doc comment at 1731-1745.
+
+Actually the truncation seems to be about identical repeated lines... Odd. Let me use `sed -n '1726,1740p'` alone.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1726,1740p' src/cli.rs |… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the help source. Let me grep for `--restricted` in help files.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "restricted" src/help.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "restricted" docs/src/ … ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 235,265p src/help.rs && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "safe-mode" docs/src/co… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's look at tests in cli.rs for restricted help documentation & the test module structure, plus how other tests handle env vars (scoped guard). Let me check existing env-var test patterns e.g. YOYO_COST_WARN_USD tests.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_var\|remove_var" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 5690,5760p src/cli.rs && … ✓ (5ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note: `wc -l` = 7299 now, and the register entry says 7272 per the task (which was from earlier). Wait — the module_size test passed before edits. Let me check the register entry for src/cli.rs in tests/module_size.rs.
+
+Note the task statement says 7272, but the file currently has 7299 lines. Task 1 of this session already changed src/cli.rs? Task 1 was a re-plan of #920 about `.yoyo/skills/` discovery symlink — that likely touched src/cli.rs or config_paths.rs. So the register may already have been updated to 7299. Let me check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cli.rs" tests/module_si… ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Register currently says 7299. So my budget: cap presumably 7300? Let me check the module_size gate band logic. Let me look at how the register is enforced — "there are ~100 lines before drift goes fatal"? Hmm, task says cli.rs is 7272 and its entry says 7272, so ~100 lines before drift goes fatal. Now both are 7299. Let me read the gate.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,120p tests/module_size.… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So cli.rs is grandfathered at 7299 with REGISTER_DRIFT_GRACE_LINES = 100 — meaning it can grow up to 7399 without failing? Let me read the actual gate logic to be sure.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,320p tests/module_siz… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+OK. So whatever I add, I must update the register entry to the exact gate-printed number. The gate: entry 7299, actual = ? Let me compute actual lines. `wc -l` gives 7299 for src/cli.rs now. The gate likely counts lines including a trailing newline check. Since the entry matches current (task 1 just updated it), and gate passes.
+
+I'll add ~80-120 lines maybe. Grace is 100 lines above the entry... Actually REGISTER_DRIFT_GRACE_LINES = 100: a grandfathered module may grow past its recorded ceiling by at most that many lines before it's fatal. So if I add more than 100 lines, I must update the entry anyway (which I will — that's the instruction). Fine, I'll update the register entry with the gate's printed number.
+
+Let's now check the tests to see how the module_size gate prints the number (there might be a test that prints drift). I'll just run `cargo test --test module_size -- --nocapture` after edits and see if it prints a number. Actually per the task: "paste exactly the line the gate prints over the entry". Let's see the gate's output format later.
+
+Now, plan the implementation:
+
+1. Add `restricted_from_sources(flag: bool, env: Option<&str>) -> bool` pure function near restricted helpers.
+2. Call site: `let restricted = restricted_from_sources(args.iter().any(|a| a == "--restricted"), std::env::var("YOYO_RESTRICTED").ok().as_deref());`
+
+Wait — the task says the env value is read once per process through the same seam the other two-source flags use. `continue_on_silence` uses config file + flag, then a OnceLock setter. For the env, `YOYO_COST_WARN_USD` is read via `std::env::var(...).ok()` at the call site in parse_args. Since parse_args is called once per process (probably), reading env once at the call site is fine. But there might be tests that call parse_args multiple times... The decision `restricted` is used locally in parse_args to compute effects. Reading env once at that single call site satisfies "one place decides the boolean".
+
+Hmm, but "The env value is read **once** per process through the same seam the other two-source flags use, so the fence cannot shift mid-session." I could read it once via a helper `restricted_env() -> Option<String>` using OnceLock to snapshot. That's more faithful to "read once per process through the same seam". But OnceLock snapshotting env in tests is problematic (global state leaks across tests — exactly the Day 190 warning). If I use a OnceLock to cache the env read, tests that set the env var would be order-dependent. Better: read `std::env::var` once at the single call site within parse_args, matching the YOYO_COST_WARN_USD precedent. The boolean computed once is what matters — the fence cannot shift mid-session because RESTRICTED is stored in a static AtomicBool once, via set_restricted.
+
+Actually let's be careful and clear: the "read once per process" is satisfied because parse_args runs once per process and stores the result in the RESTRICTED static. I'll document this in the doc comment.
+
+3. Update the deferred doc comment at 1731-1734: mark superseded in place, don't delete.
+
+4. Help text: add env var mention in src/help.rs `--restricted` paragraph. Also check tests in help_data_guards.rs that validate help text.
+
+5. `restricted_mode_note` — should I mention env? Task says add to `restricted_mode_note` only if the note names *how* the mode was entered. Currently the note doesn't name the flag; it just says "restricted mode". So no change needed there. Good.
+
+6. Docs: add one line to docs/src/troubleshooting/safety.md where `--restricted` is documented (and mention env form). permissions.md mentions safe-mode; but the restricted section is in safety.md. I'll add to safety.md.
+
+7. Tests in src/cli.rs test module: table-driven tests for `restricted_from_sources`, plus a scoped env guard for the call-site integration test? Let me check if there's an existing scoped env guard pattern in the repo. Let me grep tests/ for env guard helper.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "EnvGuard\|env_guard\|s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "YOYO_" src/*.rs | grep… ✓ (11ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at help.rs around 740-780 (ENVIRONMENT VARIABLES section) and the test at cli.rs:3820-3850 that checks env vars documented in help. There's likely a list of env var names checked against help output: `["YOYO_AUDIT", "YOYO_NO_UPDATE_CHECK", "YOYO_SESSION_BUDGET_SECS"]`. Let me read that test.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3810,3860p src/cli.rs && … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check help_data.rs — maybe there's a help-data guard that cross-checks flag help sentences. Also `help_data_guards.rs`. Let me grep for "restricted" there... earlier grep showed only help.rs:248. Let's check help_data_guards.rs for the pattern of checking flag doc mentions env vars.
+
+Also check `cli_help_text()` used by #862's guard which reads help text to ensure flags needing values have placeholders.
+
+Let me now write the code. Start with the pure function + call site.
+
+Design:
+
+```rust
+/// Environment variable that turns on restricted mode (#879 item 5).
+///
+/// The flag form is `--restricted`; this is the same switch read from the
+/// environment so a wrapper script can export it once instead of rewriting
+/// every invocation. Accepted true-ish spellings: `1` and `true`,
+/// case-insensitive and trimmed — nothing else, so `YOYO_RESTRICTED=0`,
+/// `=false`, `=""` and a misspelling all read **off** (absent means off; a
+/// nonsense value must never turn a confinement on).
+pub const RESTRICTED_ENV_VAR: &str = "YOYO_RESTRICTED";
+
+/// The single decision for whether this run is restricted: flag OR env var.
+///
+/// Monotonic: neither source can turn the other off...
+pub(crate) fn restricted_from_sources(flag: bool, env: Option<&str>) -> bool {
+    flag || restricted_env_is_on(env)
+}
+
+fn restricted_env_is_on(env: Option<&str>) -> bool {
+    match env {
+        Some(v) => {
+            let v = v.trim();
+            v.eq_ignore_ascii_case("1") || v.eq_ignore_ascii_case("true")
+        }
+        None => false,
+    }
+}
+```
+
+Hmm, two functions where one suffices. Simpler: single function with the trim/match inline, doc comment states accepted set. Keep it to one function to avoid dead code. Actually a helper for the env truthiness could be useful for the note/help? No. Keep one function.
+
+Wait — do I need `RESTRICTED_ENV_VAR` const? It's used at the call site and in tests. That's a consumer, fine. It also documents. But careful: adding a pub const without... it's used, fine.
+
+Also: should the flag/env decision be applied where `restricted` is used? Yes at line 2551.
+
+Also there's the `is_restricted()` static used by main.rs for the cwd fence. set_restricted(restricted) at 2624 uses the same boolean. Good.
+
+Now the note: doesn't name how it was entered → no change. But should I mention env in the note? The task says only if the note names how the mode was entered. It doesn't. Skip, and note why in the commit/ARCHITECTURE.
+
+Now — help text. Add to `--restricted` paragraph: "(also respects YOYO_RESTRICTED=1 env)". Similar to `--no-update-check`: "(also respects YOYO_NO_UPDATE_CHECK=1 env)". Also add to the ENVIRONMENT VARIABLES section in help.rs:
+
+```
+YOYO_RESTRICTED       Set to 1 to confine this run (same as --restricted)
+```
+
+And check `src/help.rs:1548` context — there's a list of env var names somewhere at line 1548. Let me read that.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1520,1580p src/help.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ENV_VAR\|env var" src/… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's a guard `all_known_commands_have_help` in help.rs. And in cli.rs there might be a guard requiring every flag documented in help. Let me check for a test that ensures `KNOWN_FLAGS` are all in help text (help_data.rs:test_every_subcommand_table_is_documented... those are about subcommands).
+
+Also check #862's guard: `cli_help_text()` reads flags needing values with placeholders. Let's look at that guard to make sure adding "(also respects ...)" doesn't break the placeholder check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "862\|placeholder" src/… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "cli_help_text()" src/*… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2960,3060p src/cli.rs ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I was in the middle of exploring the codebase. Let me now implement the task. I have enough understanding:
+
+Key facts gathered:
+- `src/cli.rs:1703-1705` doc comment says env-var form is deferred — need to mark superseded.
+- `src/cli.rs:2551`: `let restricted = args.iter().any(|a| a == "--restricted");`
+- `set_restricted(restricted)` at 2624.
+- `src/help.rs:248` documents `--restricted` flag.
+- `src/help.rs:753-763` documents env vars (YOYO_NO_UPDATE_CHECK, YOYO_AUDIT, YOYO_SESSION_BUDGET_SECS).
+- `KNOWN_FLAGS` has `--restricted` at line 708.
+- There's a guard `help_text_documents_known_env_vars` in cli.rs:3839 and `cli_help_text_contains_key_flags` in help.rs.
+- module_size.rs: `("src/cli.rs", 7299)`, drift grace 100 lines.
+- Tests module in cli.rs starting ~5314, uses `#[serial]` for env-var-mutating tests.
+
+Important concern: test isolation. The `RESTRICTED` static is a process-global AtomicBool, but `restricted_from_sources` is pure — tests can test it purely (flag bool + env Option<&str>) without touching process env. Good — that satisfies "Tests (table-driven, in-file)" and "Env-var tests must not leak into other tests: set/remove through a scoped guard". If I make the function pure taking `Option<&str>`, tests need no env mutation at all. That's the safest. But the task says "Env-var tests must not leak into other tests: set/remove through a scoped guard rather than mutating the process env and walking away". Hmm — but if the decision function is pure and takes the env value, then no env mutation is needed. However, I should also verify the call site reads `std::env::var`. Maybe I add one integration-ish test with a scoped guard. Let me be careful: the pure function is the main test surface. I could add a small scoped-guard test that checks `restricted_env_value()` reads the env. Actually let me check whether the "one read per process" requirement means an OnceLock.
+
+Task step 1.2 says: "The env value is read **once** per process through the same seam the other two-source flags use, so the fence cannot shift mid-session." The other two-source flags (continue_on_silence, wait_for_reset) use config file + args, not env. Hmm, but YOYO_QUIET is read via `std::env::var("YOYO_QUIET")` directly. The "read once per process" — since parse_args runs once, reading `std::env::var` at the call site is effectively once per process. But to be safe and testable, I'll do:
+
+```rust
+/// Environment variable that turns `--restricted` on without the flag (#879).
+pub(crate) const RESTRICTED_ENV_VAR: &str = "YOYO_RESTRICTED";
+
+/// The spellings of `YOYO_RESTRICTED` that mean ON...
+pub(crate) fn env_truthy(value: Option<&str>) -> bool {
+    matches!(value.map(|v| v.trim().to_ascii_lowercase()).as_deref(), Some("1") | Some("true"))
+}
+
+pub(crate) fn restricted_from_sources(flag: bool, env: Option<&str>) -> bool {
+    flag || env_truthy(env)
+}
+```
+
+Then at the call site:
+```rust
+let restricted = restricted_from_sources(
+    args.iter().any(|a| a == "--restricted"),
+    std::env::var(RESTRICTED_ENV_VAR).ok().as_deref(),
+);
+```
+
+Now, for the "read once per process" — I could route through a `OnceLock`-cached read. But the task says "the same seam the other two-source flags use". Other two-source flags (e.g., cost threshold) read env at the parse_args call site directly. Actually `resolve_cost_threshold` takes `Option<&str>` from `std::env::var(...).ok().as_deref()` at the call site. That's the pattern. I'll follow that: the env is read at the single call site in parse_args, which runs once per process. I'll document that.
+
+Hmm, but there's a subtlety: `restricted` is used later in the same function; the env isn't re-read. Good.
+
+Now, "the flag wins" — with OR, the flag being true always yields true. Monotonic. Good.
+
+Now, also need to handle: should I add a helper that reads env itself so tests can exercise the guard? The task's verify list says "Tests (table-driven, in-file): env set → true; flag set → true; both → true; neither → false". The pure function covers those. And "Env-var tests must not leak into other tests: set/remove through a scoped guard". I'll add a scoped guard test that sets the real env var and then checks the actual call-site read path... but the call site is inside parse_args which is huge. Hmm. Better: add a tiny function that reads the env and delegates:
+
+```rust
+/// Read the environment source once, at the single call site in `parse_args`.
+/// Separated so the env read is testable through a scoped guard...
+pub(crate) fn restricted_env_source() -> Option<String> {
+    std::env::var(RESTRICTED_ENV_VAR).ok()
+}
+```
+
+That adds complexity. Alternatively, keep the read inline and add a scoped guard test that exercises `restricted_from_sources(false, std::env::var(RESTRICTED_ENV_VAR).ok().as_deref())` after setting the env var via a guard. That's a real end-to-end check of the env plumbing minus parse_args. Hmm, it's basically testing std::env::var.
+
+Actually, a more valuable test: check that `--restricted` is documented in help (env var too). And a test that the call site is the only decision point (source-level guard: exactly one occurrence of `args.iter().any(|a| a == "--restricted")` in the file, and it's inside a `restricted_from_sources(` call). That mirrors repo discipline.
+
+Let me keep it focused:
+1. `RESTRICTED_ENV_VAR` const + `env_truthy` + `restricted_from_sources` pure fns with doc comments.
+2. Call site replaced.
+3. Doc comment superseded marker.
+4. help.rs: document env var in `--restricted` paragraph + in the Environment section list.
+5. docs: safety.md and permissions.md line.
+6. ARCHITECTURE.md note under src/cli.rs.
+7. Tests table-driven + scoped env guard test + source guard.
+8. module_size register line from gate output.
+
+Let me start writing. First the helper functions placed near the other restricted-mode helpers (after `restricted_disallowed_tools` or before `restricted_mode_effects`). Actually best placed right after `is_restricted`? The statics are at the top. I'll place them just before `RestrictedEffects` struct or right after `restricted_disallowed_tools`. I'll put them right after the `RESTRICTED` statics for cohesion... Hmm, `restricted_mode_effects` doc mentions env-var deferred. Let me put the new functions immediately before `restricted_mode_effects` (i.e., after the `RestrictedDirOutcome` enum), and mark the deferred comment superseded.
+
+Actually the deferred sentence is in the doc comment of `restricted_mode_effects`. Let me mark it superseded in place there.
+
+Let me look at the exact text again to edit precisely. Lines 1729-1731:
+```
+/// The env-var form (`YOYO_RESTRICTED=1`) is also deferred: it is the two-source
+/// OR shape `continue_on_silence` and `wait_for_reset` already use and can be
+/// added later without redesigning any of this.
+```
+
+I'll replace with a superseded note.
+
+Let me look at how the file does "superseded in place" at :1693-1698.
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough context. Let me check the superseded-claim idiom and the exact spots, then implement.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1686,1732p src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,745p src/cli.rs && ec… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `sed -n 1686,1732p` output got compacted. Let me read the exact region with read_file.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1690..1740 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me write the implementation. First, the helper functions. I'll insert them right after the `restricted_disallowed_tools` function (line 1831) and before `restricted_mode_note`'s doc comment at 1833.
+
+Actually better placement: right after `is_restricted` at line 112-ish? No — the trio of restricted helpers is at 1690-1831, keep cohesion. I'll insert before line 1833 (the `restricted_mode_note` doc comment).
+
+Let me define:
+
+```rust
+/// The environment variable that turns `--restricted` on without the flag, so the
+/// composite switch is reachable from a wrapper script — the actual use case #879
+/// item 5 names (Claude Code ships `CLAUDE_CODE_RESTRICTED=1` for the same reason).
+pub(crate) const RESTRICTED_ENV_VAR: &str = "YOYO_RESTRICTED";
+
+/// The spellings of `RESTRICTED_ENV_VAR` that mean ON, and nothing else.
+///
+/// The accepted set is exactly `1` and `true`, case-insensitive and trimmed. Every
+/// other value — including `0`, `false`, `""`, and nonsense like `yes-please` —
+/// reads **off**. Absent never means "on with a value I did not understand": a
+/// nonsense value must not alarm on the first run (the `parse_cost_threshold`
+/// rule). Stated here rather than inferred from the match arms.
+pub(crate) fn env_flag_is_on(value: Option<&str>) -> bool {
+    match value {
+        Some(v) => matches!(v.trim(), "1" | "true") || matches!(v.trim(), "TRUE" | "True" | "1"),
+        None => false,
+    }
+}
+```
+
+Hmm, case-insensitive. Better: `v.trim().to_ascii_lowercase()` and match `"1" | "true"`. That allocates but fine. But clippy might complain about allocation? No.
+
+```rust
+pub(crate) fn env_flag_is_on(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true")
+    )
+}
+```
+
+Then:
+
+```rust
+/// The single decision for "is this run restricted?", OR-ing the two sources.
+///
+/// Monotonic: the environment can only ever turn restricted **on**. `flag == true`
+/// is never turned off by the environment, and a value the environment does not
+/// accept is *absent*, not a contradiction.
+///
+/// **This is the ONLY place the boolean is decided.** The call site in `parse_args`
+/// passes the flag scan and the environment read in, so there is one policy and not
+/// two doors that happen to agree today. Pure and table-testable, which is also why
+/// the tests need no process-environment mutation for the semantics — the env value
+/// arrives as a parameter.
+pub(crate) fn restricted_from_sources(flag: bool, env: Option<&str>) -> bool {
+    flag || env_flag_is_on(env)
+}
+```
+
+Hmm — but does "the env value is read once per process through the same seam" require caching? Let me check `resolve_cost_threshold` seam: it takes `flag_val: Option<&str>, env_val: Option<&str>, config_val: Option<&str>`. The env read happens at the call site: `std::env::var("YOYO_COST_WARN_USD").ok().as_deref()`. So reading at the call site, once per parse_args = once per process. I'll do the same and document it.
+
+Actually to be strictly "read once per process", since `parse_args` can in principle be called multiple times in tests... but the same is true for cost threshold. The point is the fence cannot shift mid-session: `set_restricted()` is called once, and downstream reads `is_restricted()`. Good.
+
+Now — should the env source be resolved through a named helper so the source-level guard can pin "exactly one place decides"? I'll add a tiny accessor `restricted_env_source()` reading the env var, so tests can exercise the real env plumbing through a scoped guard, and the call site reads:
+
+```rust
+let restricted = restricted_from_sources(
+    args.iter().any(|a| a == "--restricted"),
+    restricted_env_source().as_deref(),
+);
+```
+
+That gives a testable env read (one place), and the scoped-guard test the task asks for. Good. Name: `restricted_env_source`.
+
+Let's write the code.
+
+Now edit 1: replace the deferred sentence in the doc comment.
+Edit 2: add helpers.
+Edit 3: replace call site.
+Edit 4: help.rs.
+Edit 5: docs.
+Edit 6: tests.
+Edit 7: ARCHITECTURE.md.
+Edit 8: module_size register line.
+
+Let me do it.
+────────────────────────────────────────────────────────────────────────────────
+
+Now implementing. First the helper functions and the superseded marker:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (4 → 11 lines)
+  - /// The env-var form (`YOYO_RESTRICTED=1`) is also deferred: it is the two-source
+  - /// OR shape `continue_on_silence` and `wait_for_reset` already use and can be
+  - /// added later without redesigning any of this.
+  + /// **Superseded, recorded rather than erased:** this list used to carry a
+  + /// *"the env-var form (`YOYO_RESTRICTED=1`) is also deferred"* entry, ending
+  + /// *"it is the two-source OR shape `continue_on_silence` and `wait_for_reset`
+  + /// already use and can be added later without redesigning any of this."* That
+  + /// sentence was **true when it was written and is false as of today**: the env
+  + /// form landed as `restricted_from_sources` / `restricted_env_source` /
+  + /// `RESTRICTED_ENV_VAR` (see those three items), with no redesign of anything in
+  + /// this function — which is exactly what the sentence predicted, so it is
+  + /// replaced rather than deleted. It stays here because a reader who remembers
+  + /// the deferral needs to be told it was paid, not left to infer it.
+    pub(crate) fn restricted_mode_effects(
+ ✓ (2m 23s)
+  - /// The env-var form (`YOYO_RESTRICTED=1`) is also deferred: it is the two-source
+  - /// OR shape `continue_on_silence` and `wait_for_reset` already use and can be
+  - /// added later without redesigning any of this.
+  + /// **Superseded, recorded rather than erased:** this list used to carry a
+  + /// *"the env-var form (`YOYO_RESTRICTED=1`) is also deferred"* entry, ending
+  + /// *"it is the two-source OR shape `continue_on_silence` and `wait_for_reset`
+  + /// already use and can be added later without redesigning any of this."* That
+  + /// sentence was **true when it was written and is false as of today**: the env
+  ... (6 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 44 lines)
+  + /// The environment variable that turns `--restricted` on without the flag, so the
+  + /// composite switch is reachable from a **wrapper script** — the actual use case
+  + /// #879 question 5 names. (Claude Code ships `CLAUDE_CODE_RESTRICTED=1` for the
+  + /// same reason.)
+  + pub(crate) const RESTRICTED_ENV_VAR: &str = "YOYO_RESTRICTED";
+  + 
+  + /// The accepted spellings of `RESTRICTED_ENV_VAR` that mean **on** — exactly `1`
+  + /// and `true`, trimmed and case-insensitive. **Every** other value reads off:
+  + /// `0`, `false`, `""`, and nonsense like `yes-please` are all off, and an unset
+  + /// variable is off. Nonsense never means "on with a value I did not understand",
+  + /// which is the `parse_cost_threshold` rule — a value the user mistyped must not
+  + /// silently change the session's confinement on the first run. The set is stated
+  + /// here rather than left to be inferred from the match arms.
+  + pub(crate) fn env_flag_is_on(value: Option<&str>) -> bool {
+  +     matches!(
+  +         value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+  +         Some("1") | Some("true")
+  +     )
+  + }
+  + 
+  ... (24 more lines)
+ ✓ (16.3s)
+  + /// The environment variable that turns `--restricted` on without the flag, so the
+  + /// composite switch is reachable from a **wrapper script** — the actual use case
+  + /// #879 question 5 names. (Claude Code ships `CLAUDE_CODE_RESTRICTED=1` for the
+  + /// same reason.)
+  + pub(crate) const RESTRICTED_ENV_VAR: &str = "YOYO_RESTRICTED";
+  + 
+  + /// The accepted spellings of `RESTRICTED_ENV_VAR` that mean **on** — exactly `1`
+  + /// and `true`, trimmed and case-insensitive. **Every** other value reads off:
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Expected — now the call site. Let me wire it.
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — now the consumer (call site):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 4 lines)
+  -     let restricted = args.iter().any(|a| a == "--restricted");
+  +     let restricted = restricted_from_sources(
+  +         args.iter().any(|a| a == "--restricted"),
+  +         restricted_env_source().as_deref(),
+  +     );
+ ✓ (2m 23s)
+  -     let restricted = args.iter().any(|a| a == "--restricted");
+  +     let restricted = restricted_from_sources(
+  +         args.iter().any(|a| a == "--restricted"),
+  +         restricted_env_source().as_deref(),
+  +     );
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -15 ✓ (168ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, it finished instantly — probably cached... but we changed cli.rs. Hmm, "Finished in 0.14s" — maybe the auto-check already compiled it. Yes, the auto-check ran cargo clippy and failed only on dead code, so it had built. But we changed the file after. Let me force check with a touch... Actually the auto-check ran after the previous edit. Now the new edit happened. 0.14s seems too fast but cargo may have finished the build quickly since it's a single file. Let me verify by running cargo build again with -v? Just run `cargo build` and check it actually compiled. Let's do `touch src/cli.rs && cargo build`.
+
+Actually it says "Finished" which means it succeeded. Fine — but let me be sure by running clippy.
+
+Also, the "call site comment" — line 2547 says "#879 clause A: --restricted turns on whatever --safe-mode already turns..." Let me view the region around the call site to make sure the comment is coherent and possibly update the clause B call site comment at 2619-2624.
+
+Let me read the call site region.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:2590..2612 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now update the comment above to mention the env source is read exactly once here. Let me add a sentence.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (8 → 13 lines)
+        // on — the same mechanism, not a second one. Read here, before project
+        // context is loaded, so the suppression is honoured this run rather than
+        // arriving after the thing it was meant to suppress.
+  +     //
+  +     // Both sources are resolved HERE and only here — the `--restricted` flag scan
+  +     // and one read of `YOYO_RESTRICTED` — and the boolean comes back from the pure
+  +     // `restricted_from_sources`, so the OS environment is consulted once for the
+  +     // process and a session's confinement cannot shift mid-session.
+        let restricted = restricted_from_sources(
+            args.iter().any(|a| a == "--restricted"),
+            restricted_env_source().as_deref(),
+ ✓ (2m 23s)
+        // on — the same mechanism, not a second one. Read here, before project
+        // context is loaded, so the suppression is honoured this run rather than
+        // arriving after the thing it was meant to suppress.
+  +     //
+  +     // Both sources are resolved HERE and only here — the `--restricted` flag scan
+  +     // and one read of `YOYO_RESTRICTED` — and the boolean comes back from the pure
+  +     // `restricted_from_sources`, so the OS environment is consulted once for the
+  +     // process and a session's confinement cannot shift mid-session.
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the help text (the --restricted flag paragraph and the Environment section):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (16 → 24 lines)
+        );
+        let _ = writeln!(
+            s,
+  -         "                    sandbox: file tools remain — use --read to stop writes"
+  +         "                    sandbox: file tools remain — use --read to stop writes."
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "                    Also settable via YOYO_RESTRICTED=1 (or true), so a wrapper"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "                    script can confine a run without editing its argv"
+        );
+ ✓ (2m 24s)
+        );
+        let _ = writeln!(
+            s,
+  -         "                    sandbox: file tools remain — use --read to stop writes"
+  +         "                    sandbox: file tools remain — use --read to stop writes."
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  ... (6 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The agent stopped due to time. I need to continue. Let me check the current state of my edits and continue.
+
+Remaining work:
+1. Add YOYO_RESTRICTED to Environment section in help.rs (optional but good)
+2. Add tests
+3. Update docs
+4. Update ARCHITECTURE.md
+5. Update module_size.rs entry
+6. Run checks and commit
+
+Let me check state first.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git diff -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "YOYO_RESTRICTED\|restri… ✓ (5ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now let me add the env var to the Environment section in help.rs, and add the tests. Let me first check the environment section again and add YOYO_RESTRICTED there.
+
+Actually, the task says "Add the env var to the `--restricted` paragraph in the help source you grepped in step 0". I did that. Adding to the Environment list is also good — the `help_text_documents_known_env_vars` test lists a few. Let me add it to the Environment section.
+
+Now tests. Let me look at the existing test module for restricted tests and find where to add. Also need a scoped env guard.
+
+Let me check existing tests around line 5314+ (now shifted). Let me find them.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn restricted_effects_t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 262,272p src/help.rs ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.3s (2 ✓)
+
+Now add the env var to the Environment section of help and write the tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (8 → 20 lines)
+        let _ = writeln!(
+            s,
+            "                            early when <30s remain (default: unbounded)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  YOYO_RESTRICTED       Set to 1 (or true) to confine this run exactly as"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "                        --restricted does; other values, including 0 and"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "                        false, are off. The flag and this env var are OR-ed"
+        );
+ ✓ (2m 23s)
+        let _ = writeln!(
+            s,
+            "                            early when <30s remain (default: unbounded)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  YOYO_RESTRICTED       Set to 1 (or true) to confine this run exactly as"
+  +     );
+  ... (8 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:5368..5408 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now insert tests after `restricted_effects_table` or at the head of the restricted section. Let me insert a new section for the env-var form right after the `// ---- #879 --restricted, first slice ---` marker... Actually better placed after `restricted_effects_table`. I'll insert before `#[test]\n    fn restricted_leaves_a_user_supplied_allow_list_byte_identical`.
+
+Tests needed:
+1. `restricted_from_sources` table: flag only → true; env only true-ish → true; both → true; neither → false; `YOYO_RESTRICTED=0|false|""|yes-please` → false; whitespace/case; flag true + env "0" → true (monotonic).
+2. Scoped env guard test for `restricted_env_source` — read through a guard that sets and restores.
+3. `restricted_disallowed_tools` still dedups (already tested) — task says verify union still dedups; existing test covers that. Also `restricted_disallowed_tools(_, false)` byte-identical — existing test covers. Good.
+4. Help text documents YOYO_RESTRICTED.
+5. `RESTRICTED_ENV_VAR` value pinned.
+
+Also need to check `--restricted` in the env: the flag-scan at the call site. Maybe add a test that the single call site exists — weak. Better: a source-level guard? The task says "Replace the `let restricted = args.iter().any(...)` at `:2524` with the single decision call so there is exactly one place that decides the boolean". A test could assert there is exactly one `restricted_from_sources(` call site in the file. Let me add a source-level guard: count occurrences of `restricted_from_sources(` in the file body (excluding test module) — similar to the "three doors" discipline. That's moderately useful. Let me do it simply by reading include_str! of the file and counting in the section before `#[cfg(test)]`.
+
+Hmm, weak source-level guards have precedent in this repo. I'll add one that asserts exactly one production call site and that it consults both sources.
+
+Let me write the tests. Env guard: need a struct that sets var, and on drop restores. Use `std::env::set_var`/`remove_var`. Since `env_flag_is_on` and `restricted_from_sources` are pure, the env tests need the guard only for `restricted_env_source`.
+
+Let me check how the tests access $ serial — the repo uses `serial_test`. For env-mutating test use `#[serial]`.
+
+Now write.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (2 → 188 lines)
+  +     // ---- #879 question 5: the `YOYO_RESTRICTED` env-var form ----------------
+  + 
+  +     /// A scoped env mutation. Day 190's rule is that every class that has eaten
+  +     /// my sessions lives in the test's *setup*, so this restores the variable it
+  +     /// touched on the way out instead of mutating the process environment and
+  +     /// walking away — a leaked `YOYO_RESTRICTED=1` would silently confine every
+  +     /// test that runs after it in this binary.
+  +     struct EnvScope(&'static str, Option<String>);
+  + 
+  +     impl EnvScope {
+  +         fn set(name: &'static str, value: &str) -> Self {
+  +             let prev = std::env::var(name).ok();
+  +             std::env::set_var(name, value);
+  +             EnvScope(name, prev)
+  +         }
+  +     }
+  + 
+  +     impl Drop for EnvScope {
+  +         fn drop(&mut self) {
+  +             match self.1.take() {
+  ... (168 more lines)
+ ✓ (2m 12s)
+  +     // ---- #879 question 5: the `YOYO_RESTRICTED` env-var form ----------------
+  + 
+  +     /// A scoped env mutation. Day 190's rule is that every class that has eaten
+  +     /// my sessions lives in the test's *setup*, so this restores the variable it
+  +     /// touched on the way out instead of mutating the process environment and
+  +     /// walking away — a leaked `YOYO_RESTRICTED=1` would silently confine every
+  +     /// test that runs after it in this binary.
+  +     struct EnvScope(&'static str, Option<String>);
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib cli::tests::res… ✓ (145ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo restricted… ✓ (164ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Two occurrences — one is the doc comment reference `restricted_from_sources` in the superseded doc? Let me check: the doc comment at 1735 mentions "`restricted_from_sources` / ..." — with backticks. My match is on "restricted_from_sources(" with a paren. Hmm, in the doc comment I wrote "`restricted_from_sources` / `restricted_env_source` /" — no paren. So where's the second with paren?
+
+Maybe the doc comment on `restricted_from_sources` itself... no. Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restricted_from_sources… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The definition line itself matches `restricted_from_sources(`. Need to exclude the definition. Use `"= restricted_from_sources("` as the needle. That appears at 2606 (`let restricted = restricted_from_sources(`). Definition is `pub(crate) fn restricted_from_sources(flag...`. So match on `"= restricted_from_sources("`.
+
+But careful: the needle appears inside the test itself... no, we split at `#[cfg(test)]` first, so the test half is excluded. But the needle string literal `"= restricted_from_sources("` in the test half is excluded. Good.
+
+Also update split needle for call context.
+
+Let me also make sure `.matches("restricted_env_source()")` count == 1: definition line is `pub(crate) fn restricted_env_source() -> Option<String> {` which contains "restricted_env_source()". That'd be 2. Let me use a different approach: count occurrences of `restricted_env_source().as_deref()` — appears once. Hmm but doc mentions? The doc comment I wrote says "`restricted_env_source` /" — with backticks, no parens. OK.
+
+Better: assert exactly one occurrence of `"= restricted_from_sources("` and use that split for the call body; then within the call body assert it references both sources. And for the env-read count, count `restricted_env_source()` occurrences minus the definition. Simpler: assert the production text contains exactly one `", restricted_env_source().as_deref(),"`. Hmm brittle.
+
+Cleanest: exclude lines that start with the definition. Let me just count needles that appear only at call sites:
+- `"let restricted = restricted_from_sources("` → exactly 1.
+- `"restricted_env_source().as_deref()"` → exactly 1.
+
+And then the body check from splitting on `"let restricted = restricted_from_sources("`.
+
+Also the `!production.contains("\"YOYO_RESTRICTED\"")` check: RESTRICTED_ENV_VAR const line in production contains "YOYO_RESTRICTED" but with quotes: `pub(crate) const RESTRICTED_ENV_VAR: &str = "YOYO_RESTRICTED";` — that DOES contain `"YOYO_RESTRICTED"` in quotes! So that assertion would fail. Need to allow the authority line. Change to: count occurrences of `"YOYO_RESTRICTED"` in production == 1 (the const's own definition).
+
+Let me rewrite the test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (34 → 39 lines)
+  -         let call_sites: Vec<&str> = production.matches("restricted_from_sources(").collect();
+  +         let call_sites: Vec<&str> = production
+  +             .matches("let restricted = restricted_from_sources(")
+  +             .collect();
+            assert_eq!(
+                call_sites.len(),
+                1,
+  ···
+            // The call site must consult BOTH sources, or the env half is wired to
+            // nothing rather than to the flag.
+            let call = production
+  -             .split("restricted_from_sources(")
+  +             .split("let restricted = restricted_from_sources(")
+                .nth(1)
+                .expect("a call site exists");
+            assert!(
+  ···
+                "the call site must read the env source through its named reader"
+            );
+            assert_eq!(
+  ... (19 more lines)
+ ✓ (2m 24s)
+  -         let call_sites: Vec<&str> = production.matches("restricted_from_sources(").collect();
+  +         let call_sites: Vec<&str> = production
+  +             .matches("let restricted = restricted_from_sources(")
+  +             .collect();
+            assert_eq!(
+                call_sites.len(),
+                1,
+  ···
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo restricted… ✓ (195ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 16 restricted tests pass. Now let me do a positive control for the new guard: neuter `restricted_from_sources` to ignore env, and confirm the table test fails by name. Then restore.
+
+Let me do it as one atomic command.
+────────────────────────────────────────────────────────────────────────────────
+
+Tests pass. Now a positive control (atomic mutate→run→restore):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/cli.rs /tmp/cli.rs.bak &&… ✓ (52.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Positive control: neutering the env half reddens exactly the two env tests by name, and restoring returns green.
+
+Now: docs. Update docs/src/troubleshooting/safety.md (the `--restricted` section) and docs/src/configuration/permissions.md (where safe-mode is documented — line 375/389/403/483/492). The task says add one line where `--safe-mode` is already documented.
+
+Let's update safety.md's --restricted section: add the env var + a wrapper script example.
+
+Also add to permissions.md near safe-mode mention? The task says "add one line where `--safe-mode` is already documented (`docs/src/configuration/permissions.md` and/or `docs/src/troubleshooting/safety.md` — both mention `safe-mode` today)."
+
+I'll add a line in safety.md (primary) and a line in permissions.md.
+
+Let me now run cargo fmt, then module_size test to get the exact line count.
+────────────────────────────────────────────────────────────────────────────────
+
+Now docs. First safety.md:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/troubleshooting/safety.md:112..157 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/troubleshooting/safety.md (5 → 18 lines)
+    ```bash
+    yoyo --restricted -p "what does this repo do?"
+  + ```
+  + 
+  + A wrapper script can also confine a run **without** editing its argv — set
+  + `YOYO_RESTRICTED=1` (or `true`) in the environment:
+  + 
+  + ```bash
+  + YOYO_RESTRICTED=1 yoyo -p "what does this repo do?"
+    ```
+  + 
+  + The flag and the environment variable are OR-ed, and the environment can
+  + only ever turn the restriction **on**; the flag is never turned off by
+  + `YOYO_RESTRICTED=0`. Only `1` and `true` (trimmed, case-insensitive) count as
+  + on — `0`, `false`, an empty value and any other spelling all mean off, so a
+  + typo cannot silently change the session's confinement.
+    
+    It does two things:
+ ✓ (2m 4s)
+    ```bash
+    yoyo --restricted -p "what does this repo do?"
+  + ```
+  + 
+  + A wrapper script can also confine a run **without** editing its argv — set
+  + `YOYO_RESTRICTED=1` (or `true`) in the environment:
+  + 
+  + ```bash
+  ... (10 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The auto-check failed — I need to see why. Let me run it. Maybe there's a docs guard that requires YOYO_RESTRICTED in help env section list, or help_data_guards requiring something. Let's run clippy + tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (1m 38s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The module_size gate failed — as expected. I need cargo fmt first, then read what the gate prints for src/cli.rs and paste exactly.
+
+Let me run cargo fmt, then get the printed line.
+
+Wait — but the file is now 7352+188+... ≈ 7540 lines? That's way over the 7299+100 = 7399 band! The register drift grace is 100 lines over the *recorded* value. cli.rs was 7299 recorded; I added ~66 + ~188 = ~260 lines. That's fatal drift.
+
+Task says: "If the addition is not going to fit under the band, move the tests into the file's existing test module rather than growing the file's production half."
+
+Hmm — the tests ARE in the file's existing test module, and they still count toward the line count (the gate counts file lines). Hmm, actually re-read: "`src/cli.rs` is **7272 lines** and its `tests/module_size.rs` entry says **7272**, so there are ~100 lines before drift goes fatal."
+
+Wait, the entry says 7299 and the file is 7299 at HEAD. So the band is 7299+100 = 7399? Let me check the actual gate: REGISTER_DRIFT_GRACE_LINES = 100. So growing beyond 7399 is fatal.
+
+So I MUST keep the file at ≤7399 lines, i.e. add at most 100 lines. My current additions: production ~66 lines (well, 66 was the diff stat before). Let me count precisely after fmt.
+
+Options:
+1. Move the new tests OUT of src/cli.rs into a separate test file (e.g. tests/restricted_env.rs integration test) — but integration tests can't access pub(crate) functions... they can't. Hmm.
+2. Move the tests into a new module file under src/, e.g. src/cli_tests_restricted.rs, declared from... but the functions are pub(crate) so a new src module can access them. But cli.rs has its own test module; I could create `src/cli_restricted_env_tests.rs`? That adds a new module — need `mod` declaration in main.rs, which adds lines to main.rs.
+
+Hmm. Alternatively: put the new tests in a different existing test module that's already over its cap... no, the file line count is per-file.
+
+Actually — the cleanest: make the env helper functions live in a smaller, less crowded file. But the task's Files line says src/cli.rs; help source; tests/module_size.rs. However the task also says explicitly: "If the addition is not going to fit under the band, move the tests into the file's existing test module rather than growing the file's production half." — meaning production additions are the priority and tests should go into the test module (which is still in the same file... that doesn't help the count).
+
+Hmm, that advice seems to be about not splitting production code. But the count still grows.
+
+Better option: move the env-source plumbing into an existing smaller file and keep cli.rs additions minimal. Actually — there's `src/config_paths.rs` (1512 lines) for paths, `src/prompt_budget.rs` for resolve seam. The cost-threshold resolution seam lives in prompt_budget.rs: `resolve_cost_threshold(flag_val, env_val, config_val)`. That's exactly the same shape — a pure three-source resolver in its own small module!
+
+Let me check prompt_budget.rs size and whether such a home is idiomatic.
+
+That would be ideal: put `RESTRICTED_ENV_VAR`, `env_flag_is_on`, `restricted_env_source`, `restricted_from_sources` in a small module, with the table tests there. Then cli.rs only gains the call site (a few lines) plus maybe nothing else — staying under the band.
+
+But the task explicitly says Files: src/cli.rs. Adding a new file is a deviation but the register discipline explicitly anticipates needing to fit. Hmm, but "Files:" line names the files to touch; adding an extra file may confuse the evaluator. However the alternative is a fatal register drift.
+
+Actually, wait. Let me reconsider: is the drift really fatal? Let me just run the gate and see what it says. Maybe the gate compares against the *actual* line count and the entry, and GRANDFATHERED entries have a different rule. Let me look at the gate code to see.
+
+Let me run fmt first and then the gate to see the message.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/cli.rs &&… ✓ (11.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+As expected: 275 past recorded, fatal. Options given by the gate: paste 7574, or move the new code to a smaller module.
+
+The task says the file is 7272 with ~100 lines of headroom... but reality says entry is 7299 and file is 7299 at HEAD — no headroom at all. Actually HEAD cli.rs (before my edit) was 7299? Let me check: earlier `wc -l src/cli.rs` gave 7299 before... no, after Task 1's commit the file was 7299 and the entry was 7299. So zero headroom.
+
+Wait, but the git diff earlier said src/cli.rs +66/-5 → the file grew from 7299 to ~7352. Now after fmt + tests = 7574.
+
+Best move per the gate's own advice and the task's: **move the new code to a smaller module**. The natural home is a new small module `src/restricted.rs` (or reuse an existing small module). Let's check if there's a good existing home: `src/prompt_budget.rs` holds the cost-threshold resolve seam (flag → env → config). That's the closest precedent but semantically it's "prompt budget", not restriction.
+
+Given the repo's structure (many src/commands_*.rs, src/config_paths.rs, src/gasp.rs), a new tiny module `src/restricted.rs` holding the env-source plumbing is clean and mirrors `prompt_budget.rs`. But this grows module count; is there a gate on that? tests/module_size.rs only counts lines. There may be a guard that every src file is declared in main.rs — fine.
+
+But: the task's Files line names src/cli.rs. Deviating increases evaluator risk. Alternative: keep functions in cli.rs production half but move the TESTS elsewhere. Production additions = how many lines? Let's measure: the const + 3 fns + docs ≈ 66 lines (from git diff earlier: +66 -5 with docs). Plus call site changes. So production adds ~70 lines; tests add ~190. If I move only the tests out, the file grows by ~70 → 7369, still 70 past recorded 7299, which is within the 100-line grace band → the gate would warn, not fail. Good — but does the gate require the register to be updated for a warning? Let's read the gate's branch 2/formulas.
+
+Let me look at the gate code for how the grace band works: "REGISTER_DRIFT_GRACE_LINES = 100" — within band = warning only (pass). Also there's the "grandfathered module may shrink" ratchet.
+
+Hmm, but leaving it 70 lines over recorded means a warning each run. Better: paste the new number. The task says: "paste exactly the line the gate prints over the entry". So pasting ("src/cli.rs", 7574) is sanctioned *if the addition fits under the band*. It doesn't (275 > 100) — the gate says fatal, and the remedy is to move code to a smaller module.
+
+Decision: move the new *tests* into a separate module file, and also consider moving the production helpers. Cleanest and most defensible: create `src/restricted.rs` with:
+- RESTRICTED_ENV_VAR
+- env_flag_is_on
+- restricted_env_source
+- restricted_from_sources
+- the table tests for those four
+
+and keep in cli.rs: the call site (3-4 lines) + the source-level "one call site" guard test (which must live where it can read cli.rs source... it uses include_str!("cli.rs") so it can live in src/restricted.rs too! include_str relative to the file's dir = src/cli.rs. 
+
+So cli.rs production delta: only the call site + comment (~10 lines) and the superseded doc comment (9 lines) and the removed 4-line deferral sentence. Net ~+15. Well under 100 → I'd then need to update the register entry to the new count (which is within grace, so gate passes/warns).
+
+Hmm, but should I paste the new count? If I paste 7299+15=7314, then subsequent edits have a fresh 100-line band. The gate's warning band exists exactly for this. The task says paste exactly what the gate prints.
+
+Even better: could I *reduce* cli.rs? Not needed.
+
+Let me now do it: create src/restricted.rs, move the helpers + tests, register module in main.rs, keep the source-level guard there.
+
+Wait — is there a module-size gate that applies to new files? MAX_MODULE_LINES 2000 — new file will be ~250 lines, fine.
+
+Also check: is src/restricted.rs a name collision? There's `src/cli.rs` fn `restricted_*`. Fine.
+
+Hmm, but the dispatcher: does the repo have a test asserting every src/*.rs is listed somewhere (e.g. in ARCHITECTURE.md or a module registry)? There's a known test about modules... let me check quickly for guards enumerating src modules, e.g. `tests/` files. Let me grep for "src/" listings in tests.
+
+Actually simpler alternative avoiding a new file: move the new tests into an EXISTING test-only file? Is there one for cli? e.g. src/cli_*_tests.rs? Let me check the file list: there's src/commands_risk_epistemic_tests.rs, src/format/highlight/highlight_tests.rs, src/main_tests.rs, src/dispatch_near_miss.rs... but no cli test file. Creating src/cli_restricted_tests.rs and declaring `#[cfg(test)] mod cli_restricted_tests;` in main.rs — that keeps the "cli" naming and is precedent-backed (main_tests.rs, commands_risk_epistemic_tests.rs).
+
+Hmm, which is better? The production helpers must live in cli.rs (they're pub(crate) and used by parse_args). If tests live in another file they can still call `crate::cli::restricted_from_sources` etc. So: create `src/cli_restricted_env_tests.rs` with `#[cfg(test)] mod` declared in main.rs, containing the env guard struct + all new tests including the source-level guard (include_str!("cli.rs") — relative to src/ → "cli.rs").
+
+That keeps everything except production helpers and small comments out of cli.rs. Production additions ~70 lines → under the 100 grace band but I'd still need to check the gate warns or passes.
+
+Let me verify the gate's behavior within the band by reading tests/module_size.rs around the check.
+
+Actually let me minimize thought: I'll put BOTH the production helpers and the tests in the new test-module file? No — production helpers must be non-test to be used by parse_args.
+
+Plan:
+- New file `src/restricted_env.rs` (production, ~90 lines with docs): const + 3 pure fns. Declared in main.rs as `pub(crate) mod restricted_env;`. All the table tests for them live in cli.rs's existing test module? That grows cli.rs again.
+
+Hmm. OK cleanest split:
+- `src/restricted_env.rs`: production helpers + `#[cfg(test)] mod tests` containing the pure table tests (table tests can live with the code — that's normal in this repo, e.g. commands_risk_epistemic_tests.rs is a separate file though).
+- cli.rs: call site (few lines), superseded doc marker, and the source-level "one call site" guard + the scoped-env runtime test — or also move those to restricted_env.rs (include_str!("cli.rs") works from there, and `crate::cli::restricted_env_source` is accessible).
+
+Yes! Put ALL new tests in src/restricted_env.rs's test module. cli.rs then only gains: the call site (~10 lines incl. comment) and the superseded doc paragraph (net ~+12 after removing the 4-line deferral sentence). Under budget. Then paste the new count.
+
+Wait — but the deleted `let restricted = args.iter().any(...)` line replaced by 4 lines. And the "Deferred, named rather than smuggled" doc gained ~7 net lines. Total ~+12. New count = 7299+12 = 7311 → only 12 over recorded, within the grace band, so the gate passes with a warning. Should I still paste? A warning is persistent noise. The gate's guidance: paste the number after an acknowledged growth. The task says paste exactly the line the gate prints. I'll paste the new number after fmt and say why in the commit message.
+
+Hmm, careful: is there a ratchet test that says grandfathered modules may only shrink (and the "grandfathered module may shrink while still over cap" test)? Raising the value is allowed if growth is under grace? Let me read the relevant part of the gate to be sure pasting is allowed within the band. The gate's message earlier said: "Fix: paste ("src/cli.rs", 7574) over its entry ... or move the new code to a smaller module." So pasting is always the offered fix; but the doc says growth beyond grace is "fatal" and the register must be updated — meaning it's allowed but must be acknowledged with a reason. OK.
+
+Actually hold on: the register's purpose is a high-water ratchet. Let me check the "grandfathered_module_may_shrink" test and whether there's a test requiring the recorded value to be ≥ actual (i.e. also a "recorded too high" check). If I paste 7311 and the actual is 7311, fine.
+
+Let me implement.
+
+Steps:
+1. Create src/restricted_env.rs with const + 3 fns + tests (table, env_flag_is_on, scoped env read, name pinned, one-call-site source guard, help documents it).
+2. Remove from cli.rs: the 4 fns + all the tests I added (EnvScope, restricted_from_sources_table, env_flag_is_on_accepts..., restricted_env_source_reads..., restricted_env_var_name_is_pinned, restricted_env_var_is_documented_in_help, only_one_place_decides...).
+3. cli.rs keeps the call site referencing crate::restricted_env::...
+4. Declare `mod restricted_env;` in main.rs.
+5. cargo fmt, run module_size, paste printed number in tests/module_size.rs entry with a reason.
+6. Run full checks, commit.
+
+Let me first check main.rs module declarations, and whether there's a guard listing modules.
+────────────────────────────────────────────────────────────────────────────────
+
+The register band is exceeded (275 lines). I'll move the new code into a small module, as the gate itself advises.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod \|^pub(crate) mod …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "prompt_budget" src/mai… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — `prompt_budget.rs` is the precedent: a 1569-line module holding the resolve seam and its tests, with the call site in cli.rs. I'll mirror that with a new module `src/restricted.rs`. Hmm, name: `restricted.rs` vs `restricted_env.rs`. The module holds the flag/env decision, not just env. I'll name it `restricted.rs`.
+
+Now write the module.
+
+Content:
+```rust
+//! The `--restricted` switch's decision seam (#879 question 5): is this run restricted?
+//! ...
+
+pub(crate) const RESTRICTED_ENV_VAR: &str = "YOYO_RESTRICTED";
+pub(crate) fn env_flag_is_on(...)
+pub(crate) fn restricted_env_source() -> Option<String>
+pub(crate) fn restricted_from_sources(flag: bool, env: Option<&str>) -> bool
+
+#[cfg(test)] mod tests { ... }
+```
+
+Does the repo have a convention that a module file has a doc comment header? Let me check prompt_budget.rs header lines 1-20 to imitate. Also, the ARCHITECTURE.md needs an entry for the new file? The task says docs: add one line where --safe-mode is documented; per-file history goes in ARCHITECTURE.md under src/cli.rs. A new file means ARCHITECTURE.md should get an entry for it, or at least a note in the cli.rs entry. Let me check the ARCHITECTURE.md cli.rs entry and how new files are handled. I'll add a brief mention.
+
+Also: is there a test that every src module appears in ARCHITECTURE.md? Let me grep for such a guard quickly.
+
+Let me now write the file.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.6s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p src/prompt_budget.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "src/prompt_budget.rs" … ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No guard requires ARCHITECTURE.md entries for files. Good. Now write src/restricted.rs.
+
+Also note main_tests.rs precedent for `#[cfg(test)] mod` — test files.
+
+Let me write the module now, moving the helpers + all tests.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.4s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/src/restricted.rs (301 lines) ✓ (2m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now remove the moved code from cli.rs, wire the call site to the new module, and declare the module:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, the superseded doc comment references "see those three items" but the items left cli.rs — now they live in src/restricted.rs. I must fix that reference to point at the new module. Let me update the doc comment.
+
+Also the call site must be `crate::restricted::restricted_from_sources(` — and my source-level guard expects "let restricted = restricted_from_sources(" which won't match with the prefix. Let me decide the call syntax and align the guard.
+
+Use:
+```rust
+    let restricted = crate::restricted::restricted_from_sources(
+        args.iter().any(|a| a == "--restricted"),
+        crate::restricted::restricted_env_source().as_deref(),
+    );
+```
+Then the guard's needle "let restricted = restricted_from_sources(" fails. Update the guard to match "restricted_from_sources(" with exactly one production occurrence... but defining? no, the def is in another file. In cli.rs production, "restricted_from_sources(" appears once (the call site). Good — restore the simpler needle.
+
+And the env-read count needle "restricted_env_source().as_deref()" is fine.
+
+Let me now fix cli.rs: call site + doc references.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1725,1745p src/cli.rs && … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (4 → 4 lines)
+  -     let restricted = restricted_from_sources(
+  +     let restricted = crate::restricted::restricted_from_sources(
+            args.iter().any(|a| a == "--restricted"),
+  -         restricted_env_source().as_deref(),
+  +         crate::restricted::restricted_env_source().as_deref(),
+        );
+ ✓ (13.9s)
+  -     let restricted = restricted_from_sources(
+  +     let restricted = crate::restricted::restricted_from_sources(
+            args.iter().any(|a| a == "--restricted"),
+  -         restricted_env_source().as_deref(),
+  +         crate::restricted::restricted_env_source().as_deref(),
+        );
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod prompt_budget;" sr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod re\?\(adline\|try\… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 105,130p src/main.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=110 && NR<=140' src/mai… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (2 → 6 lines)
+    mod repl;
+  + /// The `--restricted` switch's decision seam (#879 question 5): the flag and the
+  + /// `YOYO_RESTRICTED` env var, OR-ed in exactly one place. See the module docs for
+  + /// why it is its own file rather than four more functions in `cli.rs`.
+  + mod restricted;
+    mod rtk;
+ ✓ (2m 9s)
+    mod repl;
+  + /// The `--restricted` switch's decision seam (#879 question 5): the flag and the
+  + /// `YOYO_RESTRICTED` env var, OR-ed in exactly one place. See the module docs for
+  + /// why it is its own file rather than four more functions in `cli.rs`.
+  + mod restricted;
+    mod rtk;
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -8 && ca… ✓ (329ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Right — the call site now uses the fully-qualified path. Update the guard to match `restricted_from_sources(` with the qualified prefix. Let me use a more robust needle: `crate::restricted::restricted_from_sources(`.
+
+But careful: the test would then have to include the string. Use "restricted_from_sources(\n"? Better: count occurrences of "restricted_from_sources(" in production and require exactly 1 (there are no other callers). Let me just do that and separately require the call contains `crate::restricted::restricted_env_source()`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (32 lines) ✓ (26.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/cli.rs sr…

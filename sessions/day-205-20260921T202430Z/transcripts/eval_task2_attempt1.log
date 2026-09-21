@@ -1,0 +1,319 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me analyze the diff against the task.
+
+Key things to check:
+1. Task said the env-var form should be added. The diff adds `src/restricted.rs` as a new module with `restricted_from_sources`, `restricted_env_source`, `env_flag_is_on`, `RESTRICTED_ENV_VAR`. Call site in cli.rs. Help text updated. Docs updated.
+
+2. Task said set_restricted/is_restricted at cli.rs:107/112 read by main.rs. Wait, actually there's already a `restricted.rs` in the repo? Let me check. The repository structure lists `src/restricted.rs` (301 lines) with const RESTRICTED_ENV_VAR, fn env_flag_is_on, fn restricted_env_source, fn restricted_from_sources. Hmm, that's the file listing from... wait, the "Repository Structure" section lists src/restricted.rs with exactly those functions. That suggests the file already exists at HEAD. But the diff says "new file mode". Hmm — the repo structure listing is generated from current state maybe after the diff? Actually the recently changed files list includes src/restricted.rs. So the structure reflects post-change state. Fine.
+
+But wait — the task description says set_restricted/is_restricted at src/cli.rs:107/112. And the repo structure lists src/cli.rs with fn set_restricted, is_restricted. Hmm, but there's also src/restricted.rs. Actually the task said "the env-var form is deferred" with doc comment at src/cli.rs:1703-1705. The diff modified cli.rs around 1727. OK.
+
+Now important discrepancy: the task said register discipline — src/cli.rs is 7272 lines and its tests/module_size.rs entry says 7272, ~100 lines before drift goes fatal. The implementation chose to create a new module instead of growing cli.rs. But it still modified cli.rs (added ~20 lines: doc comment expansion + call site). Did it update tests/module_size.rs? The diff does NOT show any change to tests/module_size.rs. Hmm. The diff shows changes to docs/src/troubleshooting/safety.md, src/cli.rs, src/help.rs, src/main.rs, src/restricted.rs. No tests/module_size.rs.
+
+Wait — but the diff adds lines to cli.rs. Actually, let's check: the doc comment replacement. Original:
+```
+/// The env-var form (`YOYO_RESTRICTED=1`) is also deferred: it is the two-source
+/// OR shape `continue_on_silence` and `wait_for_reset` already use and can be
+/// added later without redesigning any of this.
+```
+That's 3 lines. New:
+```
+/// **Superseded, recorded rather than erased:** this list used to carry a
+...
+/// it was paid, not left to infer it.
+```
+Count new lines: let me count from the diff:
+1 `/// **Superseded, recorded rather than erased:** this list used to carry a`
+2 `/// *"the env-var form (\`YOYO_RESTRICTED=1\`) is also deferred"* entry, ending`
+3 `/// *"it is the two-source OR shape \`continue_on_silence\` and \`wait_for_reset\``
+4 `/// already use and can be added later without redesigning any of this."* That`
+5 `/// sentence was **true when it was written and is false as of today**: the env`
+6 `/// form landed as \`restricted_from_sources\` / \`restricted_env_source\` /`
+7 `/// \`RESTRICTED_ENV_VAR\` (see those three items), with no redesign of anything in`
+8 `/// this function — which is exactly what the sentence predicted, so it is`
+9 `/// replaced rather than deleted. It stays here because a reader who remembers`
+10 `/// the deferral needs to be told it was paid, not left to infer it.`
+
+So +7 lines net.
+
+Call site: original `let restricted = args.iter().any(|a| a == "--restricted");` replaced with comment lines + 4-line call. From diff:
+```
++    //
++    // Both sources are resolved HERE and only here — the `--restricted` flag scan
++    // and one read of `YOYO_RESTRICTED` — and the boolean comes back from the pure
++    // `restricted_from_sources`, so the OS environment is consulted once for the
++    // process and a session's confinement cannot shift mid-session.
++    let restricted = crate::restricted::restricted_from_sources(
++        args.iter().any(|a| a == "--restricted"),
++        crate::restricted::restricted_env_source().as_deref(),
++    );
+```
+That's 5 comment lines + 4 code lines = 9 lines replacing 1 → +8 lines.
+
+Total cli.rs growth ~+15 lines. If cli.rs was at 7272 exactly at the gate, +15 would exceed... wait, the task said "~100 lines before drift goes fatal". So actually the gate allows some drift. The task said the entry says 7272 and there are ~100 lines before drift goes fatal. So +15 is fine, no need to update the entry. Actually, hmm, the module_size gate: "grandfathered_module_may_shrink_while_still_over_cap" test. For files over cap, there may be a drift allowance. Let me check tests/module_size.rs to understand.
+
+Actually let me be careful. The task explicitly instructs: "Run `cargo test --test module_size` **before** the first edit and again **after** the final edit *and after* `cargo fmt`, and paste **exactly the line the gate prints** over the entry". If the gate allows drift up to some band, then maybe no edit needed. But the task says the entry says 7272 — if the file grows beyond the band, the test fails. Tests PASS per harness. So either the entry was updated (not in diff) or the growth is within band.
+
+Hmm, the harness says tests pass. So the module_size test passes. Since the diff doesn't touch tests/module_size.rs, the growth must be within the allowed band. Let me verify by checking tests/module_size.rs and the current cli.rs entry.
+
+Actually wait — maybe the drift report fraction. Let me look at the test.
+
+Also there's a concern: the task said "Register discipline (this is the one step that can revert the whole session)." The implementation's approach: new module src/restricted.rs (301 lines) — but does module_size.rs have a cap for new modules? tests/module_size.rs has `src_modules_respect_the_size_gate` which would check new modules against a cap. 301 lines is presumably under the cap (cap is likely 3000 or so). Fine.
+
+Now, another key check: does the new module compile and is the consumer present? Yes, call site in cli.rs. Good.
+
+Doc comment update: done, superseded in place. Good.
+
+Help text: updated in src/help.rs (cli_help_text), flag paragraph + Environment section. But the task said "grep first: `help.rs` or `help_data.rs`". The repo has both help.rs and help_data.rs. Note there's a test `help_data::tests::test_every_subcommand_table_is_documented_in_usage_form`. Hmm. Actually the important thing: is `--restricted` documented in help_data.rs too, and would there be a consistency test between help.rs and help_data.rs? Let me check. There might be a test that verifies help text consistency. But tests pass, so fine.
+
+Wait, but actually — the diff modifies `cli_help_text` in help.rs. Is that the function used by `--help`? There's `handle_help` and `help_text` also. Hmm. Let me check which is used. There could be a duplication issue: "two doors, one policy" — if `--restricted` is documented in multiple help sources and only one updated, that's a doc drift. The task says "the help source that documents `--restricted` (grep first: `help.rs` or `help_data.rs`)".
+
+Let me actually run the binary and check `--help` shows YOYO_RESTRICTED. And test the feature: `YOYO_RESTRICTED=1 yoyo ...` behavior. But building the binary takes time. The harness already built. Let me check if there's a binary in target/.
+
+Let me do focused checks:
+1. `grep -rn "YOYO_RESTRICTED\|--restricted" src/help.rs src/help_data.rs` to check for duplication/drift.
+2. Check module_size gate: current cli.rs line count vs entry.
+3. Try running the feature.
+
+Let me also check: the test `only_one_place_decides_whether_the_run_is_restricted` uses `include_str!("cli.rs")` and splits on `#[cfg(test)]`. If cli.rs has `#[cfg(test)]` appearing earlier than the end (e.g., inside a function for test-only code), split_once would take the first occurrence. Hmm, but that's the test's own concern; tests pass.
+
+Also the test asserts `production.matches("\"YOYO_RESTRICTED\"").count() == 0` — cli.rs must never spell the name. And the doc comment in cli.rs mentions "YOYO_RESTRICTED=1"? Let's see: the new doc comment says `*"the env-var form (\`YOYO_RESTRICTED=1\`) is also deferred"*` — that contains the literal `YOYO_RESTRICTED` but not in double quotes as `"YOYO_RESTRICTED"`. The assertion counts `"YOYO_RESTRICTED"` with literal double quotes. In the doc comment it's inside backticks: `(\`YOYO_RESTRICTED=1\`)` — no double quotes around it. So count 0. OK. But wait, the comment at the call site says `` `YOYO_RESTRICTED` `` — backticks, not double quotes. Fine.
+
+Hmm, but this test is in the `production` half? No — the test itself is in restricted.rs, and it reads cli.rs. `restricted_env_source()` count == 1 in production cli.rs. Fine.
+
+Now, one more concern: the task specified semantics `YOYO_RESTRICTED=0|false|""|yes-please → false`. Implemented. Good.
+
+Also, the task wanted tests in-file table-driven — they're in src/restricted.rs, which is in-file (same crate). Fine, arguably.
+
+Now: did the implementation add `RESTRICTED_ENV_VAR` const in restricted.rs, while the task said "Add a single pure decision function next to the other restricted-mode helpers" — i.e., in cli.rs. The implementation moved to a new module instead, justified by register discipline. That's a deviation but plausibly acceptable since the reason was given. Not a functional failure. Though the task explicitly said "next to the other restricted-mode helpers". Hmm. Is that a fail? It's a structural preference; the functionality is there. I'd not fail on that alone.
+
+But wait — there's an important consideration: `src/cli.rs` at HEAD already has `set_restricted`/`is_restricted` process-global. And the task mentions there's an existing `src/restricted.rs`? No — the file is new per diff. But the pre-existing `set_restricted` is in cli.rs. Fine.
+
+Hmm, but wait: there's a potential collision. The repo structure listing shows `src/restricted.rs` with exactly the functions in the diff. That listing is post-change. OK.
+
+Now let me actually verify things. Let me check:
+- Whether there's a doc-sync requirement: task said add one line to docs where --safe-mode is documented. Done in safety.md. The task said "and/or permissions.md". Done in one. OK.
+- Did the task want ARCHITECTURE.md entry? The task says "Not `CLAUDE.md`: per-file history goes in `ARCHITECTURE.md` under the `src/cli.rs` entry." Hmm — the task says "Docs: add one line where `--safe-mode` is already documented... Not CLAUDE.md: per-file history goes in ARCHITECTURE.md under the src/cli.rs entry." This is a bit ambiguous: does it require an ARCHITECTURE.md entry? It says the write-up... Actually the "Not in scope" section says "The write-up must say which of #879's five questions this closes (item 5) and which remain". Hmm, that's the session write-up, not necessarily ARCHITECTURE.md.
+
+CLAUDE.md says "New history goes in ARCHITECTURE.md, never here." and "Read ARCHITECTURE.md's entry for any file you are about to change." The diff doesn't touch ARCHITECTURE.md. Is that a required touchpoint? The task's STEP 2 says: "Docs: add one line where `--safe-mode` is already documented (docs/src/configuration/permissions.md and/or docs/src/troubleshooting/safety.md — both mention `safe-mode` today). Not `CLAUDE.md`: per-file history goes in `ARCHITECTURE.md` under the `src/cli.rs` entry."
+
+I read this as: docs line goes in docs/src; history goes in ARCHITECTURE.md. It says add one line where safe-mode is documented, which was done. The ARCHITECTURE.md mention could be read as an instruction to add the history there. Hmm. Also new file src/restricted.rs — ARCHITECTURE.md's per-file notes should get an entry for the new file? CLAUDE.md says read ARCHITECTURE.md's entry for any file you are about to change, and new history goes in ARCHITECTURE.md.
+
+Missing ARCHITECTURE.md update is a potential forgotten touchpoint, but it's documentation, not code. The eval criteria: "confirm the relevant docs (CLAUDE.md / README / docs/src) were updated in the same commit." docs/src was updated. ARCHITECTURE.md is a gray area. I'd mention it as feedback rather than fail. Hmm, but is it a "forgotten touchpoint"? The instruction to add per-file history to ARCHITECTURE.md is in CLAUDE.md. The diff didn't. Given the repo's strong emphasis on ARCHITECTURE.md for per-file history, this could be a legit miss. But the task's own STEP 2 said docs line in docs/src — done. I think it's fair to note.
+
+Let me actually do the checks. Let me look at the module_size test and cli.rs line count, and grep help sources.
+
+Let me run commands.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "restricted" src/help.r… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting. cli.rs is 7314 lines, and the module_size entry says 7299. Wait — that's odd: the entry is 7299 but the file is 7314? Then the gate would fail... unless the gate allows drift up to some band (e.g., a fraction). The doc says drift report fraction MODULE_DRIFT_REPORT_FRACTION. Let me read tests/module_size.rs around the entry and the drift logic.
+
+Also note: the entry comment says "Day 205: #920 — auto_discover_skills gained..." — so the entry was updated in Task 1 (commit 6f44956f), not in Task 2. And the file grew from 7299 to 7314 (+15) with Task 2. The gate presumably allows drift.
+
+Wait, but the task said the entry says 7272 and the file is 7272 lines. At HEAD now it's 7314 and entry 7299. So Task 1 also added lines. Hmm, actually 7299 entry — but the file is 7314. Let me read the gate.
+
+Hmm — wait. Let me reconsider. The "Repository Structure" says src/cli.rs (7314 lines). And the module_size entry says 7299. The gate test `src_modules_respect_the_size_gate` presumably compares against cap with a drift allowance. Since the harness says tests pass, +15 is within the allowance.
+
+Let me read module_size.rs to understand the drift band and whether the task's instruction to update the entry was satisfied. Actually the task's instruction about register discipline says: "Run cargo test --test module_size before the first edit and again after the final edit and after cargo fmt, and paste exactly the line the gate prints over the entry". It stated the entry says 7272. At the time the task was written, maybe. But the file listing at task-write time said 7272. Now it's at 7299 entry after Task 1 (Day 205 #920). So between the task description and Task 2, Task 1 already bumped the register. The Task 2 author left it at 7299 while the file is 7314.
+
+Hmm, so is the entry stale by 15 lines? Does the gate allow that? Let me check the gate logic: `grandfathered_module_may_shrink_while_still_over_cap`. The likely logic: a grandfathered module (over cap) may not grow beyond its recorded count (ratchet). If cli.rs is over cap (recorded 7299 > cap?), growth beyond recorded would fail. But tests pass... so maybe there's a tolerance.
+
+Actually wait, maybe the recorded value isn't a hard ratchet but a "report" value, and the fatal check uses a fraction. Let me read.
+
+Let me read tests/module_size.rs.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,260p tests/module_siz…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DRIFT\|drift\|fraction\… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the register drift grace band is 100 lines. cli.rs registered at 7299, actual 7314 → +15, within the band → warning, not fatal. Consistent with tests passing. The task instructed to paste exactly the line the gate prints; the implementation left it stale by 15 (a warning, not fatal). The task said the register discipline is "the one step that can revert the whole session" — but with the new module approach and +15 lines, it's a warning. Hmm, the task explicitly said "paste exactly the line the gate prints over the entry — never hand-type it, and say why in the commit message". The implementation did NOT update the entry. That's a deviation. But is it fatal? The gate warns. Actually wait — maybe the implementation intentionally didn't need to because... no. Hmm.
+
+Hmm, actually wait. Let me reconsider: was the entry 7299 before Task 2, or did Task 2's author set it? The comment says "Day 205: #920 — auto_discover_skills gained..." which is Task 1 (6f44956f) — "Does `.yoyo/skills/` discovery follow a symlink out of the gated directory? MEASURE, then guard (re-plan of #920...)". So Task 1 set 7299. Task 2 added 15 lines without updating. So the register is now 15 lines stale → warning.
+
+Does the task's instruction require the update? Yes: "Run cargo test --test module_size ... and paste exactly the line the gate prints over the entry". The implementation didn't. Is this a FAIL-worthy miss? It's a process/register-discipline miss, but the gate is green (within grace band). Hmm. It's arguably a "forgotten touchpoint" — but tests/module_size.rs is a register; the task listed it under Files. The diff does not touch it. That's a real, verifiable deviation from the task's explicit STEP 2. However the consequence is benign (warning not fatal) and the file did grow only 15 lines.
+
+Hmm, let me weigh. Evaluation criteria say FAIL only if implementation doesn't match task description, feature doesn't work, obvious bugs, security. A stale register entry (within the 100-line grace band) is a minor imperfection. Actually, the register band exists precisely so that small drift is a warning, not a revert. But the task explicitly required pasting the printed line. Hmm, but also — the task said "If the addition is not going to fit under the band, move the tests into the file's existing test module rather than growing the file's production half." The addition (+15) fits under the band. So the register update... The task's instruction says to paste over the entry regardless. The implementation didn't.
+
+Is this worth a FAIL? I lean no, but let me check whether the gate actually prints a warning now (i.e., confirm drift is 15). Let me run the module_size test to see (it's fast, and the harness says pass — I'll just run that one test file, quick).
+
+Actually the harness said not to re-run the full suite; running one test binary is fine and fast. Let me run `cargo test --test module_size 2>&1 | tail -40` — but that requires compiling, which may take a while. The build is already done (harness built). Should be incremental. Let's try with a timeout.
+
+Also I should check the help text more: the task said grep help.rs OR help_data.rs. Only help.rs has restricted. Let me confirm help_data.rs doesn't document flags. Also there's a test `test_every_subcommand_table_is_documented_in_usage_form` in help_data.rs — not relevant to flags.
+
+Also let me check: is `cli_help_text()` the function that `--help` actually uses? Let me grep for callers.
+
+Also feature test: run the binary with YOYO_RESTRICTED=1 and see behavior. What's the observable behavior? restricted → safe_mode on → ignores project settings, prints restricted_mode_note. Let's test: `./target/debug/yoyo -p "hi"` would need an API key... Hmm, hard to run end-to-end. But we can observe the startup note without a model call? The note is printed at startup. But without API key it may fail early. Let me try `YOYO_RESTRICTED=1 ./target/debug/yoyo --help`? No, that just prints help.
+
+Actually a better test: the restricted mode note "previous MCP connections lost"... no. Let's see what restricted_mode_note prints and when. It's printed at startup in main.rs presumably. Running `yoyo -p "x"` with a fake provider might print it then fail. Let's try with a dummy prompt and see.
+
+Actually, simpler: the feature's decision function is pure and table-tested; the env read is tested with a scoped guard. The wiring in cli.rs is verified by a source-level test. A binary run could confirm the note. Let me attempt quickly.
+
+Let me check the help output and the restricted note emission. Let me find where restricted_mode_note is called.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.6s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "restricted_mode_note\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (16ms)
+ ✓ (198ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the module_size gate passes but warns: cli.rs +15 and help.rs +20. Note help.rs was already +? The task said help.rs entry 2856, file now 2876 — but the diff added 12 lines to help.rs. So help.rs was already at 2864 before? Hmm, entry 2856 (Day 196), and the diff added ~12 lines → 2868... but actual 2876. Whatever, other tasks. Anyway both are warnings, not fatal. The task explicitly asked to paste the printed line over the entry. It didn't. Two registers now stale.
+
+Hmm. This is a deviation from the task's explicit instruction (STEP 2, "this is the one step that can revert the whole session"). However, the gate is non-fatal. The reason the task insisted: growth beyond the band is fatal. The implementation chose the smaller-module remedy for the bulk (restricted.rs), but still grew cli.rs by 15 and help.rs by 20 — within the band.
+
+Is this a FAIL? The eval guidance: FAIL only if implementation doesn't match the task description; tests pass but feature doesn't work; obvious bugs; security issues. Do NOT fail for minor imperfections. The stale register entries are "minor imperfections" — they generate warnings, not failures, and the gate explicitly says "Not fatal". But the task named tests/module_size.rs in Files and explicitly required the paste. Hmm.
+
+I think this is worth flagging as a forgotten touchpoint/cleanup feedback, but not necessarily a FAIL. However — "forgotten_touchpoints: PASS or FAIL: every new definition has its consumer in THIS diff". Every new definition (RESTRICTED_ENV_VAR, env_flag_is_on, restricted_env_source, restricted_from_sources) has consumers in this diff. Yes. New module registered in main.rs. Yes. So forgotten_touchpoints as defined (definitions/consumers/enum variants/renames) = PASS.
+
+The missing register paste is a doc/register issue. I'd mention it in Reason as cleanup feedback.
+
+Now let me verify the feature works end-to-end. Run the binary with YOYO_RESTRICTED=1 and observe restricted mode. Need a way to observe without a model call. `restricted_mode_note` is emitted in parse_args at line 2652 with quiet gating. So running with a dummy prompt should print the note before failing on network. Let's try:
+
+`YOYO_RESTRICTED=1 ./target/debug/yoyo -p "hi" 2>&1 | head -30` with a bogus API key and maybe a nonexistent provider to fail fast. Let's see.
+
+Also compare without env.
+
+Let me try.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.2s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && mkdir -p restrtest && cd restrtest && timeout 60 env YOYO_RESTRICTED=… ✓ (197ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The env var works: `YOYO_RESTRICTED=1` turned on safe mode (the safe-mode banner) and disabled bash. It printed "Safe mode: MCP servers, skills, custom commands, and config disabled" and "Disabled tools: bash". Hmm, but interestingly it didn't print the restricted-mode note? Wait, the note is at cli.rs:2652 under quiet gating — but the output shows the safe-mode banner, not the restricted note. Actually the restricted note might be suppressed in non-tty/quiet? Let's check: the output goes through `head` (pipe), so not a terminal → maybe plain/quiet gating. Hmm, but the safe-mode banner printed.
+
+Anyway, the key evidence: env var triggers restriction (safe mode + bash disabled). Let's also confirm baseline without env doesn't disable bash.
+
+Let me run without YOYO_RESTRICTED.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/restrtest && timeout 60 env ANTHROPIC_API_KEY=x /home/runner/work/yoyo-e… ✓ (380ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Baseline: no safe-mode banner, no bash disabled. With YOYO_RESTRICTED=1: safe mode + bash disabled. With YOYO_RESTRICTED=0: baseline (off). Feature verified working end-to-end.
+
+Also verify --restricted flag still works and YOYO_RESTRICTED=0 doesn't turn off the flag (monotonic). Quick check: `--restricted` with `YOYO_RESTRICTED=0` should still be restricted.
+
+Also verify help text shows the flag. Let's run `--help`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/restrtest && timeout 60 env YOYO_RESTRICTED=0 ANTHROPIC_API_KEY=x /home/… ✓ (191ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All verified:
+- Monotonic: `--restricted` with `YOYO_RESTRICTED=0` still restricts. ✓
+- Help documents it in both places. ✓
+- Docs updated (safety.md). ✓
+- Not a sandbox disclosure kept intact. ✓
+
+Remaining concerns:
+1. tests/module_size.rs entry not updated → gate emits non-fatal warnings for cli.rs (+15) and help.rs (+20). The task explicitly said to paste the printed line. Not fatal. Minor.
+2. New module src/restricted.rs (301 lines) — is it under the module cap? Cap is 2000 (MAX_MODULE_LINES). Wait — what's MAX_MODULE_LINES? The gate said "2000-line cap" for some modules. 301 is fine. And unlisted modules over cap → fatal; 301 < cap → silent. Good.
+3. ARCHITECTURE.md not updated with a src/cli.rs entry / new src/restricted.rs entry. CLAUDE.md says new history goes in ARCHITECTURE.md. The task didn't explicitly list ARCHITECTURE.md in Files, but STEP 2 mentioned "(... per-file history goes in `ARCHITECTURE.md` under the `src/cli.rs` entry.)". Hmm — reading it again: "Not `CLAUDE.md`: per-file history goes in `ARCHITECTURE.md` under the `src/cli.rs` entry." This is telling the author where history belongs if they write any. The diff didn't write any ARCHITECTURE.md history. Is that a required touchpoint? Ambiguous. Let me check whether src/restricted.rs has an ARCHITECTURE.md entry — CLAUDE.md says read the entry for any file you change. Actually more relevant: is there a test that requires every src module to have an ARCHITECTURE.md entry? Tests pass, so no.
+
+Let me quickly grep ARCHITECTURE.md for "restricted" to see if there's an entry, and whether cli.rs's entry mentions this change. Just to report accurately.
+
+Also check whether the doc comment claim "src/cli.rs sits at its register entry with no room under the 100-line drift band" is accurate — actually there WAS 100 lines of room, so that statement in restricted.rs's module doc is... it says "no room under the 100-line drift band" which is false-ish; there was room for 100 lines. Hmm. That's an inaccurate claim in the module docs. Wait, read: "`src/cli.rs` sits at its register entry with no room under the 100-line drift band, and the gate's own remedy for that is to move new code to a smaller module rather than to paste a larger number." Hmm — actually the register had 100 lines of grace. So the claim "no room" is factually wrong; the file grew 15 lines with no problem. But this is prose justification, not a functional issue. It's a mild inaccuracy. Worth mentioning? Maybe as a minor note. Actually it matters somewhat because the rationale for the new module is partly based on this. But functionality is fine.
+
+Hmm, but wait — is it actually accurate at the time? The entry before Task 1 was 7272 and the file 7272? The task said "its tests/module_size.rs entry says 7272, so there are ~100 lines before drift goes fatal." So the task itself acknowledged ~100 lines of room. The new module's doc says "no room under the 100-line drift band" — contradicting the task's own statement that there were ~100 lines before fatality. So the doc claim is wrong. Minor, prose-level.
+
+Let me check ARCHITECTURE.md quickly.
+
+Then write verdict. I lean PASS with notes. The task's explicit register-paste instruction was not followed, producing two non-fatal warnings — I'll mention it as cleanup feedback (per the instructions, minor imperfections and cleanup don't force FAIL). But is the register miss a "forgotten touchpoint"? The checked line definition is specific: "every new definition has its consumer in THIS diff; every new enum variant has its match arms; every renamed thing has its call sites". All satisfied → PASS.
+
+doc_sync: behavior change documented in docs/src/troubleshooting/safety.md and help.rs. Also ARCHITECTURE.md not updated — let me check. If ARCHITECTURE.md has a per-file convention requiring entries, I might note it. But doc_sync is "behavior change reflected in CLAUDE.md / README / docs" — docs/src was updated → PASS. I'll note ARCHITECTURE.md in the reason.
+
+product_surface: Kind is product, and it's an opt-in env var + flag; the default behavior is unchanged (no env → off, byte-identical). Not a #448-style default change. PASS.
+
+Let me quickly check ARCHITECTURE.md.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restricted.rs\|YOYO_RES… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No ARCHITECTURE.md entry for restricted.rs or the change. That's a documentation-history miss relative to CLAUDE.md's rule ("New history goes in ARCHITECTURE.md"), and the task hinted it. Is there a gate that fails if a src file lacks an ARCHITECTURE.md entry? Let me check quickly — there might be a test in ARCHITECTURE-related tests. Tests pass, so no.
+
+Hmm, but "doc_symbols" gate tests that backticked symbols in CLAUDE.md exist. Not relevant.
+
+Decision: PASS overall, with notes:
+- Register entries not re-pasted (cli.rs 7314 vs 7299; help.rs 2876 vs 2856) → non-fatal warnings, cleanup feedback.
+- No ARCHITECTURE.md per-file entry for the new src/restricted.rs / cli.rs change.
+- The new module's doc claim "no room under the 100-line drift band" is inaccurate (there were ~100 lines of grace; the file in fact grew 15 lines without a fatal).
+
+None of these are functional or security failures; feature verified working end-to-end.
+
+Wait — one more consideration on doc_sync. The task says: "Do not state a confinement the flag does not actually provide... keep that disclosure intact." Verified: help still says "NOT a sandbox: file tools remain". Good.
+
+Also check: does `restricted_mode_note` need updating? Task said only if the note names *how* the mode was entered. Let me check whether restricted_mode_note mentions the flag. Let me quickly look at lines 1851-1890 and the start of the flag paragraph in help.rs. Actually the help text edit added "Also settable via YOYO_RESTRICTED=1" — fine. The note: let's peek to confirm it doesn't claim a flag name.
+
+Let me do a quick read of cli.rs 1840-1880.
+
+Actually, time budget. The note is tested; the task said do it "only if the note names how the mode was entered". Let me check quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1840,1880p src/cli.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The note describes effects, not how the mode was entered (no "--restricted flag typed" claim). So no change needed there — correct per the task.
+
+I have enough evidence. Write the verdict.
+
+Verdict: PASS.
+
+Checked lines:
+- intent_alignment: PASS: verified env form implemented, single decision fn, help + docs, binary behaves (YOYO_RESTRICTED=1 → safe mode + bash disabled; =0 → baseline; --restricted with =0 stays on).
+- forgotten_touchpoints: PASS: new module registered in main.rs, RESTRICTED_ENV_VAR/env_flag_is_on/restricted_env_source all consumed in the same diff (call site in cli.rs:2563); no new enum variants/renames.
+- doc_sync: PASS: docs/src/troubleshooting/safety.md and help.rs updated in the same commit; caveat ARCHITECTURE.md not updated.
+- product_surface: PASS: opt-in env var, default unchanged (absent/0/false → off, byte-identical; verified baseline run).
+
+Then mention cleanup: register entries for cli.rs (7314 vs 7299) and help.rs (2876 vs 2856) not re-pasted → gate warns non-fatally; and no ARCHITECTURE.md per-file history entry for the new src/restricted.rs.
+
+Write the file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 40s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md.
+
+PASS — the YOYO_RESTRICTED env form is implemented as a single decision seam and I exercised it against the built binary:
+
+• `YOYO_RESTRICTED=1 yoyo -p → safe mode on, bash removed (identical to --restricted`)
+• `YOYO_RESTRICTED=0` → byte-identical to baseline (no safe-mode banner, bash present)
+• `--restricted with YOYO_RESTRICTED=0` → still restricted (monotonic OR holds)
+• `--help documents the variable in both the flag paragraph and the Environment section; docs/src/troubleshooting/safety.md` updated in the same commit
+
+Cleanup feedback (non-blocking, not failures):
+1. `tests/module_size.rs` register entries were not re-pasted — the gate now prints **non-fatal warnings**: `src/cli.rs` 7314 vs recorded 7299, `src/help.rs` 2876 vs recorded 2856. The task explicitly asked for the pasted line; the remedy the module doc cites ("no room under the 100-line drift band") is also inaccurate, since both grew inside the band.
+2. No ARCHITECTURE.md per-file history entry for the new src/restricted.rs / the cli.rs change, which CLAUDE.md makes the destination for per-file history.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
