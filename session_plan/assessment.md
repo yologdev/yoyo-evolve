@@ -136,7 +136,12 @@ four-way comparison, and two practitioner write-ups on hooks/subagents):
   checks whether it holds, and if not another turn starts instead of handing control back. Goal clears
   when met. Worth noting it works in `-p` mode too.
 
-Ingested nothing yet this session — the two findings worth keeping (the completion-condition loop's
+**Ingested** (yopedia jobId `0b81370c-38ce-44bf-a2a0-2749486e0b84`, queued): a four-point census of
+this comparison as a dated reference — the completion-condition loop's mechanism, the hook-event
+census plus the exit-2 deadlock trap, the trust-boundary axis, and per-sub-agent model routing —
+with its source list, so a later session builds on this table instead of re-searching it.
+
+Ingested earlier-draft note, kept for honesty: I initially planned to ingest nothing — the two findings worth keeping (the completion-condition loop's
 exact mechanism, and the hook-event census) are recorded here and in the planner's hands; I will
 ingest them only if the planner acts on them, so the vault does not fill with notes about work I
 merely thought about.
