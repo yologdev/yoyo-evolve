@@ -1,0 +1,177 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me analyze the diff.
+
+The task was to implement `sub_agent_model` opt-in config key. Let me check the key claims:
+
+1. Config parse: `parse_sub_agent_model` added in config.rs — table tested.
+2. Near-miss guard: no key set → child model = parent model verbatim.
+3. Emission point: with key set, `sub_agent_model_label` names configured model.
+
+The diff touches src/config.rs, src/tools.rs, docs, ARCHITECTURE.md, tests/module_size.rs. Wait, the task said files: src/config.rs, src/agent_builder.rs, src/tools.rs. The diff doesn't touch agent_builder.rs — that's fine since the resolver lives in config.rs.
+
+Key concerns:
+
+- `OnceLock` global state: The config file is loaded once per session and `record_sub_agent_model` is called. But is `load_config_file` the actual path used? Need to check. Also, the tests use `effective_sub_agent_model` which reads the global — in the test `unconfigured_child_model_is_the_parent_model_verbatim` they assert it returns parent verbatim. But if another test in the same binary sets the global... they claim they don't. Actually in config.rs tests they use a LOCAL OnceLock for the configured case, so global is never set. Good. But wait — does any test call `load_config_file`? If `load_config_file` is called in tests (e.g., in other test modules across the crate, since tests run per-binary), the global could be set with whatever the repo's `.yoyo.toml` contains. Hmm — test binaries for the lib unit tests. If a test in src/config.rs or elsewhere calls load_config_file while cwd is the repo root, `.yoyo.toml` would be parsed and `record_sub_agent_model` called. Does the repo's `.yoyo.toml` have `sub_agent_model`? Let me check. If it doesn't, then the global is set to None, which resolves to parent — fine.
+
+But also there's a risk: the global is process-wide, and test ordering nondeterminism. If any test sets it to Some, then `unconfigured_child_model_is_the_parent_model_verbatim` would fail. But tests pass per the harness, so this is fine at least once. Still, that's a potential flakiness concern — worth noting but not a FAIL since tests pass.
+
+Actually wait — there's a more serious concern. Let me check: is the feature actually wired end-to-end? The resolver `effective_sub_agent_model` is called in `dispatch_tool_with_fallback` in tools.rs. That's the single assembly point for both doors. Good.
+
+But: is `load_config_file` actually called before the agent/tools are built, in every entry path? Let's check where `load_config_file` is called. If it's called in main/repl before building tools, then the OnceLock will be populated. Let me verify.
+
+Also, another concern: does `record_sub_agent_model` get called only when a config file is found? Yes, in each of the three rungs. When no config file exists, it returns `(HashMap::new(), String::new())` without recording — the OnceLock stays unset, which resolves to parent. Fine.
+
+But there's a subtlety: the `OnceLock` first-writer-wins. If `load_config_file` is called multiple times (e.g., /clear, or a test), the first wins. Claims to mirror LOADED_CONFIG_PATH.
+
+Let me actually run the binary / check that the feature works. But the task says the harness already built and tested. Let me do a focused verification: check the wiring and maybe a quick test run of the specific new tests.
+
+Let me look at the actual source to confirm consumers exist and the wiring is real.
+
+Let me check:
+- `parse_sub_agent_model` consumer: `record_sub_agent_model` — yes.
+- `record_sub_agent_model` consumer: `load_config_file` three rungs — yes.
+- `effective_sub_agent_model` consumer: `dispatch_tool_with_fallback` — yes.
+- `resolve_sub_agent_model` consumer: `effective_sub_agent_model` and tests — yes.
+- `SUB_AGENT_MODEL` consumer: `effective_sub_agent_model` — yes.
+
+So no dangling definitions. Build passes, so that's consistent.
+
+Doc sync: docs/src/configuration/models.md updated. ARCHITECTURE.md updated. Good.
+
+Product surface: opt-in, absent = byte-identical. Good.
+
+Now, is there anything actually broken? Let me think about whether the feature works in practice. Key question: is `load_config_file` called before tools are built in the actual CLI path? Let me grep.
+
+Also a concern about the emission-point test #3 in the task: "with the key set, the rendered sub_agent_model_label output names the configured model". The test in config.rs does `resolve_sub_agent_model(&configured, "claude-opus-5")` then `sub_agent_model_label(&resolved, None)` → "`claude-haiku-4-5`". That's a decent emission-point-ish test using a local store. Acceptable given the OnceLock constraint.
+
+Let me verify the wiring in the real code, quickly. Let me run a couple of greps and possibly run the specific tests. Actually the harness says tests pass. But let me do at most one focused check.
+
+Let me check that load_config_file is called in the main path before agent build, and that .yoyo.toml doesn't set sub_agent_model (which could break other tests).
+
+Let me look.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "load_config_file()" sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "effective_sub_agent_mo… ✓ (8ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The consumer exists in tools.rs. `load_config_file` is called at cli.rs:2093 and repl.rs:973, main.rs:703 — these are the real entry paths, before agent build presumably.
+
+Let me check for the risk: tests spawning. Also check whether `dispatch_sub.rs` calls load_config_file — it does. Fine.
+
+Now let me do one focused check: run a tiny binary exercise? That's heavier. Let me instead verify the tests for this feature actually run and pass, and verify wiring by checking that the config is loaded before tools built in cli.rs. Actually simpler: run a focused test.
+
+Let me run the three new tests quickly.
+
+Actually, a stronger and cheap functional check: run `cargo test sub_agent_model -- --nocapture` — but that recompiles maybe. Build already done, so should be quick.
+
+Let me also consider a real end-to-end: set sub_agent_model in a temp config and check... that would require an API call, not feasible. So I'll verify the resolver behavior via the tests.
+
+Let me run the focused tests.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2085,2110p' src/cli.rs ✓ (2ms)
+ ✓ (134ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both new config tests pass. Note `unconfigured_child_model_is_the_parent_model_verbatim` didn't match the filter "sub_agent_model" — it's named differently. Let me run it too, quickly, and also check that it passes (it must, since tests pass overall).
+
+Actually the test name is `unconfigured_child_model_is_the_parent_model_verbatim`. Let me run it to verify it's real and passing, and importantly, that it doesn't get confounded by global state (the concern).
+
+Wait, more importantly: there's a potential real issue. The `unconfigured_child_model_is_the_parent_model_verbatim` test calls the real global `effective_sub_agent_model`. If any test in the same binary calls `load_config_file()` while cwd is repo root, and repo's `.yoyo.toml` has no sub_agent_model, then the OnceLock gets set to `None` — resolves to parent. Fine. But if a test sets cwd to a temp dir with a config that has sub_agent_model... unlikely.
+
+But there's a subtler issue: could the global be set to `Some(...)` by a test? Only via `load_config_file` on a config containing `sub_agent_model`. Only the repo's own .yoyo.toml could. It doesn't have it. So safe.
+
+Let me run the specific test to confirm.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (108ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All good. Let me also verify the tests/module_size numbers were pasted correctly — the harness build/test passed, which includes module_size tests presumably. Test PASS overall per harness. But my focused run only ran filtered tests. The harness said Tests: PASS. Let me not re-run everything.
+
+One concern flagged in the task: "the emission-point test with the key set". It exists in config.rs's resolution table (asserts label = "`claude-haiku-4-5`"), with anti-vacuous assert_ne. Good.
+
+Also the task's Step 3 said pass effective child model to sub_agent_model_label's primary — done.
+
+Also concern: the fallback target used `&config.model` → now `&child_model`. That's a design decision: is it right? The fallback distinctness check compares the child's model against the fallback model. The doc says "is the fallback distinct?" asked about the child's model. Reasonable.
+
+Another touchpoint: does anything else use `config.model` for the child? Only this. Good.
+
+Docs: models.md updated with the key and description. ARCHITECTURE.md updated with per-file history (large diffs, but that's their convention). CLAUDE.md untouched — correct per instructions.
+
+Product surface: opt-in, absent = byte-identical; the near-miss guard pins it. product_surface: PASS (it's a product task and the change is opt-in).
+
+Potential issue: The config is recorded at load time into a global OnceLock. If a user changes config mid-session (e.g., `/config set sub_agent_model`), it won't take effect. But SETTABLE_KEYS — did they add sub_agent_model to SETTABLE_KEYS? The task didn't strictly require it, but `/config set` support would be nice. Let me check if it's in SETTABLE_KEYS. If not, `/config get sub_agent_model` won't work. The task's deliverable only requires the `.yoyo.toml` key. Not a FAIL.
+
+Actually, is that a forgotten touchpoint? The task deliverable: "A `.yoyo.toml` key `sub_agent_model = "<model-id>"`". It doesn't require /config set. So fine — worth a mention.
+
+Let me quickly check SETTABLE_KEYS to mention it accurately.
+
+Also verify `.yoyo.toml.bak` exists — stray file? It's listed in project files as pre-existing, not part of this diff.
+
+Let me check SETTABLE_KEYS quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent_model" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain | head -2… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`git status --porcelain` empty — clean tree, all committed.
+
+`sub_agent_model` is NOT in SETTABLE_KEYS, so `/config set sub_agent_model ...` won't work. Task didn't require it. The deliverable is the `.yoyo.toml` key. Mention as minor.
+
+Now, one thing to double check: the feature works only if `load_config_file()` is called before the tools are built. In the REPL path (repl.rs:973) — is that before agent build? Let me check the ordering quickly. Actually the tools are built inside AgentConfig::build_agent, which is called after config load in cli.rs. That's the standard path. In repl.rs, line 973 loads config. Should be fine.
+
+Also main.rs:703 piped mode loads config. Good.
+
+One more: is there a test verifying the wiring in tools.rs actually reads the global (a source-level guard)? Not strictly required. The two tests cover the resolver and the label.
+
+I have enough. Verdict PASS.
+
+Let me write the eval file.
+
+Check "forgotten_touchpoints": every new definition has its consumer in this diff. `parse_sub_agent_model` → `record_sub_agent_model` ✓. `record_sub_agent_model` → three load_config_file rungs ✓. `SUB_AGENT_MODEL` → `effective_sub_agent_model` ✓. `resolve_sub_agent_model` → `effective_sub_agent_model` + tests ✓. `effective_sub_agent_model` → `dispatch_tool_with_fallback` + test ✓. Build passes so no dead code. PASS.
+
+doc_sync: models.md updated, ARCHITECTURE.md updated. PASS.
+
+product_surface: opt-in; absent = byte-identical; near-miss guard. PASS.
+
+Write it.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.6s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (51.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md.
+
+PASS. The sub_agent_model opt-in cost-routing knob is implemented and wired correctly:
+
+• **Resolver + config**: `parse_sub_agent_model`, a load-time `OnceLock` store filled from all three `load_config_file` rungs, and `effective_sub_agent_model(parent)` as the single resolution point — all in src/config.rs.
+• **Both doors**: `dispatch_tool_with_fallback` (`src/tools.rs:1762`) is the common assembly site for `sub_agent` and `explore_agent`, and all three uses (primary build, fallback-target distinctness, and the sub_agent_model_label primary argument) moved off config.model onto the resolved child_model.
+• **Opt-in / regression surface**: absent key returns the parent model verbatim, pinned by whole-string assert_eq!.
+• **Verified live**: ran the three new tests — `sub_agent_model_parse_table`, `sub_agent_model_resolution_table`, `unconfigured_child_model_is_the_parent_model_verbatim` — all pass.
+• **Docs**: docs/src/configuration/models.md + ARCHITECTURE.md updated in the same diff; CLAUDE.md untouched.
+
+One non-blocking note (cleanup, not a fail): sub_agent_model is not in SETTABLE_KEYS, so /config set sub_agent_model … won't validate — but the task only specified the .yoyo.toml key.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

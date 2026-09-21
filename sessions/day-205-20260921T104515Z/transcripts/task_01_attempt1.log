@@ -1,0 +1,2150 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start with discovery: verify the assessment's claims about where the child model is set, and re-run that grep.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "sub_agent_model" src/ …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (5ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, working tree clean. Now let's look at build_sub_agent_tool and build_explore_agent_tool.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_sub_agent_tool…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "config\.model\|model_co… ✓ (2ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read tools.rs around 1340-1850.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:1500..1840 ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read lines 1750-1810 more fully to see dispatch_tool_with_fallback.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:1700..1800 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the structure is clear:
+
+- `dispatch_tool_with_fallback(config, flavor, child_tools, shared_state)` builds the primary attempt using `config.provider`/`config.model` and the fallback using `config.fallback_provider`/`config.fallback_model`.
+- Both `build_sub_agent_tool_at_depth` and `build_explore_agent_tool` call `dispatch_tool_with_fallback`.
+- The label is `sub_agent_model_label(&config.model, fallback.as_ref().map(...))`.
+
+Now, the design. The task says: resolve the effective child model in one place (configured value, else the parent's model, else the existing fallback) and pass that to both doors, then keep the label honest: pass the *effective* child model as `sub_agent_model_label`'s `primary` argument.
+
+Hmm, there's a subtlety: the fallback mechanism. If `sub_agent_model` is configured, primary child model = sub_agent_model. The fallback: `sub_agent_fallback_target(&config.provider, &config.model, ...)` — should the fallback compare against the child model or the parent model? The fallback target logic returns None if fb_model == primary model. If sub_agent_model is set and equals fallback_model, then... Hmm.
+
+Actually let's think carefully. The cleanest narrow change: define a helper `sub_agent_child_model(config) -> &str` that returns `config.sub_agent_model.as_deref().unwrap_or(&config.model)` (or fallback model? The task says "configured value, else the parent's model, else the existing fallback"). Hmm "else the existing fallback" — that likely refers to `config.fallback_model`? Actually in genai's `create_model_config`, if model is empty it may fall back. Let me check `create_model_config` — does it handle empty model? Probably a default. Let's keep it simple.
+
+Actually the phrase "else the existing fallback" might mean: if neither sub_agent_model nor model... but model is always set. Hmm. Let me check AgentConfig fields and whether model can be empty.
+
+Let me now look at AgentConfig in agent_builder.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct AgentConfig"… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's see the config.rs: how model and thinking are parsed from .yoyo.toml.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct Config" -A 6… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub struct\|^struct\|p… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+config.rs seems to be about the raw key/value HashMap config file. `load_config_file()` returns `(HashMap<String,String>, String)`. So there's no `Config` struct with typed fields for `model`. Let me check how `model` gets read into AgentConfig — probably in cli.rs via `config_map.get("model")`.
+
+Let me search for `get("model")`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'get("model")\|get("thi… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So config.rs is the file/keyset parser (returns HashMap). The typed resolution happens in cli.rs. But the task says Files: src/config.rs, src/agent_builder.rs, src/tools.rs. Hmm — so `Config` in the task refers to... Let me look at cli.rs:1065 context to see how the model resolution works.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1030..1120 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the resolution is in cli.rs (`resolve_model_config`). Where is `AgentConfig` constructed from `ModelConfig`? Let's find `AgentConfig {` literal constructions.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "AgentConfig {" src/ | … ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There are multiple literal constructions of AgentConfig. Adding a field with `Option<String>` would ripple into all of them (compile errors). The task says "If `Config`'s field addition would ripple into many literal constructions, prefer the struct's existing default/parse path over editing each site; the budget is three source files and that budget is the task."
+
+Hmm. But these constructions are all in src/ (main.rs, commands_spawn.rs, dispatch_sub.rs). That would widen the diff. Unless... we use `..Default::default()`? Does AgentConfig implement Default? Let me check.
+
+Let me count how many literal constructions there are.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "AgentConfig {" src/ | … ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, `grep -rn "AgentConfig {" src/` only listed ~14 but wc said 54? The output was truncated by the tool ("... (6 more similar lines)" style). Actually the output shows "..." markers which is the tool's own truncation? Hmm, the output includes "... (6 more similar lines)" — that's odd. It seems the tool compressed. Let me get a full list.
+
+Actually, the `wc -l` says 54. But that count includes the struct definition and the test helper lines? No, `AgentConfig {` matches the struct def line and literals. Hmm 54 lines contain "AgentConfig {". Let me get the file counts.
+
+Adding a field would break 50+ literal constructions. That's too many files. But wait — how did the previous fields like `bash_cwd` get added? Let me check how many literals exist and whether they use `..Default::default()`.
+
+Let me look at the main.rs construction.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rc "AgentConfig {" src/*.r… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, the grep output is being compressed by the tool for some reason (it shows "... (N more similar lines)"). Weird — maybe the tool summarises long outputs. Anyway.
+
+AgentConfig has 37 occurrences in agent_builder.rs — many are in tests probably. Actually agent_builder.rs has test module with many.
+
+Let me check: does AgentConfig have a Default impl? `#[derive(Debug, Clone, Default, PartialEq, Eq)]` at line 352 is a different struct probably. Let's check if AgentConfig implements Default — grep "impl Default for AgentConfig".
+
+Alternative approach that avoids rippling: don't add a field to `AgentConfig`. Instead, read the key at the point of use. But the task explicitly says Files: src/config.rs, src/agent_builder.rs, src/tools.rs. Hmm, but adding the field to AgentConfig would ripple to main.rs, commands_spawn.rs, dispatch_sub.rs, commands.rs, main_tests.rs — 5 more files. Too many.
+
+Hmm, but wait. Does AgentConfig derive Default? If it does, then adding `sub_agent_model: Option<String>` with `#[derive(Default)]` would still break every literal that doesn't use `..Default::default()`. Let me check the literal shapes — e.g., tools.rs:1902.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "impl Default for AgentC… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So all literals are exhaustive, no `..Default::default()`. Adding a field means editing all 50+ literals across 6 files. That blows the three-file budget.
+
+Alternative: avoid a new AgentConfig field entirely. Instead, read the config directly at the point of use in tools.rs, via `crate::config::load_config_file()`? But that's a global-ish read at tool-build time; acceptable? Hmm, but this is a per-agent build, and reading the config file inside the tool builder is a re-read of the environment — but actually tools.rs already does global reads (`crate::cli::is_read_only_subagents()`).
+
+Hmm, but the task explicitly wants a config field and says src/config.rs is one of the files. Maybe there IS a `Config` struct in this repo (different from AgentConfig) — the task says "how a `.yoyo.toml` key becomes a field on `Config`". Maybe the task author meant the file_config HashMap in config.rs. Let's check config.rs's KNOWN_KEYS list around line 1339-1400. There's a list of (key, description) pairs. And there's `validate_config_value`. The task's "Config parse: the key absent → None; the key present → Some(id). Table-tested" — could be implemented as a pure parse function in config.rs: e.g. `pub fn parse_sub_agent_model(config: &HashMap<String,String>) -> Option<String>`, or a general "resolve" reading from the map.
+
+Hmm. Let me think about the cleanest approach that keeps to 3 files: src/config.rs, src/agent_builder.rs, src/tools.rs.
+
+Option A: Add `sub_agent_model: Option<String>` to `AgentConfig`. Then need edits to main.rs, commands_spawn.rs, dispatch_sub.rs, commands.rs, main_tests.rs. That's 8 files total. Violates budget.
+
+Hmm, but maybe those literals can be avoided... no.
+
+Option B: Store the resolved child model in a module-level global (like `cli::set_effective_context_tokens`). But global mutable state across agents is ugly and the repo warns about global state races (tests/global_state_races.rs). Hmm. Actually there's precedent: `crate::cli::set_effective_context_tokens`, `is_read_only_subagents()`, `is_safe_mode()`. And also — importantly — how does `agent_builder.rs` get the model? `AgentConfig.model` is set from `config.model` in main.rs.
+
+Wait — maybe there's a *narrower* seam. `build_sub_agent_tool(config: &AgentConfig)` is called from `configure_agent` in agent_builder.rs. The AgentConfig at that point... Let me check where build_sub_agent_tool is called.
+
+Actually — hold on. Let me reconsider: maybe the number of *non-test* literal constructions is smaller. agent_builder.rs has 37 occurrences of "AgentConfig {" — many in tests inside agent_builder.rs. Those tests would need editing too (they're in the same file, fine). The non-test files needing edits: main.rs (1), commands_spawn.rs (8), dispatch_sub.rs (1), commands.rs (3), main_tests.rs (2), tools.rs (2 test helper). So 6 files. Budget says 3.
+
+Hmm, but is there a Default? Let me check if `AgentConfig` derives Default somewhere... Let me search for `Default for AgentConfig`. The grep earlier returned nothing for "impl Default for AgentConfig". So no.
+
+So Option B or C.
+
+Option C: Make the field `#[serde(default)]`-ish... no serde here.
+
+Option D: The task says "prefer the struct's existing default/parse path over editing each site". Maybe there IS a builder method. Let me check AgentConfig methods — maybe there's `AgentConfig::from_raw_config` or something. Let's look for how `--editor-model` is threaded, since that's a per-role model override. `parse_editor_model_flag` exists. Let's see how editor model reaches build_editor_agent.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "editor_model\|architec… ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's a precedent: `commands_config::set_editor_model` / `editor_model()` — that's a module-level global, stored in commands_config.rs (a 4th file). Hmm.
+
+Let me look at commands_config.rs around 100-150 to see the storage mechanism.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs:90..170 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's a precedent for module-level state, but that's in commands_config.rs (4th file).
+
+Now, an important consideration: where does the config file key get *read*? The `.yoyo.toml` is read into `file_config` HashMap in cli.rs (via `crate::config::load_config_file()`). Then `resolve_model_config` picks it.
+
+Best approach given the constraint: the task says "Add `sub_agent_model: Option<String>`, absent by default, parsed from the same file/keyset as `model` and `thinking`."
+
+Hmm — "parsed from the same file/keyset as model and thinking" — that's `config.rs`'s `load_config_file()` HashMap. Maybe the intended design is:
+
+- `src/config.rs`: add `"sub_agent_model"` to KNOWN_KEYS (so it's recognized/documented), and add a pure parse helper `pub fn parse_sub_agent_model(cfg: &HashMap<String,String>) -> Option<String>` that trims and filters empty.
+- `src/agent_builder.rs`: add a method on AgentConfig? But no field... hmm.
+
+Alternatively, since AgentConfig is a struct with no default, maybe I can add the field with a *default-initializer trick*: implement `Default for AgentConfig` and convert literals? No, too wide.
+
+Wait — what about adding the field but making the struct... Rust requires all fields in a struct literal. Unless the struct literal uses `..Default::default()`. There's no way around it.
+
+Hmm, hold on. Let me re-read: "If `Config`'s field addition would ripple into many literal constructions, prefer the struct's existing default/parse path over editing each site; the budget is three source files and that budget is the task."
+
+So the task anticipates this and says: prefer the existing default/parse path. In config.rs, the "existing default/parse path" refers to reading from the config HashMap. So the field lives on... hmm, `Config` here might mean `cli::ModelConfig`. Let's look at ModelConfig. `ModelConfig { provider, base_url, api_key, model, fallback_provider, fallback_model }`. Where is ModelConfig consumed to build AgentConfig? In cli.rs presumably `config.model` in main.rs's `Config` struct (the `config` in main.rs is a different thing — `cli::Config`?). main.rs builds AgentConfig from `config.model`. Let's see what `config` is in main.rs.
+
+Actually in main.rs: `model: config.model`. What's `config`'s type there? Probably `cli::Config` or `CliConfig`. Let me check.
+
+Hmm, actually, this matters a lot: if there's a struct that carries model/thinking/fallback to main.rs and then to AgentConfig, adding a field there ripples similarly.
+
+Let me look at how previous similar features were added. E.g., `fallback_model` — how many files? Or `auto_watch`. Let's check git log for a commit adding a field to AgentConfig to see the file count.
+
+Actually simpler: let me count. `grep -rn "fallback_model" src/ | wc -l` and files.
+
+Alternatively — the pragmatic, minimal, and defensible design:
+
+**Read the config file at the point of use, inside `dispatch_tool_with_fallback` in tools.rs**, via a pure helper in config.rs: `crate::config::sub_agent_model_from_config(&crate::config::load_config_file().0)`. But that re-reads the config file at tool-build time (once per session, since tools are built once per agent). Actually `load_config_file()` is called in cli.rs at startup; calling it again in tools.rs is a second read — acceptable but it re-reads disk and might mix project/home config order. Hmm, and it's a global read inside a function, which makes the field not settable from `--sub-agent-model` flag or per-AgentConfig.
+
+But wait: there's a cleaner variant. `AgentConfig` doesn't have the field, but tools.rs resolves the child model as: `config.sub_agent_model` — no field.
+
+OK here's another thought: what if I add the field to `AgentConfig` but *also* implement `Default for AgentConfig` and rewrite the literals with `..Default::default()`? That's editing 6 files. Budget says 3.
+
+Hmm, actually... wait. Let me recount which files have non-test AgentConfig literals that are *outside* the 3 allowed files:
+- src/main.rs: 1 (production)
+- src/commands_spawn.rs: 8 (production)
+- src/dispatch_sub.rs: 1 (production)
+- src/commands.rs: 3 (production)
+- src/main_tests.rs: 2 (test helper, 1 function)
+- src/tools.rs: 2 (test helper — allowed file)
+- src/agent_builder.rs: 37 (allowed file)
+- src/commands_spawn.rs:4551 test, commands.rs tests...
+
+So adding a field requires editing main.rs, commands_spawn.rs, dispatch_sub.rs, commands.rs, main_tests.rs = 5 extra files. Way over.
+
+So the field must NOT go on AgentConfig. 
+
+Therefore: resolve at the point of use in tools.rs. How do we get the configured value there without a field? Options:
+
+1. Module-level state in `agent_builder.rs` (allowed file): e.g.
+```rust
+static SUB_AGENT_MODEL: Mutex<Option<String>> = Mutex::new(None);
+pub fn set_sub_agent_model(m: Option<String>) { ... }
+pub fn sub_agent_model_override() -> Option<String> { ... }
+```
+and set it in main.rs — no, main.rs is not an allowed file. Hmm. But it could be set in `agent_builder.rs::AgentConfig::build_agent()`... which reads `self`? It doesn't have the field.
+
+2. Read the config file inside agent_builder/tools at the point of use: `crate::config::load_config_file().0` then parse the key. This keeps everything in the 3 allowed files: config.rs gets the pure parser + KNOWN_KEYS entry, tools.rs calls it (or agent_builder.rs stores it at agent build time and tools.rs reads it).
+
+Hmm — but there's a subtlety: `--safe-mode` drops project customizations. And the config file path ordering. Does `load_config_file()` merge home + project? Let's read it.
+
+Actually, hold on. Let me reconsider. Is there really a *global* read concern? tools.rs already calls `crate::cli::is_read_only_subagents()` (a global read). So reading config is consistent with existing style... but re-reading the config file inside `build_sub_agent_tool_at_depth` (called recursively per depth!) is wasteful. Better: resolve once in `build_sub_agent_tool` / `build_explore_agent_tool` and pass down as a parameter. But `dispatch_tool_with_fallback(config, flavor, ...)` is shared. I could add a parameter `child_model: &str` to `dispatch_tool_with_fallback`? That's within tools.rs. And then `sub_agent_tool_for(config, provider, model, ...)` already takes a model param! Great — `dispatch_tool_with_fallback` currently passes `&config.model` for primary and `fb_model` for fallback.
+
+So minimal change in tools.rs:
+```rust
+fn dispatch_tool_with_fallback(config, flavor, child_tools, shared_state, child_model: &str) -> Box<dyn AgentTool>
+```
+where callers compute `child_model` = effective child model.
+
+Wait, but the recursion: `build_sub_agent_tool_at_depth` recurses and would need to pass the resolved child model down. Fine — resolve once at the top (`build_sub_agent_tool`) and pass down as a param, or just call the resolver (a cheap clone) at each level. Since it's a `&str` from a String that must live somewhere... Options: `Option<String>` resolved per level. Simplest: `let child_model = resolve_child_model(config, fallback_model_from_config)`. Hmm.
+
+Hmm, but where does the configured value come from? If not a field on AgentConfig, then... we need *some* place. Let me reconsider once more whether adding a field is really that bad. The instruction says "do not widen the diff past three files to force it" — meaning if it can't be done in three files, say so. But there might be a way in three files.
+
+Key insight: could the config value be captured in the `skills` or another existing field? No, hacky.
+
+Could we extend `cli::ModelConfig`? ModelConfig is in cli.rs, resolved by resolve_model_config, then stored... let me trace where ModelConfig goes and how main.rs's `config` gets `model`. If `config.model` in main.rs comes from a struct in cli.rs (say `cli::Config`), maybe adding a field there + propagating into AgentConfig is still 2 more literals.
+
+Let me find main.rs's `config` variable definition.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let config\|let mut con… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ModelConfig" src/*.rs … ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, `ModelConfig` here is `src/cli.rs`'s local struct at line 985. And `yoagent::provider::ModelConfig` is a different type. Let me find where cli::ModelConfig is used (main.rs?).
+
+The grep output is truncated with "... (36 more similar lines)". The tool truncates. Let me use a different approach to get full output — write to a file and read? Or use grep with -o. Let me just do targeted greps.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "resolve_model_config\|… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, so `resolve_model_config` (or whatever the function at 999 is) isn't called in main.rs. Let me look at cli.rs around 960-1000 and find the caller.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '975,1000p' src/cli.rs &&… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The context ran out. Let me re-orient: I need to re-check where I was. The task: add `sub_agent_model` config key. Let me check git status to see if anything changed.
+
+I was in discovery. Let me be efficient now: check whether AgentConfig has a Default impl and how tests construct it, then decide the shape.
+
+Key findings so far:
+- `ModelConfig` struct in `src/cli.rs:985` — private, built by `parse_model_config` in cli.rs:2463. That is a fourth file.
+- `AgentConfig` in `src/agent_builder.rs:1077`, constructed at 54 sites across 7 files.
+
+Hmm, task says files: src/config.rs, src/agent_builder.rs, src/tools.rs. Budget 3 source files.
+
+But `AgentConfig` is built in `main.rs` from... where? Let me check. `main.rs:1025` builds AgentConfig from `config` which is from `parse_args` probably in cli.rs. Let's check what type `config` is in main.rs.
+
+Actually the crucial insight: the config file is read into a `HashMap<String,String>` via `load_config_file()` in src/config.rs. So `sub_agent_model` can be read from that HashMap without adding a field to any struct that requires ripple.
+
+Where does AgentConfig get `fallback_model`? from `config.fallback_model` (parse_args result). Hmm.
+
+Options:
+1. Add field to AgentConfig (ripples to 54 sites — too wide).
+2. Read the config file at tool-build time in tools.rs — a process-global read like `crate::cli::is_read_only_subagents()`. That's the pattern already used in build_sub_agent_tool_at_depth.
+3. Add field to cli.rs's parse result — 4th file.
+
+Let me check what's simplest and cheapest. Since `AgentConfig` has no Default impl derived? Let me check.
+
+Let me re-run commands quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+Context ran long; let me re-orient and check the current state fast.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "derive" src/agent_build… ✓ (5ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No changes yet. Now: the crucial decision — where does the config value come from and how does it reach the child model resolution, within 3 source files?
+
+The child model is resolved in `src/tools.rs` `dispatch_tool_with_fallback` from `config.model` (an `AgentConfig` field, defined in `src/agent_builder.rs`).
+
+If I add a field `sub_agent_model: Option<String>` to `AgentConfig`, I'd have to update 54 construction sites. That's wide but... let me check how many are in test helpers vs real. Actually the task says "If `Config`'s field addition would ripple into many literal constructions, prefer the struct's existing default/parse path over editing each site".
+
+Alternative: read the config file directly in tools.rs at build time. There's already precedent: `crate::cli::is_read_only_subagents()` is a process-global read in `build_sub_agent_tool_at_depth`. And there's `load_config_file()` in src/config.rs which returns `(HashMap<String,String>, String)`.
+
+That would be:
+- src/config.rs: add a pure parse helper? Actually the config file is already parsed into a HashMap with a key allowlist ("model", "thinking", etc.). Let me check if there's a keyset that would filter out unknown keys.
+
+Let me check `parse_model_pricing_from_config` and the config keyset at config.rs:1343.
+
+Line 1343: `("model", "AI model name"),` — there's a list of known keys. Let me look at that.
+
+And the get path: `file_config.get("model")`. If `load_config_file` returns all keys from the TOML flat map, then adding "sub_agent_model" needs just the keyset entry for validation/`/config set`.
+
+So the cleanest shape within 3 files:
+- `src/config.rs`: register `sub_agent_model` in the known-keys table (so `yoyo config set sub_agent_model ...` validates and `/config` shows it) + a pure helper `sub_agent_model_from(config: &HashMap<String,String>) -> Option<String>`.
+- `src/tools.rs`: resolve effective child model = configured sub_agent_model, else config.model; pass to both doors (sub_agent + explore_agent, and the fallback primary/secondary model).
+- `src/agent_builder.rs`: hmm, needed? The label is `sub_agent_model_label` in tool_wrappers.rs.
+
+Wait — but the task says files: src/config.rs, src/agent_builder.rs, src/tools.rs. Where does agent_builder come in? Because if I add the field to AgentConfig I need to... no.
+
+Hmm, let me reconsider. AgentConfig is in agent_builder.rs. The value has to get from config into AgentConfig. main.rs builds AgentConfig from `config: Config` (the parsed args struct). Let me check main.rs around 1025 to see what `config` is and where it comes from.
+
+Actually wait — where does main.rs's `config` come from? Let me check. If it comes from `cli::parse_args`, then that struct is in cli.rs.
+
+Let's check quickly.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.6s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1000,1030p' src/main.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1330,1420p' src/config.r… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So `parse_args` returns a `Config` type. Where is that defined? Let me search broadly.
+
+Line 2463 in cli.rs: `let mc = parse_model_config(args, &file_config, &prompt_arg);` — that's inside parse_args presumably which builds some struct returned. Let me find parse_args signature.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub fn parse_args\|fn … ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`Config` is in `src/cli_config.rs`. That's a 4th file. But the task restricts files to `src/config.rs`, `src/agent_builder.rs`, `src/tools.rs`.
+
+Hmm. Let me think about the cheapest path that respects the three-file budget AND the "If the child's model is set somewhere that cannot see a new config field without a fourth source file, stop and say so in the commit body".
+
+Wait — but AgentConfig IS built in main.rs from cli_config::Config. Let's see how `Config` in cli_config.rs gets fields. If it's constructed with a builder from the file_config HashMap, adding a field there ripples to main.rs but maybe only a couple of sites.
+
+Actually, let's check: does cli_config::Config have a Default and is it built in many places? Let me look.
+
+Alternatively: the simplest, narrowest, product-safe approach that fits the three-file budget and the repo's existing patterns:
+
+`sub_agent_model` is read from the config file. `src/config.rs` has `load_config_file() -> (HashMap<String, String>, String)`. In `src/tools.rs`, `dispatch_tool_with_fallback` needs the effective child model. Reading the config file at tool-construction time would be a process-global read — precedent exists (`crate::cli::is_read_only_subagents()`).
+
+But actually cleaner and more testable: add `sub_agent_model: Option<String>` to `AgentConfig` (agent_builder.rs) — that's file 2 — and set it in main.rs... but main.rs is a 4th file.
+
+Hmm. Let's count: how many of the 54 `AgentConfig {` sites are in agent_builder.rs (37)? Those would all need the new field. That's a lot.
+
+Wait, actually — is there a way to avoid adding a field? Yes: put the config value into `AgentConfig` via a **default-valued field** — no. Rust requires all struct literal sites to name every field.
+
+OK so what about the global-read approach:
+
+**Design: process-global config read, mirroring `is_read_only_subagents`.**
+
+- `src/config.rs`: add `pub fn sub_agent_model_override() -> Option<String>` that reads `load_config_file()`, gets `"sub_agent_model"`, trims, filters empty. Plus register the key in `SETTABLE_KEYS` so `/config set sub_agent_model …` works.
+- `src/tools.rs`: in `dispatch_tool_with_fallback`, compute `let child_model = crate::config::sub_agent_model_override().unwrap_or_else(|| config.model.clone());` and use `&child_model` for the primary `sub_agent_tool_for` call. Also the fallback: FallbackSubAgentTool::new(primary, secondary, &config.model, fb_model) — the label arg. And the label `sub_agent_model_label(&child_model, fallback....
+
+Hmm but the fallback semantics: fallback_model is derived from fallback_provider's default model, separate from config.model. When sub_agent_model is set, what's the fallback? Keep `fallback` resolution keyed on config.model (as now — it decides whether a fallback *differs*). Actually `sub_agent_fallback_target(&config.provider, &config.model, ...)` — its second arg is primary_model used to detect "differs". With a sub_agent_model override, the honest primary is child_model. Hmm, but fallback is about provider-level failover. Let me keep it simple and minimal: the override applies to the model the child is built with; the fallback target derivation stays on the parent's config (that's the fallback provider/model config, unchanged). But if sub_agent_model == fallback model... edge case, ignore — actually, to be careful: if the child model is the same as the fallback model, then a fallback would be pointless. But `sub_agent_fallback_target` compares config.model vs fallback_model. Minimal change: keep it.
+
+Hmm, wait. But actually is a global read right? The task says "Resolve the effective child model in one place (configured value, else the parent's model, else the existing fallback)". And test #2 requires asserting the emitted label string.
+
+Testability: a process-global read is hard to test without mutating globals. But I can make a **pure resolver** that takes the configured value as an argument:
+
+```rust
+pub fn effective_child_model(parent_model: &str, configured: Option<&str>) -> String
+```
+That's table-testable. And the global read is the thin non-pure wrapper.
+
+Hmm. But where should `effective_child_model` live? `src/tools.rs` is fine (it's the consumer).
+
+Actually — hold on. Let me reconsider adding the field to `AgentConfig`, because `AgentConfig` already has a `Default`? No, it doesn't. But many of the 37 sites inside agent_builder.rs are tests using `AgentConfig { ... }` literals... which my earlier grep showed. Hmm, let me actually count non-test sites.
+
+Actually a much better idea: check whether AgentConfig construction sites use `..Default::default()` — no Default impl, so no.
+
+Alternatively: since the field addition ripples to ~54 literals, the task explicitly says: "If `Config`'s field addition would ripple into many literal constructions, prefer the struct's existing default/parse path over editing each site; the budget is three source files and that budget is the task."
+
+So: DON'T add the field to AgentConfig. Use the config-file read path. But where? `src/config.rs` `load_config_file()` is the "struct's existing default/parse path".
+
+Hmm, but reading the file on every tool build is a bit heavy — though it's once per session at build time (build_agent is called once, plus rebuilds). That's acceptable, and `is_read_only_subagents` is already a global read at that exact site.
+
+But wait — there's a subtlety. `/config set sub_agent_model X` during a session wouldn't take effect until rebuild. Same for model. Fine.
+
+Let me check `load_config_file()` signature and whether it merges project + home config.
+
+Also I must check: is there a `Config` field for `model` that AlSO reads config file? Yes: `parse_model_config` gets file_config and `file_config.get("model")`.
+
+OK here's the thing though — is a global read actually the best product design? Consider: the effective child model should be resolved once at agent-build time and stored, so that the label and both doors agree. With a global read inside `dispatch_tool_with_fallback`, and `dispatch_tool_with_fallback` being called for BOTH doors (sub_agent and explore_agent), the read happens once per door — two reads, but the same function, so one statement. The task's "two doors one policy" concern is satisfied because both doors go through `dispatch_tool_with_fallback`.
+
+Hmm, but actually cleaner: read it once in `build_sub_agent_tool` / `build_explore_agent_tool`? No — `dispatch_tool_with_fallback` is the single shared funnel. Put the resolution there.
+
+Let me now check: does the test helper `test_agent_config` in tools.rs exist so I can write a test calling `dispatch_tool_with_fallback`? The label is inside `DiagnosticSubAgentTool`. To assert the emitted label string, I'd need to extract it. Let me look at how existing tests assert labels. `sub_agent_model_label` is tested directly in tool_wrappers.rs.
+
+Best emission-point test: call `dispatch_tool_with_fallback` with a config whose `sub_agent_model` is set... but AgentConfig has no such field in my design. Hmm — then the emission point test needs the global set.
+
+Alternative approach that is BOTH testable and no-global: make the child model a **parameter of `dispatch_tool_with_fallback`**:
+
+```rust
+fn dispatch_tool_with_fallback(config, flavor, child_tools, shared_state, child_model: &str) -> Box<dyn AgentTool>
+```
+
+and its two callers (`build_sub_agent_tool_at_depth`, `build_explore_agent_tool`) each compute the child model... no, that's two places → "two doors one policy". Unless both call a single `resolve_child_model(config)` helper. Hmm, that's fine: one helper, two callers — but the task says "Resolve the effective child model in one place ... and pass that to both". Two call sites of one resolver is still one policy. But the safest is resolving INSIDE `dispatch_tool_with_fallback` (single call site).
+
+So: resolve inside `dispatch_tool_with_fallback` via a pure function + the global config read. For testing, extract the pure resolver and test it, plus test the label emission by... hmm.
+
+Actually, better testing idea: make the resolution seam a function that takes the configured value:
+
+```rust
+/// Pure: the model a child dispatch is built with.
+pub(crate) fn effective_child_model(parent_model: &str, configured: Option<&str>) -> String
+```
+
+and test 3 (emission point) can be done by calling `dispatch_tool_with_fallback` — no. Hmm.
+
+Let me reconsider: is the global read really necessary? What if I add the field to `AgentConfig` but the ripple is smaller than I thought because most of those 54 sites... no, all 54 need it.
+
+OK, alternative that avoids globals AND AgentConfig: use a process-global setter, like `cli_config::set_*`:
+
+Actually, you know what — `tool_wrappers.rs` isn't in the budget. Let me check where `DiagnosticSubAgentTool` is defined and whether the label is retrievable for a test.
+
+Let me step back and think about what's the *best product design* here, and what fits.
+
+Actually, there IS a cleaner path. Look at `AgentConfig` construction: `main.rs:1025` builds it from `cli_config::Config`. What if `sub_agent_model` is read from the config file **inside `AgentConfig`'s construction in main.rs**? No — that's a 4th file (main.rs).
+
+Hmm, but is main.rs really out of budget? Task says "Files: src/config.rs, src/agent_builder.rs, src/tools.rs". And step 1 says: "If the child's model is set somewhere that cannot see a new config field without a fourth source file, stop and say so in the commit body — do not widen the diff past three files to force it."
+
+But there's a legitimate reading: the three files listed are *modifiable*, and main.rs is a construction site. Hmm, risky. Let me avoid main.rs.
+
+Decision: **global-read design**, with a pure resolver.
+
+Where does the read live? `src/config.rs` — it owns `load_config_file()`. Add:
+
+```rust
+/// The configured `sub_agent_model`, or `None`.
+pub fn sub_agent_model_override() -> Option<String>
+```
+
+and `src/tools.rs` uses it inside `dispatch_tool_with_fallback` via:
+
+```rust
+let child_model = effective_child_model(&config.model, crate::config::sub_agent_model_override().as_deref());
+```
+
+Now for the emission-point test (#3): I can test `effective_child_model` (pure) AND assert the label. To assert the label on the string a caller receives, I need to reach the label out of the built tool. Options:
+- Test `DiagnosticSubAgentTool` label via a getter — tool_wrappers.rs not in budget.
+- Use the existing pattern: does `build_sub_agent_tool` expose the label? Let me check `DiagnosticSubAgentTool`.
+
+Let me grep for it.
+
+Actually, the honest emission-point test given the constraint: assert on the **string produced by the same expression** the caller uses. I.e. in tools.rs, write the label at the emission point as:
+
+```rust
+let label = sub_agent_model_label(&child_model, fallback.as_ref().map(|(_, m, _)| m.as_str()));
+...
+Box::new(DiagnosticSubAgentTool::new(inner, label))
+```
+
+Then a test can call `effective_child_model(parent, Some(configured))` and `sub_agent_model_label(&that, None)` and assert_eq against the full expected string. That IS the string a caller receives, modulo construction. Hmm, it's two steps.
+
+Better: extract a tiny pure function in tools.rs that produces the exact label the DiagnosticSubAgentTool receives:
+
+```rust
+fn child_model_label(parent_model: &str, configured: Option<&str>, fallback_model: Option<&str>) -> String
+```
+Hmm, over-engineering.
+
+Let me check DiagnosticSubAgentTool — maybe it has a `name()` or the label is accessible.
+
+Let me just look.
+
+Actually, maybe simpler and more faithful: the existing test at tool_wrappers.rs:5008 already asserts on `sub_agent_model_label` output directly, calling it "the string a caller receives"? Let me read those tests to see what the repo considers the emission point here.
+
+Let me look at those.
+
+Time to be efficient. Let me read the relevant chunk of tool_wrappers.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1580,1640p' src/tool_wra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn load_config_file… ✓ (2ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`load_config_file()` has side effects: it prints "config: {name}" and calls `record_loaded_config_path`. Calling it again at tool-build time would print a duplicate DIM line and re-record. That's a product-visible behaviour change for users with a config file. Bad.
+
+Is there a cached/stored config? Let me check `record_loaded_config_path` and whether there's a getter for the loaded config content. Let me look for something like `loaded_config()` or a OnceLock cache.
+
+Actually — better: check `parse_config_file` and whether the config content is cached anywhere. Let's grep.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "loaded_config\|LOADED_C… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No cached config content. So a global read of the config file at tool-build time would re-print the "config: .yoyo.toml" DIM line — a product-visible regression for every user with a config file. Not acceptable.
+
+So: the config value must be plumbed through the already-parsed `Config` → `AgentConfig`.
+
+That means `AgentConfig` gets a field (agent_builder.rs) and `main.rs` sets it from `cli_config::Config` (main.rs = 4th file), plus all 54 `AgentConfig {` literals need the field... 
+
+Hold on. Let me recount. How many are actual struct literals vs something else? grep "AgentConfig {" gives 54 but includes type annotations like `let config = AgentConfig {`. Let me count per-file non-test occurrences. 37 in agent_builder.rs is a LOT — mostly tests probably.
+
+This is the "ripple into many literal constructions" case the task warns about. Hmm.
+
+Wait — what about a different plumbing route that avoids AgentConfig entirely: a **process-global set once at startup from the parsed config**, exactly like `cli::set_effective_context_tokens` / `set_read_only_subagents` / `cli_config::set_architect_mode`. 
+
+Look: `cli.rs:2467`: `crate::commands_config::set_editor_model(Some(editor))` — a global setter called during arg parsing. And `cli_config.rs` has `set_architect_mode`, `set_read_mode`. 
+
+So the established pattern for exactly this: parse flag/config during `parse_args`, store in a static, read it where needed.
+
+But the task files are src/config.rs, src/agent_builder.rs, src/tools.rs. The setter would naturally live in cli.rs or commands_config.rs (4th file).
+
+Hmm, but wait: `src/config.rs` is where config-file parsing lives. I could put the static + setter there:
+
+- `src/config.rs`: 
+  - `SETTABLE_KEYS` entry for `sub_agent_model` (so `/config set` works).
+  - `pub fn parse_sub_agent_model(file_config: &HashMap<String,String>) -> Option<String>` — pure, table-tested (test #1).
+  - Who calls it? Hmm, needs a caller in the same edit.
+  
+Hmm, I need to see how `parse_args` uses file_config to build Config, and whether Config's construction is in cli_config.rs with `Default`. Let me check `cli_config::Config` — if it has `Default` and is built mostly via `..Default::default()` or a builder, adding a field is cheap!
+
+Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '185,215p' src/cli_config…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fallback_model" src/cli… ✓ (2ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`cli_config::Config` is constructed at ONE site: `src/cli.rs:2691`. And it's not in the task's three files.
+
+Hmm. `cli_config::Config` → `AgentConfig` field: I'd need:
+1. `src/cli_config.rs` — add field + set it at 2691. (file A)
+2. `src/main.rs` — `sub_agent_model: config.sub_agent_model`. (file B)
+3. `src/agent_builder.rs` — field on AgentConfig + 37 literal sites. (file C)
+4. `src/tools.rs` — use it. (file D)
+
+That's 4 files, plus a nasty ripple in agent_builder.rs's tests.
+
+BUT: what if I DON'T add a field to `AgentConfig` and instead pass the resolved child model as a **parameter** to `build_sub_agent_tool` and `build_explore_agent_tool`? Those are called from `agent_builder.rs` (`configure_agent` / `build_agent`). So:
+
+- agent_builder.rs: `build_sub_agent_tool(&self)` → the config value must be on `self`... still AgentConfig.
+
+Hmm.
+
+OK. Let me reconsider: what's the minimal correct design given a hard 3-file budget, and which 3 files?
+
+Honestly the natural minimal design is:
+1. **src/cli.rs** — parse `sub_agent_model` from `file_config` into `ModelConfig` → `Config`. (But not in the listed files.)
+2. **src/main.rs** — pass through.
+3. **src/agent_builder.rs** — field.
+4. **src/tools.rs** — use.
+
+The task's step 1 explicitly anticipates this: "If the child's model is set somewhere that cannot see a new config field without a fourth source file, stop and say so in the commit body — do not widen the diff past three files to force it."
+
+Hmm, but that instruction says to STOP and say so — implying the task might not be doable. But wait, let me re-read: "Write down where the child's model is actually set. If the child's model is set somewhere that cannot see a new config field without a fourth source file, stop and say so in the commit body — do not widen the diff past three files to force it."
+
+Hmm. But there might be a route that works: **`src/config.rs` can hold a process-global set during config load**, and the config-file load happens once in `cli.rs` via `load_config_file()`. If `src/config.rs`'s `parse_config_file` (or a sibling) stores the parsed `sub_agent_model` in a static inside config.rs, then... but `parse_config_file` is called from `load_config_file` only, and it's a pure parser used in tests too. Storing a global inside a pure parser is bad.
+
+Alternative within budget: **`src/config.rs` exposes the pure parse + a global store; `src/tools.rs` reads the global; and the store is populated from... `load_config_file()`?** That's called in cli.rs.
+
+Hmm, what if `load_config_file()` itself populates the static? That's the "existing default/parse path" the task hints at! `load_config_file()` is called once by `parse_args`. Adding a line there:
+
+```rust
+let map = parse_config_file(&content);
+record_sub_agent_model(&map);   // stores in a OnceLock
+return (map, content);
+```
+
+But `load_config_file` is called in 3 branches. Ugly but contained — and it's a 3-file-only design:
+- **src/config.rs**: static + `parse_sub_agent_model(&HashMap)` pure fn + set-at-load + `pub fn sub_agent_model()` getter.
+- **src/tools.rs**: resolve & use.
+- **src/agent_builder.rs**: ??? nothing needed. Then ARCHITECTURE.md/docs only.
+
+Hmm, but then agent_builder.rs isn't needed — task lists 3 files but doesn't require touching all.
+
+Hmm, but a global that's silently populated as a side effect of `load_config_file` is a "hidden coupling". Also: what if `load_config_file` is never called (no config file at all)? Then the default None is correct. What if tests call `load_config_file`? OnceLock::set — first wins, tests could interfere. Risky for test isolation.
+
+Better: use `Mutex<Option<String>>` and set unconditionally at each load (last wins), like `commands_config::set_editor_model`. Tests can set it explicitly. Hmm, but global mutable state in tests = races (the repo has `tests/global_state_races.rs`).
+
+Hmm hmm. Let me look at this from a different angle: what if the getter is at the point of use with NO global, by adding the field to `AgentConfig` but avoiding the 54-site ripple?
+
+Idea: `AgentConfig` doesn't have `Default`, but I could add `impl Default for AgentConfig` and change sites to `..Default::default()`. That's still touching 54 sites.
+
+Hmm, actually wait. Let me actually LOOK at how many of those 54 are in `#[cfg(test)]` blocks and how they're spelled. If most are in tests with explicit lists, adding a field means editing each. 54 edits is "wide" but mechanical... The task explicitly warns against it though.
+
+Let me reconsider ONE more time.
+
+**Key realization**: `sub_agent_model` doesn't need to be a field on `AgentConfig` at all if the resolution happens where `AgentConfig` is *built*. But `build_sub_agent_tool(config: &AgentConfig)` is called from agent_builder's `configure_agent`, and `config` there is `&self` = the AgentConfig.
+
+OK so `AgentConfig` is the carrier. Unless...
+
+**What about the process-global in `cli.rs`?** `cli.rs` already has process globals used exactly this way, and `cli.rs` already reads the config file into `file_config`. E.g. `is_read_only_subagents()`. Let me check how `--read-only-subagents` is stored — if it's a static in cli.rs set during parse_args, that's the exact precedent, and `tools.rs` reads it.
+
+But cli.rs is a 4th file (not in the budget list).
+
+Hmm, BUT: `src/config.rs` is in the budget and IS the config-file module. And there's a natural, side-effect-free place: **`Config`/`file_config` handling lives in config.rs**; a *pure* extraction function `sub_agent_model_from(&HashMap) -> Option<String>` in config.rs, called from cli.rs... 4th file again.
+
+Argh.
+
+Let me just check: is `src/cli.rs` maybe acceptable? The task says "Files: src/config.rs, src/agent_builder.rs, src/tools.rs" and "do not widen the diff past three files". I'll respect it.
+
+**Decision**: Global-store approach *inside config.rs*, populated at the one place config file content is parsed for real use. To avoid the "side effect of a pure parser" problem and OnceLock test fragility:
+
+Actually, here's a cleaner variant! `load_config_file()` returns `(HashMap<String,String>, String)`. What if I add a **second return value**? No, ripples.
+
+Hmm, what about: the global lives in `src/agent_builder.rs` (in budget!) as a `pub fn set_sub_agent_model(...)` / `pub fn sub_agent_model()`, populated by... nobody in budget. No.
+
+OK — what about making `AgentConfig` carry it via `Default` on the *one* field + `#[derive(Default)]`? No.
+
+Let me try yet another angle: **reduce the ripple by giving the new field a `Default` and using struct update syntax at construction sites**... still 54 edits.
+
+Hmm, WAIT. What about not touching AgentConfig at all, and instead having `build_sub_agent_tool` / `build_explore_agent_tool` take an extra `child_model: Option<&str>` param — and the caller is `configure_agent` in agent_builder.rs where `self` is AgentConfig... same problem.
+
+OK, let me look at this from the "what does the repo do for `--editor-model`" angle more closely: `set_editor_model` is a global in commands_config.rs, set from cli.rs during arg parsing. `default_editor_model(current_model)` reads it. That is EXACTLY the pattern needed. The only issue is which file holds the static.
+
+Given the budget, put the static in **`src/agent_builder.rs`** (in budget) — semantically fine, since agent_builder is where agents/models are configured. Setter called from... cli.rs. Nope, 4th file.
+
+Alternatively the static in `src/config.rs` and set from `load_config_file()`. 3 files exactly: config.rs (+key registration, +pure parse, +store, +getter), tools.rs (+resolve, +label), agent_builder.rs (optional).
+
+Hmm, is there truly no way for the value to be stored without cli.rs?
+
+Actually! **`SETTABLE_KEYS` + `/config set`** is in config.rs. And a user could set it via the config file. The *read* happens via `load_config_file()` → `parse_config_file()` → returns HashMap. `parse_config_file` is pure and unit-tested.
+
+If I store the global inside `parse_config_file`, tests that call it would mutate global state → races. But if I store it as `Mutex<Option<String>>` with last-write-wins, a parallel test calling `parse_config_file` with a config lacking the key would reset it to None → flaky. Bad.
+
+If I store inside `load_config_file` (which tests generally don't call; it touches the filesystem/cwd), that's safer. But it has 3 return branches.
+
+Hmm, alternatively: **have `src/config.rs` expose `pub fn sub_agent_model_from_config_file() -> Option<String>` that reads the file directly**, and accept the duplicate DIM line problem... no, that's a product regression.
+
+Hmm, actually wait. Let me re-examine: is the DIM "config: .yoyo.toml" line printed by `load_config_file` gated on `is_quiet()`? Yes: `if !is_quiet() { eprintln!("{DIM}  config: {name}{RESET}"); }`. So for normal users it WOULD print again. Definitely a regression.
+
+OK, let me just go and check whether there's an existing **cached** config map somewhere — e.g. `cli_config` or a `OnceLock<HashMap>`. Let me grep for OnceLock in config.rs / cli.rs.
+
+Actually — hold on! Let me reconsider the problem completely. 
+
+What if the resolution doesn't need the config at all in tools.rs, because **`AgentConfig` can carry the field and I add it only where it's *needed*** — i.e., use `#[non_exhaustive]`? No.
+
+**Alternative: `AgentConfig` gets the field, and I add `impl Default for AgentConfig` + a builder-ish `..Default::default()` at the ~54 sites.** Too wide.
+
+Hmm OK, let me actually count the real (non-test) sites precisely. If it's, say, 8 non-test sites, maybe... but the file budget also matters (main.rs, cli_config.rs).
+
+Let me look at it from the "author's intent" angle once more. The task says:
+
+"**Step 2 — the config field.** Add `sub_agent_model: Option<String>`, absent by default, parsed from the same file/keyset as `model` and `thinking`. If `Config`'s field addition would ripple into many literal constructions, prefer the struct's existing default/parse path over editing each site; the budget is three source files and that budget is the task."
+
+"`Config`" here — capital C — likely means `cli_config::Config` (the parsed CLI configuration). Hmm, or `AgentConfig`. "the same file/keyset as `model` and `thinking`" — `SETTABLE_KEYS` in config.rs, and `file_config.get("model")` in cli.rs.
+
+"prefer the struct's existing default/parse path over editing each site" — suggests using a `Default` impl / `from` function.
+
+Hmm — is there a `Config::default()` for cli_config::Config? Let me check. And how is it constructed at cli.rs:2691 — maybe with `..Default::default()`? If cli_config::Config has Default and the single construction site uses it, adding a field costs 2 lines in cli_config.rs + 1 in cli.rs... still 4 files with main.rs.
+
+I think the pragmatic, honest answer: **the value can reach the child without touching main.rs or cli_config.rs if `AgentConfig` gains the field AND `main.rs` sets it** — no.
+
+FINAL alternative that fits 3 files precisely and is genuinely clean:
+
+**Put the resolution in `src/agent_builder.rs` inside `AgentConfig::build_agent`**... no, resolution is in tools.rs.
+
+Hmm, what about: `AgentConfig` gains the field with a `Default`-provided value... 
+
+OK, actually, hold on. What about **not adding a field, and instead reading the value from a process-global that `src/config.rs` populates at the point where config values are already loaded into a global**? Is there such a place? `cli::set_effective_context_tokens` — in cli.rs.
+
+Let me look for any existing global holding config-file-derived values that tools.rs reads. `crate::cli::is_read_only_subagents()` — set from a flag. `crate::config::loaded_config_is_project_local()` — reads LOADED_CONFIG_PATH OnceLock in config.rs.
+
+Hmm! There it is: **`src/config.rs` already keeps a process-global populated by `load_config_file()`: `LOADED_CONFIG_PATH`.** So extending config.rs with a parallel global populated at the same three return sites is *exactly* the module's existing, established design — not a novel hack. And `record_loaded_config_path` is a private helper called at each of the 3 sites; I can add `record_sub_agent_model(&map)` next to it.
+
+That's defensible and precedented. Design:
+
+**src/config.rs**
+- `SETTABLE_KEYS` += `("sub_agent_model", "model for sub-agent dispatches (empty = same as the session model)")`.
+- `validate_config_value`: add `"sub_agent_model"` to the `"model" | "provider"` empty-reject arm? Careful: for `sub_agent_model`, empty should mean "unset" (fall back to parent). Let me check how `set_toml_key`/empty is handled — there's `cost_warn_usd` "(empty = disabled)". Let me check how that's validated. Probably needs a dedicated arm allowing empty.
+
+Hmm, this is getting big. Let me check the size/scope. Maybe simpler: don't add to SETTABLE_KEYS at all — the key is read directly from the config file map, which accepts arbitrary keys. But then `/config set sub_agent_model X` fails and `/config show` doesn't display it. The task says "parsed from the same file/keyset as `model` and `thinking`" — `thinking` IS in SETTABLE_KEYS. So add it.
+
+Hmm, wait. Let me check whether SETTABLE_KEYS gates *parsing* of the file or only `/config set`. `parse_config_file` — let me read it (line 1944).
+
+Let me read parse_config_file and validate_config_value's remaining arms + how empty values are handled.
+
+Let me be decisive and gather the last facts I need, then write code.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.3s (2 ✓)
+
+Discovery is mostly done. Let me gather the last few facts I need, then write code.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1936,1980p' src/config.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2085,2110p' src/config.r… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now, the decisive realization: **`crate::cli` already has `set_read_only_subagents`-style process globals set from parsed flags.** And `src/config.rs`'s `load_config_file()` is where the file_config HashMap is created.
+
+Let me now check: in `cli.rs`'s `parse_args` (line 2691, building `Config`), `file_config` is in scope. But cli.rs isn't in budget.
+
+**KEY INSIGHT I should check**: does `src/config.rs` have the `SETTABLE_KEYS` + `validate_config_value` only for `/config set`, or is there a *parse path* used at startup that filters keys? `parse_config_file` accepts ALL keys into the map (no allowlist). So `sub_agent_model` in .yoyo.toml is already available in `file_config` — I just need a consumer.
+
+So the actual minimal plumbing: **`load_config_file()` in `src/config.rs` stores the parsed `sub_agent_model` into a module-level static; `src/tools.rs` reads it.** Both in budget. Plus `SETTABLE_KEYS` so it's discoverable/settable.
+
+That's 2 files touched. That's *narrower* than 3, which is fine.
+
+Wait — but is the static populated in the tests' environment? For test #2/#3 I'd write tests that set the static directly via a `set_sub_agent_model_for_test`? No — better: make the *resolution* pure and testable, and the static read be the thin wrapper.
+
+But test #3 says "assert on the string a caller actually receives, never on an intermediate value". Hmm.
+
+Alternative that gives real emission-point testability AND no global: **store the value in `AgentConfig`** — no, ripple.
+
+Hmm, hold on. Let me reconsider once more, because there IS a clean place in the budget:
+
+`src/agent_builder.rs` — `AgentConfig` — I could add a field with a **`Default` derive on a newtype**… no, literal sites.
+
+OK what about: `AgentConfig` gains the field, but I use `..AgentConfig::default()`… no Default.
+
+Alright, hmm, what about this: does `AgentConfig` really have 37 literal sites, or does my grep `AgentConfig {` also match e.g. `crate::AgentConfig {`? Let me actually count in agent_builder.rs and see how many are in tests.
+
+If the count is dominated by ~30 test helpers, maybe there's a test-only helper `test_config()`. Let me check.
+
+Let me just look at the list.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.2s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AgentConfig {" src/agen… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So in agent_builder.rs: only `1531` (`let editor_config = AgentConfig {` in build_editor_agent, non-test) is a production literal. All the rest (1735–4026) are in `#[cfg(test)]`. But they still must be updated (or use `..Default::default()`).
+
+Total literal sites across files: 54 minus non-literals. Let's count: agent_builder 35 test + 1 prod; tools.rs 2 (test); main_tests 2; main.rs 1; commands.rs 3; commands_spawn.rs 8; dispatch_sub.rs 1. So ~53 sites, 49 of them tests.
+
+That's a big mechanical edit. Not fun, and it also requires cli_config.rs + cli.rs + main.rs = 5 files.
+
+**So: the global-store-in-config.rs route it is.** Let me nail down the design to be clean and honest, and give it strong tests.
+
+Actually hold on, hold on. Let me reconsider ONE more time, because there's a much simpler idea I keep missing:
+
+**`src/agent_builder.rs` has `AgentConfig`. What if the child model override is set on `AgentConfig` from *within* `agent_builder.rs`'s `build_agent()` — by reading the config file there?** Same global-read problem (DIM line).
+
+Unless... `loaded_config_is_project_local()` reads `LOADED_CONFIG_PATH` — populated during `parse_args`. So `load_config_file()` HAS already run by the time any agent is built. So I can add a static in config.rs populated inside `load_config_file()` — no extra file read, no extra output line, one config load per process. 
+
+Now, testability. Design:
+
+```rust
+// src/config.rs
+
+/// The configured `sub_agent_model`, or `None` when unset/empty.
+///
+/// Populated once, in `load_config_file`, ...
+static SUB_AGENT_MODEL: OnceLock<Option<String>> = OnceLock::new();
+
+fn record_sub_agent_model(map: &HashMap<String, String>) {
+    let _ = SUB_AGENT_MODEL.set(parse_sub_agent_model(map));
+}
+
+pub fn sub_agent_model() -> Option<String> { SUB_AGENT_MODEL.get().cloned().flatten() }
+
+/// Pure: extract `sub_agent_model` from a parsed config map.
+pub fn parse_sub_agent_model(map: &HashMap<String, String>) -> Option<String> { ... }
+```
+
+Hmm, `load_config_file` returns early in 3 branches + a final empty. I'd need `record_sub_agent_model` at each. Actually, I can restructure minimally: each branch does `let map = parse_config_file(&content); record_sub_agent_model(&map); return (map, content);` — 3 small edits. Plus the "no config found" path returns `(HashMap::new(), String::new())` — the OnceLock stays unset → `sub_agent_model()` returns None. Good.
+
+Hmm, wait: but `load_config_file()` may be called more than once? OnceLock::set second call fails silently — fine (idempotent, same file). But if cwd changes (`/cd`), the config could change; OnceLock would keep the old value. Hmm — actually that's a real concern: `/cd` re-loads config? Let me not over-think. Actually to be safe and match `set_editor_model`'s mutate-able global pattern, use `Mutex<Option<Option<String>>>`... ugly.
+
+Hmm, simpler: use `RwLock<Option<String>>` with last-write-wins. Then `/cd` re-loading gives the new value. But test races: any test calling `load_config_file` mutates global. Tests are discouraged from calling it (filesystem). Let me check if any test calls load_config_file.
+
+Hmm, honestly: I'm now worried this design is getting complicated and hard to test at the emission point.
+
+**Let me step back and reconsider the AgentConfig field once more, but with a much smaller ripple.**
+
+Idea: add the field to `AgentConfig` and add `impl Default for AgentConfig`. Then update the ~50 literal sites? No.
+
+Idea 2: **Don't add a field to `AgentConfig`. Add a parameter to `build_sub_agent_tool` and `build_explore_agent_tool`** — signature change: `build_sub_agent_tool(config: &AgentConfig, child_model: Option<&str>)`. Callers: `src/agent_builder.rs::configure_agent` (in budget!) — it can pass `crate::config::sub_agent_model().as_deref()`.
+
+That centralizes the config read in agent_builder.rs (in budget), keeps tools.rs's resolution pure and parameterized (great testability!), and touches only config.rs + agent_builder.rs + tools.rs.
+
+But wait, `build_sub_agent_tool_at_depth` recurses, and `build_explore_agent_tool` also calls dispatch. So I'd thread `child_model: Option<&str>` through:
+- `build_sub_agent_tool(config, child_model)` → `build_sub_agent_tool_at_depth(config, depth, shared_state, child_model)` → `dispatch_tool_with_fallback(config, flavor, child_tools, shared_state, child_model)`.
+- `build_explore_agent_tool(config, child_model)` → `dispatch_tool_with_fallback(...)`.
+
+Then the resolution (pure, testable):
+```rust
+pub(crate) fn effective_child_model(parent_model: &str, configured: Option<&str>) -> String {
+    configured.map(str::trim).filter(|m| !m.is_empty()).unwrap_or(parent_model).to_string()
+}
+```
+called once inside `dispatch_tool_with_fallback` → single policy for both doors. 
+
+And for the emission-point test: `dispatch_tool_with_fallback` returns a `Box<dyn AgentTool>` — the label is inside `DiagnosticSubAgentTool`. Can a test read the label back? Let me check `DiagnosticSubAgentTool` — does it expose the label? If I can call `.name()` only, no.
+
+Hmm. For test #3 to be an emission-point test, I need to observe the label string. Options:
+(a) Have `dispatch_tool_with_fallback` also return the label (e.g. `(Box<dyn AgentTool>, String)`) — a small, honest widening: the label is computed there, and returning it lets the caller assert on it. But it changes the function's contract; tools.rs is in budget. Actually the callers just drop it. Hmm, clippy might complain about unused? No, `let (tool, _label) = ...`.
+
+Actually cleaner: extract the label computation into a tiny pure function used at the emission point:
+
+```rust
+pub(crate) fn child_model_label(parent_model: &str, configured: Option<&str>, fallback: Option<&str>) -> String {
+    sub_agent_model_label(&effective_child_model(parent_model, configured), fallback)
+}
+```
+and at the emission point: `DiagnosticSubAgentTool::new(inner, child_model_label(&config.model, child_model, fallback...))`.
+
+Then the test asserts `child_model_label(...)` == exact expected string, which IS the string the tool receives. That's a legitimate emission-point test in this repo's idiom (the tool_wrappers tests assert `sub_agent_model_label(...)` output directly, calling that "the emission point" — see the test names "the label, both shapes" and "the decorator, at the emission point" separately).
+
+Hmm, and the description says: "**Emission-point test:** with the key set, the rendered `sub_agent_model_label` output names the configured model — assert on the string a caller actually receives". So asserting on `sub_agent_model_label`'s rendered output IS what they want! Good. So:
+
+- Test 3: `assert_eq!(sub_agent_model_label(&effective_child_model(parent, Some(cfg)), None), "`cfg-model`")` — hmm, that's two steps. Better to assert the composed label via the actual emission expression.
+
+I think the cleanest is to make the label composition a named function so it can be asserted whole:
+
+Actually — simplest honest approach: in `dispatch_tool_with_fallback`:
+```rust
+let child_model = effective_child_model(&config.model, child_model_override);
+...
+DiagnosticSubAgentTool::new(inner, sub_agent_model_label(&child_model, fallback.as_ref().map(|(_, m, _)| m.as_str())))
+```
+and the test asserts:
+```rust
+assert_eq!(
+    sub_agent_model_label(&effective_child_model("parent-model", Some("cheap-model")), None),
+    "`cheap-model`"
+);
+```
+That composes exactly the same two calls in the same order as the emission point. That's acceptable but slightly weaker than a single named seam.
+
+Better: introduce `pub(crate) fn child_dispatch_model_label(parent_model: &str, override_model: Option<&str>, fallback_model: Option<&str>) -> String` — the ONE expression the emission point uses. Test asserts whole string with assert_eq!. Good — a real seam, anti-vacuous with differing ids.
+
+Hmm, but is that over-abstraction? It's one small function replacing one expression. I think it's justified and it makes the emission test honest. Actually, hmm, wait: the primary/secondary models for the fallback tool also need updating? `FallbackSubAgentTool::new(Box::new(primary), Box::new(secondary), &config.model, fb_model)` — the first model arg is `primary_model` used for `fallback_switch_note`. Since primary is now built with `child_model`, the note should say the child's model. So pass `&child_model`. Its doc says "the model label the failure report names". Let me check its signature/use.
+
+Let me check `FallbackSubAgentTool::new(primary, secondary, primary_model, fallback_model)`.
+
+So changes in dispatch_tool_with_fallback:
+```rust
+let child_model = effective_child_model(&config.model, child_model_override);
+// primary built with &child_model
+let primary = sub_agent_tool_for(config, &config.provider, &child_model, &config.api_key, ...);
+```
+Fallback target: `sub_agent_fallback_target(&config.provider, &config.model, ...)` — this decides a fallback exists if fallback_model differs from the primary. With an override, "differs" should compare against the child model. Hmm — if a user sets `sub_agent_model = "haiku"` and `fallback = "openai"` (default gpt-4o), child primary is haiku and fallback gpt-4o — fine either way. If fallback_provider resolves to the same model as child_model, the fallback is pointless but harmless except `FallbackSubAgentTool` would try a switch to the same model. Edge case. Minimal change: pass `&child_model` as the "primary_model" to `sub_agent_fallback_target` too — that's more correct. But careful: `sub_agent_fallback_target`'s doc/near-miss tests assert its behaviour with explicit args (pure fn, tests pass explicit values) — changing the *call site* arg doesn't break its tests. Let me check the near-miss: `sub_agent_fallback_target("anthropic","claude-opus-5", None, Some("claude-opus-5"))` → None. Fine, pure.
+
+Hmm, but the fallback *provider* is `fallback_provider` (a separate config key) — unaffected.
+
+OK. But hold on: is `child_model_override` threaded as a parameter, or read from the global inside dispatch? I decided: parameter, resolved from the global in agent_builder.rs's configure_agent.
+
+Hmm, but then `build_sub_agent_tool(config)` is called from where? Let me check all callers of build_sub_agent_tool / build_explore_agent_tool.
+
+Let me grep.
+
+Also — very important: is `AgentConfig` the only config? `rebuild_preserving_messages` etc. Let me check the call sites.
+
+Let me also double-check: does `configure_agent` build the sub-agent tools? Earlier at line ~1140-1200 I saw `let mut tools = build_tools_with_hooks(...)`. Let me read that region fully.
+
+Time check: I've used a lot. Let me move fast and decisively.
+
+Plan (final):
+1. `src/config.rs`: add pure `parse_sub_agent_model(&HashMap) -> Option<String>`, a process-global store + `sub_agent_model()` getter, populate it in `load_config_file()`, and register the key in `SETTABLE_KEYS` + `validate_config_value` (allow empty = unset).
+
+Hmm wait. Actually... hmm, does `load_config_file` get called before or after AgentConfig is built? `parse_args` calls it → main.rs builds AgentConfig after parse_args. Yes.
+
+But testability again: `sub_agent_model()` from a OnceLock is untestable without process-global mutation. My tests will target `parse_sub_agent_model` (pure) + `effective_child_model` (pure) + `child_dispatch_model_label` (pure, the emission expression). The global is a thin read. That satisfies tests 1–3 as specified:
+- Test 1: config parse → `parse_sub_agent_model` table-tested (absent → None, present → Some, empty/whitespace → None).
+- Test 2: near-miss — `child_dispatch_model_label("parent", None, None)` == "`parent`" (whole-string assert_eq!).
+- Test 3: `child_dispatch_model_label("parent", Some("cheap"), None)` == "`cheap`" + anti-vacuous assert that ids differ.
+
+Hmm, but that leaves the *plumbing* (config.rs global → agent_builder → tools) untested end-to-end. The repo's discipline would want at least a source-level guard that both doors pass it. I can add:
+- A source-level guard test asserting both `build_sub_agent_tool_at_depth` and `build_explore_agent_tool` route through `dispatch_tool_with_fallback` with the child model (like the existing `every_rebuild_arm_resets_the_counter_it_invalidated` weak guard). Plus the existing test `build_explore_agent_tool_folds_the_read_only_list_rather_than_re_spelling_it`.
+
+Also I could add a test that `build_sub_agent_tool` with an override produces a tool whose... hmm, can't read label.
+
+OK. Alternatively — make it even simpler and MORE testable: put the override INSIDE `AgentConfig`? NO. Stop. Go.
+
+Hmm, actually wait. Let me reconsider the global-vs-parameter one final time, because there's a subtlety: `sub_agent_model` as a process global in config.rs is read in agent_builder.rs and passed down as a parameter. That's fine. But `/config set sub_agent_model X` mid-session wouldn't update the global (it writes the file). Acceptable — same as `model`.
+
+Alright. But hmm — one more consideration. Is `load_config_file()` really the only place the config file is read? Let me confirm `parse_args` uses it.
+
+Let me check cli.rs 2116-2130 (`parse_args_with_config`).
+
+Let me gather: callers of build_sub_agent_tool/build_explore_agent_tool, parse_args_with_config, and FallbackSubAgentTool::new signature. Then write.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== callers ===" && grep -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "impl FallbackSubAgentTo… ✓ (2ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Two important discoveries:
+
+1. `load_config_file()` is called in MANY places: `dispatch_sub.rs` (x3?), `cli.rs:2093`, `main.rs:703`, `repl.rs:973`. So a global populated in `load_config_file` would be set from various places — but with the same value (it reads the same file). OnceLock/Mutex last-writer-wins is fine, BUT `main.rs:703` and `repl.rs:973` call it too. Hmm, they'd each print the DIM line too... wait, they already do! So `load_config_file` is already called multiple times per session and already prints multiple DIM lines? Let me check main.rs:703 — it's in `piped_file_config`, probably a guarded branch.
+
+Hmm, this makes the global-in-load_config_file approach messier: `/cd` or sub processes. But it's not wrong.
+
+2. `build_sub_agent_tool(&config)` is called from `agent_builder.rs:1185` and `build_explore_agent_tool(self, &shared_state)` at 1236 — both with `self: &AgentConfig`. So threading a `child_model: Option<&str>` param means editing those 2 call sites (+ tools.rs internal recursion) and ~28 test call sites in tools.rs! `build_sub_agent_tool(&config)` appears ~25 times in tools.rs tests. Ouch — that's a big ripple too, though all within tools.rs (in budget).
+
+Hmm. Better: keep `build_sub_agent_tool(config)` signature unchanged and read the override **inside** `dispatch_tool_with_fallback` (or inside `build_sub_agent_tool_at_depth` / `build_explore_agent_tool`... no, inside the shared funnel). Then no test call sites change, no agent_builder signature change. Only:
+- config.rs: global + getter + pure parse + keyset/validate.
+- tools.rs: resolve + use + tests.
+
+**agent_builder.rs isn't touched at all.** Only 2 files! That's the narrowest possible.
+
+But then testability of the global: tests in tools.rs would need to set the global. Risky for races (there's `tests/global_state_races.rs`). Hmm. But I can expose `config::set_sub_agent_model_for_tests`? Ugly.
+
+Alternative for testability: expose in config.rs a function that returns the *resolved, effective* child model given the parent's:
+
+Hmm, no — keep it pure:
+
+```rust
+// config.rs
+pub fn parse_sub_agent_model(map: &HashMap<String,String>) -> Option<String>   // pure, test 1
+pub fn sub_agent_model() -> Option<String>                                      // global read, populated at load
+```
+```rust
+// tools.rs
+pub(crate) fn effective_child_model(parent_model: &str, override_model: Option<&str>) -> String  // pure, tests 2 & 3
+```
+and at the emission point:
+```rust
+let child_model = effective_child_model(&config.model, crate::config::sub_agent_model().as_deref());
+...
+DiagnosticSubAgentTool::new(inner, sub_agent_model_label(&child_model, fallback...))
+```
+
+Test 2 (near-miss, whole-string assert_eq!): `assert_eq!(effective_child_model("claude-opus-5", None), "claude-opus-5")`.
+Test 3 (emission point): assert the rendered label:
+```rust
+let child = effective_child_model("claude-opus-5", Some("claude-haiku-35"));
+assert_ne!(child, "claude-opus-5"); // anti-vacuous
+assert_eq!(sub_agent_model_label(&child, None), "`claude-haiku-35`");
+```
+Hmm — that's "the string a caller actually receives" for the DiagnosticSubAgentTool, composed exactly as at the emission point. I'd rather have a single named seam. Let me add:
+
+```rust
+/// The label `DiagnosticSubAgentTool` is constructed with — the exact string a
+/// parent agent sees when a dispatch fails. One expression, so the emission
+/// point and its test cannot drift.
+pub(crate) fn child_dispatch_model_label(
+    parent_model: &str,
+    override_model: Option<&str>,
+    fallback_model: Option<&str>,
+) -> String {
+    sub_agent_model_label(&effective_child_model(parent_model, override_model), fallback_model)
+}
+```
+Emission point calls `child_dispatch_model_label(&config.model, override.as_deref(), fallback.as_ref().map(...))`. Test asserts whole string with assert_eq!.
+
+Hmm, is `child_dispatch_model_label` adding a definition without a consumer? No — used at the emission point + tests.
+
+Now the *plumbing* global read: `crate::config::sub_agent_model()`. To make the end-to-end path testable without global mutation, I could instead make the read happen... hmm.
+
+Actually, you know what — there's a MUCH better place to read the global that makes everything nice: read it ONCE in `build_tools_with_hooks`? No.
+
+Hmm, let me think about whether the global read could be avoided by... 
+
+OK actually, let me reconsider: what if I read the global in `agent_builder.rs` (`configure_agent`) — which is IN the task's file list — and pass it down via a *closure/param*? The ripple problem was test call sites of `build_sub_agent_tool`. But I could avoid widening those by instead storing the resolved child model in... a field on AgentConfig. Circular.
+
+Alternatively pass it as a parameter but give `build_sub_agent_tool` a default: e.g. `build_sub_agent_tool(config)` kept as a thin wrapper that reads the global, and `build_sub_agent_tool_with_model(config, child_model)` for the explicit path. Then existing test call sites are unchanged:
+
+```rust
+pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (Box<dyn AgentTool>, SharedState) {
+    let child_model = crate::config::sub_agent_model();
+    build_sub_agent_tool_with_model(config, child_model.as_deref())
+}
+```
+Hmm, that's two functions and a global anyway.
+
+**Decision: read the global once inside `dispatch_tool_with_fallback`** — the single funnel both doors pass through. That is literally "resolve once, use at BOTH doors". Two files touched (config.rs, tools.rs) + docs.
+
+Wait, but task says files: src/config.rs, src/agent_builder.rs, src/tools.rs. Touching only 2 is fine ("do not widen past three").
+
+Hmm, hold on. But is reading a process global inside `dispatch_tool_with_fallback` good product design? It's a hidden dependency. The repo does this a lot though (`is_read_only_subagents()` right there in `build_sub_agent_tool_at_depth`). And it keeps the diff narrow. Also `/config show` and `--help` won't mention a flag (task doesn't ask for a CLI flag; only the .yoyo.toml key).
+
+Hmm, but actually — hmm. Let me reconsider ONE thing: is there a real risk the global isn't populated when tools are built? `load_config_file()` is called at cli.rs:2093 inside `parse_args`, which runs before `main.rs` builds AgentConfig. Wait — is 2093 inside parse_args? Let me verify: parse_args at 2072, parse_args_with_config at 2116, and 2093 is between → yes, inside parse_args. 
+
+Also tests: tools.rs tests build tools directly without parse_args → global unset → None → parent model. Exactly the near-miss case. 
+
+Now: where else does `load_config_file` get called (dispatch_sub.rs:798, main.rs:703, repl.rs:973)? Those are later; setting the OnceLock again with the same value is a no-op. I'll use `OnceLock<Option<String>>` — first write wins. Is that OK? parse_args's call is the first in any process. Hmm, except in tests. Let me use a `Mutex<Option<Option<String>>>`-free approach:
+
+Use `std::sync::OnceLock<Option<String>>` and set it in `load_config_file`. First call wins — which is `parse_args`'s. Fine and deterministic. Actually careful: `dispatch_sub.rs:225` etc. might run in tests. Fine — value would be whatever; tests don't assert on the global.
+
+Hmm, one risk: `tests/global_state_races.rs` runs tests in parallel within a process. If some test calls `load_config_file` (in cwd = repo root, which has `.yoyo.toml`!) it would set the global to whatever `.yoyo.toml` says. Let me check: does `.yoyo.toml` in this repo have `sub_agent_model`? No (I control that — I won't add it). So global → None. Safe.
+
+But a user's project could have it; and tests calling `load_config_file` in the repo root would read the repo's `.yoyo.toml` → None. Safe.
+
+However: if a test sets cwd to a temp dir with a config containing sub_agent_model... then a parallel test could see it. Currently no test does that (the key is new). I'll note the limit in a doc comment.
+
+Hmm, hmm. Actually — wait. There's a subtle correctness problem with populating in `load_config_file`: the config file loaded could be from a *different* cwd later (main.rs:703 piped file config, repl:973 after `/cd`). OnceLock keeps the first. Acceptable? The first is parse_args → startup config. `/cd` changing sub_agent_model mid-session is an edge case; the doc will say the value is the one loaded at startup. That's honest and matches how `model` itself behaves (also fixed at startup).
+
+Good. Let me now also handle `SETTABLE_KEYS` + `validate_config_value` so `/config set sub_agent_model <id>` works and `/config show` lists it. Need to allow empty (to clear). Let me check how `cost_warn_usd` (empty = disabled) is validated.
+
+Let me look at the rest of validate_config_value.
+
+Also: module-size gate. config.rs 4459 lines, tools.rs 4899, agent_builder.rs 4347. Adding ~60 lines to config.rs might trip the gate. Let me check `tests/module_size.rs` for the register and the caps.
+
+Let me gather these two things now.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.3s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1500,1570p' src/config.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "config.rs\|tools.rs\|ag… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Register drift grace = 100 lines, and I must paste the register line **from what the gate printed**.
+
+Now let me write the code. Plan:
+
+### src/config.rs
+1. Add `sub_agent_model` to `SETTABLE_KEYS`.
+2. `validate_config_value`: add arm — `"sub_agent_model"` → empty/whitespace clears (Ok(String::new())), otherwise non-empty trimmed value. Actually reuse the "model"|"provider" arm? That rejects empty. Better a dedicated arm allowing empty.
+3. Add pure `parse_sub_agent_model(map) -> Option<String>`.
+4. Add global `SUB_AGENT_MODEL: OnceLock<Option<String>>` + `sub_agent_model()` getter + `record_sub_agent_model(map)` called from `load_config_file`.
+
+### src/tools.rs
+5. `effective_child_model(parent, override) -> String` (pure).
+6. `child_dispatch_model_label(parent, override, fallback) -> String` (pure, the emission expression).
+7. In `dispatch_tool_with_fallback`: resolve `override_model`, compute `child_model`, use for primary build, fallback target comparison, FallbackSubAgentTool primary_model, and the label.
+
+Wait — careful about the fallback *secondary* model: if sub_agent_model is set and a fallback model is configured, the fallback attempt uses `fb_model`. Fine.
+
+Hmm, one question: should the sub_agent_model override apply to the fallback secondary too? No — the fallback model is explicitly configured. Keep it.
+
+Let me write it.
+
+Also need tests in tools.rs (tests 2 & 3) and config.rs (test 1).
+
+Let me check the tests module in tools.rs around 1900 and 4577 for style, and the config.rs tests module.
+
+Let me now write the config.rs changes.
+
+First read the exact regions I'll edit.
+
+For `load_config_file`, I need to add `record_sub_agent_model(&map)` at 3 places. Let me restructure minimally:
+
+```rust
+        if let Ok(content) = std::fs::read_to_string(name) {
+            if !is_quiet() {
+                eprintln!("{DIM}  config: {name}{RESET}");
+            }
+            record_loaded_config_path(std::path::PathBuf::from(name));
+            return (parse_config_file(&content), content);
+        }
+```
+→
+```rust
+            let map = parse_config_file(&content);
+            record_loaded_config_path(std::path::PathBuf::from(name));
+            record_sub_agent_model(&map);
+            return (map, content);
+```
+
+Do that 3 times. And the final fallback returns empty map → global stays unset → None. Good.
+
+Hmm, is `record_sub_agent_model` a "definition without consumer" risk? It's used. `parse_sub_agent_model` used by record + tests. `sub_agent_model()` used by tools.rs. Good.
+
+Let me check the tail of load_config_file to see the no-config branch.
+
+Let me get exact text of the three branches.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.9s (2 ✓)
+
+Now I have the full picture. Let me write the code, starting with src/config.rs.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1975,2030p' src/config.r… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's write. First, the three `load_config_file` branches.
+
+I'll write the edits.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (4 → 6 lines)
+                record_loaded_config_path(std::path::PathBuf::from(name));
+  -             return (parse_config_file(&content), content);
+  +             let map = parse_config_file(&content);
+  +             record_sub_agent_model(&map);
+  +             return (map, content);
+            }
+        }
+ ✓ (13.3s)
+                record_loaded_config_path(std::path::PathBuf::from(name));
+  -             return (parse_config_file(&content), content);
+  +             let map = parse_config_file(&content);
+  +             record_sub_agent_model(&map);
+  +             return (map, content);
+            }
+        }
+
+── Thinking ────────────────────────────────────────────────────────────────
+Expected. Continue with the other two branches, then define the function.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (5 → 7 lines)
+                record_loaded_config_path(path);
+  -             return (parse_config_file(&content), content);
+  +             let map = parse_config_file(&content);
+  +             record_sub_agent_model(&map);
+  +             return (map, content);
+            }
+        }
+        // Check user-level config (XDG)
+ ✓ (12.9s)
+                record_loaded_config_path(path);
+  -             return (parse_config_file(&content), content);
+  +             let map = parse_config_file(&content);
+  +             record_sub_agent_model(&map);
+  +             return (map, content);
+            }
+        }
+        // Check user-level config (XDG)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (6 → 8 lines)
+                record_loaded_config_path(path);
+  -             return (parse_config_file(&content), content);
+  +             let map = parse_config_file(&content);
+  +             record_sub_agent_model(&map);
+  +             return (map, content);
+            }
+        }
+        (HashMap::new(), String::new())
+ ✓ (12.6s)
+                record_loaded_config_path(path);
+  -             return (parse_config_file(&content), content);
+  +             let map = parse_config_file(&content);
+  +             record_sub_agent_model(&map);
+  +             return (map, content);
+            }
+        }
+        (HashMap::new(), String::new())
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me continue: I need to add the store + `record_sub_agent_model` + parse helper + `effective_sub_agent_model` to config.rs. Let me do it now in one write.
+
+Let me check current state first briefly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1979,2015p' src/config.r… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now add the store, recorder, parse helper, resolver, and tests. Insert right before `pub fn load_config_file()`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (1 → 101 lines)
+  + // ---------------------------------------------------------------------------
+  + // `sub_agent_model` — opt-in cost routing for dispatched child agents
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Parse `sub_agent_model` out of an already-parsed config map.
+  + ///
+  + /// Absent, empty, or whitespace-only yields `None` — the same tri-state
+  + /// collapse `--model` uses (`cli.rs`'s `.filter(|s| !s.is_empty())`), so
+  + /// `sub_agent_model = ""` reads as "not set" rather than as "set to an empty
+  + /// model id", which would be a 404 dressed as a configuration.
+  + pub fn parse_sub_agent_model(map: &HashMap<String, String>) -> Option<String> {
+  +     map.get("sub_agent_model")
+  +         .map(|s| s.trim().to_string())
+  +         .filter(|s| !s.is_empty())
+  + }
+  + 
+  + /// The `sub_agent_model` the session's config file declared, recorded at load
+  + /// time because the config map itself is dropped before any tool is built.
+  + ///
+  + /// **Superseded claim, recorded rather than erased:** this feature was first
+  ... (81 more lines)
+ ✓ (13.9s)
+  + // ---------------------------------------------------------------------------
+  + // `sub_agent_model` — opt-in cost routing for dispatched child agents
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Parse `sub_agent_model` out of an already-parsed config map.
+  + ///
+  + /// Absent, empty, or whitespace-only yields `None` — the same tri-state
+  + /// collapse `--model` uses (`cli.rs`'s `.filter(|s| !s.is_empty())`), so
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — compiles except the expected dead-code (consumer lands next, in tools.rs). Now edit src/tools.rs.
+
+Two edits:
+1. `dispatch_tool_with_fallback`: resolve `let child_model = crate::config::effective_sub_agent_model(&config.model);` and use it in the primary build + both label args.
+2. In the fallback block, `FallbackSubAgentTool::new(..., &child_model, fb_model)`.
+
+Wait — careful about the ordering/borrow: `child_tools.clone()` then `child_tools` moved. Fine.
+
+Also `sub_agent_fallback_target(&config.provider, &config.model, ...)` — should the second arg become `&child_model`? Its doc: "the primary model — a fallback that duplicates the primary is not a real fallback". With a configured child model, the "primary" a child runs is `child_model`, so passing `&child_model` is more correct. But it changes behaviour for users with a fallback configured AND a sub_agent_model set... that's the same population (opt-in). Near-miss (no key) → child_model == config.model → byte-identical ✓.
+
+Hmm, but caution: `sub_agent_fallback_target` includes the provider; with a cross-provider prefixed value we preserve the parent provider, so provider stays config.provider. Correct.
+
+I'll pass `&child_model` there — it's the honest primary for the child. Let me make the edits.
+
+Also the child's system prompt / tools: `sub_agent_tool_for` uses `config.base_url` — for a cross-provider configured model this could be wrong, but we refused cross-provider, so fine.
+
+Now edit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (27 → 34 lines)
+        child_tools: Vec<Arc<dyn AgentTool>>,
+        shared_state: &SharedState,
+    ) -> Box<dyn AgentTool> {
+  -     // The primary attempt, on the session's configured model.
+  +     // ONE resolution of the child's model, read by both doors (`sub_agent` and
+  +     // `explore_agent` both land here) and by the label. `config.model` when
+  +     // nothing is configured, so every existing user is byte-identical; a
+  +     // configured `sub_agent_model` when the user opted in. See
+  +     // `config::effective_sub_agent_model` for the provider-prefix rule.
+  +     let child_model = crate::config::effective_sub_agent_model(&config.model);
+  + 
+  +     // The primary attempt, on the resolved child model.
+        let primary = sub_agent_tool_for(
+            config,
+            &config.provider,
+  -         &config.model,
+  +         &child_model,
+            &config.api_key,
+            child_tools.clone(),
+            shared_state,
+  ... (9 more lines)
+ ✓ (1m 27s)
+        child_tools: Vec<Arc<dyn AgentTool>>,
+        shared_state: &SharedState,
+    ) -> Box<dyn AgentTool> {
+  -     // The primary attempt, on the session's configured model.
+  +     // ONE resolution of the child's model, read by both doors (`sub_agent` and
+  +     // `explore_agent` both land here) and by the label. `config.model` when
+  +     // nothing is configured, so every existing user is byte-identical; a
+  +     // configured `sub_agent_model` when the user opted in. See
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the label + FallbackSubAgentTool primary_model.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (14 → 20 lines)
+                Box::new(FallbackSubAgentTool::new(
+                    Box::new(primary),
+                    Box::new(secondary),
+  -                 &config.model,
+  +                 &child_model,
+                    fb_model,
+                ))
+            }
+  ···
+    
+        Box::new(DiagnosticSubAgentTool::new(
+            inner,
+  -         sub_agent_model_label(&config.model, fallback.as_ref().map(|(_, m, _)| m.as_str())),
+  +         // The label names the model the child is ACTUALLY built with — the
+  +         // resolved child model, never `config.model` unconditionally. A report
+  +         // that named the parent's model while the child ran on the configured
+  +         // cheap one would be the confident-wrong-diagnosis defect this wrapper
+  +         // exists to refuse. `sub_agent_model_label`'s signature is unchanged;
+  +         // only its `primary` argument moved.
+  +         sub_agent_model_label(&child_model, fallback.as_ref().map(|(_, m, _)| m.as_str())),
+  ... (2 more lines)
+ ✓ (1m 24s)
+                Box::new(FallbackSubAgentTool::new(
+                    Box::new(primary),
+                    Box::new(secondary),
+  -                 &config.model,
+  +                 &child_model,
+                    fb_model,
+                ))
+            }
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (125ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Builds. Now the remaining question: does the label actually reach the emission point? Yes — resolved child model flows to both.
+
+Now, a critical review: is `parent_provider_name()` a good idea? It adds a subtle env-dependent behaviour to a config resolution, and I invented it. Let me reconsider once more, because this is the weakest part of the design and it cost me context.
+
+Arguments against keeping it:
+- Not required by the task.
+- Env-var sniffing to decide config semantics is surprising and hard to document ("provider/model is accepted only when it matches your env").
+- A user with `sub_agent_model = "google/gemini-2.0-flash"` and only ANTHROPIC_API_KEY set gets silent fallback to parent — a silent misconfiguration.
+
+Arguments for:
+- Prevents sending the parent's key to another provider (CLAUDE.md's load-bearing trap).
+
+Middle ground that is simpler AND honest: drop the prefix rule entirely; a bare value is the model id as written, and document that the child inherits the session's provider — so a bare foreign id will fail visibly with a provider error, which is the honest outcome. That removes `parent_provider_name`, the env sniffing, and the prefix parsing. Simpler, fewer branches, less invented policy.
+
+Hmm. But the 401 concern is specifically about *silently* sending the wrong token. A bare model id sent to the parent's provider doesn't send anyone else's key — it just 404s on an unknown model. That's visible. The scenario "user intends cross-provider" isn't supported either way (provider can't change). So the prefix rule buys nothing except silently ignoring a prefix.
+
+Decision: simplify. `effective_sub_agent_model` = configured (trimmed) if set, else parent. Document that the provider is inherited. Remove parent_provider_name and the prefix logic.
+
+That's a cleaner, defensible, smaller diff — and it means the tests I write are about the actual contract.
+
+Let me rewrite that function.
+────────────────────────────────────────────────────────────────────────────────
+
+The prefix rule I added is invented policy with no test backing — simplifying to the honest minimal contract:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (58 → 28 lines)
+    /// **One resolver, both doors.** `sub_agent` and `explore_agent` must not be
+    /// able to disagree about which model a child runs on — `sub_agent_model_label`
+    /// is rendered from this same value, so a per-door resolution could name one
+  - /// model and run another. The prefix rule below is the reason a single site is
+  - /// load-bearing rather than tidy.
+  + /// model and run another.
+    ///
+  - /// Absent → `parent_model` **verbatim**, so every user who sets nothing keeps
+  - /// today's behaviour byte-identically. That is the whole regression surface and
+  - /// it is pinned by `no_configured_child_model_returns_the_parent_verbatim`.
+  + /// Absent (the default, and every existing user) → `parent_model` **verbatim**,
+  + /// byte-identically to before this feature existed. That is the whole regression
+  + /// surface and it is pinned by `no_configured_child_model_returns_the_parent_verbatim`.
+    ///
+  - /// Prefix rule, stated because it is a real limit and not an oversight: a bare
+  - /// model name inherits the provider this session is already authenticated for
+  - /// (`sub_agent_tool_for` takes one `provider_name`), so only a `provider/model`
+  - /// value can route *across* providers. A bare id therefore cannot silently send
+  - /// the parent's key to a provider that never issued one — the load-bearing
+  - /// 401-fallback trap CLAUDE.md records for workflows. A prefixed value is
+  ... (49 more lines)
+ ✓ (1m 26s)
+    /// **One resolver, both doors.** `sub_agent` and `explore_agent` must not be
+    /// able to disagree about which model a child runs on — `sub_agent_model_label`
+    /// is rendered from this same value, so a per-door resolution could name one
+  - /// model and run another. The prefix rule below is the reason a single site is
+  - /// load-bearing rather than tidy.
+  + /// model and run another.
+    ///
+  - /// Absent → `parent_model` **verbatim**, so every user who sets nothing keeps
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (124ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the tests. I need:
+
+1. Sync tests (no global mutation): `parse_sub_agent_model` table test in config.rs.
+2. Global-mutating tests for `effective_sub_agent_model` + the label emission point.
+
+Where to put the global tests? In `src/config.rs` tests module — but tests run in parallel within the same binary, and `record_sub_agent_model` uses OnceLock so it can be set only once per process. A test that sets it can't be un-set. So I need a single test (or a serial harness) that: uses a lock, sets the OnceLock... but the OnceLock can never be reset, so only ONE test can drive it.
+
+Solution: one test that covers both directions is impossible in one process (set is permanent). So I must parameterise the resolution like `context_budget_warning_with`: an inner function taking the configured value.
+
+Design: make the resolution pure over an explicit Option:
+```rust
+fn resolve_sub_agent_model(configured: Option<&str>, parent_model: &str) -> String
+pub fn effective_sub_agent_model(parent_model: &str) -> String {
+    resolve_sub_agent_model(SUB_AGENT_MODEL.get().and_then(|m| m.as_deref()), parent_model)
+}
+```
+Then tests drive `resolve_sub_agent_model(None, ...)` and `Some(...)` deterministically — both directions in one test, no globals, fully parallel-safe. That matches the repo's stated remedy.
+
+And then the emission point test in tools.rs: call `sub_agent_model_label(&resolve_sub_agent_model(None, parent), None)` — hmm, that's testing the composition by re-deriving, not by calling the production path.
+
+Better for the emission point in tools.rs: extract the wrapper construction? Or make `dispatch_tool_with_fallback` take the resolved model as a parameter? That would change the signature at 2 call sites (internal). Hmm, but the resolution should happen once; passing it in makes it testable... but then callers must resolve, and there are 2 call sites (build_sub_agent_tool_at_depth, build_explore_agent_tool) — both in tools.rs, small.
+
+Actually no: `dispatch_tool_with_fallback` is *the* single seam both doors go through. Keeping resolution inside it is what guarantees one resolution. Changing its signature to accept the model would let a future caller pass something else — weakening the guarantee.
+
+Pragmatic approach that is honest about what it proves:
+- `resolve_sub_agent_model` (pure, in config.rs) — table test proving both directions.
+- The label emission in tools.rs: test that `sub_agent_model_label(&resolve_sub_agent_model(None, "parent-model"), None)` equals the pre-change literal, and `sub_agent_model_label(&resolve_sub_agent_model(Some("cheap"), "parent-model"), None)` names "cheap". Plus an anti-vacuous assertion that configured != parent.
+- A source-level test (like `every_rebuild_arm_resets_the_counter_it_invalidated`) that `dispatch_tool_with_fallback` resolves once and passes the resolved value to both the tool build and the label — because that's the wiring claim a unit test can't reach without globals.
+
+Hmm, is the source-level test worth it? It proves the resolution site exists and both label/tool use `child_model`. It's a weak-but-honest guard against the "two doors, one deaf" regression: if someone reverts the label to `&config.model`, the test reddens. I think yes — this repo uses exactly that pattern for async/unreachable seams. Needles assembled at runtime to avoid self-matching.
+
+Let me write:
+
+In tools.rs tests (existing `mod sub_agent_fallback_gate_tests` or a new mod), add:
+
+```rust
+mod sub_agent_model_routing_tests {
+    use super::*;
+
+    /// The pre-change label, spelled out as a literal, because "byte-identical
+    /// to before" is the whole regression surface...
+    #[test]
+    fn no_configured_child_model_is_byte_identical_to_the_pre_change_label() {
+        let parent = "claude-opus-5";
+        let resolved = crate::config::resolve_sub_agent_model(None, parent);
+        assert_eq!(sub_agent_model_label(&resolved, None), "`claude-opus-5`");
+    }
+
+    #[test]
+    fn a_configured_child_model_reaches_the_label_and_not_the_parent() {
+        let parent = "claude-opus-5";
+        let configured = "claude-haiku-4-5";
+        // anti-vacuous: the fixture must provably discriminate
+        assert_ne!(configured, parent);
+        let resolved = crate::config::resolve_sub_agent_model(Some(configured), parent);
+        assert_eq!(sub_agent_model_label(&resolved, None), "`claude-haiku-4-5`");
+    }
+
+    #[test]
+    fn one_resolution_feeds_both_the_tool_and_the_label() { ... source-level ... }
+}
+```
+
+For the source-level test: read src/tools.rs at compile time (`include_str!("tools.rs")`), slice the `dispatch_tool_with_fallback` body, assert:
+- exactly 1 `effective_sub_agent_model(` call site
+- that call is assigned to `child_model`
+- `sub_agent_tool_for` is called with `&child_model` (not `&config.model`)
+- `sub_agent_model_label(&child_model,` present
+- `FallbackSubAgentTool::new(` … `&child_model,` present
+- no `&config.model` passed to `sub_agent_tool_for` or the label.
+
+Let me use runtime-assembled needles as the repo does.
+
+How to slice the function: find `fn dispatch_tool_with_fallback(` and take until `\nfn sub_agent_tool_for`. Needles built at runtime: `format!("{}{}", "effective_sub_agent", "_model(")` etc.
+
+Honestly, the more valuable and simpler version: assert the resolved-model variable name appears in the three consumer positions. Let me write it carefully but not over-engineer.
+
+Actually — hmm. Let me reconsider whether the source-level test is net-positive or ceremony. The task says the third test is "the one that proves the feature" and it should assert on the string a caller actually receives. A source-level test is the weak kind the repo explicitly labels "deliberately weak". I'll include a *small* one focused on the exact regression ("two doors, one deaf") since I cannot drive the global — and label it honestly in its doc comment as weak (proving presence, not behaviour), like the repo's existing precedent.
+
+Also, I should add a test that the tool built by BOTH doors uses the resolved model... can't without globals. The source-level test covers both call sites of dispatch_tool_with_fallback? Both doors call it, so one resolution inside covers both by construction. Good — I can assert that both `build_sub_agent_tool_at_depth` and `build_explore_agent_tool` route through `dispatch_tool_with_fallback` (which is the "both doors" claim). That's a genuinely useful check.
+
+Let me now write the tests.
+
+First, update config.rs: rename to `resolve_sub_agent_model` (pure) + keep `effective_sub_agent_model` public wrapper. Note: `effective_sub_agent_model` would then only be used by tools.rs — used, so no dead code.
+
+Wait — is `effective_sub_agent_model`'s OnceLock read path tested at all then? No. That's the honest limit: the global read is untested (it's a OnceLock read; the pure function is tested). I could make the OnceLock path testable by having one test in config.rs that sets... no, permanence.
+
+Alternative: make the *store* injectable, like `drain_failure_note(&store)`: 
+```rust
+fn resolve_from(store: &OnceLock<Option<String>>, parent_model: &str) -> String
+pub fn effective_sub_agent_model(parent) -> String { resolve_from(&SUB_AGENT_MODEL, parent) }
+```
+and test `resolve_from` with a LOCAL OnceLock (settable in the test, since it's a local). That covers the read path including "set once, first writer wins". Nice — that's the repo's `context_budget_warning_with` remedy pattern.
+
+So:
+```rust
+fn resolve_sub_agent_model(store: &OnceLock<Option<String>>, parent_model: &str) -> String
+pub fn effective_sub_agent_model(parent_model: &str) -> String { resolve_sub_agent_model(&SUB_AGENT_MODEL, parent_model) }
+```
+Tests drive `resolve_sub_agent_model(&local, ...)`.
+
+Cleaner: one pure function that takes configured Option, plus the store-taking wrapper. I'll do: 
+
+```rust
+/// Pure: given the configured value (if any) and the parent's model, the model a child runs on.
+fn child_model_from(configured: Option<&str>, parent_model: &str) -> String {
+    match configured { None => parent_model.to_string(), Some(c) => c.to_string() }
+}
+
+fn resolve_sub_agent_model(store: &OnceLock<Option<String>>, parent_model: &str) -> String {
+    child_model_from(store.get().and_then(|m| m.as_deref()), parent_model)
+}
+
+pub fn effective_sub_agent_model(parent_model: &str) -> String {
+    resolve_sub_agent_model(&SUB_AGENT_MODEL, parent_model)
+}
+```
+
+Hmm, three layers for something this small is over-engineered. Let me do two:
+
+```rust
+fn resolve_sub_agent_model(store: &OnceLock<Option<String>>, parent_model: &str) -> String {
+    match store.get().and_then(|m| m.as_deref()) {
+        None => parent_model.to_string(),
+        Some(configured) => configured.to_string(),
+    }
+}
+pub fn effective_sub_agent_model(parent_model: &str) -> String {
+    resolve_sub_agent_model(&SUB_AGENT_MODEL, parent_model)
+}
+```
+Tests use a local `OnceLock`. Good — one layer, testable read path.
+
+Let me apply that edit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (6 → 24 lines)
+    pub fn effective_sub_agent_model(parent_model: &str) -> String {
+  -     match SUB_AGENT_MODEL.get().and_then(|m| m.as_deref()) {
+  +     resolve_sub_agent_model(&SUB_AGENT_MODEL, parent_model)
+  + }
+  + 
+  + /// The resolution itself, taking the store as a **parameter**.
+  + ///
+  + /// Not decoration: `SUB_AGENT_MODEL` is a process-global `OnceLock` and a test
+  + /// that set it could never un-set it, so a test driving the real global could
+  + /// cover exactly one of the two directions in a whole test binary — and the
+  + /// missing direction would be whichever one ran second. Taking the store as an
+  + /// argument lets a test drive a LOCAL `OnceLock` for both directions in one
+  + /// process, which is the remedy `drain_failure_note(&store)` and
+  + /// `context_budget_warning_with` already use. The `OnceLock` also encodes the
+  + /// first-writer-wins rule directly: the stored value is the one the session
+  + /// loaded, exactly like `LOADED_CONFIG_PATH`.
+  + fn resolve_sub_agent_model(
+  +     store: &std::sync::OnceLock<Option<String>>,
+  +     parent_model: &str,
+  + ) -> String {
+  ... (4 more lines)
+ ✓ (1m 24s)
+    pub fn effective_sub_agent_model(parent_model: &str) -> String {
+  -     match SUB_AGENT_MODEL.get().and_then(|m| m.as_deref()) {
+  +     resolve_sub_agent_model(&SUB_AGENT_MODEL, parent_model)
+  + }
+  + 
+  + /// The resolution itself, taking the store as a **parameter**.
+  + ///
+  + /// Not decoration: `SUB_AGENT_MODEL` is a process-global `OnceLock` and a test
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests. First the pure parse + resolution table tests in config.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && gr… ✓ (126ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2196,2210p' src/config.r… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (6 → 86 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     // -----------------------------------------------------------------
+  +     // `sub_agent_model` — the config half of the opt-in cost-routing knob
+  +     // -----------------------------------------------------------------
+  + 
+  +     /// The parse table. Absent, empty and whitespace-only must all read as
+  +     /// "not set": `sub_agent_model = ""` is a configuration slip, and treating
+  +     /// it as a set-but-empty model id would dispatch a child at a model named
+  +     /// nothing, which is a 404 dressed as a setting.
+  +     #[test]
+  +     fn sub_agent_model_parse_table() {
+  +         let cases: &[(&str, Option<&str>)] = &[
+  +             ("", None),
+  +             ("model = \"gpt-4o\"\n", None),
+  +             ("sub_agent_model = \"cheap-1\"\n", Some("cheap-1")),
+  +             // Whitespace-only and empty values collapse to `None`, the same
+  +             // tri-state `--model` uses (`.filter(|s| !s.is_empty())`).
+  ... (66 more lines)
+ ✓ (1m 24s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     // -----------------------------------------------------------------
+  +     // `sub_agent_model` — the config half of the opt-in cost-routing knob
+  +     // -----------------------------------------------------------------
+  + 
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib config:: 2>&1 |… ✓ (115ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo config::te… ✓ (108ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both pass. Now the emission-point test in tools.rs. Place it near the existing sub-agent fallback gate tests (line ~4577). Let me look at the end of that module to append a new module.
+
+Tests to add in tools.rs:
+1. `no_configured_child_model_is_byte_identical_to_the_pre_change_label` — whole-string assert_eq! of `sub_agent_model_label(&resolved, None)` against the pre-change literal `\`claude-opus-5\``.
+2. `a_configured_child_model_reaches_the_label` — plus anti-vacuous assert_ne.
+3. Source-level guard: one resolution, both doors, both consumers.
+
+Note: `sub_agent_model_label` is `pub(crate)` — accessible from tools.rs (already imported).
+
+Let me write them using the real production path as far as possible: `crate::config::effective_sub_agent_model(parent)` — but since the global is unset in tests (nothing calls load_config_file with a config containing the key... wait, actually the test suite may call load_config_file somewhere, e.g. cli tests, which would set SUB_AGENT_MODEL to whatever the repo's own .yoyo.toml has. Does the repo .yoyo.toml have sub_agent_model? No. So it'd be set to None. But once set to None, `effective_sub_agent_model` returns parent verbatim. Good, so using the real `effective_sub_agent_model` in the near-miss test is deterministic-as-long as the repo config lacks the key... but that's fragile: if a future session adds `sub_agent_model` to .yoyo.toml, this test would flip. Hmm. That's actually a real hazard (my own repo config is read by tests). 
+
+Safer: use the store-taking function via a local OnceLock? It's private to config.rs (`fn resolve_sub_agent_model`). Not accessible from tools.rs. I could make it `pub(crate)`. Then tools.rs tests can drive a local store through the exact production resolver. That's the honest emission-point test: `sub_agent_model_label(&crate::config::resolve_sub_agent_model(&local_store, parent), None)`.
+
+Hmm, but then the test uses the private resolver + the public label — neither is "the string a caller actually receives" from the full assembly. The full assembly needs a global. The repo's precedent (DiagnosticSubAgentTool tests) tests the wrapper with a given label, which is one layer below the emission point, and its doc says the label is "stated once so the wording cannot..." 
+
+I'll do the best available and say so plainly in the doc comment: assert at the label layer (the string a `DiagnosticSubAgentTool` caller receives as its report's model line) driving the *production resolver* with a store parameter, and add the source-level guard that the assembly passes the resolved value to both consumers. Being explicit about the residual (the process-global read is not driven end-to-end) is the honest thing.
+
+Let me make `resolve_sub_agent_model` pub(crate) and write the tests.
+
+Actually — I realize there may be a stronger option: construct the whole tool and check the label via the failure report! `DiagnosticSubAgentTool` produces a report containing the label when the wrapped tool errors. But the tool construction requires the global. Still blocked.
+
+OK, go with the plan. Let me make resolve pub(crate).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (4 → 4 lines) ✓ (1m 25s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to be efficient now. Let me check the state and finish: add the emission-point test in tools.rs, docs, module size register, then run checks and commit.
+
+Let me check git status first.
+────────────────────────────────────────────────────────────────────────────────
+
+Context is tight — let me move straight to the remaining pieces: the emission-point test, docs, register, then commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && cargo build 2… ✓ (131ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the emission-point test in tools.rs. I need a test that:
+- with no key set: the child's model resolves to exactly the parent's model — assert the emitted label string with a whole-string assert_eq!
+- with the key set: the rendered sub_agent_model_label output names the configured model.
+
+But `effective_sub_agent_model` reads the process global which I can't set from tools.rs tests (config's SUB_AGENT_MODEL is private). Hmm. So the emission-point test in tools.rs can only test the no-key case (byte-identical), unless I expose a setter.
+
+Options:
+1. Expose a test-only setter in config.rs: `#[cfg(test)] pub fn set_sub_agent_model_for_test(m: Option<String>)`. But setting a global affects other tests in the same binary (tools.rs tests and config tests run in the same binary `yoyo` since it's a bin). That's the shared-global hazard (d190). Risky: setting it would make other tools.rs tests see the configured model. If the configured value differs only in the label, other tests might not care. But ordering nondeterminism.
+
+2. Better: make `dispatch_tool_with_fallback`'s label observable through the DiagnosticSubAgentTool for the no-key case, and for the configured case, test the composition `sub_agent_model_label(&effective_child_model, None)` where effective_child_model comes from the real global... same problem.
+
+Cleanest and honest: put the emission-point test where the config seam is injectable. The real emission point is `dispatch_tool_with_fallback`, which passes `&child_model` to `sub_agent_model_label`. The label is embedded in `DiagnosticSubAgentTool`. Can I read the label back out of the built tool? DiagnosticSubAgentTool has a method? Probably not public.
+
+Given budget, the honest approach: add a test-only setter guarded so it can only run once, and run the configured-case assertion in a *separate* test that is the only one setting it... but the no-key test could then run after it and fail.
+
+Alternative: make the emission test derive from a pure function that takes the store as a parameter — i.e. refactor `dispatch_tool_with_fallback` label computation into a pure helper `child_model_label_with(store, parent_model, fallback)`. Then tools.rs can call it with a local OnceLock and assert the exact emitted string. That's genuinely the emission point's string, computed by the same expression, and the near-miss is a whole-string assert_eq!.
+
+That's clean, testable, and adds one small function in tools.rs. Let me do that: in tools.rs,
+
+```rust
+/// The label a dispatched child's failure report will carry, computed from the
+/// store that `dispatch_tool_with_fallback` reads...
+fn child_model_label(child_model: &str, fallback: Option<&str>) -> String
+```
+Hmm but the store-parameter version needs config::resolve which is private.
+
+Simplest sufficient: in tools.rs, test that `sub_agent_model_label(&effective_sub_agent_model("parent"), None)` == "`parent`" (whole-string eq) — this is the no-key case, and it IS the emitted string since dispatch passes exactly `&child_model` to the label. With no key set in the test process (true unless another test sets it), the global is unset → parent verbatim.
+
+For the configured case, I can test in config.rs (already do resolution) plus assert the label composition there:
+`sub_agent_model_label` is pub(crate) in tool_wrappers — config.rs can call it. So in config.rs's test I can assert: with store holding "cheap-1", the emitted label string is "`cheap-1`" — whole-string assert_eq. That's the emission point string, composed by the same two calls dispatch makes.
+
+But is that "asserting on an intermediate value"? No — the label string is exactly what the parent receives on failure. Good.
+
+So: add to config.rs test:
+```rust
+// the emitted label, exactly as dispatch_tool_with_fallback composes it
+assert_eq!(crate::tool_wrappers::sub_agent_model_label(&resolved, None), "`claude-haiku-4-5`");
+```
+and near-miss: unset → "`claude-opus-5`" whole-string.
+
+And in tools.rs add a test pinning that the *real* global (unset in this test process) yields the parent verbatim label — that's the regression surface for every existing user, and it exercises the actual production `effective_sub_agent_model`.
+
+Let me write both now, compactly. Then docs, register, checks, commit. Budget is tight so let me be surgical.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (10 → 18 lines)
+            // ignored the store and returned the parent could not pass by accident.
+            assert_ne!("claude-haiku-4-5", "claude-opus-5");
+            assert_eq!(resolved, "claude-haiku-4-5");
+  + 
+  +         // And the EMISSION POINT: the string the parent actually receives on a
+  +         // child failure, composed by the same two calls `dispatch_tool_with_fallback`
+  +         // makes. Whole-string equality, never a `contains`.
+  +         assert_eq!(
+  +             crate::tool_wrappers::sub_agent_model_label(&resolved, None),
+  +             "`claude-haiku-4-5`"
+  +         );
+ ✓ (1m 25s)
+            // ignored the store and returned the parent could not pass by accident.
+            assert_ne!("claude-haiku-4-5", "claude-opus-5");
+            assert_eq!(resolved, "claude-haiku-4-5");
+  + 
+  +         // And the EMISSION POINT: the string the parent actually receives on a
+  +         // child failure, composed by the same two calls `dispatch_tool_with_fallback`
+  +         // makes. Whole-string equality, never a `contains`.
+  +         assert_eq!(
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (7 → 16 lines)
+            // The near-miss case and the whole regression surface: nothing
+  -         // configured, so the child runs on the parent's model VERBATIM.
+  +         // configured, so the child runs on the parent's model VERBATIM — pinned
+  +         // with whole-string equality against the pre-change output, because
+  +         // this is EVERY existing user.
+            let unset: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+            assert_eq!(
+                resolve_sub_agent_model(&unset, "claude-opus-5"),
+                "claude-opus-5"
+  +         );
+  +         assert_eq!(
+  +             crate::tool_wrappers::sub_agent_model_label(
+  +                 &resolve_sub_agent_model(&unset, "claude-opus-5"),
+  +                 None
+  +             ),
+  +             "`claude-opus-5`"
+            );
+ ✓ (1m 25s)
+            // The near-miss case and the whole regression surface: nothing
+  -         // configured, so the child runs on the parent's model VERBATIM.
+  +         // configured, so the child runs on the parent's model VERBATIM — pinned
+  +         // with whole-string equality against the pre-change output, because
+  +         // this is EVERY existing user.
+            let unset: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+            assert_eq!(
+                resolve_sub_agent_model(&unset, "claude-opus-5"),
+  ... (9 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tools.rs test pinning the production path (real global, unset):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_agent_config(pr… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1942,1962p' src/tools.rs ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (2 → 21 lines)
+  +     /// The production resolver, through its real process-global store.
+  +     ///
+  +     /// `SUB_AGENT_MODEL` is a `OnceLock`, so this test cannot set it — and it
+  +     /// must not need to: what it pins is the **absence** case, which is the
+  +     /// entire regression surface (every user who sets nothing). A `OnceLock`
+  +     /// written by another test would be a shared-global confound, which is why
+  +     /// the configured direction is driven by `config.rs`'s
+  +     /// `sub_agent_model_resolution_table` against a LOCAL store instead of
+  +     /// mutating this one.
+  +     #[test]
+  +     fn unconfigured_child_model_is_the_parent_model_verbatim() {
+  +         let parent = "claude-opus-5";
+  +         let child = crate::config::effective_sub_agent_model(parent);
+  +         // Whole-string equality against the pre-change output: a `contains`
+  +         // would pass for a prefix or a decorated id, which is not byte-identical.
+  +         assert_eq!(child, parent);
+  +         assert_eq!(sub_agent_model_label(&child, None), "`claude-opus-5`");
+  +     }
+  + 
+        #[test]
+  ... (1 more lines)
+ ✓ (1m 28s)
+  +     /// The production resolver, through its real process-global store.
+  +     ///
+  +     /// `SUB_AGENT_MODEL` is a `OnceLock`, so this test cannot set it — and it
+  +     /// must not need to: what it pins is the **absence** case, which is the
+  +     /// entire regression surface (every user who sets nothing). A `OnceLock`
+  +     /// written by another test would be a shared-global confound, which is why
+  +     /// the configured direction is driven by `config.rs`'s
+  +     /// `sub_agent_model_resolution_table` against a LOCAL store instead of
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo sub_agent … ✓ (136ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now the docs and the module-size register.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "model\|thinking" docs/s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (4ms)
+ ✓ (124ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The gate printed the exact numbers. I need to paste the register lines as printed. Let me see the register lines to update, and also consider trimming config.rs (190 lines is a lot — mostly my doc comments). Let me trim the doc comment in config.rs a bit to reduce growth, but the register still needs updating. Actually pasting is the prescribed fix. Let me paste exactly what the gate printed.
+
+Let me look at the register entries.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '290,298p' tests/module_s… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/config.rs", 4459), // Day 198: +223 for the cloud-metadata allow narrowing, CLOUD_METADATA_HOSTS and 7 guards.
+  +     ("src/config.rs", 4649), // Day 205: +190 for the `sub_agent_model` knob — parse, the load-time store and `effective_sub_agent_model`, plus the parse/resolution tables that pin absent-is-the-parent-verbatim.
+ ✓ (51.5s)
+  -     ("src/config.rs", 4459), // Day 198: +223 for the cloud-metadata allow narrowing, CLOUD_METADATA_HOSTS and 7 guards.
+  +     ("src/config.rs", 4649), // Day 205: +190 for the `sub_agent_model` knob — parse, the load-time store and `effective_sub_agent_model`, plus the parse/resolution tables that pin absent-is-the-parent-verbatim.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/tools.rs", 4899), // Day 203: #881 slice 2, the read-only dispatcher.
+  +     ("src/tools.rs", 4931), // Day 205: +32 for the single child-model resolution that both dispatch doors read, and the label that must name it.
+ ✓ (51.8s)
+  -     ("src/tools.rs", 4899), // Day 203: #881 slice 2, the read-only dispatcher.
+  +     ("src/tools.rs", 4931), // Day 205: +32 for the single child-model resolution that both dispatch doors read, and the label that must name it.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test m… ✓ (9.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`cargo fmt` reflowed one line (4649 → 4650). Paste the printed number.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/config.rs", 4649), // Day 205: +190 for the `sub_agent_model` knob — parse, the load-time store and `effective_sub_agent_model`, plus the parse/resolution tables that pin absent-is-the-parent-verbatim.
+  +     ("src/config.rs", 4650), // Day 205: +190 for the `sub_agent_model` knob — parse, the load-time store and `effective_sub_agent_model`, plus the parse/resolution tables that pin absent-is-the-parent-verbatim.
+ ✓ (1m 25s)
+  -     ("src/config.rs", 4649), // Day 205: +190 for the `sub_agent_model` knob — parse, the load-time store and `effective_sub_agent_model`, plus the parse/resolution tables that pin absent-is-the-parent-verbatim.
+  +     ("src/config.rs", 4650), // Day 205: +190 for the `sub_agent_model` knob — parse, the load-time store and `effective_sub_agent_model`, plus the parse/resolution tables that pin absent-is-the-parent-verbatim.
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me finish fast: docs, ARCHITECTURE.md, then full check + commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '66,90p' docs/src/configu… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/configuration/models.md (7 → 28 lines)
+    provider = "openai"
+    model = "gpt-4o"
+    base_url = "https://api.openai.com/v1"
+  + ```
+  + 
+  + ## Route sub-agents to a cheaper model
+  + 
+  + A sub-agent (`sub_agent` or `explore_agent`) inherits the session's model by default. If
+  + your exploration and bulk-delegation work does not need your main model, point it at a
+  + cheaper one:
+  + 
+  + ```toml
+  + model = "claude-opus-4-6"
+  + sub_agent_model = "claude-haiku-4-5"
+    ```
+  + 
+  + This exists for **cost routing, not capability** — it is purely a cost lever, and the
+  + child is otherwise unchanged. Only the model id moves.
+  + 
+  + - **Absent (the default) means the child runs on your session's model** — nothing changes
+  ... (6 more lines)
+ ✓ (49.2s)
+    provider = "openai"
+    model = "gpt-4o"
+    base_url = "https://api.openai.com/v1"
+  + ```
+  + 
+  + ## Route sub-agents to a cheaper model
+  + 
+  + A sub-agent (`sub_agent` or `explore_agent`) inherits the session's model by default. If
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the ARCHITECTURE.md per-file history entries:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^### \|^## " ARCHITECTU… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/config.rs\|src/tool… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md is a big prose file with per-file sections. I need to find where to append per-file history. Let me look at the structure — grep for "### " headings.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^## \|^### " ARCHITECTU… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '250,262p' ARCHITECTURE.m… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The per-file bullets are long single lines. I need to append to the `src/config.rs` and `src/tools.rs` bullets. Let me find those exact lines and append a Day 205 sentence. Given context limits, keep it concise but substantive.
+
+Let me find the line numbers for config.rs and tools.rs bullets.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=250 && NR<=270 && /^\- … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`src/config.rs\`\|^… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "config\.rs" ARCHITECTUR… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Found the anchors. Let me append the Day 205 history to the config.rs and tools.rs bullets.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==378 {print length($0)} … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (29 lines) ✓ (68ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`tools\.rs\`" ARCHI… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to append the tools.rs Day 205 note, then run the full checks and commit. Let me be efficient — context is exhausted, so minimal steps.
+
+Let me check if the tools.rs entry line already has my note... no. Let me append.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the full check suite:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (50.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (1m 39s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 17 test binaries report ok, no failures. Let me run the neutered-guards check explicitly (it's part of the suite presumably) — it's covered. Now commit.
+
+Let me do a final sanity check on the diff then commit.
+────────────────────────────────────────────────────────────────────────────────
+
+All 17 test binaries green, no failures. Let me verify the diff once more before committing.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "=== too… ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (30 lines) ✓ (33ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed. One last check that the tree is clean and the working tree still builds:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo sub_agent_… ✓ (234ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done. Task complete and committed as 0bc7b98e.
+
+## What I shipped
+
+An opt-in .yoyo.toml key sub_agent_model that routes every dispatched child agent — both the sub_agent and explore_agent doors — to a cheaper model. It's a cost lever, not a capability change.
+
+Discovery changed the design, and that's the notable part. The task file specified a sub_agent_model: Option<String> field on Config/AgentConfig. I measured before building: AgentConfig is constructed at 39 sites across 8 files, so a field there blows past the task's own three-file budget. And it can't be read from agent_builder.rs either — connect_external_servers runs on an already-built agent, and a config read there would be a second walk of the same CONFIG_FILE_NAMES → ~/.yoyo.toml → XDG ladder (two spellings of one policy). So the value is recorded once at load time into a OnceLock with first-writer-wins, matching LOADED_CONFIG_PATH directly above it. Both halves of that rejection are written into src/config.rs and ARCHITECTURE.md rather than left for the next reader to re-derive.
+
+One resolution, both doors. dispatch_tool_with_fallback is the single site both doors funnel through, so effective_sub_agent_model is read there and used for all four things that needed to move together: the primary dispatch, the fallback-distinctness check, the fallback switch note, and — the honesty half — sub_agent_model_label's primary argument, so a failure report names the model the child actually ran on. The label's signature was not widened.
+
+## Verification
+
+• `cargo build, cargo test (17 binaries, 5701 + 12 passed, 0 failed), cargo clippy --all-targets -- -D warnings, cargo fmt -- --check` — all green.
+• Tests: parse table, resolution table driving a local OnceLock in both directions (the real global can be set but never unset, so the global could only ever cover one direction per binary), the emission point with a whole-string assert_eq! against the pre-change label, plus the production resolver through its real global for the absent case.
+• Module-size register lines re-pasted from what the gate printed.
+
+## Two things worth flagging rather than burying
+
+1. **I invented a provider-prefix routing rule mid-implementation and then deleted it.** My first resolver stripped a `provider/model` prefix and compared it against an env-guessed provider name. It compiled and built fine — but it was untested policy with no fixture, resting on a guess about which provider the session is authenticated for. I replaced it with the minimal contract and stated the real limit in two places: the child inherits the session's provider and key, so a bare model id is required. Refusing to move provider is the safe direction — the alternative sends a provider the parent's token and dies on exactly the 401 the CLAUDE.md workflow trap describes.
+
+2. **The docs claim at the top says the assessment's grep should be re-run before editing — I did, and it held:** sub_agent_model appeared only in sub_agent_model_label. Not a reinvention.
+
+Not done, named rather than implied: no per-dispatch model argument on the sub_agent tool's schema (SubAgentTool::execute is yoagent's), and no cross-provider routing.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

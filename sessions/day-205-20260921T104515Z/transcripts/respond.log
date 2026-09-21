@@ -1,0 +1,323 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at what the session actually did. Commits this session:
+- Task 1: Route sub-agent dispatches to a configured cheaper model — opt-in `sub_agent_model`
+- Task 2: Drain #805 — measure `commands_risk_epistemic.rs` against the size cap
+- assessment commits
+
+So the issues listed: #937, #902, #881, #879, #870, #869, #858, #738.
+
+Task 1 sounds related to #881 (read-only sub-agent preset, cheap-model routing mentioned as item 4). Let me check the actual diff to see what was done.
+
+Let me investigate the repo state.
+
+Note: build status PASSING. Also note the same commit appears twice "Drain #805 ... (Task 2)" twice — maybe revert/retry.
+
+Let me actually look at git log and the diff for Task 1.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20 && echo "-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ && echo "---" &… ✓ (2ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+session_plan dir was deleted (uncommitted). Let's check what's uncommitted.
+
+Let's look at Task 1's diff (0bc7b98e) to see what it did — is it related to #881's item 4 (cheap-model routing)?
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 0bc7b98e && echo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 465df6d5 && echo… ✓ (21ms)
+ ✓ (48ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me understand this session's work:
+
+1. Task 1: `sub_agent_model` — opt-in cheaper model for sub-agents. This is directly relevant to #881's item 4 ("Does read-only imply cheap-model routing? ... Probably a separate issue; naming it so the scope stays honest."). So Task 1 partially addresses #881 item 4, but #881's core is per-dispatch read-only which... wait, Day 203 shipped `explore_agent` (slice 2) and Day 199 probed the blocker. #881 stays open on "caller cannot ask for read-only per dispatch of the existing sub_agent". Hmm, actually Day 203 shipped build_explore_agent_tool, which gives per-dispatch read-only via a second tool. So #881's main ask got shipped in slices. But #881 was not closed? Let me check whether issue #881 is still open.
+
+2. Task 2: #805 — measure commands_risk_epistemic.rs. That's about #805, not in the list of issues to comment on. Hmm, #805 isn't listed. The listed issues are #937, #902, #881, #879, #870, #869, #858, #738.
+
+So none of the listed issues were worked on this session directly... except #881 perhaps. Let me check if #881 is still open and if Task 1's sub_agent_model relates to item 4 of #881.
+
+Actually — wait. Task 1 `sub_agent_model` is germane to #881 item 4 (cheap-model routing). But more importantly, is there an issue that this session's Task 1 implements? Let me search issues for sub_agent_model.
+
+Let me check the issue states on GitHub.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.3s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 937 902 881 879 870 869…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .yoyo/goal.md 2>/dev/null | … ✓ (6ms)
+ ✓ (3.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+#805 was closed today (10:34) by Task 2. That's not in the list, fine.
+
+So the session's work: Task 1 (sub_agent_model) and Task 2 (#805 guard). Neither is in the listed issues... except possibly #881 item 4.
+
+Wait — maybe the evolve loop only posts to issues, but the listed issues are "all the issues from this session" — meaning issues that were created or updated? Actually the prompt lists them as "ALL the issues (community + self-filed) from this session". These are likely issues fed to the planning phase. So I need to decide about each.
+
+Hmm, but Task 1's work: does it close anything? Let's check: does #881 mention cheap-model routing as item 4? Yes — "Does read-only imply cheap-model routing? Claude Code pins Explore to a cheap model deliberately. I have sub_agent_fallback_target (availability failover, Day 180) and no deliberate cost routing. Probably a separate issue; naming it so the scope stays honest."
+
+So Task 1 = the "separate issue" that #881 named. That's real partial progress on #881: I can comment on #881 with a specific progress update: item 4 is now implemented as `sub_agent_model` (applies to both doors including explore_agent), and the per-dispatch read-only half... wait, is that still open? Day 203 shipped `explore_agent` which IS per-dispatch read-only (a second tool). And the residue stated in ARCHITECTURE: "a caller still cannot ask for read-only per dispatch of the existing sub_agent" — but they can call `explore_agent` per dispatch, which is exactly what Claude Code does (a separate Explore subagent). Hmm. So arguably #881 is largely resolved by slices 1 and 2 (Day 193, Day 203), plus now item 4 (Day 205). The residue that remains: `--read-only-subagents` is still session-wide, and a caller cannot make *the ordinary* sub_agent read-only per dispatch. But option 2 (second tool) was chosen precisely for that. Honestly #881 could be closed as resolved by the composition of `explore_agent` + `sub_agent_model`.
+
+But careful: is closing #881 correct? The issue's core ask: "No read-only sub-agent preset: I own ReadModeGuardTool and I own sub_agent, and nothing composes them." Now `explore_agent` composes them (read-only child tool set + refusals at the tool layer + shared state). Shipped Day 203. And the cheap-model routing half shipped today. Remaining: cheap-model routing is global not per-tool; the explore_agent uses the same configured sub_agent_model as sub_agent. That's minor.
+
+I think a strong comment on #881: progress + what remains, then decide close. Let me check whether the working tree/tests are green, and read the explore_agent docs to make accurate claims. Also check what remains for #881 concretely.
+
+Now for the other issues: #937, #902, #879, #870, #869, #858, #738 — did this session do anything about them? Task 2 was #805. Task 1 was sub_agent_model. Hmm, but wait — maybe sub_agent_model relates to #937? No, #937 is pricing literals.
+
+Actually, hold on. Let me reconsider: maybe Task 1's `sub_agent_model` was planned from... let me check the assessment (deleted from working tree but committed at bab7a541) and session_plan/task_01.md content (deleted in working tree but in commit?). Let me check git show for task_01.md — the commits listed include task_01.md in recently changed files. Let me look.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.3s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show bab7a541:session_plan/a…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --all --oneline --diff-f… ✓ (4ms)
+ ✓ (47ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The assessment says: #937 (price drift alarm — **done Day 204**, tracker still open). So #937 was done Day 204 — the DeepSeek row correction + an `#[ignore]`d price-drift alarm fetching models.dev. The issue #937 asks exactly for that: "A source of truth plus an alarm" — option 1 (port yoagent's price_audit shape). So #937 appears resolved (largely). Let me verify what actually landed: check src/format/cost.rs for the ignored test and the deepseek rows.
+
+Let me verify:
+1. #937: the price-drift alarm exists? Are the deepseek rows now consistent?
+2. #902: no work (assessment says "Filed Day 202, still open, no work done").
+3. #881: slices landed.
+4. #879: no work.
+5. #870: no work.
+6. #869: no work.
+7. #858: no work (skill-evolve gate needs human).
+8. #738: durable mirror issue, standing.
+
+So the plan: 
+- #937: verify the alarm is real, then comment + close.
+- #881: comment with the sub_agent_model progress (item 4 done) and possibly close if read-only per-dispatch is complete via explore_agent.
+- Others: skip (no progress, nothing new) — except maybe one where I have something real.
+
+Hmm, but careful with #937: did the Day-204 alarm actually land? Let me check the code.
+
+Also verify: "an `#[ignore]`d price-drift alarm that fetches models.dev and compares row-by-row". Let me check.
+
+Also #902: assessment says still open, no work done. Nothing to say → skip. But hmm, the assessment mentions a Day-203 measurement: "a measurement that the spawned worker's `load_project_context()` was *already* shut under `--safe-mode`/`--restricted` (a clean reading, now pinned by a test)". That's measured caveat #3 from #902: "commands_spawn.rs:810 and :961 call load_project_context() directly, outside cli.rs's safe-mode branch. Whether a --safe-mode parent's spawned worker still loads project instructions was not verified." Day 203 measured it and pinned it with a test. That's real progress on #902's open question #3 — the spawned worker IS restricted. Wait, "already shut under --safe-mode/--restricted" — that means the spawned worker does not load project context when safe-mode. That resolves #902's measured caveat. Should I comment on #902 with that? That was Day 203, not this session. The instruction: "For EACH issue listed above, decide what to do" — comment only when there's something REAL to say. A measurement landed on Day 203 that answers #902's open caveat #3... but it was a previous session's work; would have been commented then? Probably not, since #902 is still open with no comment. Hmm.
+
+But careful about honesty: I should verify the claim before commenting. Let me look at the actual test.
+
+Let me check both things: #937 alarm and the spawn safe-mode test.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.7s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "deepseek" src/format/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ignore\|models.dev\|pri… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So #937 landed Day 204: the price drift alarm exists (an `#[ignore]`d test comparing the deepseek rows to models.dev), plus the deepseek-v4-flash row was corrected to the `deepseek-flash` row (0.15/0.60). So #937's ask (option 1: port the alarm shape) is done — but only for the DeepSeek provider rows. Let me check: does the alarm cover only deepseek? The constants `MODELS_DEV_URL`, `parse_models_dev_deepseek` — yes, deepseek only. The issue #937 says "yoyo's table is larger than yoagent's, covers more providers, has more (estimated) arms, and has no equivalent." So the alarm landed for one provider. Is that "fixed" enough to close? It's partial progress: the mechanism exists (the shape), but it covers only the deepseek rows. Hmm.
+
+Let me read that section more fully to be accurate.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2930,3175p src/format/cos… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So #937's alarm landed Day 204 for the DeepSeek provider. The issue #937's ask: "The ask is a source of truth plus an alarm, not a better literal." Options 1 (port yoagent's price_audit shape) — partially done: the shape exists but only for DeepSeek rows; the table has ~7 arms commented `(estimated)` for other providers (OpenAI, Gemini, Mistral, xAI, Llama, Anthropic legacy opus). So I should comment on #937: what landed (Day 204: the two DeepSeek rows reconciled — deepseek-v4-flash now rides the 0.15/0.60 row; the alarm exists with the models.dev shape, ignored, fetch-failure says "not checked"), and what remains (coverage: one provider; the seven `(estimated)` arms and the legacy $15/$75 opus arm are still unaudited; option 3 upstream migration untouched). Keep open? The issue's core defect — "the repository asserts both and cannot tell you which it believes" — is resolved for DeepSeek, and the alarm shape exists. But its stated scope was the whole table. Partial progress → keep open with a specific update. That's honest.
+
+Hmm, but let me check: is the alarm's coverage one provider = partial. I'd say: comment with progress, keep open. Or close since the mechanism asked for landed? The issue says "The ask is a source of truth plus an alarm, not a better literal." The alarm landed, but pointed at one provider. The residue in the issue says the Anthropic path is fine; the trap is the legacy $15/$75 opus arm and the 7 estimated arms. I'll keep it open and state precisely what's covered and what isn't, with file:line evidence. Actually — should I verify whether models.dev has other providers parseable? The alarm only parses `deepseek`. So generalizing to all providers is the remaining work.
+
+Hmm, wait. Is closing appropriate? Rules: "Only keep open if there's genuinely more work to do." There is genuinely more work: the alarm covers 1 of ~8 providers. Keep open. Good.
+
+Now #881: Day 203 shipped explore_agent (per-dispatch read-only tool), Day 199 probed the blocker, Day 193 slice 1 (--read-only-subagents). Today: sub_agent_model (item 4, cheap-model routing, applies to both doors). So #881's four items: 1 probed & answered (no per-call params), 2 done (second tool explore_agent), 3 rejected explicitly, 4 now done. What remains? The stated residue: "a caller still cannot ask for read-only per dispatch of the existing `sub_agent`" — but `explore_agent` IS the per-dispatch read-only door. Also "`--read-only-subagents` remains a session-wide switch" — that's fine, it's opt-in.
+
+I think #881 is now genuinely resolved: the composition exists (`explore_agent`), the default is unchanged (near-miss guard), the guard is a refusal (with_read_guard_bash_arc), the cheap-model routing question is answered (sub_agent_model applies to both doors). Closure with a comment explaining is appropriate.
+
+Let me verify the explore_agent details in source to make honest claims: read_only_child_disallowed, build_explore_agent_tool, and that explore_agent is registered/pushed and its child tools include read guard + shared state. Let me check tools.rs.
+
+Also verify sub_agent_model applies to explore_agent (single site dispatch_tool_with_fallback).
+
+Let me check the tests pass — build status says PASSING, but let me run a quick targeted test to be safe? The rules say don't claim fixed if build failing. Build status: PASSING. Maybe run the specific test for sub_agent_model and explore_agent. Also, there's uncommitted deletion of session_plan/assessment.md and modified JOURNAL.md — that's the session wrap-up, not my concern.
+
+Let me verify #881 claims in code.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "explore_agent\|EXPLORE_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "effective_sub_agent_mod… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now check that `explore_agent` uses with_read_guard_bash_arc (refusal, not absence) and see the docs entry for sub_agent_model (docs/src/configuration/models.md updated). Let me check the read guard and the docs.
+
+Also confirm the default child set byte-identical guard exists.
+
+Then verify tests: run `cargo test sub_agent_model` (or the relevant tests) to confirm green? Build status says PASSING; but the task prompt says build passing. I can run a focused test to confirm the claims I'll make. Let's do a quick targeted run.
+
+Also note there are uncommitted changes (JOURNAL.md modification + session_plan/assessment.md deletion) — that's the wrap-up in progress. Not my concern.
+
+Let me check the bash read guard in explore child and the ARCHITECTURE note, then run targeted tests.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1400,1470p src/tools.rs; …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n "$(grep -n 'fn sub_agent_… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. The explore_agent child gets the same base set minus write/edit/rename, with `/read`-mode guards wrappers (with_read_guard*) on write tools still present? No wait — write tools are removed by the disallow list, so a write attempt would be "tool not found"... Hmm, ARCHITECTURE said "the explore child keeps `bash` via `with_read_guard_bash_arc`, so a write attempt returns the REFUSAL_STEM_MODE_ACTIVE-shaped error at the emission point rather than the tool being absent." That's about bash. OK.
+
+Now, one honest concern for #881: does the explore_agent child inherit `shared_state` and skills? Let me check dispatch_tool_with_fallback briefly (line 1751-1800) to be accurate.
+
+Let me read that region.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1700,1830p src/tools.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now let me run the relevant tests to verify claims: e.g. `cargo test --bin yoyo sub_agent_model` and explore_agent tests. Also maybe doc test for models.md not needed.
+
+Let me run a targeted test to be sure things are green.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 500 cargo test --bin yoy…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent_model" docs/s… ✓ (2ms)
+ ✓ (117ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now let me check the status of #902's spawned-worker caveat: the Day 203 measurement/pin. Let me find the test.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "safe_mode\|safe-mode" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "spawn.*safe\|safe.*spa… ✓ (5ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 460,520p src/commands_spa… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So Day 203's finding: the spawned worker DOES honour the parent's --safe-mode (the `is_safe_mode()` global read), and it's now pinned. That answers #902's measured caveat #3: "Whether a --safe-mode parent's spawned worker still loads project instructions was not verified" → measured: it does NOT load them (it's shut). That's real, specific progress on #902 that hasn't been reported on the issue (the issue lists it as unverified). Was it commented on #902 before? Let me check comments on #902 to avoid duplicating.
+
+Let me check comments on all the issues to see what was already said (avoid duplicate comments, and see if #937 was already answered).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 937 902 881 879 870 869… ✓ (2.7s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The session hit max tokens. I need to continue: post comments on issues. Let me be efficient and concise now.
+
+Let me look at the comments more carefully — actually I have enough. Let me quickly check the most recent comment dates on each issue to avoid repeating, then post comments.
+
+Key decisions:
+
+1. **#937** — price drift alarm. Already has two comments (from Day 204: `a547b058` contradiction fix + `c09152ca` alarm). Today's assessment says "done Day 204, tracker still open". The issue asks for a source of truth + alarm; the alarm landed Day 204 and widened. Severity memory said "Staying open". So: skip? Actually the assessment says #937 done — hidden day-204 comment said "Staying open because your second wrong row is still wrong" (deepseek-v4-pro divergence, now in KNOWN_DIVERGENCES register). Hmm. Since a comment already exists from Day 204 saying it stays open... Today I have nothing new except "still open". Best: skip (silence) — or comment? The instructions: only comment when something REAL. Actually a genuinely useful thing: this session's Task 1 was sub_agent_model, Task 2 was #805. Nothing on #937. So SKIP #937... But wait: the fresh session assessment claims "#937 (price drift alarm — done Day 204, tracker still open)" which is a stale-claim risk. Hmm, but a comment saying "still open, no change" is noise. Skip.
+
+Hmm, but actually there's a valuable observation: the assessment draft mislabeled #937 as done. That could mislead. But careful, don't overreach.
+
+2. **#902** — instruction-file trust door. Day 203 verified the spawned-worker safe-mode question. No new work today. SKIP.
+
+3. **#881** — read-only sub-agent. Slice 1 + slice 2 landed (Day 203: `explore_agent`). Today's Task 1 (`sub_agent_model`) is directly related — it's design question 4 of #881: "Does read-only imply cheap-model routing? Probably a separate issue; naming it so the scope stays honest." That's REAL progress: the cheap-model routing half now exists as `sub_agent_model`, opt-in config key, applied to both `sub_agent` and `explore_agent` via the single `dispatch_tool_with_fallback` site. So comment on #881: the cheap-model-routing question (item 4) is answered/shipped, and say what remains (per-dispatch read-only for ordinary `sub_agent` is still open, per Day 199 probe). Keep open.
+
+4. **#879** — composite safe mode `--restricted`. Its comment history shows `--restricted` already landed. Nothing today. SKIP.
+
+5. **#870** — fix-loop population. Comment from a prior session says "terminal state... stays open". Nothing today. SKIP.
+
+6. **#869** — `/cd` config reload. Nothing today. SKIP.
+
+7. **#858** — skill-evolve gate defects. Nothing today. SKIP.
+
+8. **#738** — blind-round prediction mirror. Hmm — did anything happen this session? Let me check if dreams/experiments.jsonl got a round today. Today was Day 205; no blind round mentioned. The commits: assessment, Task 1 (sub_agent_model), Task 2 (#805). No blind round. SKIP.
+
+9. **#805** — already CLOSED today at 10:34. So no action needed, but should I comment? It's closed. The instruction says comment on issues listed. #805 was closed by my commits. Already closed — could add a comment explaining, but a close already happened; the issue list includes it. Actually it's not in the "Here are ALL the issues" list — the listed issues are #937, #902, #881, #879, #870, #869, #858, #738. #805 isn't listed. So no action.
+
+So the main comment is #881. Let me double-check whether #881's latest comment already covers the sub_agent_model thing... The latest visible comment (2026-09-19 slice 2). Today's Task 1 is separate and relevant. Good.
+
+Let me verify the claim precisely: `sub_agent_model` — one resolution in `dispatch_tool_with_fallback`, both doors. Yes, verified in the diff and code.
+
+Also should I comment on #937? Let me reconsider: severity. The issue's option 3 ("push non-Anthropic prices upstream into yoagent") is still open, and the alarm is DeepSeek-only while the table covers more providers — a real residue. But I've said that already in prior comments? The Day-204 comment said "Staying open". I could add one genuinely new measured fact: the audit's `parse_models_dev_deepseek` only fetches the `deepseek` provider, so the alarm's coverage is one provider out of a table covering ~7 providers — but that's likely already in the Day-204 comment. Risky duplication. Skip.
+
+Hmm, but wait — is there a real new fact for #937? Today's assessment noted the price row is done. Nothing new. Skip.
+
+Let me also double check #902's spawned-worker caveat is closed by a test (Day 203). Yes, `spawn_project_context_with` with stub test. Nothing new today. Skip.
+
+So: one comment on #881, keeping it open.
+
+Actually, let me reconsider #879 once more: the issue's "sibling gap" — `permissions.blockReadsOutsideWorkingDirectories` + one-time prompt for reads outside cwd. `dir_restrictions` defaults unrestricted. Has anything changed? Today nothing. Skip.
+
+Let me write the #881 comment. Must be honest and specific:
+
+- Today's Task 1 shipped `sub_agent_model` (opt-in `.yoyo.toml` key). That answers design question 4 from this issue ("Does read-only imply cheap-model routing? Probably a separate issue") — it shipped as a separate, general knob rather than being pinned to the read-only tool, and it deliberately covers BOTH doors since they funnel through one `dispatch_tool_with_fallback`.
+- But it is NOT read-only routing: it applies to `sub_agent` too, and it does not pin Explore to a cheap model — the user opts in globally. So the design question is answered in the "no coupling" direction: cheap-model routing is orthogonal to read-only-ness.
+- The limit: child inherits provider + key, so bare model id only.
+- Still open/#881's residue: per-dispatch read-only for the ordinary `sub_agent` (yoagent schema blocker confirmed at 0.18.1, Day 199).
+
+Keep it reasonably concise. Then done.
+
+Let me verify the comment posting works.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 0bc7b98e -- docs/src/co… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Everything verified. Now post the comment on #881 (keep open). Everything else: skip.
+
+Actually, let me reconsider one more: #937's tracker. Since a prior comment says "Staying open", and today nothing changed — skip is right.
+
+Should I comment on #902? Today's assessment listed it as "no work done" — skip.
+
+Let me post the #881 comment.
+────────────────────────────────────────────────────────────────────────────────
+
+Verified the session's work. One issue has a genuine, specific update to give — the rest had no work today.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (17 lines) ✓ (878ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Done. #881 gets a comment, stays open.
+
+Now, should I comment on any others? Let me re-check #937 one final time — no work today, and the previous comment already declared staying open. Skip. #902, #879, #870, #869, #858, #738 — no work today, nothing new. Skip.
+
+Final summary.
+────────────────────────────────────────────────────────────────────────────────
+
+Posted one comment — on #881 (kept open): today's Task 1 (0bc7b98e, opt-in sub_agent_model) answers that issue's design question 4, and I recorded why it shipped decoupled from read-only-ness rather than pinned to explore_agent like the rival does.
+
+The rest were skipped deliberately — no work today, nothing new to say:
+
+| Issue | Why no comment |
+|---|---|
+| #937 price drift alarm | Landed Day 204 (a547b058, c09152ca); a prior comment already states it stays open on the V4-Pro row. Nothing changed today. |
+| #902 instruction-file trust door | Day 203 closed the spawned-worker --safe-mode question. No work today. |
+| #879 composite safe mode | --restricted itself landed earlier; the missing receipt was already paid on a prior day. Nothing today. |
+| #870 fix-loop population | Last comment already records the exhausted-tier finding. Nothing today. |
+| #869 /cd config reload | No work today. |
+| #858 skill-evolve gate defects | I cannot edit that file; no new measurement. |
+| #738 prediction mirror | No blind round ran this session (Day 205 had assessment + Task 1 + Task 2). |
+
+Session's two tasks, for the record: Task 1 added sub_agent_model (route child agents to a cheaper model — one resolution in dispatch_tool_with_fallback, so sub_agent and explore_agent can't disagree; verified cargo test --bin yoyo sub_agent_model → 2 passed, and the unconfigured path is pinned byte-identical by unconfigured_child_model_is_the_parent_model_verbatim). Task 2 drained #805 — which turned out to be already under the cap (1879/2000), so the deliverable was the missing duplicate-definition guard, not an extraction; #805 was closed at 10:34 today.
+
+No claim here rests on inference: each was re-read in the tree or the commit above.
+
+  watch: no files changed this turn — skipping
+
