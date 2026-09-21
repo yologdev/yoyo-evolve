@@ -1142,3 +1142,158 @@ mod entry_condition_tests {
         );
     }
 }
+
+/// ── Day 205 (#805): the hypothesis-family items are a MOVE, and nothing pinned it ──
+///
+/// #805's evaluator receipt described a *copy*: the items still defined in the
+/// parent while a second, uncompiled file held a duplicate. The tree has moved
+/// on since that receipt — the parent measured 1879 lines against the fatal 2000
+/// cap, the module is declared, and the items exist once — so the remaining
+/// defect is that **nothing said so**. A re-paste of any one item back into the
+/// parent leaves `tests/module_size.rs` green (121 lines of headroom) and clippy
+/// green, because two live definitions in two live modules is not an error; it
+/// is a duplicate, which is the class this repo names as the duplication defect.
+///
+/// **This is a deliberately weak SOURCE-LEVEL guard, and it says so here rather
+/// than implying more.** It asserts on definition-shaped *text*: it proves no
+/// file under `src/` carries a second definition of these six names. It cannot
+/// see a duplicate that was renamed, and it cannot see one whose body was
+/// inlined at a call site (`dead_code` covers that only once the file is
+/// compiled at all). The needles are assembled at runtime so this test cannot
+/// match its own source — the idiom `src/agent_builder.rs`'s
+/// `every_rebuild_arm_…` uses.
+///
+/// **One test, not two, and the reason is a measurement rather than a
+/// preference.** A separate `the_parent_names_the_child_module` guard stood here
+/// and was removed: at HEAD the parent *imports* the child, so commenting out
+/// `mod commands_risk_families;` fails `cargo build` outright with `E0432:
+/// unresolved import` naming the file — the reachability claim is already
+/// enforced by rustc, and the guard's only unique firing condition (parent
+/// imports nothing, child file still on disk) is also caught below. So it could
+/// never have reddened alone, which by this repo's Day-190 rule makes it
+/// ceremony, not safety. The assertion it carried is kept *here*, where it does
+/// work as the anti-vacuous companion: "the one definition site is the child" is
+/// only a meaningful claim if the child is compiled, which is exactly the Day-173
+/// #804 state where the duplicate was real and rustc never saw it.
+#[cfg(test)]
+mod module_split_tests {
+    use std::path::{Path, PathBuf};
+
+    /// The names #805's receipt listed as still present in the parent, plus the
+    /// two that travelled with them, spelled as **definitions** rather than bare
+    /// names. That distinction is load-bearing: the parent legitimately *names*
+    /// three of these in its re-export, and `FamilyTally` appears in its
+    /// `FamilyTally::default()` call sites, so a guard on the bare name would be
+    /// red on the correct tree.
+    fn moved_item_needles() -> Vec<String> {
+        [
+            ("enum", "Provenance"),
+            ("struct", "FamilyTally"),
+            ("struct", "ExperimentFamilies"),
+            ("fn", "tally_hypothesis_families"),
+            ("fn", "format_family_line"),
+            ("fn", "format_experiment_families"),
+        ]
+        .iter()
+        .map(|(kind, name)| format!("{kind} {name}"))
+        .collect()
+    }
+
+    fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        let entries =
+            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
+        let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+        paths.sort();
+        for path in paths {
+            if path.is_dir() {
+                collect_rs_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Every definition site in the crate, as `(path relative to the repo root,
+    /// needle)` pairs. Walking all of `src/` rather than the two files the claim
+    /// is about is what makes this a **single**-definition claim instead of a
+    /// two-file one — a third copy anywhere else is the same defect.
+    fn definition_sites() -> Vec<(String, String)> {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        collect_rs_files(&root.join("src"), &mut files);
+
+        // Anti-vacuous, in the shape `tests/module_size.rs` uses: a walk that
+        // found nothing would make every assertion below pass while checking
+        // absolutely nothing.
+        assert!(
+            files.len() > 10,
+            "module walk found only {} files — the walk is broken, not the repo",
+            files.len()
+        );
+
+        let needles = moved_item_needles();
+        let mut sites = Vec::new();
+        for path in &files {
+            let text = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            for needle in &needles {
+                if text.contains(needle.as_str()) {
+                    sites.push((rel.clone(), needle.clone()));
+                }
+            }
+        }
+        sites
+    }
+
+    /// The claim the extraction's own commit cannot keep on its own: each item is
+    /// defined **exactly once** across `src/`, and the one place is the child.
+    #[test]
+    fn each_moved_item_has_exactly_one_definition_and_it_is_in_the_child() {
+        // Precondition, not decoration: the assertion below says the single
+        // definition is `src/commands_risk_families.rs`, and that is only a
+        // statement about the program if the module is reached. `is compiled?`
+        // is otherwise indistinguishable from `does the text exist?` — the
+        // Day-173 #804 defect in one sentence. Measured, not assumed: with this
+        // line commented out, `cargo build` fails with `E0432: unresolved
+        // import \`crate::commands_risk_families\`` pointing at the parent's
+        // re-export on `src/commands_risk_epistemic.rs:355`, which is why a
+        // standalone guard for it was removed rather than kept beside this one.
+        let crate_root = include_str!("main.rs");
+        let mod_needle = format!("mod {};", "commands_risk_families");
+        assert!(crate_root.contains("fn main("), "not the crate root");
+        assert!(
+            crate_root.contains(mod_needle.as_str()),
+            "src/main.rs does not declare `{mod_needle}` — rustc never compiles              src/commands_risk_families.rs, and cargo build, cargo test, clippy              and fmt --check are all structurally blind to it (#804). The              definition count below would then be counting a file that is not              part of the program."
+        );
+
+        let sites = definition_sites();
+        let mut wrong: Vec<String> = Vec::new();
+        for needle in moved_item_needles() {
+            let here: Vec<&str> = sites
+                .iter()
+                .filter(|(_, n)| *n == needle)
+                .map(|(p, _)| p.as_str())
+                .collect();
+            if here.len() != 1 || here[0] != "src/commands_risk_families.rs" {
+                wrong.push(format!(
+                    "`{needle}` is defined in {here:?} — expected exactly                      [\"src/commands_risk_families.rs\"]"
+                ));
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "the hypothesis-family extraction is no longer a move:\n  {}\n\n\
+             These items live in src/commands_risk_families.rs and are re-exported \
+             from src/commands_risk_epistemic.rs. If you are *moving* one back, \
+             delete the child's copy in the same commit: a second live definition \
+             is a duplicate, not a refactor, and it keeps the size gate green while \
+             the parent grows.",
+            wrong.join("\n  ")
+        );
+    }
+}
