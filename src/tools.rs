@@ -1754,11 +1754,18 @@ fn dispatch_tool_with_fallback(
     child_tools: Vec<Arc<dyn AgentTool>>,
     shared_state: &SharedState,
 ) -> Box<dyn AgentTool> {
-    // The primary attempt, on the session's configured model.
+    // ONE resolution of the child's model, read by both doors (`sub_agent` and
+    // `explore_agent` both land here) and by the label. `config.model` when
+    // nothing is configured, so every existing user is byte-identical; a
+    // configured `sub_agent_model` when the user opted in. See
+    // `config::effective_sub_agent_model` for the provider-prefix rule.
+    let child_model = crate::config::effective_sub_agent_model(&config.model);
+
+    // The primary attempt, on the resolved child model.
     let primary = sub_agent_tool_for(
         config,
         &config.provider,
-        &config.model,
+        &child_model,
         &config.api_key,
         child_tools.clone(),
         shared_state,
@@ -1771,7 +1778,7 @@ fn dispatch_tool_with_fallback(
     // returned byte-identically.
     let fallback = sub_agent_fallback_target(
         &config.provider,
-        &config.model,
+        &child_model,
         config.fallback_provider.as_deref(),
         config.fallback_model.as_deref(),
     )
@@ -1795,7 +1802,7 @@ fn dispatch_tool_with_fallback(
             Box::new(FallbackSubAgentTool::new(
                 Box::new(primary),
                 Box::new(secondary),
-                &config.model,
+                &child_model,
                 fb_model,
             ))
         }
@@ -1803,7 +1810,13 @@ fn dispatch_tool_with_fallback(
 
     Box::new(DiagnosticSubAgentTool::new(
         inner,
-        sub_agent_model_label(&config.model, fallback.as_ref().map(|(_, m, _)| m.as_str())),
+        // The label names the model the child is ACTUALLY built with — the
+        // resolved child model, never `config.model` unconditionally. A report
+        // that named the parent's model while the child ran on the configured
+        // cheap one would be the confident-wrong-diagnosis defect this wrapper
+        // exists to refuse. `sub_agent_model_label`'s signature is unchanged;
+        // only its `primary` argument moved.
+        sub_agent_model_label(&child_model, fallback.as_ref().map(|(_, m, _)| m.as_str())),
     ))
 }
 
@@ -1926,6 +1939,25 @@ mod tests {
             lite: false,
             bash_cwd: None,
         }
+    }
+
+    /// The production resolver, through its real process-global store.
+    ///
+    /// `SUB_AGENT_MODEL` is a `OnceLock`, so this test cannot set it — and it
+    /// must not need to: what it pins is the **absence** case, which is the
+    /// entire regression surface (every user who sets nothing). A `OnceLock`
+    /// written by another test would be a shared-global confound, which is why
+    /// the configured direction is driven by `config.rs`'s
+    /// `sub_agent_model_resolution_table` against a LOCAL store instead of
+    /// mutating this one.
+    #[test]
+    fn unconfigured_child_model_is_the_parent_model_verbatim() {
+        let parent = "claude-opus-5";
+        let child = crate::config::effective_sub_agent_model(parent);
+        // Whole-string equality against the pre-change output: a `contains`
+        // would pass for a prefix or a decorated id, which is not byte-identical.
+        assert_eq!(child, parent);
+        assert_eq!(sub_agent_model_label(&child, None), "`claude-opus-5`");
     }
 
     #[test]

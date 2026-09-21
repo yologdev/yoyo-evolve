@@ -1972,6 +1972,94 @@ pub fn parse_config_file(content: &str) -> HashMap<String, String> {
     map
 }
 
+// ---------------------------------------------------------------------------
+// `sub_agent_model` — opt-in cost routing for dispatched child agents
+// ---------------------------------------------------------------------------
+
+/// Parse `sub_agent_model` out of an already-parsed config map.
+///
+/// Absent, empty, or whitespace-only yields `None` — the same tri-state
+/// collapse `--model` uses (`cli.rs`'s `.filter(|s| !s.is_empty())`), so
+/// `sub_agent_model = ""` reads as "not set" rather than as "set to an empty
+/// model id", which would be a 404 dressed as a configuration.
+pub fn parse_sub_agent_model(map: &HashMap<String, String>) -> Option<String> {
+    map.get("sub_agent_model")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// The `sub_agent_model` the session's config file declared, recorded at load
+/// time because the config map itself is dropped before any tool is built.
+///
+/// **Superseded claim, recorded rather than erased:** this feature was first
+/// designed to ride `Config`/`AgentConfig`. It cannot. `AgentConfig` is
+/// constructed at 39 sites across 8 files (`src/main.rs:1025` is only the
+/// first), so a new field there is a diff that touches every construction site
+/// — the task's three-file budget was rejected on measurement, which is what
+/// its own Step 1 asked for.
+///
+/// The map is **not** resolvable in `src/agent_builder.rs` either, and the
+/// reason is mechanical, so a later reader does not "simplify" this away:
+/// `connect_external_servers` is called on an *already-built* agent and the
+/// filesystem is read here, at load time, exactly once per session — a
+/// `load_config_file()` from inside the agent builder would be a second read of
+/// the same discovery ladder (`CONFIG_FILE_NAMES` → `~/.yoyo.toml` → XDG), i.e.
+/// two spellings of one policy that agree today.
+static SUB_AGENT_MODEL: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// Record the configured child model from the config map that just won
+/// `load_config_file`'s search. `OnceLock::set` keeps the FIRST writer, matching
+/// `LOADED_CONFIG_PATH` directly above: the session acts on one config file and
+/// re-recording a later read would change provenance the session already used.
+fn record_sub_agent_model(map: &HashMap<String, String>) {
+    let _ = SUB_AGENT_MODEL.set(parse_sub_agent_model(map));
+}
+
+/// The model to build a dispatched child agent with.
+///
+/// **One resolver, both doors.** `sub_agent` and `explore_agent` must not be
+/// able to disagree about which model a child runs on — `sub_agent_model_label`
+/// is rendered from this same value, so a per-door resolution could name one
+/// model and run another.
+///
+/// Absent (the default, and every existing user) → `parent_model` **verbatim**,
+/// byte-identically to before this feature existed. That is the whole regression
+/// surface and it is pinned by `no_configured_child_model_returns_the_parent_verbatim`.
+///
+/// **The provider is inherited, deliberately, and this is the limit to know:**
+/// `sub_agent_tool_for` takes ONE `provider_name`, so a configured id is
+/// dispatched against the session's own provider and the session's own API key.
+/// A `provider/model` value is therefore NOT a cross-provider route — write the
+/// bare model id. That restriction is the load-bearing one from CLAUDE.md: a
+/// child dispatched at a provider whose key is unset would be sent the wrong
+/// token and die on a 401, so refusing to move provider is the safe direction.
+/// A foreign id simply 404s as an unknown model on the parent's provider, which
+/// is a visible configuration error rather than a silent mis-route.
+pub fn effective_sub_agent_model(parent_model: &str) -> String {
+    resolve_sub_agent_model(&SUB_AGENT_MODEL, parent_model)
+}
+
+/// The resolution itself, taking the store as a **parameter**.
+///
+/// Not decoration: `SUB_AGENT_MODEL` is a process-global `OnceLock` and a test
+/// that set it could never un-set it, so a test driving the real global could
+/// cover exactly one of the two directions in a whole test binary — and the
+/// missing direction would be whichever one ran second. Taking the store as an
+/// argument lets a test drive a LOCAL `OnceLock` for both directions in one
+/// process, which is the remedy `drain_failure_note(&store)` and
+/// `context_budget_warning_with` already use. The `OnceLock` also encodes the
+/// first-writer-wins rule directly: the stored value is the one the session
+/// loaded, exactly like `LOADED_CONFIG_PATH`.
+fn resolve_sub_agent_model(
+    store: &std::sync::OnceLock<Option<String>>,
+    parent_model: &str,
+) -> String {
+    match store.get().and_then(|m| m.as_deref()) {
+        None => parent_model.to_string(),
+        Some(configured) => configured.to_string(),
+    }
+}
+
 /// Load config from file, checking project-level, home-level, then user-level paths.
 /// The search order: `.yoyo.toml` (project) → `~/.yoyo.toml` (home) → XDG config dir.
 /// Prints the loaded path to stderr (unless quiet mode).
@@ -1984,7 +2072,9 @@ pub fn load_config_file() -> (HashMap<String, String>, String) {
                 eprintln!("{DIM}  config: {name}{RESET}");
             }
             record_loaded_config_path(std::path::PathBuf::from(name));
-            return (parse_config_file(&content), content);
+            let map = parse_config_file(&content);
+            record_sub_agent_model(&map);
+            return (map, content);
         }
     }
     // Check ~/.yoyo.toml (home directory shorthand)
@@ -1994,7 +2084,9 @@ pub fn load_config_file() -> (HashMap<String, String>, String) {
                 eprintln!("{DIM}  config: {}{RESET}", path.display());
             }
             record_loaded_config_path(path);
-            return (parse_config_file(&content), content);
+            let map = parse_config_file(&content);
+            record_sub_agent_model(&map);
+            return (map, content);
         }
     }
     // Check user-level config (XDG)
@@ -2004,7 +2096,9 @@ pub fn load_config_file() -> (HashMap<String, String>, String) {
                 eprintln!("{DIM}  config: {}{RESET}", path.display());
             }
             record_loaded_config_path(path);
-            return (parse_config_file(&content), content);
+            let map = parse_config_file(&content);
+            record_sub_agent_model(&map);
+            return (map, content);
         }
     }
     (HashMap::new(), String::new())
@@ -2102,6 +2196,103 @@ pub fn loaded_config_is_project_local() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -----------------------------------------------------------------
+    // `sub_agent_model` — the config half of the opt-in cost-routing knob
+    // -----------------------------------------------------------------
+
+    /// The parse table. Absent, empty and whitespace-only must all read as
+    /// "not set": `sub_agent_model = ""` is a configuration slip, and treating
+    /// it as a set-but-empty model id would dispatch a child at a model named
+    /// nothing, which is a 404 dressed as a setting.
+    #[test]
+    fn sub_agent_model_parse_table() {
+        let cases: &[(&str, Option<&str>)] = &[
+            ("", None),
+            ("model = \"gpt-4o\"\n", None),
+            ("sub_agent_model = \"cheap-1\"\n", Some("cheap-1")),
+            // Whitespace-only and empty values collapse to `None`, the same
+            // tri-state `--model` uses (`.filter(|s| !s.is_empty())`).
+            ("sub_agent_model = \"\"\n", None),
+            ("sub_agent_model = \"   \"\n", None),
+            // Surrounding whitespace is trimmed, so a hand-edited line with a
+            // stray space does not become a distinct model id.
+            ("sub_agent_model = \"  cheap-1  \"\n", Some("cheap-1")),
+            // It reads the same file/keyset as `model` and `thinking`, and
+            // does NOT disturb them.
+            (
+                "model = \"parent-1\"\nsub_agent_model = \"cheap-1\"\nthinking = \"high\"\n",
+                Some("cheap-1"),
+            ),
+        ];
+        for (content, expected) in cases {
+            let map = parse_config_file(content);
+            assert_eq!(
+                parse_sub_agent_model(&map).as_deref(),
+                *expected,
+                "for config {content:?}"
+            );
+        }
+    }
+
+    /// The resolution table — BOTH directions in one process, which the real
+    /// `SUB_AGENT_MODEL` global cannot give (a `OnceLock` can be set but never
+    /// unset, so whichever direction ran second would be untestable).
+    #[test]
+    fn sub_agent_model_resolution_table() {
+        // The near-miss case and the whole regression surface: nothing
+        // configured, so the child runs on the parent's model VERBATIM — pinned
+        // with whole-string equality against the pre-change output, because
+        // this is EVERY existing user.
+        let unset: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        assert_eq!(
+            resolve_sub_agent_model(&unset, "claude-opus-5"),
+            "claude-opus-5"
+        );
+        assert_eq!(
+            crate::tool_wrappers::sub_agent_model_label(
+                &resolve_sub_agent_model(&unset, "claude-opus-5"),
+                None
+            ),
+            "`claude-opus-5`"
+        );
+
+        // Recorded-but-`None` (a config file that simply omits the key) must
+        // behave identically to a store that was never written.
+        let explicit_none: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        explicit_none.set(None).expect("first write wins");
+        assert_eq!(
+            resolve_sub_agent_model(&explicit_none, "claude-opus-5"),
+            "claude-opus-5"
+        );
+
+        // Configured: the child gets the configured id, not the parent's.
+        let configured: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        configured
+            .set(Some("claude-haiku-4-5".to_string()))
+            .expect("first write wins");
+        let resolved = resolve_sub_agent_model(&configured, "claude-opus-5");
+        // Anti-vacuous: the fixture provably discriminates, so a resolver that
+        // ignored the store and returned the parent could not pass by accident.
+        assert_ne!("claude-haiku-4-5", "claude-opus-5");
+        assert_eq!(resolved, "claude-haiku-4-5");
+
+        // And the EMISSION POINT: the string the parent actually receives on a
+        // child failure, composed by the same two calls `dispatch_tool_with_fallback`
+        // makes. Whole-string equality, never a `contains`.
+        assert_eq!(
+            crate::tool_wrappers::sub_agent_model_label(&resolved, None),
+            "`claude-haiku-4-5`"
+        );
+
+        // First writer wins, matching `LOADED_CONFIG_PATH`: a later read cannot
+        // change the provenance the session is already acting on.
+        let _ = configured.set(Some("something-else".to_string()));
+        assert_eq!(
+            resolve_sub_agent_model(&configured, "claude-opus-5"),
+            "claude-haiku-4-5"
+        );
+    }
 
     #[test]
     fn test_config_module_glob_match() {

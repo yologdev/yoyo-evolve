@@ -73,6 +73,27 @@ model = "gpt-4o"
 base_url = "https://api.openai.com/v1"
 ```
 
+## Route sub-agents to a cheaper model
+
+A sub-agent (`sub_agent` or `explore_agent`) inherits the session's model by default. If
+your exploration and bulk-delegation work does not need your main model, point it at a
+cheaper one:
+
+```toml
+model = "claude-opus-4-6"
+sub_agent_model = "claude-haiku-4-5"
+```
+
+This exists for **cost routing, not capability** — it is purely a cost lever, and the
+child is otherwise unchanged. Only the model id moves.
+
+- **Absent (the default) means the child runs on your session's model** — nothing changes
+  for anyone who does not set it.
+- The child is dispatched against **your session's provider and API key**, so write the
+  bare model id from that provider. A `provider/model` value does not switch providers.
+- The failure report a parent sees on a dead sub-agent names the model the child actually
+  ran on, so the cheaper route is visible rather than implied.
+
 ## Cost estimation
 
 Cost estimation is built in for many providers:

@@ -290,7 +290,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // side, matching unescaping (and a lone-quote panic fix) on the read side,
     // plus the round-trip tests that pin writer and reader as one promise.
     // Day 174: +256 absorbed since Day 166.
-    ("src/config.rs", 4459), // Day 198: +223 for the cloud-metadata allow narrowing, CLOUD_METADATA_HOSTS and 7 guards.
+    ("src/config.rs", 4650), // Day 205: +190 for the `sub_agent_model` knob — parse, the load-time store and `effective_sub_agent_model`, plus the parse/resolution tables that pin absent-is-the-parent-verbatim.
     // Day 165: 2307 -> 2296. Not a shrink I made this session — the entry was
     // stale-high, and branch 3 (below-ceiling is fatal) is what finally said so.
     // Day 184: 2321 -> 2337 (+16). NOT this task's diff — `git diff src/dispatch.rs`
@@ -502,7 +502,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // pin the two child sets, the refusal stem, the parent-facing description
     // and the fold. Number pasted from what the gate itself printed (line
     // count after `cargo fmt`; the gate ran on 4655 pre-fmt).
-    ("src/tools.rs", 4899), // Day 203: #881 slice 2, the read-only dispatcher.
+    ("src/tools.rs", 4931), // Day 205: +32 for the single child-model resolution that both dispatch doors read, and the label that must name it.
     // Day 163 (#726): -58 lines — emerging-risk annotation removed from
     // build_watch_fix_prompt, with its own test; see #724.
     ("src/watch.rs", 4418),
