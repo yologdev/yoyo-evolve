@@ -62,6 +62,13 @@ This appears when the Anthropic API returns an error. Common causes:
 - **Invalid API key** — check your key is correct and active
 - **Rate limiting** — you're sending too many requests; wait and retry
 - **Model unavailable** — the model you specified doesn't exist or you don't have access
+- **A model id from another vendor's family** — `--provider` and `--model` resolve
+  independently, so `--model claude-opus-5` with `provider = "deepseek"` sends an Anthropic
+  id to `https://api.deepseek.com/v1`, and the 401 from the wrong endpoint is the only clue
+  you get. yoyo warns once at startup when it sees this, naming the model, the resolved
+  provider, and the endpoint requests will actually go to. Fix it by passing
+  `--provider anthropic`, or pass `--base-url` if the endpoint is deliberate — a proxy or
+  gateway serving another vendor's ids is a supported setup and stays silent.
 
 **Automatic retry:** yoyo automatically retries transient errors (rate limits, server errors, network issues) with exponential backoff — up to 3 retries with 1s, 2s, 4s delays. You'll see a dim message like `⚡ retrying (attempt 2/4, waiting 2s)...` when this happens. Auth errors (401, 403) and invalid requests (400) are shown immediately without retrying.
 

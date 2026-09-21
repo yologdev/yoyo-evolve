@@ -1102,6 +1102,13 @@ fn parse_model_config(
         eprintln!("{warning}");
     }
 
+    // #942: the same independence that lets `--model` fall back to the provider's
+    // default lets a foreign id through unreconciled. Emitted here, once, before
+    // the session starts — not per turn.
+    if let Some(warning) = model_provider_mismatch_warning(&model, &provider, base_url.is_some()) {
+        eprintln!("{warning}");
+    }
+
     // --fallback <provider>: fallback provider if primary fails
     let fallback_provider = flag_value(args, &["--fallback"])
         .or_else(|| file_config.get("fallback").cloned())
@@ -1138,6 +1145,72 @@ pub(crate) fn unknown_model_warning(provider: &str, model: &str) -> Option<Strin
         "{YELLOW}warning:{RESET} Unknown model '{model}' for provider '{provider}'. \
          Known models: {}. Proceeding anyway (custom models are valid).",
         known.iter().take(5).copied().collect::<Vec<_>>().join(", ")
+    ))
+}
+
+/// Providers that legitimately serve another vendor's model ids.
+///
+/// An aggregator (OpenRouter, GitHub Models), a local runtime (Ollama) and a
+/// user-declared `custom` endpoint all take foreign ids on purpose, so a warning
+/// here would be crying wolf at a supported setup. The `--base-url` clause below
+/// covers the same ground for single-vendor providers pointed at a gateway.
+const MULTI_VENDOR_PROVIDERS: &[&str] = &["openrouter", "ollama", "github", "custom"];
+
+/// The `--provider`/`--model` disagreement warning, or `None` when the pair is
+/// consistent (or consistent enough that warning would be guessing).
+///
+/// `--provider` and `--model` resolve independently in `parse_model_config` and
+/// never consult each other, so `--model claude-fable-5-1` under
+/// `provider = "deepseek"` sends an Anthropic id to `https://api.deepseek.com/v1`.
+/// The failure is masked twice over: the key lookup falls back to
+/// `ANTHROPIC_API_KEY` (#942's sibling), so a 401 from the wrong endpoint is the
+/// only clue, and it arrives before the unknown-model warning above can be read.
+///
+/// `None` when:
+/// - the user gave an explicit `--base-url` — a proxy or gateway serving another
+///   vendor's ids is a legitimate setup, not a mistake;
+/// - the provider is an aggregator or a local runtime (`MULTI_VENDOR_PROVIDERS`),
+///   or an unrecognised name (already warned about on its own line);
+/// - the inference agrees with the resolved provider;
+/// - the id is not **positively attributable** to the inferred family — i.e.
+///   `model_is_known_for_provider` does not recognise it. This is the
+///   "unknown family — never guess" clause: `infer_provider_from_model` answers
+///   `anthropic` both for a Claude id and for an id carrying no family keyword at
+///   all, so its own return value cannot tell those apart. Asking a *second*,
+///   independent authority (the known-model lists plus `anthropic_preset`) rather
+///   than re-reading the keyword table keeps one source of truth for the families
+///   and makes the two agree by observation instead of by my typing hand.
+///
+/// Returns `None` for every provider's own default model, so the common first run
+/// (`--provider X`, no `--model`) is byte-identical to today. That is the whole
+/// regression surface.
+fn model_provider_mismatch_warning(
+    model: &str,
+    provider: &str,
+    base_url_given: bool,
+) -> Option<String> {
+    if base_url_given || MULTI_VENDOR_PROVIDERS.contains(&provider) {
+        return None;
+    }
+    if !KNOWN_PROVIDERS.contains(&provider) {
+        return None;
+    }
+    let inferred = crate::prompt_retry::infer_provider_from_model(model);
+    if inferred == provider {
+        return None;
+    }
+    if !crate::providers::model_is_known_for_provider(&inferred, model) {
+        return None;
+    }
+    // The endpoint is the fact the user cannot otherwise see, and it is read from
+    // the same function that will choose it (`create_model_config`, `base_url =
+    // None` because a given one already returned above) rather than restated here.
+    let endpoint = crate::agent_builder::create_model_config(provider, model, None).base_url;
+    Some(format!(
+        "{YELLOW}warning:{RESET} Model '{model}' is an id from the {inferred} family, but provider \
+         '{provider}' is set, so requests go to {endpoint}. Pass --provider {inferred} if that \
+         is what you meant, or --base-url if the endpoint is deliberate (a gateway serving \
+         these ids)."
     ))
 }
 
@@ -2945,6 +3018,120 @@ mod tests {
         // A provider with no list stays silent, so a wider rule cannot start
         // shouting at `custom`/`openrouter` users.
         assert_eq!(unknown_model_warning("openrouter", "whatever"), None);
+    }
+
+    /// #942 — `--provider` and `--model` resolve independently, so a model id from
+    /// another vendor's family is invisible: the request simply goes to the wrong
+    /// endpoint, the API-key fallback in `parse_model_config` hands it the wrong
+    /// token, and the 401 arrives before any unknown-model warning can be read.
+    /// The endpoint is the fact the user cannot otherwise see, so the warning names
+    /// it. Asserted at the emission point: the string a caller receives is exactly
+    /// what the call site prints.
+    #[test]
+    fn test_model_provider_mismatch_warns_on_a_foreign_id_and_stays_silent_otherwise() {
+        // Raw stderr: libtest's capture hook discards macro output from *passing*
+        // tests, so the census below only appears under `-- --nocapture`. It is
+        // measured output, never a gate — the assertions are the gate.
+        use std::io::Write;
+        fn row(line: &str) {
+            let _ = writeln!(std::io::stderr(), "mismatch-warning census: {line}");
+        }
+        // The issue's own fixture. ANTI-VACUOUS: it really is an id whose inferred
+        // family disagrees with the resolved provider, asserted separately, so the
+        // table cannot pass by having quietly made every row a `None`.
+        const FOREIGN_ID: &str = "claude-fable-5-1";
+        let inferred = crate::prompt_retry::infer_provider_from_model(FOREIGN_ID);
+        assert_eq!(inferred, "anthropic");
+        assert_ne!(inferred, "deepseek");
+        assert!(
+            crate::providers::model_is_known_for_provider(&inferred, FOREIGN_ID),
+            "{FOREIGN_ID} must be a real id of the inferred family or this row tests nothing"
+        );
+
+        // (model, provider, base_url_given, must_warn)
+        let rows = [
+            // The motivating case: an Anthropic id against the DeepSeek endpoint.
+            (FOREIGN_ID, "deepseek", false, true),
+            // My own loop's pair — the regression surface, byte-identical to today.
+            ("deepseek-v4-flash", "deepseek", false, false),
+            // Unknown family: the predicate has no "I don't know" answer, so an id
+            // it resolved by its own fallback is not a claim about anybody.
+            ("totally-unknown-model", "deepseek", false, false),
+            // Explicit --base-url: a gateway serving another vendor's ids is a
+            // legitimate setup, not a mistake.
+            (FOREIGN_ID, "deepseek", true, false),
+            // Aggregators and local runtimes serve foreign ids on purpose.
+            ("claude-opus-5", "openrouter", false, false),
+            ("claude-opus-5", "ollama", false, false),
+            // An unrecognised provider name is already warned about on its own line.
+            ("claude-opus-5", "bogus-provider", false, false),
+        ];
+        for (model, provider, base_url_given, must_warn) in rows {
+            let got = model_provider_mismatch_warning(model, provider, base_url_given);
+            assert_eq!(
+                got.is_some(),
+                must_warn,
+                "{model} under {provider} (base_url={base_url_given}): expected \
+                 warning={must_warn}, got {got:?}"
+            );
+            row(&format!(
+                "{model:30} {provider:16} base_url={base_url_given:<5} -> {}",
+                match &got {
+                    Some(w) => format!("WARN: {w}"),
+                    None => "None".to_string(),
+                }
+            ));
+        }
+
+        // The warning names the model, the resolved provider, and the endpoint the
+        // request will actually go to.
+        let got = model_provider_mismatch_warning(FOREIGN_ID, "deepseek", false)
+            .expect("the motivating case must warn");
+        assert!(got.contains(FOREIGN_ID), "{got}");
+        assert!(got.contains("'deepseek'"), "{got}");
+        assert!(got.contains("https://api.deepseek.com/v1"), "{got}");
+
+        // The silent rows are pinned with full-string `assert_eq!` against no
+        // output, not a `contains` that a partial warning could satisfy.
+        assert_eq!(
+            model_provider_mismatch_warning("deepseek-v4-flash", "deepseek", false),
+            None
+        );
+        assert_eq!(
+            model_provider_mismatch_warning("deepseek-v4-pro", "deepseek", false),
+            None
+        );
+        assert_eq!(
+            model_provider_mismatch_warning("totally-unknown-model", "deepseek", false),
+            None
+        );
+        assert_eq!(
+            model_provider_mismatch_warning(FOREIGN_ID, "deepseek", true),
+            None
+        );
+        assert_eq!(
+            model_provider_mismatch_warning("claude-opus-5", "openrouter", false),
+            None
+        );
+        assert_eq!(
+            model_provider_mismatch_warning("claude-opus-5", "bogus-provider", false),
+            None
+        );
+
+        // No default model for any provider may warn on its own default:
+        // `--provider X` with no `--model` is every user's first run, and a
+        // warning there would be the crying-wolf direction.
+        for provider in KNOWN_PROVIDERS {
+            assert_eq!(
+                model_provider_mismatch_warning(
+                    &default_model_for_provider(provider),
+                    provider,
+                    false
+                ),
+                None,
+                "{provider} warns on its own default model"
+            );
+        }
     }
 
     /// True if `flag` appears in `text` as a whole token — neither side may be a

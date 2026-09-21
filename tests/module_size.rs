@@ -186,7 +186,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 202: 7276 -> 7272, a 4-line shrink this task caused — the three
     // inline `match hook.phase` blocks (`project_hook_refusal_message`, the
     // test `hook()` helper) now read `HookPhase::as_str`, the single source.
-    ("src/cli.rs", 7397), // Day 205: #941 — the `Unknown model` warning now consults `providers::model_is_known_for_provider` (one rule, shared with the config path) via the new `unknown_model_warning` composer, plus its emission-point test. The composer lives here because the message interpolates the `format::*` colour statics; the predicate lives in providers.rs. Pasted from what the gate printed. Day 205: #920 — `auto_discover_skills` gained the project-skill symlink-escape refusal (the gate's own reading; only the *call site* lives here, the logic is in config_paths.rs). Pasted from what the gate printed. Day 199: #924 — parse_args grew a config-injecting seam (parse_args_with_config) plus its source-level delegation guard.
+    ("src/cli.rs", 7584), // Day 205: #942 — `parse_model_config` now also emits `model_provider_mismatch_warning`, which reconciles the independently-resolved `--provider` and `--model` at resolution time and names the endpoint the request will actually go to (the fact the user cannot otherwise see). +187, past the 100-line register-drift grace band, so this one was fatal until pasted; the bulk is the emission-point table test, whose rows go to stderr under `--nocapture` rather than being eyeballed. Day 205: #941 — the `Unknown model` warning now consults `providers::model_is_known_for_provider` (one rule, shared with the config path) via the new `unknown_model_warning` composer, plus its emission-point test. The composer lives here because the message interpolates the `format::*` colour statics; the predicate lives in providers.rs. Pasted from what the gate printed. Day 205: #920 — `auto_discover_skills` gained the project-skill symlink-escape refusal (the gate's own reading; only the *call site* lives here, the logic is in config_paths.rs). Pasted from what the gate printed. Day 199: #924 — parse_args grew a config-injecting seam (parse_args_with_config) plus its source-level delegation guard.
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
@@ -429,7 +429,13 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // done here: a half-landed pure move is a build failure and a reverted
     // session, while a register edit cannot half-land. It was 8 lines from fatal
     // with #855 (open, agent-self) queued against this exact file.
-    ("src/prompt_retry.rs", 2713),
+    // Day 205 (#942): 2713 -> 2718 (+5, inside REGISTER_DRIFT_GRACE_LINES, so the
+    // gate warned rather than failed). The five lines are a `pub(crate)` widening
+    // on `infer_provider_from_model` plus the doc comment saying why: `cli.rs` now
+    // asks that same table at resolution time instead of restating the family
+    // keywords a second time in the parser, where a restatement performs no read
+    // and would drift silently. No behaviour change, no test touched.
+    ("src/prompt_retry.rs", 2718),
     // Day 162 (#689): +14 lines — double Ctrl+C at the idle REPL prompt now
     // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
     // Day 174: +91 absorbed since Day 166.

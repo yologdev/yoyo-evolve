@@ -788,7 +788,12 @@ pub(crate) fn mentions_retry_directive(lower: &str) -> bool {
 
 /// Infer the provider name from a model identifier.
 /// Used by `diagnose_api_error` so it doesn't need `provider` threaded through every caller.
-fn infer_provider_from_model(model: &str) -> String {
+///
+/// #942 widened this from private to `pub(crate)` so `cli.rs` can ask the same
+/// table at resolution time rather than restating the family keywords a second
+/// time in the parser — a restatement performs no read and would drift silently.
+/// The body and its tests are unchanged.
+pub(crate) fn infer_provider_from_model(model: &str) -> String {
     let m = model.to_lowercase();
     if m.contains("claude") || m.contains("opus") || m.contains("sonnet") || m.contains("haiku") {
         "anthropic".into()
