@@ -79,9 +79,24 @@ cleanup() {
             echo "  WARNING: pull --rebase failed; cooldown commit may conflict" >&2
         # Stage ONLY the stamp (never -A / .) so an uncommitted out-of-scope write
         # the agent may have left is never committed or pushed — it dies with the runner.
+        #
+        # `git add` alone is NOT enough to make that true, and the claim above was
+        # false until the pathspec below was added. `git commit` with no pathspec
+        # commits the WHOLE INDEX, and the agent is told to `git add` its own files
+        # (prompt step 6) — so any kill between its add and its commit leaves those
+        # files staged, and they ride this checkpoint out to origin. Reproduced
+        # 2026-09-21: with IDENTITY.md left staged, the resulting commit contained
+        # `.dream_last_run` AND `IDENTITY.md`.
+        #
+        # The diff-scope guard cannot catch it: the guard inspects
+        # HEAD_BEFORE..HEAD_AFTER and has already run by the time the trap fires,
+        # so this commit is created behind it. `-- "$LAST_RUN_FILE"` bounds the
+        # commit to the one file regardless of what else is staged, which is the
+        # same defence evolve.sh applies at :1977 with `diff --cached --name-only`.
         git add "$LAST_RUN_FILE" 2>/dev/null || true
-        if ! git diff --cached --quiet 2>/dev/null; then
-            git commit -m "dream: cooldown checkpoint (cycle $(date -u +%Y-%m-%dT%H:%MZ))" 2>/dev/null || \
+        if ! git diff --cached --quiet -- "$LAST_RUN_FILE" 2>/dev/null; then
+            git commit -m "dream: cooldown checkpoint (cycle $(date -u +%Y-%m-%dT%H:%MZ))" \
+                -- "$LAST_RUN_FILE" 2>/dev/null || \
                 echo "  WARNING: cooldown commit failed" >&2
         fi
         if [ "${HEAD_BEFORE:-}" != "$(git rev-parse HEAD 2>/dev/null)" ] || ! git diff-index --quiet HEAD -- 2>/dev/null; then
