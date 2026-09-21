@@ -1727,9 +1727,16 @@ pub(crate) enum RestrictedDirOutcome {
 /// own confinement is worse than an invisible one — which is why the *disclosure*
 /// moved in the same diff as the behaviour rather than a session later.
 ///
-/// The env-var form (`YOYO_RESTRICTED=1`) is also deferred: it is the two-source
-/// OR shape `continue_on_silence` and `wait_for_reset` already use and can be
-/// added later without redesigning any of this.
+/// **Superseded, recorded rather than erased:** this list used to carry a
+/// *"the env-var form (`YOYO_RESTRICTED=1`) is also deferred"* entry, ending
+/// *"it is the two-source OR shape `continue_on_silence` and `wait_for_reset`
+/// already use and can be added later without redesigning any of this."* That
+/// sentence was **true when it was written and is false as of today**: the env
+/// form landed as `restricted_from_sources` / `restricted_env_source` /
+/// `RESTRICTED_ENV_VAR` (see those three items), with no redesign of anything in
+/// this function — which is exactly what the sentence predicted, so it is
+/// replaced rather than deleted. It stays here because a reader who remembers
+/// the deferral needs to be told it was paid, not left to infer it.
 pub(crate) fn restricted_mode_effects(
     allow_dirs: &[String],
     cwd: Option<&std::path::Path>,
@@ -2548,7 +2555,15 @@ directory ({e}); this run is trusted, later runs will not be."
     // on — the same mechanism, not a second one. Read here, before project
     // context is loaded, so the suppression is honoured this run rather than
     // arriving after the thing it was meant to suppress.
-    let restricted = args.iter().any(|a| a == "--restricted");
+    //
+    // Both sources are resolved HERE and only here — the `--restricted` flag scan
+    // and one read of `YOYO_RESTRICTED` — and the boolean comes back from the pure
+    // `restricted_from_sources`, so the OS environment is consulted once for the
+    // process and a session's confinement cannot shift mid-session.
+    let restricted = crate::restricted::restricted_from_sources(
+        args.iter().any(|a| a == "--restricted"),
+        crate::restricted::restricted_env_source().as_deref(),
+    );
     let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");
     if !safe_mode {
         if let Some(project_context) = load_project_context() {

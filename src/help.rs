@@ -257,7 +257,15 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
-        "                    sandbox: file tools remain — use --read to stop writes"
+        "                    sandbox: file tools remain — use --read to stop writes."
+    );
+    let _ = writeln!(
+        s,
+        "                    Also settable via YOYO_RESTRICTED=1 (or true), so a wrapper"
+    );
+    let _ = writeln!(
+        s,
+        "                    script can confine a run without editing its argv"
     );
     let _ = writeln!(
         s,
@@ -764,6 +772,18 @@ pub fn cli_help_text() -> String {
     let _ = writeln!(
         s,
         "                            early when <30s remain (default: unbounded)"
+    );
+    let _ = writeln!(
+        s,
+        "  YOYO_RESTRICTED       Set to 1 (or true) to confine this run exactly as"
+    );
+    let _ = writeln!(
+        s,
+        "                        --restricted does; other values, including 0 and"
+    );
+    let _ = writeln!(
+        s,
+        "                        false, are off. The flag and this env var are OR-ed"
     );
     let _ = writeln!(s);
     let _ = writeln!(s, "Config files (searched in order, first found wins):");

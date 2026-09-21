@@ -119,6 +119,10 @@ mod prompt_retry_limits;
 mod prompt_utils;
 mod providers;
 mod repl;
+/// The `--restricted` switch's decision seam (#879 question 5): the flag and the
+/// `YOYO_RESTRICTED` env var, OR-ed in exactly one place. See the module docs for
+/// why it is its own file rather than four more functions in `cli.rs`.
+mod restricted;
 mod rtk;
 mod safety;
 mod session;

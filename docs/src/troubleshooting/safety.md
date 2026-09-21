@@ -120,6 +120,19 @@ exactly what it was.
 yoyo --restricted -p "what does this repo do?"
 ```
 
+A wrapper script can also confine a run **without** editing its argv — set
+`YOYO_RESTRICTED=1` (or `true`) in the environment:
+
+```bash
+YOYO_RESTRICTED=1 yoyo -p "what does this repo do?"
+```
+
+The flag and the environment variable are OR-ed, and the environment can
+only ever turn the restriction **on**; the flag is never turned off by
+`YOYO_RESTRICTED=0`. Only `1` and `true` (trimmed, case-insensitive) count as
+on — `0`, `false`, an empty value and any other spelling all mean off, so a
+typo cannot silently change the session's confinement.
+
 It does two things:
 
 1. **Turns on everything `--safe-mode` turns on** — no project-local
