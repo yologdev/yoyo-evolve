@@ -20,7 +20,7 @@ pub(crate) const RISK_FIRST_SCORED_PATH: &str = ".yoyo/risk_first_scored.jsonl";
 
 /// Filename of the first-scored ledger, resolved as a **sibling** of whatever
 /// snapshot path a caller passes so a tempdir test writes into its tempdir.
-const RISK_FIRST_SCORED_FILE: &str = "risk_first_scored.jsonl";
+pub(crate) const RISK_FIRST_SCORED_FILE: &str = "risk_first_scored.jsonl";
 
 /// Current UTC instant in the `YYYY-MM-DDTHH:MM:SSZ` shape both JSONL ledgers
 /// use. One statement of the format — the snapshot line and the first-scored
@@ -470,6 +470,13 @@ pub(crate) const RISK_VALIDATION_PATH: &str = ".yoyo/risk_validations.jsonl";
 /// `snapshot_git_hash` records which snapshot this event graded — used by the
 /// green-outcome dedup (grade each snapshot at most once). `None` omits the
 /// key (all pre-existing event shapes).
+///
+/// `unhittable_surprises` is how many of this event's `surprises` were **first
+/// scored after the snapshot that graded them** — files that did not exist when
+/// the prediction was made, so they are guaranteed misses that look exactly like
+/// real ones (see [`count_unhittable_surprises`]). `None` omits the key, which
+/// means *not measured* and must never be read as `Some(0)`; only the two call
+/// sites that hold a snapshot timestamp pass `Some`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_validation_event(
     validation_path: &std::path::Path,
@@ -482,6 +489,7 @@ pub(crate) fn write_validation_event(
     severity: Option<&str>,
     snapshot_git_hash: Option<&str>,
     ci_run_id: Option<u64>,
+    unhittable_surprises: Option<u32>,
 ) -> std::io::Result<()> {
     let ts = utc_timestamp();
 
@@ -527,6 +535,16 @@ pub(crate) fn write_validation_event(
     if let Some(run_id) = ci_run_id {
         if let Some(obj) = event.as_object_mut() {
             obj.insert("ci_run_id".to_string(), serde_json::json!(run_id));
+        }
+    }
+
+    // Optional, like the four fields above: absent means "not measured"
+    // (legacy lines, and the two sites with no snapshot timestamp in scope),
+    // never `0` — a zero here is a measurement, and the difference matters to
+    // anyone reading a `0%` later.
+    if let Some(n) = unhittable_surprises {
+        if let Some(obj) = event.as_object_mut() {
+            obj.insert("unhittable_surprises".to_string(), serde_json::json!(n));
         }
     }
 
@@ -706,6 +724,12 @@ pub(crate) fn record_green_validation_to(
         Some("watch_success"),
         Some(snapshot_git_hash),
         None, // green event — not a CI harvest
+        // #DREAM: no snapshot *timestamp* is in scope here — this site is
+        // handed a git hash, not the snapshot line — so the unhittable join
+        // (which compares timestamps, never hashes) passes None rather than
+        // guessing. Named limit, not an oversight: green events carry no 0%
+        // recall figure, so no unhittable zero can hide inside one.
+        None,
     )?;
 
     Ok(GreenGrade::Recorded {
@@ -739,7 +763,7 @@ pub(crate) fn auto_validate_after_failure(changed_files: &[String], severity: &s
 }
 
 /// Inner implementation with configurable paths (for testing).
-fn auto_validate_after_failure_to(
+pub(crate) fn auto_validate_after_failure_to(
     changed_files: &[String],
     severity: &str,
     snapshot_path: &std::path::Path,
@@ -805,6 +829,18 @@ fn auto_validate_after_failure_to(
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
 
+    // Say "unhittable" out loud. A surprise that did not exist when this
+    // snapshot was taken was never predictable, yet it is scored exactly like a
+    // real miss — both render as a lower accuracy with the file named under
+    // `surprises`. The join reads the first-scored ledger beside these
+    // snapshots (no git: the clone is shallow and old snapshot hashes are
+    // unresolvable, which is why the ledger proxy exists at all).
+    let unhittable = count_unhittable_surprises_at(
+        &surprises,
+        &last.ts,
+        &first_scored_ledger_path(snapshot_path),
+    );
+
     // Append the validation event via the shared writer (same shape the CLI
     // `/risk validate` path uses).
     if let Err(e) = write_validation_event(
@@ -818,6 +854,7 @@ fn auto_validate_after_failure_to(
         Some(severity),
         Some(&last.git_hash), // the snapshot this event graded — auditability, not a dedup key
         None,                 // not a CI-harvested event — no run id
+        Some(unhittable.unhittable), // measured here: a real 0 is a reading, not an absence
     ) {
         eprintln!("  {DIM}(warning: could not write risk validation entry: {e}){RESET}");
     }
@@ -829,6 +866,13 @@ fn auto_validate_after_failure_to(
         total_changed,
         accuracy_pct_rounded,
     );
+    // Only when there is something to say, and only outside --quiet: an
+    // ordinary session's stderr stays byte-identical to the pre-Dream shape.
+    if !crate::format::is_quiet() {
+        if let Some(note) = unhittable_note(unhittable, crate::format::is_plain_output()) {
+            eprintln!("{DIM}     {note}{RESET}");
+        }
+    }
     if let Some((emerging_hits, e_pct)) = emerging_grade {
         // Allostatic-vs-homeostatic comparison, visible the moment it's measured.
         eprintln!(
@@ -861,6 +905,11 @@ fn auto_validate_after_failure_to(
 // is deliberately absent: no call site ever names it (it is only reached as
 // `parse_failed_ci_runs`'s return type), so re-exporting it would be an unused
 // import rather than a preserved seam.
+// The unhittable-surprise join lives in its own module (Day 206) — too big for
+// this grandfathered file; re-exported so the snapshot call sites import one
+// path, the same seam the parse re-export below uses.
+pub(crate) use crate::commands_risk_unhittable::{count_unhittable_surprises_at, unhittable_note};
+
 pub(crate) use crate::commands_risk_parse::{
     ci_event_exists_for, ci_payload_note, epistemic_ledger_notes, load_validation_history_from,
     parse_all_snapshots, parse_ci_run_payload, parse_failed_ci_runs, parse_validation_events,
@@ -1409,7 +1458,7 @@ mod tests {
         let hits = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
         let surprises = vec!["src/prompt.rs".to_string()];
         write_validation_event(
-            &path, 129, "cli", &hits, &surprises, 66.7, None, None, None, None,
+            &path, 129, "cli", &hits, &surprises, 66.7, None, None, None, None, None,
         )
         .expect("write validation event");
 
@@ -1447,6 +1496,7 @@ mod tests {
             Some("watch_failure"),
             None,
             None,
+            None,
         )
         .expect("write validation event");
 
@@ -1473,11 +1523,11 @@ mod tests {
         let hits = vec!["src/main.rs".to_string()];
         let surprises: Vec<String> = vec![];
         write_validation_event(
-            &path, 1, "cli", &hits, &surprises, 100.0, None, None, None, None,
+            &path, 1, "cli", &hits, &surprises, 100.0, None, None, None, None, None,
         )
         .expect("first write");
         write_validation_event(
-            &path, 2, "cli", &hits, &surprises, 100.0, None, None, None, None,
+            &path, 2, "cli", &hits, &surprises, 100.0, None, None, None, None, None,
         )
         .expect("second write");
 
@@ -1573,6 +1623,7 @@ mod tests {
             50.0,
             Some(75.0),
             Some("watch_failure"),
+            None,
             None,
             None,
         )
@@ -1767,6 +1818,7 @@ mod tests {
             Some("ci_failure"),
             None,
             Some(30051449447),
+            None,
         )
         .expect("write ci_failure event");
 

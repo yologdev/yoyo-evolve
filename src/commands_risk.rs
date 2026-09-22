@@ -2703,6 +2703,17 @@ fn handle_risk_harvest() {
             .collect();
         let emerging_grade = emerging_grade_of(&broke_refs, &snapshot.emerging);
 
+        // Dream cycle 10: CI-harvested events know their snapshot's own `ts`,
+        // so they get the unhittable join too — a run that broke files created
+        // *after* the snapshot it is graded against is a guaranteed miss, and
+        // that is exactly the population this counter exists to name. (The
+        // ledger sits beside the snapshots it annotates; both are real paths.)
+        let unhittable = crate::commands_risk_unhittable::count_unhittable_surprises_at(
+            &surprises,
+            &snapshot.ts,
+            std::path::Path::new(crate::commands_risk_snapshots::RISK_FIRST_SCORED_PATH),
+        );
+
         // 7. Persist. `severity: "ci_failure"` is not `"watch_success"`, so
         //    `is_green_event` is false and this grades on the RECALL side of
         //    the Day-142 polarity split — which is the entire point.
@@ -2717,6 +2728,7 @@ fn handle_risk_harvest() {
             Some("ci_failure"),
             Some(&snapshot.git_hash), // the snapshot this event graded — auditability (#723), not a dedup key
             Some(run.run_id),
+            Some(unhittable.unhittable), // measured from this snapshot's own ts, not guessed
         ) {
             skipped += 1;
             eprintln!(
@@ -2874,6 +2886,17 @@ fn handle_risk_validate() {
         }
         let emerging_accuracy_pct = emerging_grade.map(|(_, pct)| pct);
 
+        // Dream cycle 10: the CLI path parses the snapshot as raw JSON, so its
+        // timestamp is read defensively — a legacy line without `ts` yields the
+        // sentinel, which the join treats as *undecidable*, never as "all
+        // hittable".
+        let snapshot_ts = snapshot["ts"].as_str().unwrap_or("unknown");
+        let unhittable = crate::commands_risk_unhittable::count_unhittable_surprises_at(
+            &surprises,
+            snapshot_ts,
+            std::path::Path::new(crate::commands_risk_snapshots::RISK_FIRST_SCORED_PATH),
+        );
+
         if let Err(e) = crate::commands_risk::write_validation_event(
             std::path::Path::new(RISK_VALIDATION_PATH),
             day as u32,
@@ -2885,6 +2908,7 @@ fn handle_risk_validate() {
             None, // CLI manual grading — untagged severity
             (git_hash != "unknown").then_some(git_hash.as_str()), // graded snapshot — auditability (#723); sentinel stays absent
             None,                                                 // not a CI-harvest event
+            Some(unhittable.unhittable), // measured against this snapshot's own ts
         ) {
             eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
         }
@@ -5942,6 +5966,9 @@ src/commands_bg.rs
             None, // no emerging forecast in this synthetic snapshot
             None, // untagged severity — the shape handle_risk_validate writes
             None,
+            None,
+            // Test fixture: no snapshot line, so no timestamp to join against.
+            // Absent (not Some(0)) — exactly what a legacy line looks like.
             None,
         )
         .expect("write validation event");
