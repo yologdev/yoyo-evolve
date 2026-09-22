@@ -1,0 +1,1311 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me start by looking at the relevant code.
+
+Let me read src/agent_builder.rs around the deepseek arm, and check the yoagent source.
+
+Let me act early.
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by verifying the premise in one command, then make the changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 855,905p src/agent_builde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/ | gr… ✓ (6ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now check yoagent 0.18.1 ModelConfig::deepseek and ModelConfig::openai.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src/provider && grep -n "fn openai\|fn…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src/provider && sed -n 825,860p model.… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Premise confirmed. Now let's look at the `create_model_config` function and `configure_agent`, and how max_tokens is used.
+
+Let me look at agent_builder.rs around 800-900 (create_model_config), and 1100-1450.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.4s (2 ✓)
+
+Premise verified. Now let me look at the surrounding code structure.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn create_model_config\… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:1080..1200 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:1320..1410 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I understand the structure. `configure_agent(agent, model_context_window: u32)` — the ceiling `max_tokens` isn't passed. I need to add a parameter for the model's max_tokens ceiling.
+
+Design: change `configure_agent(&self, agent, model_context_window: u32)` to also take the resolved ModelConfig's max_tokens, e.g. `configure_agent(&self, agent, model_config: &ModelConfig)` — but that's a bigger refactor. Minimal: add a second param `model_max_tokens: u32`.
+
+Change signature: `fn configure_agent(&self, mut agent: Agent, model_context_window: u32, model_max_tokens: u32) -> Agent`.
+
+Call sites: 4 in build_agent, plus possibly elsewhere. Let me grep for configure_agent call sites.
+
+Also there's the "budget thinking" adjustment nearby at line ~1337? Let me look. Task says: 'Do the same for the legacy "raises the value for budget thinking" adjustment nearby'. Let me search for that.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "configure_agent" src/ … ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's look at .yoyo.toml lines 20-35.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,45p .yoyo.toml ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 16,60p .yoyo.toml ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`sed -n` is being truncated by the tool? It says "... (3 more similar lines)". The read_file tool truncates. Let me use `cat -n`? Actually sed printed with elision by the tool. Let me use read_file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/.yoyo.toml:20..50 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's look at existing tests in agent_builder.rs for create_model_config (line ~1779 "preset.context_window == expected.context_window"). Let me read the test region ~1700-1850.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:1700..1820 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check any existing tests referencing deepseek arm in create_model_config.
+
+Let me grep for "deepseek" in agent_builder.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "deepseek" src/agent_bui… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:2600..2670 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's look at how the warning messages are built elsewhere — `collision_guard_skipped_message`, `connections_lost_note` — and `format::is_plain_output()`, `format::is_quiet()`.
+
+Let me grep for is_plain_output usage in agent_builder.rs. And where does agent_builder.rs print? Let's check imports and existing message patterns.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/agent_builder.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "collision_guard_skippe… ✓ (4ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at `connections_lost_note` in cli.rs as the pattern for the message (it's the closest sibling). Where is it defined? Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn connections_lost_no… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "fn connections_lost_n… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn connections_lost_not… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, I have the pattern. Now let me see where `collision_guard_skipped_message` is, and the plain-output helper style. And check `is_quiet`.
+
+Let me now plan the implementation.
+
+**Step 1**: change the deepseek arm to `ModelConfig::deepseek(model, model)`.
+
+**Step 2**: warn when configured max_tokens exceeds the resolved ceiling.
+
+Implementation plan:
+- Change `configure_agent` signature to accept the ceiling. Actually simplest: pass the whole `&ModelConfig`? The call sites currently extract `context_window`. Let me pass `model_config: &ModelConfig` and inside do `let effective_window = self.context_window.unwrap_or(model_config.context_window);` and compare against `model_config.max_tokens`.
+
+That's a clean minimal change: 4 call sites updated.
+
+But there's a subtlety: `configure_agent` is called with `agent` already built from the model_config. Let's do:
+
+```rust
+fn configure_agent(&self, mut agent: Agent, model_config: &ModelConfig) -> Agent {
+    let effective_window = self.context_window.unwrap_or(model_config.context_window);
+    ...
+    if let Some(max) = self.max_tokens {
+        if let Some(warning) = max_tokens_ceiling_warning(max, model_config.max_tokens, &self.model, crate::format::is_plain_output()) {
+            if !crate::format::is_quiet() {
+                eprintln!("{warning}");
+            }
+        }
+        agent = agent.with_max_tokens(max);
+    }
+```
+
+Hmm, but the task says: "Build it as a pure, table-tested function (`max_tokens_ceiling_warning(config, ceiling, model) -> Option<String>`) so the message is pinned at the emission point and `None` when `config <= ceiling`".
+
+So signature: `fn max_tokens_ceiling_warning(config: u32, ceiling: u32, model: &str, plain: bool) -> Option<String>`. The task's suggested signature has 3 params; I'll add `plain` (like siblings `connections_lost_note(kind, lost, plain)`).
+
+Also: "Do the same for the legacy 'raises the value for budget thinking' adjustment nearby — if it still raises above the ceiling, that is exactly the case the warning is for." Let me find that legacy adjustment. Grep for "raise" / "budget thinking".
+
+Let me search in cli.rs / main.rs for max_tokens adjustment.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "budget thinking\|budge… ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No "raises the value for budget thinking" adjustment found in the current code — let me search more broadly for any raising of max_tokens for thinking.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "max_tokens\|max output…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ThinkingLevel::High" s… ✓ (5ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No legacy "raises the value for budget thinking" adjustment exists at HEAD. Line 2140 is a test setting `config.thinking = ThinkingLevel::High` and asserting. Let me check around 2130-2150 to see if it's about max_tokens.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:2128..2158 ✓ (1ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me get oriented. I was investigating the task. I need to check status and continue with the implementation.
+
+Let me check git status first and see what I've done so far.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No changes yet. Task 1 was committed already. Now I need to do Task 2: #943.
+
+Plan:
+1. Step 1 — change `"deepseek"` arm to `ModelConfig::deepseek(model, model)`.
+2. Step 2 — warn when configured max_tokens exceeds the resolved ceiling. Hoist ModelConfig's max_tokens before with_max_tokens.
+3. Step 3 — fix .yoyo.toml comment.
+4. Tests: near-miss guard for create_model_config deepseek; pure function `max_tokens_ceiling_warning(config, ceiling, model) -> Option<String>`; assert current config doesn't warn.
+5. ARCHITECTURE.md entry.
+6. Run checks, commit.
+
+Let me think about the design for Step 2 carefully.
+
+Currently:
+```rust
+fn configure_agent(&self, mut agent: Agent, model_context_window: u32) -> Agent {
+```
+
+I need to pass the ceiling too. The instruction says: hoist the resolved ModelConfig (or just the max_tokens it carries) so it exists before the `with_max_tokens` block, and compare there.
+
+Simplest: change `configure_agent(&self, agent, model_context_window)` to take `model_max_tokens: u32` as a third param, and pass `model_config.max_tokens` from each build_agent arm. But that changes 4 call sites... Actually build_agent has 4 arms each calling configure_agent. That's fine, and it's the honest way.
+
+Alternatively, hoist inside configure_agent by calling create_model_config again — no, that duplicates work.
+
+Let me go with adding a parameter. Actually wait — the task says "Hoist the resolved `ModelConfig` (or just the `max_tokens` it carries) so it exists before the `with_max_tokens` block, and compare there." So adding a parameter to configure_agent is the natural reading.
+
+Hmm, but there's another concern: is `configure_agent` called anywhere else? From the grep earlier: only `src/agent_builder.rs:1115` definition and the calls at 1382, 1388, 1394, 1400. Let me verify there are no other call sites (earlier grep showed "18 more similar lines" truncated). Let me check.
+
+Actually the earlier grep output was truncated by the tool display. Let me re-grep exactly.
+
+Also need to check: does anything else call `configure_agent` outside this file (e.g. tests)? Let me check.
+
+Then: the warning emission point. Where does it print? `configure_agent` is `&self -> Agent` and returns Agent; it already does `eprintln!` calls in places (line 1164). So printing inside configure_agent is consistent with existing style, gated on `!crate::format::is_quiet()`.
+
+The pure function: `max_tokens_ceiling_warning(config: u32, ceiling: u32, model: &str, plain: bool) -> Option<String>`. The task says signature `max_tokens_ceiling_warning(config, ceiling, model) -> Option<String>`. I'll add a `plain: bool` param for the glyph-free-ness, following `connections_lost_note(kind, lost, plain)`. Hmm, the task said "be glyph-free under `format::is_plain_output()`" — so it needs the plain flag passed in (pure function). I'll include `plain`.
+
+Wait, but actually: to keep it minimal and match existing patterns, let me look at how the message should read:
+"configured max_tokens 131072 exceeds deepseek-v4-flash's declared ceiling 384000"
+
+The task's example message: `"configured max_tokens 131072 exceeds deepseek-v4-flash's declared ceiling 384000"`. Note that example doesn't actually exceed (131072 < 384000) — it's just the shape. Whatever.
+
+Now for the second part: "Do the same for the legacy 'raises the value for budget thinking' adjustment nearby — if it still raises above the ceiling, that is exactly the case the warning is for."
+
+But I grepped for "budget thinking" / a place that raises max_tokens and found nothing. Line 1337-1339 is the only place. The task's premise here seems to be about something that doesn't exist at HEAD. I should verify and state that in the write-up. Let me grep more broadly for any place max_tokens is raised.
+
+Actually let me search for `with_max_tokens` in the whole src.
+
+I already did: only src/agent_builder.rs:1338. So there's no "raises the value for budget thinking" adjustment. That's a superseded claim in the task premise — I should record it. But wait: maybe it's in `.yoyo.toml` handling or in cli.rs where `thinking` interacts. Let me grep for "raise" near max_tokens. Earlier grep `grep -rn "max_tokens\|max output" src/ --include=*.rs | grep -i "think\|budget\|raise\|ceil"` returned nothing (exit 1). So no such adjustment exists.
+
+Hmm, but let me double check by searching the whole repo including scripts. Actually, it might be that the referenced adjustment is in yoagent's provider config (e.g., auto-raising max_tokens for thinking mode). Let me check yoagent for something like that.
+
+Regardless: the point of that bullet is "apply the warning wherever max_tokens is raised above the ceiling". Since the only max_tokens application is line 1337 and I'll check there, that's covered.
+
+Now, ordering/placement: `configure_agent` signature change. Let me write it.
+
+Plan for code:
+
+```rust
+/// Warn when the user's configured `max_tokens` exceeds the ceiling the
+/// resolved model config declares.
+///
+/// Pure and table-tested, so the exact string is pinned at the emission point
+/// and `None` for the ordinary case (config <= ceiling) is the whole
+/// regression surface.
+pub(crate) fn max_tokens_ceiling_warning(
+    configured: u32,
+    ceiling: u32,
+    model: &str,
+    plain: bool,
+) -> Option<String> {
+    if configured <= ceiling {
+        return None;
+    }
+    let marker = if plain { "" } else { "⚠ " };
+    Some(format!(
+        "{marker}configured max_tokens {configured} exceeds {model}'s declared ceiling \
+{ceiling}; the provider may reject the request. Lower max_tokens or pick a model that \
+allows it."
+    ))
+}
+```
+
+Hmm, glyph-free under plain: apostrophe in "model's" is fine (not a glyph per the existing test which checks ⚠ — • ✓ ✗). Let's keep the em-dash out. Good.
+
+Wait — careful: `is_plain_output()` checks... let me look at what `is_plain_output` does and what glyphs tests check. The existing tests check for '⚠', '—', '•', '✓', '✗'. I'll avoid all of those.
+
+Now the call site:
+
+```rust
+fn configure_agent(&self, mut agent: Agent, model_context_window: u32, model_max_tokens: u32) -> Agent {
+```
+
+and
+
+```rust
+        if let Some(max) = self.max_tokens {
+            if let Some(warning) = max_tokens_ceiling_warning(
+                max,
+                model_max_tokens,
+                &self.model,
+                crate::format::is_plain_output(),
+            ) {
+                if !crate::format::is_quiet() {
+                    eprintln!("{warning}");
+                }
+            }
+            agent = agent.with_max_tokens(max);
+        }
+```
+
+Hmm — but `is_quiet()` gating. The instruction says "silent under `format::is_quiet()`". The cleanest: build the message with a `quiet` param too? Other patterns pass plain and gate quiet at the call site. Let me check `rate_limit_wait_notice(delay, is_plain_output())` usage at prompt_retry_limits.rs:196 — it's called only when a condition holds. Let me look at how it gates quiet.
+
+Let me check a nearby example to match style. Actually, simpler and testable: keep the pure function signature with `plain`, gate quiet at the call site. But then the quiet behavior is untested. Existing repo practice: `collision_guard_skipped_message(server_cmd, err, plain)` + "the existing quiet-gating is unchanged" at the call site. So gating quiet at call site is the established pattern. Good — I'll follow it.
+
+Now `Cargo` — is `crate::format::is_plain_output` accessible from agent_builder? Yes, other code uses `crate::format::is_plain_output()`.
+
+Now the near-miss guard test:
+
+```rust
+#[test]
+fn test_deepseek_arm_uses_yoagent_preset_ceiling() {
+    let config = create_model_config("deepseek", "deepseek-v4-flash", None);
+    assert_eq!(config.context_window, 1_000_000);
+    assert_eq!(config.max_tokens, 384_000);
+    assert_eq!(config.base_url, "https://api.deepseek.com/v1");
+}
+```
+
+Also a test that a sibling arm is untouched? The task says "If a sibling-arm test exists, keep it green untouched." Let me check if there's an existing test for create_model_config arms. I'll grep.
+
+And the "current config must not warn" assertion:
+
+```rust
+#[test]
+fn test_configured_max_tokens_does_not_warn_against_deepseek_ceiling() {
+    assert_eq!(max_tokens_ceiling_warning(131_072, 384_000, "deepseek-v4-flash", false), None);
+}
+```
+
+Plus table test for the warning: names both numbers and model; None when equal; plain vs fancy differ; glyph-free.
+
+Also I need a test that the ceiling actually reaches the emission point? Hmm — the honest limit: no test can see whether the provider accepts 131072. But can I test that `configure_agent` emits the warning? configure_agent is private and returns an Agent. Testing stderr emission is hard. The repo's pattern is to pin the pure function at the emission point. I'll add a weak source-level guard? Probably overkill. Let me instead make the wiring verifiable: could I make configure_agent testable? Not easily.
+
+Actually — there's a cleaner approach that makes the wiring testable AND matches "hoist the resolved ModelConfig": I could compute the warning inside `build_agent` and pass it... no, same problem.
+
+Alternative: give `AgentConfig` a helper `max_tokens_ceiling_check(&self, model_config: &ModelConfig) -> Option<String>` that the tests can call directly, and have configure_agent call it. But configure_agent doesn't have the ModelConfig unless passed. So: pass the whole `&ModelConfig` to configure_agent! Then a test can construct a ModelConfig and call a method that returns the warning. Hmm, but that method would be a thin wrapper over the pure function.
+
+Let me keep it lean: pass `model_max_tokens: u32`, pure function pinned at the emission point by a test that asserts the exact string, plus a weak-ish source-level guard test that `configure_agent` calls `max_tokens_ceiling_warning` and passes `model_config.max_tokens`... The repo does use source-level guards for un-drivable paths (`include_str!`). That's an established, explicitly-labelled-weak discipline. I'll add one — it proves the call site is present, not that it fires. Actually, let me think about whether the wiring can be tested by observation instead.
+
+Hmm — actually, could I capture stderr? Tests run in-process; eprintln goes to the test harness's stderr capture, not capturable. So no.
+
+But wait: I could refactor so the warning is *returned* rather than printed from configure_agent... but configure_agent returns Agent.
+
+I think the honest approach, following the repo's own precedent (`every_rebuild_arm_resets_the_counter_it_invalidated` is a deliberately weak source-level guard for an async undrivable path), is:
+- pure function table test (pins the message bytes)
+- a source-level guard that the call site exists with the resolved ceiling in scope (weak, documented as weak)
+- near-miss guard for Step 1.
+
+Let me now also double check: is there any other reader of `model_config.max_tokens` in yoyo? Grep showed max_tokens fields in AgentConfig, cli_config, commands_config, commands_spawn — those are AgentConfig.max_tokens, not ModelConfig.max_tokens. The task asks: "Check where it is read before claiming anything. ... if you find a second reader of `model_config.max_tokens`, name it in the write-up. If there is none, say plainly that this field is inert today and exists for Step 2."
+
+So let me grep for `model_config.max_tokens` and `.max_tokens` on a ModelConfig.
+
+Let me do these greps now.
+
+Also `reasoning: false -> true`: verify only read by Debug impl and yoagent tests. Let me grep yoagent.
+
+Let's go step by step with commands. I should act quickly now — budget is a concern (I already blew 1M tokens). Let me be efficient.
+
+Let me batch: 
+1. grep call sites of configure_agent
+2. grep model_config.max_tokens
+3. grep yoagent for `reasoning` field reads
+4. grep existing create_model_config tests
+
+Then make edits.
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up Task 2 (#943). Let me verify the remaining facts before editing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== configure_agent caller…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== existing create_model_… ✓ (3ms)
+ ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's a `configure_agent(` call at 2775 in a test! Let me look at it.
+
+Also lines 1446-1497 are other build paths (rebuild/preserve, maybe `rebuild_agent_with`). Let me look at those.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1425,1505p src/agent_buil… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Only 5 call sites of `configure_agent`: 4 in `build_agent` + 1 in a test. Adding a parameter means updating all 5.
+
+Now check yoagent's `reasoning` field readers.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && grep -rn "\.reasoning\b\|reason… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Important finding: `agent.rs:1108` DOES read `mc.reasoning` — not just the Debug impl. Let me look at that.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && sed -n 1090,1125p agent.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So `mc.reasoning` IS read at `agent.rs:1108` — it emits a `tracing::warn!`. Not just the Debug impl. This is a factual correction to the task's claim #3. The behavior change: with the deepseek preset, `reasoning: true`, so the tracing warn (which would have fired when thinking != Off and reasoning == false) no longer fires. Since this repo runs `thinking = "high"` on deepseek, the OLD code would emit a spurious `tracing::warn!` — so this is actually a real (if cosmetic) fix. Let me see the warn message.
+
+Let me read the whole warn text.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && sed -n 1105,1116p agent.rs; ech… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The tool truncated the strings. Let me use grep -A to print full lines (the "similar lines" suppression is a display feature). Let me use `awk` to print raw.
+
+Actually the display tool is compressing. Let me use `sed -n '1109,1115p'` with `cat -A`? The compression is by the terminal tool... Actually it printed "... (3 more similar lines)" which is odd. Let me try `grep -n "reasoning-capable" -B4 -A4`.
+
+The earlier grep output showed `agent.rs:1111: reasoning-capable (ModelConfig.reasoning = false)"`. So the warn message is something like "Reasoning enabled but model is not reasoning-capable (ModelConfig.reasoning = false)". Good enough.
+
+And yoyo sets no tracing subscriber, so `tracing::warn!` goes nowhere (no subscriber → no output by default unless a global default subscriber is installed; tracing without subscriber drops events). So the effect is nil in yoyo. But it's still a reader — I'll name it in the write-up as the second reader, correcting the task's claim #3.
+
+Let me get the full warn string for accuracy.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && awk 'NR>=1108 && NR<=1114' agen… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The tool is compressing. Let me write it to a file and read it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && awk 'NR>=1108 && NR<=1115' agen… ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, the file itself contains "... (3 more similar lines)"? That can't be — it means the awk output was already substituted? No... Let me check with grep -c on the actual file and use `od`. Actually more likely: this session's tool output pipeline compresses repeated-looking lines. But writing to a file and reading it back with python gives the same text... which means the file itself contains that text, which means awk read a file containing that. That's impossible.
+
+Wait — maybe the tool compresses the *output of my command* including the python print. So the compression is applied at display time regardless of source. Let me try a different approach: compute a hash/transform that breaks the pattern, e.g., print with line numbers embedded and joined by "|".
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && python3 -c … (5 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Still compressed. The tool must be deduplicating. Let me join them into one line.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && python3 -c … (4 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: `agent.rs:1108-1113` is a real reader of `ModelConfig.reasoning`: `tracing::warn!("thinking_level is set but model '{}' is not marked reasoning-capable (ModelConfig.reasoning = false)", mc.id)`. yoyo installs no tracing subscriber, so the warn is dropped — but it is a reader, contradicting the task premise that only the Debug impl and yoagent's tests read it.
+
+Now let me check the `supports_reasoning_effort` / thinking_level gate claim for the wire (`openai_compat.rs:453`) — the task says to state that I verified it. Let me check quickly.
+
+Then I'll write the code. Budget is a concern. Let me move.
+
+Actually, on to the code now. Let me make the edits.
+
+Step 1: `ModelConfig::deepseek(model, model)`.
+Step 2: warning + hoist.
+Step 3: .yoyo.toml comment.
+Tests.
+ARCHITECTURE.md.
+
+Let me first check openai_compat.rs:453 quickly for the reasoning gate (one command).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && python3 -c … (4 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed the wire gate: `config.thinking_level != Off && compat.supports_reasoning_effort`. `ModelConfig.reasoning` is NOT in the wire path. Verified.
+
+Now let's make the edits.
+
+Edit 1: the deepseek arm.
+────────────────────────────────────────────────────────────────────────────────
+
+Verified all three deltas. Now making the edits.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (9 → 22 lines)
+  +         // #943: built from yoagent's own DeepSeek preset, NOT `ModelConfig::openai`.
+  +         // The OpenAI base config declares `context_window: 128_000, max_tokens:
+  +         // 4096`, and the 4096 was the arm's declared output ceiling — which is
+  +         // the number Step 2's warning compares a user's configured `max_tokens`
+  +         // against. Building the ceiling check on the wrong preset would have
+  +         // silently cut this loop's own 131072 down to 4096 (a latent 400
+  +         // becoming a present, silent capability loss), so the preset came first
+  +         // and the check second. The preset declares 1_000_000 / 384_000.
+  +         //
+  +         // The explicit `base_url` line is KEPT deliberately and is not tidiness:
+  +         // the preset sets `https://api.deepseek.com` (no `/v1`), so dropping the
+  +         // override would be a live wire change on the provider this repo runs
+  +         // on. Keeping it confines the diff to the two numbers.
+            "deepseek" => {
+  -             let mut config = ModelConfig::openai(model, model);
+  +             let mut config = ModelConfig::deepseek(model, model);
+                config.provider = "deepseek".into();
+                config.base_url = base_url
+                    .unwrap_or("https://api.deepseek.com/v1")
+ ✓ (2m 7s)
+  +         // #943: built from yoagent's own DeepSeek preset, NOT `ModelConfig::openai`.
+  +         // The OpenAI base config declares `context_window: 128_000, max_tokens:
+  +         // 4096`, and the 4096 was the arm's declared output ceiling — which is
+  +         // the number Step 2's warning compares a user's configured `max_tokens`
+  +         // against. Building the ceiling check on the wrong preset would have
+  +         // silently cut this loop's own 131072 down to 4096 (a latent 400
+  +         // becoming a present, silent capability loss), so the preset came first
+  +         // and the check second. The preset declares 1_000_000 / 384_000.
+  ... (11 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now Step 2: add the pure function. Where to put it? Near `connections_lost_note` (line ~238) so it sits with its siblings, or right above `configure_agent`. I'll put it just above the `AgentConfig` impl / near configure_agent so the reader finds it at the call site. Actually the module has a cluster of pure message helpers near the top (collision_guard_skipped_message, connections_lost_note, external_tool_failure_note). Let me check what's around line 240-400 to place it consistently.
+
+Actually let me just place it immediately before `impl AgentConfig` (before line 1108ish). That keeps it close to configure_agent. Hmm, but the section conventions... Let me look at the structure briefly around the functions near 240-410.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub(crate) fn \|^pub f… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I'll place `max_tokens_ceiling_warning` right after `create_model_config` ends (before `model_identity_note` at 986) — so it sits beside the function that produces the ceiling. Actually better: immediately before `impl AgentConfig` (line 1121), since it's consumed there. Hmm. Let me put it right after create_model_config (i.e., before line 986 `fn model_identity_note`) — it's a pure helper about model config, consumed by configure_agent. Either is fine. I'll put it just before `impl AgentConfig`.
+
+Let me view lines 1110-1125.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:1108..1126 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the pure warning helper:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (1 → 37 lines)
+  + /// Warn when the user's configured `max_tokens` exceeds the output ceiling the
+  + /// resolved model config declares (#943).
+  + ///
+  + /// **Why a warning and not a clamp**, written here so the next reader does not
+  + /// "simplify" it into one: a preset ceiling can itself be stale (it is a
+  + /// statement about a vendor's API at the time yoagent shipped), and silently
+  + /// sending a different number than the user configured turns a visible 400 into
+  + /// an invisible change in behaviour. Naming both numbers lets the user decide.
+  + ///
+  + /// Pure and table-tested, so the exact string is pinned at the emission point,
+  + /// and **`None` when `configured <= ceiling` is the entire regression surface**
+  + /// — that is every user who configured nothing, and every user whose config sits
+  + /// under the ceiling, including this repo's own `.yoyo.toml` (131072 against
+  + /// DeepSeek's 384000).
+  + ///
+  + /// #943's own premise said the ceiling "is already in hand" at this comparison.
+  + /// Measured at HEAD it was **4096**, because the DeepSeek arm built
+  + /// `ModelConfig::openai` — so a clamp written against it would have cut this
+  + /// loop's configured 131072 to 4096. The preset fix landed first, deliberately.
+  + pub(crate) fn max_tokens_ceiling_warning(
+  ... (17 more lines)
+ ✓ (15.9s)
+  + /// Warn when the user's configured `max_tokens` exceeds the output ceiling the
+  + /// resolved model config declares (#943).
+  + ///
+  + /// **Why a warning and not a clamp**, written here so the next reader does not
+  + /// "simplify" it into one: a preset ceiling can itself be stale (it is a
+  + /// statement about a vendor's API at the time yoagent shipped), and silently
+  + /// sending a different number than the user configured turns a visible 400 into
+  + /// an invisible change in behaviour. Naming both numbers lets the user decide.
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to wire the consumer now. Let me look at configure_agent and build_agent.
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the helper needs its consumer. Let me wire it now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1145,1155p src/agent_buil… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1156,1170p src/agent_buil… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now add the fourth parameter. Let me write the edit.
+
+Signature:
+```rust
+    /// `model_output_ceiling` is the resolved `ModelConfig.max_tokens`, threaded
+    /// in from `build_agent` (#943) ...
+    fn configure_agent(
+        &self,
+        mut agent: Agent,
+        model_context_window: u32,
+        model_output_ceiling: u32,
+    ) -> Agent {
+```
+
+And at 1337 region:
+```rust
+        if let Some(max) = self.max_tokens {
+            if !crate::format::is_quiet() {
+                if let Some(w) = max_tokens_ceiling_warning(
+                    max,
+                    model_output_ceiling,
+                    &self.model,
+                    crate::format::is_plain_output(),
+                ) {
+                    eprintln!("{w}");
+                }
+            }
+            agent = agent.with_max_tokens(max);
+        }
+```
+
+Note: `if let ... { if let ... }` can be collapsed with clippy? `collapsible_if` is a clippy lint (style) which is warn-by-default. `cargo clippy -- -D warnings` would fail. Let me use a single expression:
+
+```rust
+        if let Some(max) = self.max_tokens {
+            if let Some(warning) = ... {
+                eprintln!("{warning}");
+            }
+            agent = agent.with_max_tokens(max);
+        }
+```
+Still nested if-let. collapsible_if in recent clippy does suggest collapsing `if let ... { if let ... {} }` using let-chains (`if let Some(a) = x && let Some(b) = y`) — but only for the same pattern-level? Actually clippy's `collapsible_if` now fires for nested `if let`. Since Rust 2024 supports let-chains. Let me check the edition in Cargo.toml.
+
+Safer: avoid nesting entirely:
+
+```rust
+        if let Some(max) = self.max_tokens {
+            let warning = if crate::format::is_quiet() {
+                None
+            } else {
+                max_tokens_ceiling_warning(max, model_output_ceiling, &self.model, crate::format::is_plain_output())
+            };
+            if let Some(w) = warning { eprintln!("{w}"); }
+            agent = agent.with_max_tokens(max);
+        }
+```
+Still has `if let Some(w)` after. Fine — not nested.
+
+Actually is_quiet gate: the task says "silent under `format::is_quiet()`". How do other sites do it? e.g. cli.rs:2412 pattern. Let me check one emission site to match the discipline.
+
+Let me check how connections_lost_note is emitted in commands_config_mcp.rs or main.rs.
+
+Let me search for where notes are emitted with quiet gating.
+
+Let me just do it carefully. Also check edition.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "edition" Cargo.toml; ec… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "connections_lost_note"… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "connections_lost_note\… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 585,600p src/agent_builde… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — the emission style is `if let Some(note) = note { eprintln!(...) }` and quiet gating is done at the call site in main.rs (`!print_mode && !format::is_quiet()`). Wait, let me check where these notes are printed relative to quiet. The task says "silent under `format::is_quiet()`".
+
+Let me check whether these connection-failure emissions are inside a quiet gate. Let me look at the enclosing function.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 555,600p src/agent_builde… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So these emissions are not quiet-gated themselves — quiet is gated at the caller (`!print_mode && !format::is_quiet()` in main.rs at line 738). But the task explicitly says "silent under `format::is_quiet()`". So I should gate at the emission point with `is_quiet()`. Let me check the pattern used by `rate_limit_wait_notice` at prompt_retry_limits.rs:196.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 190,202p src/prompt_retry… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, nested `if !is_quiet { if let Some(...) }` exists in the codebase already and passes clippy (no collapsible_if issue since the outer is not an `if let`). I'll use that exact shape.
+
+Now edit configure_agent.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (3 → 14 lines)
+  -     fn configure_agent(&self, mut agent: Agent, model_context_window: u32) -> Agent {
+  +     /// `model_context_window` and `model_output_ceiling` are both fields of the
+  +     /// **resolved** `ModelConfig` — the caller has already applied the provider
+  +     /// arm's preset, so these are the numbers the request will actually be made
+  +     /// against. They are passed in rather than re-derived here because
+  +     /// `create_model_config` lives in `build_agent`'s branches, which run after
+  +     /// this function is reached through the call chain (#943).
+  +     fn configure_agent(
+  +         &self,
+  +         mut agent: Agent,
+  +         model_context_window: u32,
+  +         model_output_ceiling: u32,
+  +     ) -> Agent {
+            // User override takes precedence; otherwise use the model's actual context window
+            let effective_window = self.context_window.unwrap_or(model_context_window);
+ ✓ (13.7s)
+  -     fn configure_agent(&self, mut agent: Agent, model_context_window: u32) -> Agent {
+  +     /// `model_context_window` and `model_output_ceiling` are both fields of the
+  +     /// **resolved** `ModelConfig` — the caller has already applied the provider
+  +     /// arm's preset, so these are the numbers the request will actually be made
+  +     /// against. They are passed in rather than re-derived here because
+  +     /// `create_model_config` lives in `build_agent`'s branches, which run after
+  +     /// this function is reached through the call chain (#943).
+  +     fn configure_agent(
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now add the warning wiring and thread the ceiling through the four call sites:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (3 → 18 lines)
+            if let Some(max) = self.max_tokens {
+  +             // #943: compare the user's configured value against the resolved
+  +             // model's own declared output ceiling. Warn, never clamp — see
+  +             // `max_tokens_ceiling_warning` for why that is a decision and not
+  +             // an oversight. Sits BEFORE `with_max_tokens` so the number warned
+  +             // about is the number that is applied.
+  +             if !crate::format::is_quiet() {
+  +                 if let Some(warning) = max_tokens_ceiling_warning(
+  +                     max,
+  +                     model_output_ceiling,
+  +                     &self.model,
+  +                     crate::format::is_plain_output(),
+  +                 ) {
+  +                     eprintln!("{warning}");
+  +                 }
+  +             }
+                agent = agent.with_max_tokens(max);
+            }
+ ✓ (13.6s)
+            if let Some(max) = self.max_tokens {
+  +             // #943: compare the user's configured value against the resolved
+  +             // model's own declared output ceiling. Warn, never clamp — see
+  +             // `max_tokens_ceiling_warning` for why that is a decision and not
+  +             // an oversight. Sits BEFORE `with_max_tokens` so the number warned
+  +             // about is the number that is applied.
+  +             if !crate::format::is_quiet() {
+  +                 if let Some(warning) = max_tokens_ceiling_warning(
+  ... (10 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1448,1485p src/agent_buil… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now the test call site at ~2895 (`config_with_turns.configure_agent(...)`). Let me find it and pass a value.
+
+Also `configure_agent` is called with `Agent::from_provider(... ModelConfig::mock())`. I'll pass a large ceiling (u32::MAX) so no warning fires in that test. But ModelConfig::mock() — what's its max_tokens? Let me just pass an explicit value like 4096 (mock's ceiling probably) and ensure the test config has max_tokens None so no warning. Let me check that test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "configure_agent(" src/a… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for l in 2774 2817 2854; do echo… ✓ (7ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Add the third argument to the three test call sites. Let me check if those tests set max_tokens — line 2774 one might. Let me look for max_tokens in those blocks. Simplest: add `200_000,` after `200_000,` → replace `            200_000,\n        );` with `            200_000,\n            200_000,\n        );`. But that could affect other places. Let me do targeted python replacement for `configure_agent(` blocks.
+
+Actually cleaner: replace the three occurrences of:
+```
+            ),
+            200_000,
+        );
+```
+Only in those three spots. Let me check how many occurrences of that exact sequence exist.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "^            200_000,$"… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (9.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Builds. Now let me add the near-miss guard test for `create_model_config("deepseek", ...)` and the table test for `max_tokens_ceiling_warning`.
+
+Let me first check whether there's a sibling-arm test to keep green (the task says "If a sibling-arm test exists, keep it green untouched"). Let me check tests around 2284-2330.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_create_model_co… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests. Adding both the near-miss guard and the warning table:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (2 → 21 lines)
+  +     #[test]
+  +     fn test_create_model_config_deepseek_uses_the_deepseek_preset() {
+  +         // #943 near-miss guard. The arm used to build `ModelConfig::openai`,
+  +         // which declares 128_000 / 4096 — so the "declared ceiling" a
+  +         // max_tokens check would read was 4096, not the vendor's 384_000.
+  +         // Asserted by value here (not by calling the preset), so a future
+  +         // edit that swaps the constructor back is caught by these three
+  +         // numbers rather than by agreeing with itself.
+  +         let config = create_model_config("deepseek", "deepseek-v4-flash", None);
+  +         assert_eq!(config.context_window, 1_000_000);
+  +         assert_eq!(config.max_tokens, 384_000);
+  +         // The explicit `/v1` override is kept on purpose: the preset's own
+  +         // base_url is `https://api.deepseek.com` (no `/v1`), and this repo runs
+  +         // on this provider, so dropping the override would be a live wire
+  +         // change rather than a number.
+  +         assert_eq!(config.base_url, "https://api.deepseek.com/v1");
+  +         assert_eq!(config.provider, "deepseek");
+  +     }
+  + 
+        #[test]
+  ... (1 more lines)
+ ✓ (2m 9s)
+  +     #[test]
+  +     fn test_create_model_config_deepseek_uses_the_deepseek_preset() {
+  +         // #943 near-miss guard. The arm used to build `ModelConfig::openai`,
+  +         // which declares 128_000 / 4096 — so the "declared ceiling" a
+  +         // max_tokens check would read was 4096, not the vendor's 384_000.
+  +         // Asserted by value here (not by calling the preset), so a future
+  +         // edit that swaps the constructor back is caught by these three
+  +         // numbers rather than by agreeing with itself.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib agent_builder 2… ✓ (140ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test agent_builder:: 2>&1 … ✓ (171ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Tests pass. Now add the table test for `max_tokens_ceiling_warning`. Place it near `connections_lost_note_table`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (2 → 71 lines)
+  +     /// Table test for the #943 ceiling warning. Pin the exact emission string,
+  +     /// and pin `None` for the ordinary case — **that `None` is the entire
+  +     /// regression surface**: every user who configured nothing, and every user
+  +     /// whose config sits at or under the ceiling (including this repo's own
+  +     /// `.yoyo.toml`: 131072 against DeepSeek's 384000).
+  +     #[test]
+  +     fn max_tokens_ceiling_warning_table() {
+  +         // The ordinary case: configured at or under the ceiling → silent.
+  +         assert_eq!(
+  +             max_tokens_ceiling_warning(384_000, 384_000, "deepseek-v4-flash", false),
+  +             None,
+  +             "at the ceiling is legal and must be byte-identical to before"
+  +         );
+  +         assert_eq!(
+  +             max_tokens_ceiling_warning(4096, 384_000, "deepseek-v4-flash", false),
+  +             None
+  +         );
+  +         // This repo's own reading, asserted rather than assumed: .yoyo.toml
+  +         // sets 131072 and the DeepSeek preset declares 384000, so the loop
+  +         // must NOT start warning after this change.
+  ... (51 more lines)
+ ✓ (2m 6s)
+  +     /// Table test for the #943 ceiling warning. Pin the exact emission string,
+  +     /// and pin `None` for the ordinary case — **that `None` is the entire
+  +     /// regression surface**: every user who configured nothing, and every user
+  +     /// whose config sits at or under the ceiling (including this repo's own
+  +     /// `.yoyo.toml`: 131072 against DeepSeek's 384000).
+  +     #[test]
+  +     fn max_tokens_ceiling_warning_table() {
+  +         // The ordinary case: configured at or under the ceiling → silent.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I accidentally left a placeholder assertion garbage line `!plain.as_bytes().windows(1).any(|_| false)` — that's a meaningless always-true assertion I shouldn't have written. Let me remove it.
+────────────────────────────────────────────────────────────────────────────────
+
+I left a nonsense placeholder assertion — removing it:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (10 → 6 lines)
+            for glyph in ['⚠', '—', '•', '✓', '✗', '🔒'] {
+  -             assert!(
+  -                 !plain.as_bytes().windows(1).any(|_| false),
+  -                 "placeholder"
+  -             );
+                assert!(
+                    !plain.contains(glyph),
+                    "plain output must carry no glyph '{glyph}': {plain}"
+ ✓ (2m 6s)
+            for glyph in ['⚠', '—', '•', '✓', '✗', '🔒'] {
+  -             assert!(
+  -                 !plain.as_bytes().windows(1).any(|_| false),
+  -                 "placeholder"
+  -             );
+                assert!(
+                    !plain.contains(glyph),
+                    "plain output must carry no glyph '{glyph}': {plain}"
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test agent_builder::tests:… ✓ (194ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now Step 3 — the stale .yoyo.toml comment:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/.yoyo.toml (5 → 8 lines)
+  - # Output ceiling. yoyo's DeepSeek arm inherits max_tokens=4096 from the
+  - # OpenAI-compatible base config, which would cap reasoning + answer at 4K
+  - # tokens. DeepSeek accepts 1..393216 and defaults to 64K in thinking mode
+  + # Output ceiling. yoyo's DeepSeek arm builds from yoagent's own
+  + # `ModelConfig::deepseek` preset, whose declared output ceiling is 384000 —
+  + # not the 4096 the OpenAI-compatible base config carries (#943; before that
+  + # change this arm inherited the base config and a ceiling check written
+  + # against it would have silently cut this value to 4K).
+  + # DeepSeek accepts 1..393216 and defaults to 64K in thinking mode
+    # (128K at reasoning_effort "max"); 128K is its documented top default.
+    max_tokens = 131072
+ ✓ (1m 34s)
+  - # Output ceiling. yoyo's DeepSeek arm inherits max_tokens=4096 from the
+  - # OpenAI-compatible base config, which would cap reasoning + answer at 4K
+  - # tokens. DeepSeek accepts 1..393216 and defaults to 64K in thinking mode
+  + # Output ceiling. yoyo's DeepSeek arm builds from yoagent's own
+  + # `ModelConfig::deepseek` preset, whose declared output ceiling is 384000 —
+  + # not the 4096 the OpenAI-compatible base config carries (#943; before that
+  + # change this arm inherited the base config and a ceiling check written
+  + # against it would have silently cut this value to 4K).
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (1m 35s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting — there's a test named `stale_ceiling_message_states_the_smaller_number_verbatim`. That's from the module_size test file? Let me check — that seems related to my change? No, it's probably a pre-existing test in tests/module_size.rs about the ceiling message. Wait, "stale_ceiling_message" — hmm, that may be an existing test in module_size.rs about a different ceiling ("ceiling" = module size cap). Let me check.
+
+Also I need to update the module size register: `("src/agent_builder.rs", 4513)`.
+
+Let me check the ARCHITECTURE.md gate rules for module_size register.
+
+First update the register.
+────────────────────────────────────────────────────────────────────────────────
+
+Module size gate needs the register updated. Let me check the convention first:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "agent_builder.rs\"" tes… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+That test is unrelated (module-size ceiling). Good.
+
+Now update the register entry: `("src/agent_builder.rs", 4513)`. But wait — the guidance says a module that grew past the grace band is fatal and I should paste the new count. Also architecture guidance in ARCHITECTURE.md for src/agent_builder.rs. Let me check whether agent_builder.rs has a strategy noted (e.g., "split instead"). Let me read the ARCHITECTURE.md entry for agent_builder.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "agent_builder" ARCHITEC… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to update `tests/module_size.rs` register entry for `src/agent_builder.rs` to 4513. But wait — ARCHITECTURE.md may say agent_builder.rs should be split rather than grown. Let me check the module_size.rs register comment for agent_builder. Also, maybe the task's Files line doesn't include tests/module_size.rs, but the gate requires it. The register update is required by the gate; I'll do it and say why in the commit message.
+
+Let me look at the register entry area.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 165,185p tests/module_siz… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 152,168p tests/module_siz… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (3 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `read_file`/`bash` output truncation is annoying. Let me use python to print exact lines with numbering.
+
+Actually the issue is that the tool seems to be summarizing long outputs. Let me just grep line numbers.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=158 && NR<=178 {printf … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 11 lines)
+  -     ("src/agent_builder.rs", 4347),
+  +     // Day 206 (#943): 4347 -> 4513 (+166, past REGISTER_DRIFT_GRACE_LINES, so
+  +     // this one is fatal and the number is pasted anyway — the register is
+  +     // monotonically updated, never silently absorbed). The DeepSeek arm now
+  +     // builds `ModelConfig::deepseek` instead of `ModelConfig::openai`, so the
+  +     // arm's declared output ceiling is 384000 rather than the base config's
+  +     // 4096; `configure_agent` gained a `model_output_ceiling` parameter and the
+  +     // new pure `max_tokens_ceiling_warning` (plus its table test and the
+  +     // near-miss guard on the preset's two numbers) compares the user's
+  +     // configured `max_tokens` against it. The +166 is mostly comment and test:
+  +     // the two deltas at the arm, the near-miss guard, and the warning table.
+  +     ("src/agent_builder.rs", 4513),
+ ✓ (1m 34s)
+  -     ("src/agent_builder.rs", 4347),
+  +     // Day 206 (#943): 4347 -> 4513 (+166, past REGISTER_DRIFT_GRACE_LINES, so
+  +     // this one is fatal and the number is pasted anyway — the register is
+  +     // monotonically updated, never silently absorbed). The DeepSeek arm now
+  +     // builds `ModelConfig::deepseek` instead of `ModelConfig::openai`, so the
+  +     // arm's declared output ceiling is 384000 rather than the base config's
+  +     // 4096; `configure_agent` gained a `model_output_ceiling` parameter and the
+  +     // new pure `max_tokens_ceiling_warning` (plus its table test and the
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (189ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the full test suite:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 33s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (3m 7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All tests pass. Now the positive control (mutate→run→restore as one atomic command) for the new warning, and then the docs (ARCHITECTURE.md).
+
+Positive control: neuter `max_tokens_ceiling_warning` to always return None → the table test should fail by name. Then restore. Serially, atomic.
+
+Note there's also the neutered_guards.rs test requiring markers. Use `NEUTERED` marker and restore in the same command. Actually the instruction says best practice is one atomic command.
+
+Let me do it.
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now the positive control — mutate → run → restore as one atomic command:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent… (17 lines) ✓ (54.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Positive control: red exactly one test by name, restored green. 
+
+Let me also run the full test after restore to be safe (neutered_guards test). And verify no marker left.
+
+Now: docs — ARCHITECTURE.md entry for src/agent_builder.rs. Let me find the right section. There is a "per-file notes" section. Let me find where agent_builder.rs's bullet is (line 255 is main.rs; agent_builder appears at 159 too). Let me find the file-note bullet heading.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "NEUTERED\|DO NOT COMMIT… ✓ (10ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ARCHITECTURE.md entry for `src/agent_builder.rs` is line 257, one huge paragraph. I need to append my Day 206 entry to that bullet. Let me find the end of that bullet (line 257 or where the next bullet starts).
+
+I'll append at the end of the bullet. Let me find where the bullet ends.
+────────────────────────────────────────────────────────────────────────────────
+
+The register entry is line 257. Let me find its end and append the Day 206 entry:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=257 && NR<=260 {print N… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> /tmp/… (12 lines) ✓ (39ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, the entry got appended but I should check it starts right. Also I need to verify claim (c) about build_side_agent / build_architect_agent - those don't call configure_agent, correct (verified earlier by grep - configure_agent called only from the 4 build_agent arms + tests).
+
+And claim (b): "they keep their 128_000 / 4096 declaration for Step 2 to warn against" — actually the warning is only in configure_agent which is only called by build_agent, so yes other arms do get warned. Correct.
+
+Now let me run the full check suite.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (17.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 34s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green. Let me verify the final diff and check for neutered markers, then commit.
+
+Let me also double-check the CLAUDE.md requirement: "CLAUDE.md gets nothing except, if you change the vendored thinking = "high" claim in the .yoyo.toml neighbourhood — you are not — nothing." Good, nothing.
+
+Let me review the diff.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (30ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/agent_builder.rs | … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The diff looks clean. Note one thing: I need to double check that the warning fires in the right place — the task mentioned "Do the same for the legacy 'raises the value for budget thinking' adjustment nearby". Let me search once more whether such an adjustment exists.
+
+Earlier greps found nothing about "budget thinking". Let me quickly re-verify since it's an explicit task requirement and I wrote in the ARCHITECTURE entry that there's no such adjustment... actually I didn't claim that explicitly. Let me check to be honest in the write-up.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "budget\|raise" src/age… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: there is no "legacy raises the value for budget thinking" adjustment in `configure_agent`. The only max_tokens application is `if let Some(max) = self.max_tokens { agent = agent.with_max_tokens(max); }`. I traced this — the task said "Do the same for the legacy 'raises the value for budget thinking' adjustment nearby — if it still raises above the ceiling, that is exactly the case the warning is for." That adjustment does not exist at HEAD. Let me be honest and note that in the ARCHITECTURE entry — I should add a sentence. Let me verify definitively by looking at the whole block around 1395-1420.
+
+Already did: lines 1393-1402 are just the if-let and temperature. Nothing raises. Also check `cli.rs` for a max_tokens raise.
+
+grep earlier: cli.rs:2708 parses --max-tokens. No raise. And the "thinking" branch. Let me do one final combined grep across src for anything that mutates agent.max_tokens.
+
+grep -rn "max_tokens = \|\.max_tokens\b" src/. Let's check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "with_max_tokens\|\.max… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: `with_max_tokens` is called exactly once, and no code "raises" max_tokens for budget thinking. The task's premise about a legacy adjustment raising the value doesn't exist at HEAD. I should record that honestly in the ARCHITECTURE entry rather than silently skip it.
+
+Let me add that sentence to the ARCHITECTURE entry.
+────────────────────────────────────────────────────────────────────────────────
+
+The task mentioned a "legacy raises the value for budget thinking" adjustment — let me verify that claim rather than skip it silently:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "max_tokens" src/main.r… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: no raising. Let me add this honest finding to the ARCHITECTURE entry — "Step 2's instruction to 'do the same for the legacy raises-the-value-for-budget-thinking adjustment nearby' names an adjustment that does not exist at HEAD; `with_max_tokens` has exactly one call site."
+
+Let me insert that into the entry. I'll patch the ARCHITECTURE line.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (3m 12s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

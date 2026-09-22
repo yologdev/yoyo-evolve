@@ -1,0 +1,1787 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the relevant code before making changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && ls -la .…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 240,400p src/commands_ris… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read the file more thoroughly around the relevant functions.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 200,280p src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_validation_event\… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me read the write_validation_event and the call sites.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 400,560p src/commands_ris… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 560,720p src/commands_ris… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 720,900p src/commands_ris… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the `/risk validate` site in commands_risk.rs around 2883, and 2709, 5930.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_validation_event"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2650,2760p src/commands_r… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's look at the /risk validate site (2877) and the fixture (5935).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2760,2940p src/commands_r… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `/risk validate` site has `last_line` snapshot value; it doesn't have a `ParsedSnapshot` but has `day`, `git_hash`, and the snapshot `ts`. Hmm, actually the site reads the raw JSON value. It has `snapshot["ts"]` accessible. The task says the watch-failure call site (`:816`) and `/risk validate` (`commands_risk.rs:2883`) compute the count. The `:2709` and `:5930` pass `None`.
+
+Wait but `:2883` is the green path? Let me re-read the task: "The watch-failure call site (`:816`) and the `/risk validate` site (`src/commands_risk.rs:2883`) compute the count. `commands_risk.rs:2709` and `:5930` pass `None` — say why in a one-line comment at each: they are the CI-harvest and test-fixture paths, where no `ParsedSnapshot` is in scope."
+
+Hmm but line 2877 is the call in `handle_risk_validate` — wait, my grep showed line 2877: `if let Err(e) = crate::commands_risk::write_validation_event(`. The task says 2883. Line numbers may shift. Fine.
+
+But wait: at the /risk validate site there is no `ParsedSnapshot`, just a raw serde_json::Value. Actually the task says 2709 and 5930 pass None because "no ParsedSnapshot is in scope". At the /risk validate site, we DO have the snapshot `ts` field via serde_json value. Hmm — we can compute snapshot_ts from `snapshot["ts"]`. Yes.
+
+Also: "If threading the count into `commands_risk.rs` turns out to need more than a few lines there, pass `None` at that site too and say so in the write-up". Let me consider: at handle_risk_validate we'd need to read the first_scored ledger and founding_ts, then call count_unhittable_surprises with the snapshot ts. That's a few lines. It's feasible.
+
+Now, what is the snapshot `ts` for the last snapshot in the JSONL? Let me check `ParsedSnapshot` and `build_risk_snapshot_json` — does the snapshot JSON include `ts`? Let's check.
+
+Let me look at commands_risk_parse.rs:228 for ParsedSnapshot and at build_risk_snapshot_json.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 200,300p src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_risk_snapshot_… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Snapshots have `ts`.
+
+Now the plan. Let me look at the module structure of `commands_risk_snapshots.rs` around `first_scored_age` for where to add the new struct/function, and the test module `first_scored_tests`.
+
+Also I need to check module size gate — `tests/module_size.rs` could fail if the file grows. Let's check the current line count and the cap.
+
+Also I should check how the retrospective reading is done. And check the `is_plain_output`/`is_quiet` usage in the file.
+
+Let me now check module size and the file's line count.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_snapshot…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1835,1900p src/commands_r… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The file is exactly at 2047 lines, the grandfathered cap. Adding code will push it over. Let me look at the module_size gate rules more carefully — the grandfathered entry has a cap; if the file shrinks it may trigger a "shrink" note. Let's read tests/module_size.rs around 85-140 and the check logic.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,160p tests/module_size.… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The register entry caps at 2047. If my change exceeds 2047 + REGISTER_DRIFT_GRACE_LINES (100) = 2147, it fails. If it grows past 2047 by ≤100 (i.e., to ≤2147), presumably there's a "nice" warning? Let's check the check_module_sizes logic.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 560,700p tests/module_siz… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+GrewPastCeiling is not fatal. Good. So if the file grows to ≤2147, it's just a warning (not fatal). But best practice: update the register entry to the new measured size and say why in the commit message. The task says files: src/commands_risk_snapshots.rs, ARCHITECTURE.md. Updating tests/module_size.rs register would be a third file, but it's a mechanical register update — the house style says paste the new number over its entry. The task says Files: those two. Hmm. But the CLAUDE.md Day-202 lesson is precisely about this: the register entry. Let me check whether the test is a warning or fatal at ≤100 lines growth. Non-fatal. But the "grew past ceiling" warning will appear. Actually, is a warning acceptable? The gate test would still pass. But leaving a stale register entry that's within grace... hmm, actually the correct behavior is to update the register. Let me see exactly how tests treat warnings — do they print and still pass? Let's check around line 940-1000.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 900,1010p tests/module_si… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Non-fatal but a warning. I should update the register entry to keep it honest and to avoid the warning. The task's Files line names only two files, but the register update is the repo's own documented discipline for growing a grandfathered module. Hmm — but the task explicitly says "Files: src/commands_risk_snapshots.rs, ARCHITECTURE.md". The evolve evaluator may check files touched. However, the Day-202 lesson warns about register prose. Also a previous lesson: register updates are expected when growth happens.
+
+Given the module cap: I'd prefer to keep the growth small. My additions: a struct + function (~35 lines with doc comments) + tests (~80 lines) + call-site wiring (~15 lines). That's ~130 lines, exceeding the 100-line grace → FATAL. So I must either update the register entry or move code elsewhere.
+
+Option A: update `tests/module_size.rs` register entry from 2047 to new value. That's a third file, but it's the documented remedy ("paste (\"{path}\", {lines}) over its entry ... and say why in the commit message"). I'll do that and explain in the write-up.
+
+Actually wait — alternatively I could keep the new pure function in `commands_risk_snapshots.rs` (required by task) but put the tests... they should be in the module's #[cfg(test)].
+
+Hmm, the register entry growth is fatal beyond 100 lines. Let me estimate more carefully and try to be compact. Still, tests alone will be ~70-80 lines. Total likely ~120. So register update needed. I'll do the register update — it's the repo's own prescribed remedy, and the module_size test itself names it.
+
+Wait, but careful: the register entry is a line-count cap. The gate says the entry is the ceiling. If I paste the new number, the gate is satisfied. Good.
+
+Also there's a pre-push hook and CI. Fine.
+
+Now let's plan the implementation.
+
+### Step 1: pure join
+
+In `commands_risk_snapshots.rs`, beside `first_scored_age`:
+
+```rust
+/// Split a surprise list into files that were *hittable* and files that were
+/// not, using the first-scored ledger as the proxy for "did this exist at the
+/// snapshot".
+pub(crate) struct UnhittableCount {
+    pub(crate) unhittable: u32,
+    pub(crate) measured: u32,
+    pub(crate) unmeasurable: u32,
+}
+
+pub(crate) fn count_unhittable_surprises(
+    surprises: &[String],
+    snapshot_ts: &str,
+    first_scored: &BTreeMap<String, String>,
+    founding: Option<&str>,
+) -> UnhittableCount
+```
+
+Need `BTreeMap` import — the existing code uses fully qualified `std::collections::BTreeMap`. I'll use the fully qualified path for consistency.
+
+Rule: unhittable when `first_scored_age(...)` is Some(ts) and ts > snapshot_ts. Unmeasurable when first_scored_age is None or snapshot_ts == "unknown". measured = unhittable + hittable.
+
+Implementation:
+```rust
+pub(crate) fn count_unhittable_surprises(
+    surprises: &[String],
+    snapshot_ts: &str,
+    first_scored: &std::collections::BTreeMap<String, String>,
+    founding: Option<&str>,
+) -> UnhittableCount {
+    let mut out = UnhittableCount { unhittable: 0, measured: 0, unmeasurable: 0 };
+    // An unknown snapshot ts can decide nothing: without a time to compare
+    // against, every surprise is unmeasurable — never "hittable".
+    if snapshot_ts == "unknown" {
+        out.unmeasurable = surprises.len() as u32;
+        return out;
+    }
+    for path in surprises {
+        match first_scored_age(path, first_scored, founding) {
+            // The ledger's ts and the snapshot's ts are both fixed-width
+            // ISO-8601 UTC (`%Y-%m-%dT%H:%M:%SZ`), so lexicographic order is
+            // chronological order — a plain string compare is the date compare.
+            Some(ts) if ts > snapshot_ts => {
+                out.unhittable += 1;
+                out.measured += 1;
+            }
+            // Born at or before the snapshot: it existed to be predicted, so
+            // this is a real miss and counts as measured (hittable).
+            Some(_) => out.measured += 1,
+            // Founding-batch or never-scored: no birthday to compare.
+            None => out.unmeasurable += 1,
+        }
+    }
+    out
+}
+```
+
+Wait: with snapshot_ts == "unknown", measured = 0 and unmeasurable = len. Test expects that.
+
+Also derive Debug/PartialEq for tests? Tests use assert_eq on the struct fields, or maybe compare struct. I'll add `#[derive(Debug, PartialEq, Eq)]` so tests can assert_eq!(count, UnhittableCount{...}). Careful: clippy dead_code — struct fields are pub(crate) and read at call sites. Fine as long as used.
+
+Hmm—one subtlety: is `measured` "hittable + unhittable"? Test asks: ordinary long-scored paths → unhittable == 0 and measured == len. Yes.
+
+### Step 2: writer + call sites
+
+`write_validation_event` gains `unhittable_surprises: Option<u32>`, inserted only when Some. That adds a 11th argument; there's already `#[allow(clippy::too_many_arguments)]`. Update doc comment enumerating fields. Let me read the doc comment fully.
+
+Then call sites:
+- `auto_validate_after_failure_to` :816 — compute count using `last.ts`, first_scored ledger read, founding. Then pass Some(count.unhittable), and print clause if unhittable>0 || unmeasurable>0.
+- `record_green_validation_to` (:698) — green path. Task says the "watch-failure call site (:816) and the /risk validate site". What about the green path at line 698? It's inside commands_risk_snapshots.rs and it has `snapshot_git_hash` but not the snapshot ts. It computes surprises too. The task didn't mention it. Hmm — "The watch-failure call site (:816) and the /risk validate site (src/commands_risk.rs:2883) compute the count. commands_risk.rs:2709 and :5930 pass None."
+
+So the green path at :698 must also pass something — pass None. And say why in a comment? The task says "say why in a one-line comment at each: they are the CI-harvest and test-fixture paths, where no ParsedSnapshot is in scope." Those refer to commands_risk.rs:2709 and :5930. For the green path (record_green_validation_to), I need to pass None too with a comment. Justification: it carries no ParsedSnapshot ts in scope — actually it doesn't: signature has no ts. So pass None with a comment "no snapshot ts in scope here — this path grades the green outcome from a git hash alone".
+
+Hmm, alternatively I could thread ts into record_green_validation_to. But let's keep narrow: pass None with a one-line reason.
+
+Wait, but the watch-failure path in commands_risk_snapshots.rs at :698 is `record_green_validation_to`. Actually hold on — also `commands_risk.rs` there might be other call sites. Let me grep all call sites across the repo.
+
+Let me grep for write_validation_event everywhere.
+
+Also there's a test-fixture at :5935 in commands_risk.rs (the one described as fixture) and :2709 CI harvest. Plus tests in commands_risk_snapshots.rs that call write_validation_event — those need updating too.
+
+Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "write_validation_event…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 468,500p src/commands_ris… ✓ (6ms)
+ ✓ (65ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The grep result was truncated oddly. Let me get exact call sites with line numbers via grep -n per file.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_validation_event(… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, grep only shows these. But earlier the file's call at line 698 (`record_green_validation_to`) and 810 (`auto_validate_after_failure_to`) — the grep didn't show them? Odd. Oh, grep -n with that pattern... the earlier grep for "write_validation_event" in src/commands_risk_snapshots.rs showed 474, 698, 810, 1411, 1439, 1475, 1479, 1567, 1759. But now `write_validation_event(` shows only 474 and 1759. That means lines 698, 810, etc. have the name followed by something else? No... Let me check line 698 - `write_validation_event(` at 698 earlier. Hmm, the second grep output was "... (7 more similar lines)" which is this tool's compression of output! The tool is collapsing similar lines. So there are more matches. Let me use a different approach - count them.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "write_validation_event(… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+OK so call sites in snapshots: 698 (green), 810 (watch_failure), and tests at 1411, 1439, 1475, 1479, 1567, 1759. Plus commands_risk.rs: 2709 (CI harvest), 2877 (/risk validate), 5935 (test fixture).
+
+Also record_green_validation_to is called from commands_risk.rs /risk validate green path.
+
+Now let me check commands_risk.rs line 17-20 to see imports (BTreeMap? first_scored?). And check whether commands_risk.rs can access `crate::commands_risk_snapshots::{count_unhittable_surprises, read_first_scored, founding_ts}`. Let me look at the imports.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p src/commands_risk.r… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the /risk validate site more: it has `snapshot` (serde_json Value) with `ts`, `day`, `git_hash`. To compute the count I need the snapshot's ts. Snapshot ts defaults to "unknown" when absent:
+
+```rust
+let snapshot_ts = snapshot["ts"].as_str().unwrap_or("unknown").to_string();
+```
+
+Then read first-scored ledger from RISK_FIRST_SCORED_PATH, get founding, call count_unhittable_surprises(&surprises, &snapshot_ts, &map, founding).
+
+That's ~6 lines. Acceptable — "a few lines".
+
+Now: does commands_risk.rs have access to `RISK_FIRST_SCORED_PATH`, `read_first_scored`, `founding_ts`, `count_unhittable_surprises`? They're `pub(crate)` in commands_risk_snapshots. Need to import them (or use fully qualified paths). I'll use fully qualified `crate::commands_risk_snapshots::...` to avoid touching the re-export block... Actually cleaner to add to the re-export list. But the re-export block is "Re-exported here so all call sites remain unchanged". I'll just use fully-qualified paths in the function body — fewer edits.
+
+Hmm, but the file is `commands_risk.rs` and inside it they call `crate::commands_risk::write_validation_event` (weird but fine).
+
+Now the printing at the /risk validate site: The task says "The existing watch-failure stderr summary gains one clause". It only explicitly mentions the watch-failure summary. For the /risk validate site, presumably also print something? The task says step 2 point 2: "The watch-failure call site (:816) and the /risk validate site (src/commands_risk.rs:2883) compute the count." Point 3 only mentions the watch-failure stderr summary. To keep the product surface quiet, hmm. The /risk validate path is a CLI command, user-facing. Printing the clause there too would be consistent. But there's a risk of over-reaching. Let me think: the value of the task is that the ledger *records* the unhittable count, and the watch-failure summary prints it. For the /risk validate site, computing and recording it in the event is the point. I think printing there as well is consistent and low-risk — the /risk validate path already prints a report. But the task explicitly only specifies the clause for the watch-failure summary. I'll add the clause to both for consistency? Hmm.
+
+"§ Non-goals" don't forbid it. But minimal-change discipline: the task lists exactly what to do. It says the /risk validate site computes the count (i.e., records it). I'll record it there and also print the clause — actually let me reconsider: the `is_plain_output()`/`is_quiet()` gating matters. The /risk validate path uses `println!` for the report and `eprintln!` for the emerging note. The watch-failure path uses eprintln! with DIM.
+
+Decision: implement the clause in the watch-failure summary as specified (with a helper that both sites can share?). Hmm — a helper would be cleaner and avoid duplicating the format... but the sites differ in indentation and gating. Let me keep it simple: define a small pure helper in commands_risk_snapshots.rs that formats the clause, returning Option<String>, e.g.
+
+```rust
+pub(crate) fn unhittable_clause(count: &UnhittableCount, plain: bool) -> Option<String>
+```
+
+Hmm, but that adds surface. The task spec says the clause is printed "only when unhittable > 0 or unmeasurable > 0", glyph-free under is_plain_output(), silent under is_quiet(). A pure helper makes this testable — that's in the spirit of this repo (pure, table-tested message helpers). And the ARCHITECTURE.md entries in CLAUDE.md heavily praise "pure, table-tested" message helpers.
+
+But careful about scope: the spec's step 3 example output:
+```
+📊 2 of 5 surprises were unhittable (first scored after this snapshot); 1 undecidable
+```
+This is the watch-failure summary clause. I'll add a helper:
+
+```rust
+/// One-line clause for the validation summary, or `None` when there is
+/// nothing to say. ...
+pub(crate) fn unhittable_surprise_clause(
+    unhittable: u32,
+    measured: u32,
+    unmeasurable: u32,
+    total_surprises: usize,
+    plain: bool,
+) -> Option<String>
+```
+
+Hmm, that's a lot of params (5). Could take `&UnhittableCount` and a total. Actually `measured` = hittable+unhittable. The example says "2 of 5 surprises were unhittable" where 5 is presumably total surprises. So we need the total = surprises.len(). UnhittableCount has measured and unmeasurable; total = measured + unmeasurable. So I can derive total from the struct. So helper signature: `fn unhittable_surprise_clause(count: &UnhittableCount, plain: bool) -> Option<String>`.
+
+Return None when unhittable == 0 && unmeasurable == 0.
+
+Format:
+- with glyph: `📊 2 of 5 surprises were unhittable (first scored after this snapshot); 1 undecidable`
+- plain: strip the glyph and the em dash — there's no em dash here. Plain would be: `2 of 5 surprises were unhittable (first scored after this snapshot); 1 undecidable`? The pattern used by other helpers: glyph-free under is_plain_output. E.g. `project_mcp_refusal_message` bullets and em dashes. I'll drop the 📊 emoji in plain mode.
+
+Hmm, but the surplus: the spec example includes the 📊 glyph. Let me check how other messages do the glyph/plain split. Let's look at `connections_lost_note` in commands_risk_snapshots or wherever, and at `is_plain_output`.
+
+Actually, wait. Let me search for is_plain_output usage in commands_risk_snapshots.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "is_plain_output\|is_qu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1395,1500p src/commands_r… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me continue. I need to pick up where I left off — I've done exploration. Now I should implement the changes.
+
+Let me make a todo list and start implementing. Note: I haven't made any changes yet. Let me check the current state first.
+
+Plan:
+1. Add `UnhittableCount` struct + `count_unhittable_surprises` function in `src/commands_risk_snapshots.rs` beside `first_scored_age`.
+2. Add tests.
+3. Add parameter to `write_validation_event` and insert key when Some.
+4. Update call site at `auto_validate_after_failure_to` (:810) and `/risk validate` in commands_risk.rs:2877.
+5. Pass None at commands_risk.rs:2709 and :5935 with comments.
+6. Add stderr clause.
+7. Update ARCHITECTURE.md.
+8. Run checks and commit.
+
+Let me first check git status to confirm no changes made.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && sed -n 260… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, the sed output shows "... (N more similar lines)" in the middle — the file read is being elided by the tool? That's odd, seems like the read tool truncates. Actually it seems `sed` via bash shows the file, but there are literal "... (4 more similar lines)" strings? No — that would be in the file. Hmm, actually the header says "Repository Structure" and the tool seems to compress. Let me check raw with cat -A or grep to confirm the file content is not literally elided.
+
+Actually the `bash` tool output seems to elide long runs. Let me check whether the file literally contains "... (4 more similar lines)".
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "more similar lines" src… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The bash output is being compressed by the tool ("... (2 more similar lines)"), not the file. That's a display artifact. I need to be careful: when I use edit_file I must match exact text. Let me read specific ranges with the read_file tool instead which paginates properly.
+
+Let me read lines 262-300 of the file using read_file with offset/limit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:260..310 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me implement Step 1. Insert after line 297 (after first_scored_age).
+
+Let me write the code.
+
+```rust
+/// Split a surprise list into files that were *hittable* and files that were
+/// not, using the first-scored ledger as the proxy for "did this exist at the
+/// snapshot".
+///
+/// A surprise the model could not have predicted because the file did not exist
+/// when the snapshot was taken is scored exactly like a real miss — both render
+/// as `0%` with the file named under `surprises`. This is the honest neighbour:
+/// it lets a validation event say *unhittable* out loud.
+///
+/// The proxy, and its limit: the ledger join is only as complete as the ledger
+/// is — a path the scorer never saw has no birthday here and lands in
+/// `unmeasurable`, never in `unhittable`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct UnhittableCount {
+    /// Surprises whose ledger birthday is strictly after the snapshot's ts.
+    pub(crate) unhittable: u32,
+    /// Surprises the join could actually decide (unhittable + hittable).
+    pub(crate) measured: u32,
+    /// Surprises the join could NOT decide: no ledger entry (never scored), a
+    /// founding-batch path (unknown birthday, see [`first_scored_age`]), or a
+    /// snapshot whose own ts is `"unknown"`.
+    pub(crate) unmeasurable: u32,
+}
+
+/// Decide each surprise against the first-scored ledger.
+///
+/// A surprise is **unhittable** when [`first_scored_age`] is `Some(ts)` and
+/// `ts > snapshot_ts` — a plain string compare, which is chronological here
+/// because every ts in both files is the same fixed-width ISO-8601 UTC shape
+/// (`%Y-%m-%dT%H:%M:%SZ`), so lexicographic order is time order.
+///
+/// It is **unmeasurable** when the join cannot decide: no ledger entry at all,
+/// a founding-batch birthday (the survivor-trap guard — see
+/// [`first_scored_age`], reused rather than re-derived), or a snapshot whose
+/// own `ts` is `"unknown"`. That last case is the whole reason this counter
+/// exists: an unorderable snapshot must not let every surprise read as
+/// *hittable*.
+pub(crate) fn count_unhittable_surprises(
+    surprises: &[String],
+    snapshot_ts: &str,
+    first_scored: &std::collections::BTreeMap<String, String>,
+    founding: Option<&str>,
+) -> UnhittableCount {
+    let mut out = UnhittableCount::default();
+    let snapshot_orderable = snapshot_ts != "unknown" && !snapshot_ts.trim().is_empty();
+    for path in surprises {
+        let Some(birthday) = first_scored_age(path, first_scored, founding) else {
+            out.unmeasurable += 1;
+            continue;
+        };
+        if !snapshot_orderable {
+            // A snapshot with no orderable timestamp cannot be compared
+            // against — "born after an unknown moment" is not a measurement.
+            out.unmeasurable += 1;
+            continue;
+        }
+        out.measured += 1;
+        if birthday > snapshot_ts {
+            out.unhittable += 1;
+        }
+    }
+    out
+}
+```
+
+Wait: the spec says "It is **unmeasurable** when `first_scored_age` is `None` (founding batch, or no entry) or `snapshot_ts == "unknown"`." And "`measured = unhittable + hittable`." My code: measured increments for each decidable surprise, and unhittable for those with birthday > snapshot_ts. So measured = unhittable + hittable. Good.
+
+Order of checks: if first_scored_age is None → unmeasurable regardless of snapshot_ts. Fine.
+
+Should I check `!snapshot_ts.trim().is_empty()`? Spec only says `== "unknown"`. Adding empty-string handling is extra. Hmm, an empty snapshot_ts would make every birthday > "" true → all unhittable, which is the dangerous direction. But spec says exactly `snapshot_ts == "unknown"`. The parsed snapshot's ts defaults to "unknown" when missing. Let me check parse: in commands_risk_parse the ts is `val["ts"].as_str().unwrap_or("unknown").to_string()`. So empty string can't come from there but could be an explicit "". I'll treat unknown-or-empty as unmeasurable — but careful: the spec's test says `snapshot_ts == "unknown"` → unmeasurable == len. Adding empty-string is a superset that doesn't break the named tests. But "do not widen" discipline... A trim-empty ts is genuinely unorderable and the empty case would read all-unhittable, which is the wrong direction. I'll include it and note it in the doc comment as an explicit extension — hmm, but the instructions say step 1's rule "stated exactly". Risky to add. However the "exactly" statement is about the unhittable rule. Let me keep it simple and just check `snapshot_ts == "unknown"`, matching spec exactly. Actually... an empty ts is a real possible case? `ParsedSnapshot.ts` is `"unknown"` on legacy lines per doc. So no empty case from the parser. Keep it exact: `snapshot_ts != "unknown"`. Simpler, matches spec, no surprise.
+
+Hmm, but what about a lower-case or whitespace "unknown"? Not needed.
+
+Now the count types: u32. surprises.len() could exceed u32 — no.
+
+Now Step 1 tests. Add in the `first_scored_tests` module or a new module? The spec says "in the module's `#[cfg(test)]`". The first_scored tests module is a natural home. But do I add a new module? The existing `first_scored_tests` mod is at line ~1848 and is dedicated to the first-scored ledger — the join uses the ledger, so it fits. But the struct/tests are about surprises. I'll add tests into `first_scored_tests` since it has `ledger()` helper and imports. Actually wait — `first_scored_tests` uses `use super::*;` and `use crate::commands_risk_neverforecast::forecast_opportunities;`. Good, can access count_unhittable_surprises.
+
+I'll add a new submodule? Simpler: append tests to first_scored_tests. But naming: tests for count_unhittable_surprises in first_scored_tests. Acceptable — the module doc says "Tests for the first-scored ledger". The join is a consumer of that ledger. I'll add there and mention.
+
+Actually cleaner: add a dedicated `#[cfg(test)] mod unhittable_tests` in the same file, using `use super::*;`. That keeps the ledger module's narrative clean. But module count / file size... fine either way. I'll add to first_scored_tests to avoid duplicating helper setup. Hmm, the spec says "Tests, table-shaped, in the module's `#[cfg(test)]`". Either is "the module's". I'll put them in `first_scored_tests` and note why (it already owns the ledger fixture).
+
+Now, one test needs a snapshot ts of "unknown" and a non-empty surprise list. Fine.
+
+Near-miss guard: a list of ordinary long-scored paths yields unhittable == 0 and measured == len.
+
+Now Step 2: write_validation_event parameter. Add `unhittable_surprises: Option<u32>` at the end (after ci_run_id) — or where? "gains one parameter, `unhittable_surprises: Option<u32>`". Position: I'll add it right after `surprises` conceptually? No — all call sites are positional; appending at the end minimizes confusion. Let me append after ci_run_id. Hmm, but doc comment enumerates fields. Where does it live logically? It describes surprises, so placing near surprises would be more readable, but appending at the end keeps the diff of call sites simpler (add one arg at the end). I'll append at the end and document.
+
+Wait — clippy `too_many_arguments` is already allowed.
+
+Then insert key when Some:
+```rust
+    // #DREAM: how many of this event's surprises were *unhittable* — first
+    // scored after the snapshot that graded them, i.e. files that did not
+    // exist when the prediction was made. Optional so every legacy line and
+    // legacy reader stays valid (absent = "not measured", never 0).
+    if let Some(n) = unhittable_surprises {
+        if let Some(obj) = event.as_object_mut() {
+            obj.insert("unhittable_surprises".to_string(), serde_json::json!(n));
+        }
+    }
+```
+
+Then the doc comment enumerating fields. Let me read the doc comment at ~452-475.
+
+Then call sites:
+- snapshots.rs:698 record_green_validation_to → green event, no surprises... actually green path has surprises (files touched but not predicted). But no ParsedSnapshot in scope? Actually record_green_validation_to gets snapshot_git_hash but not ts. So pass None. The spec only names :816 and commands_risk.rs:2883 as computing the count; :2709 and :5930 pass None. What about :698 (green)? It's not named. Green events have surprises list too... but spec says two sites compute, two pass None. Hmm, there are more call sites: 698, 810, and test call sites (1411, 1439, 1475, 1479, 1567, 1759), plus commands_risk.rs 2709, 2877, 5935.
+
+The green site (698) — spec doesn't mention. It should pass None with a comment (no snapshot ts in scope). Actually it does have snapshot_git_hash only. I'll pass None and comment briefly. But "no git" ... The green path could look up the snapshot's ts from the snapshot file? No — keep scope. Pass None, with a one-line comment saying why: only the git hash is in scope, not the snapshot's ts, and this task's two computing sites are the failure/CLI grading paths.
+
+Hmm, but is that leaving a hole where a genuine unhittable surprise on a green event is silently absorbed? The green event isn't a 0% miss though — it's a false-positive measure. The accuracy_pct there is top_pct. An unhittable surprise there is also arguably relevant, but out of scope; I'll note it in the write-up/ARCHITECTURE as a named limit.
+
+Actually wait. Let me reconsider: could I cheaply compute it at the green site? record_green_validation_to doesn't have ts. I could pass the ts in as another parameter — that widens to a caller (commands_risk.rs:2915ish). The task says "If threading the count into `commands_risk.rs` turns out to need more than a few lines there, pass `None`". The green site isn't explicitly in scope either. I'll pass None with a comment, and record the limit.
+
+Test call sites: add `None`.
+
+Now, the watch-failure site (810): needs `last.ts`, first_scored map, founding. Compute before write:
+
+```rust
+    // Say "unhittable" out loud: a surprise that was born after this snapshot
+    // could not have been predicted, and looks identical to a real miss in
+    // `accuracy_pct`. Reuse the first-scored ledger join (no git needed).
+    let unhittable = {
+        let (first_scored, _dropped) = read_first_scored(&first_scored_ledger_path(snapshot_path));
+        let founding = founding_ts(&first_scored);
+        count_unhittable_surprises(&surprises, &last.ts, &first_scored, founding)
+    };
+```
+
+Check `first_scored_ledger_path`: line 154. Let me read it to be sure it gives the ledger path beside snapshots.
+
+Then pass `Some(unhittable.unhittable)`? Spec: "`write_validation_event` gains one parameter, `unhittable_surprises: Option<u32>`, and inserts the key only when `Some`". Which value: the count of unhittable. But should we record when unmeasurable > 0? The key is `unhittable_surprises`. I'd record Some(n) always in the watch-failure path (even 0), since we did measure. Hmm — "inserts the key only when Some" is about the Option convention, not about suppressing zero. Recording `Some(0)` is an honest measurement: "measured, zero unhittable". That's better than absent, which means "not measured". I'll pass Some(unhittable.unhittable) always at the sites where we measured.
+
+Hmm but wait, does that break legacy-reader compatibility? No, unknown keys are ignored by serde_json Value readers. And the "only when Some" is satisfied.
+
+Should I also record `unmeasurable`? Spec doesn't ask for a second param. It asks the stderr line to mention undecidable. Hmm — the stderr prints "1 undecidable" but the record only holds unhittable. That's the spec's design. Keep to spec.
+
+Then the stderr clause: printed only when unhittable > 0 or unmeasurable > 0, next to the accuracy line. Glyph-free under is_plain_output(), silent under is_quiet().
+
+Hmm — the neighbouring lines here (the existing summary) are NOT gated on quiet or plain: they use `{DIM}  📊 ...{RESET}` unconditionally. The spec says "Glyph-free under `format::is_plain_output()` and silent under `format::is_quiet()`, matching the neighbouring lines." The neighbouring lines don't do that... but this is in commands_risk_snapshots.rs which does not import format::. Let me check what's imported there. Line 1-20. Let me look. Also, "matching the neighbouring lines" — the neighbours are printed via eprintln! with DIM. If I gate mine on quiet while neighbours aren't, it's inconsistent but strictly better (quiet means quiet).
+
+Hmm, careful: format::is_quiet() — is quiet set in these contexts? Let me check the functions. In commands_risk.rs the summary uses {DIM}. I'll follow spec: gate on quiet and strip glyph when plain.
+
+Let me check module imports and how is_plain_output/is_quiet are used elsewhere in similar risk code. Earlier grep in these two files found nothing (exit 1). So these files don't use format::. commands_risk.rs does `use crate::format::*;` — so it has access to is_quiet/is_plain_output? Let me check format/mod.rs exports: `enable_quiet`, `is_quiet`, ... `set_plain_output`/`is_plain_output` are in format/tools.rs. Let me check they're re-exported.
+
+Since commands_risk_snapshots.rs doesn't import format::, I need to add a `use crate::format::{is_plain_output, is_quiet};` or use fully-qualified paths `crate::format::is_plain_output()`.
+
+But adding a new `use` to this module... is that fine? It's a new definition with consumers, fine.
+
+Hmm wait — but this is a *product* surface? The stderr summary of risk validation is a yoyo-internal feature (`/risk` commands, watch failures). It's evolve-ish but the existing lines already print unconditionally. Adding a gated line only when >0 keeps byte-identical stderr for normal sessions. Under plain output mode, use no glyph.
+
+Let me design the message:
+- non-plain: `📊 2 of 5 surprises were unhittable (first scored after this snapshot); 1 undecidable`
+- plain: `2 of 5 surprises were unhittable (first scored after this snapshot); 1 undecidable`
+
+The spec example shows total_changed (`5`) as denominator. Hmm, "2 of 5 surprises" — 5 should be surprises.len(), not total_changed. The example: "2 of 5 surprises were unhittable". If surprises.len() = 5 then it's "of 5 surprises". I'll use `surprises.len()` as the denominator, since the clause says "of N surprises". Yes — measured/unmeasurable are subsets of surprises. Use surprises.len().
+
+Edge: if measured == 0 and unmeasurable == len, print "0 of N surprises were unhittable; N undecidable". Fine.
+
+Should I make it a pure helper for testability? The house style loves pure helpers with table tests. Let me create:
+
+```rust
+/// The one clause a validation summary prints when some surprises could not
+/// have been hit. `None` when there is nothing to say — which is every
+/// ordinary session, so its stderr stays byte-identical.
+fn unhittable_note(surprises: usize, c: UnhittableCount, plain: bool) -> Option<String>
+```
+
+Hmm, naming: `unhittable_summary`? Let me call it `unhittable_note(measured_total_surprises, count, plain)`. Returns None when unhittable == 0 && unmeasurable == 0.
+
+Singular/plural: "2 of 5 surprises were unhittable" / "1 of 5 surprises was unhittable"? The repo cares about singular/plural agreement (connections_lost_note). Let's do:
+- unhittable == 1 → "was unhittable", else "were unhittable".
+- undecidable == 1 → "1 undecidable", else "N undecidable" (no verb, fine).
+
+Message: `{unhittable} of {total} surprises {was|were} unhittable (first scored after this snapshot)` + optional `; {unmeasurable} undecidable`.
+
+Where to put it? In commands_risk_snapshots.rs, near the stderr site. But the /risk validate site in commands_risk.rs also should print? Spec step 2 item 3 says "The existing watch-failure stderr summary gains one clause". Only the watch-failure summary. The CLI `/risk validate` site just records. OK.
+
+Now the /risk validate site in commands_risk.rs:2877 computes the count. In handle_risk_validate, we have `snapshot` as serde_json::Value, and `git_hash`, and day. The snapshot's ts: `snapshot["ts"].as_str().unwrap_or("unknown")`. And the ledger: read via read_first_scored(&ledger path). Need the ledger path. There's `first_scored_ledger_path(snapshot_path)` which is private `fn` (not pub(crate)) at line 154. Let me check.
+
+Line 154: `fn first_scored_ledger_path(snapshot_path: &std::path::Path) -> std::path::PathBuf` — private to commands_risk_snapshots. commands_risk.rs needs access. It could use `RISK_FIRST_SCORED_PATH` const (pub(crate), line 19). In handle_risk_validate, snapshot path is RISK_SNAPSHOT_PATH → ledger is RISK_FIRST_SCORED_PATH. So `std::path::Path::new(RISK_FIRST_SCORED_PATH)`.
+
+But is RISK_FIRST_SCORED_PATH re-exported in commands_risk.rs? Line 17-21 re-exports a list; not including RISK_FIRST_SCORED_PATH. I can add it to the re-export list, or refer to `crate::commands_risk_snapshots::RISK_FIRST_SCORED_PATH`.
+
+Simplest: add a small pure helper in commands_risk_snapshots.rs that does the whole "compute from surprises + snapshot ts" using the default ledger path? But the watch path needs the ledger beside the snapshot (for tests). Hmm.
+
+Alternative: expose a helper in snapshots.rs:
+
+```rust
+/// Convenience wrapper for call sites that hold a snapshot `ts` and want the
+/// count against the default ledger path.
+pub(crate) fn unhittable_surprises_for(surprises: &[String], snapshot_ts: &str) -> UnhittableCount {
+    let (map, _dropped) = read_first_scored(std::path::Path::new(RISK_FIRST_SCORED_PATH));
+    let founding = founding_ts(&map);
+    count_unhittable_surprises(surprises, snapshot_ts, &map, founding)
+}
+```
+
+That keeps commands_risk.rs to ~3 lines: 
+```rust
+let unhittable = crate::commands_risk_snapshots::unhittable_surprises_for(&surprises, snapshot["ts"].as_str().unwrap_or("unknown"));
+```
+Hmm, but need the re-export for tidiness. commands_risk.rs already imports from the module. I'll add `unhittable_surprises_for, UnhittableCount` to the pub(crate) use list? UnhittableCount is only needed if we destructure. We need `.unhittable` field → struct field access requires the type in scope? No, field access works without importing the type.
+
+OK. But wait: does the extra wrapper add a "definition without consumer"? It has a consumer (commands_risk.rs). Fine.
+
+Also for the watch path, I could use the same wrapper but for tests it must use the tempdir ledger. Let me look at how tests call auto_validate_after_failure_to with tempdirs — the snapshot path is a tempdir path, and `first_scored_ledger_path(snapshot_path)` places the ledger beside it. If I use the default RISK_FIRST_SCORED_PATH in the watch path, the tests would read the repo's real ledger — bad.
+
+So the watch path must use `first_scored_ledger_path(snapshot_path)`. Good, that's testable: tests can write a ledger beside the snapshot.
+
+Hmm, is `first_scored_ledger_path` private fn at 154 — usable within the module. Yes.
+
+So:
+- watch path: read_first_scored(&first_scored_ledger_path(snapshot_path)) + founding_ts + count_unhittable_surprises.
+- CLI /risk validate: unhittable_surprises_for(&surprises, ts). It's a few lines.
+
+Actually, to avoid the extra wrapper, commands_risk.rs could do it in 4 lines with its own import of read_first_scored/founding_ts/count_unhittable_surprises. But `core` helper is nicer and keeps "one statement of each". I'll add the wrapper and use it in commands_risk.rs. Hmm — but then the watch path and the CLI path use two different compositions (wrapper vs manual). That's the "two doors" smell. Better: make the wrapper take the ledger path explicitly and use it from both:
+
+```rust
+pub(crate) fn count_unhittable_surprises_at(
+    surprises: &[String],
+    snapshot_ts: &str,
+    ledger_path: &std::path::Path,
+) -> UnhittableCount {
+    let (map, _dropped) = read_first_scored(ledger_path);
+    let founding = founding_ts(&map);
+    count_unhittable_surprises(surprises, snapshot_ts, &map, founding)
+}
+```
+
+Then watch path calls it with first_scored_ledger_path(snapshot_path), and CLI calls it with Path::new(RISK_FIRST_SCORED_PATH). Two call sites, one statement. 
+
+Is this wrapper "pure"? No, it does I/O — name it accordingly. Hmm, but it also needs a test? It's I/O, tests via integration-ish. Keep the pure function as the tested unit; the wrapper is thin.
+
+Hmm, careful about adding a new pub(crate) fn without tests — clippy won't complain. Fine.
+
+Now: does the repo have a rule about "never add a definition without its consumer in the same edit"? Yes — I'll add both together.
+
+Now also: the `measured` field — is it read anywhere? It's a pub(crate) field in a struct; unused fields in a struct don't trigger dead_code if the struct is constructed... Actually `dead_code` lint fires for never-read fields. Clippy with -D warnings would fail on "field `measured` is never read". Hmm! That's a real risk.
+
+Where would `measured` be read? In tests. Does dead_code count test usage? Test code is compiled with cfg(test) — dead_code analysis in the non-test build would see the field never read → warning "field is never read: `measured`".
+
+Hmm. In the non-test `cargo build`, `UnhittableCount.measured` is never read if nothing reads it. Wait — pub(crate) fields on a pub(crate) struct: dead_code lint does report unread fields even if pub(crate)? For `pub` items in a lib crate it doesn't; for pub(crate) it does (since it's not externally visible). Yes, dead_code fires for pub(crate) fields never read.
+
+So I must read `measured` somewhere in production code. Options:
+1. Use it in the stderr note: e.g. print "{measured} of {total} surprises were decidable"? The spec's example: "📊 2 of 5 surprises were unhittable (first scored after this snapshot); 1 undecidable". Hmm, that prints unhittable, total, undecidable — measured is derivable but unread.
+
+2. Have the note function take `UnhittableCount` and use `measured` for the denominator: "2 of 5 decidable surprises were unhittable; 1 undecidable". But spec example uses "of 5 surprises".
+
+Hmm. Option: use measured in the record? The record only takes unhittable.
+
+Let me instead use measured in the note computation, e.g., compute `total_surprises = c.measured + c.unmeasurable` inside unhittable_note — that reads measured! Nice: the note takes the count struct and derives the denominator as measured + unmeasurable, which is exactly surprises.len(). Then I don't even need to pass surprises.len(). And it reads `measured` in production code. 
+
+But is measured+unmeasurable always == surprises.len()? Yes by construction (each surprise contributes to exactly one of measured/unmeasurable). Good — and that's a nice invariant to pin in a test: `c.measured + c.unmeasurable == surprises.len()`.
+
+So: `fn unhittable_note(c: UnhittableCount, plain: bool) -> Option<String>`.
+
+Hmm, but the struct fields are pub(crate) — reading inside the same module is fine.
+
+Alternatively make the struct fields pub(crate) but read only in this module... still counts as read. Good.
+
+Now, "measured" must be read in a non-test build path. unhittable_note is called from the watch-failure summary → yes.
+
+Now the CLI site also constructs UnhittableCount but only reads `.unhittable`. Fine.
+
+Now let's also double check: `Default` derive on UnhittableCount — used (default()). Fine.
+
+Now, one more consideration: the parse side. Do I need a reader for `unhittable_surprises`? Spec: "every legacy line and every legacy reader stays valid" — no new reader required. But the "reading you must report" requires a retrospective analysis over existing events — that's a write-up analysis, not code (the census in scripts/extract_trajectory.py is out of scope).
+
+Hmm wait — but if no reader reads the new key, is it dead weight? The point is forward data for later analysis. The spec says it's fine.
+
+Now — should the ValidationEvent parser expose it? Not required. Keep narrow.
+
+Now the retrospective reading: I need to run a one-off analysis over `.yoyo/risk_validations.jsonl` + `.yoyo/risk_first_scored.jsonl` + snapshots to count events with ≥1 unhittable surprise. Let me write a throwaway python script (not committed) to compute it. I need: for each validation event with a snapshot_git_hash, its snapshot's ts; then for each surprise, its first-scored ts; count if > snapshot ts, restricted to events at/after founding_ts.
+
+Wait — the restriction "restrict to events at or after founding_ts". founding_ts is the earliest ts in the ledger (~2026-08-22?). For events before that, first_scored ts is the backfill moment (i.e., > event's snapshot ts trivially) → they'd all count as unhittable falsely. So restrict events whose snapshot ts >= founding_ts.
+
+Which ts is the event's reference? For watch_failure events, there's `snapshot_git_hash` and no event ts for the snapshot... The event line has its own "ts" (write time). The snapshot's ts needs to be looked up from risk_snapshots.jsonl by git_hash. Hmm, and the spec says "surprises whose first-scored ts is after that event's snapshot ts".
+
+So I need to join: event.snapshot_git_hash → snapshot line with that git_hash → snapshot.ts.
+
+Also events without snapshot_git_hash (older) → skip/unmeasurable.
+
+Also the day-205 row (`src/commands_risk_epistemic_tests.rs`) and day-203 row (`src/format/highlight/highlight_tests.rs`): check which the join marks unhittable.
+
+Let me look at the data. Let me write the analysis script in /tmp (not committed).
+
+Also note: the ledger `risk_first_scored.jsonl` is only 97 lines and the file may be regenerated per session? It's committed in the repo. Let me look at it.
+
+Let me now start writing code. First, read the doc comment for write_validation_event (lines ~452-475) and first_scored_ledger_path, plus the summaries at :810.
+
+Let me read those regions.
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me read the exact regions I'll edit.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:130..170  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:448..493 ✓ (0ms)
+ ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me make the edits. Start with Step 1: insert the struct + pure fn after first_scored_age (line 297), plus the I/O wrapper `count_unhittable_surprises_at` and the note helper `unhittable_note`. Where to put the note helper? Near the stderr site or with the count? I'll put it right after the count functions so the pure helpers live together.
+
+Let me write the edit.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+Now let me implement Step 1 — the pure join plus the note helper, beside first_scored_age.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (3 → 109 lines)
+  + /// Split a surprise list into files that were *hittable* and files that were
+  + /// not, using the first-scored ledger as the proxy for "did this exist at the
+  + /// snapshot".
+  + ///
+  + /// Why this exists: a surprise the model could not have predicted — because the
+  + /// file did not exist yet when the snapshot was taken — is scored exactly like a
+  + /// real miss. Both render as `0%` with the file named under `surprises`, so the
+  + /// number alone cannot tell me whether that zero is my foresight failing or my
+  + /// own change restating itself. This is the honest neighbour for that zero.
+  + ///
+  + /// The proxy, stated rather than implied: the ledger join is only as complete as
+  + /// the ledger is — a path the scorer never saw has no birthday here and lands in
+  + /// `unmeasurable`, **never** in `unhittable`.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+  + pub(crate) struct UnhittableCount {
+  +     /// Surprises whose ledger birthday is strictly after the snapshot's `ts`.
+  +     pub(crate) unhittable: u32,
+  +     /// Surprises the join could actually decide (`unhittable + hittable`).
+  +     pub(crate) measured: u32,
+  +     /// Surprises the join could **not** decide: no ledger entry at all, a
+  ... (89 more lines)
+ ✓ (15.8s)
+  + /// Split a surprise list into files that were *hittable* and files that were
+  + /// not, using the first-scored ledger as the proxy for "did this exist at the
+  + /// snapshot".
+  + ///
+  + /// Why this exists: a surprise the model could not have predicted — because the
+  + /// file did not exist yet when the snapshot was taken — is scored exactly like a
+  + /// real miss. Both render as `0%` with the file named under `surprises`, so the
+  + /// number alone cannot tell me whether that zero is my foresight failing or my
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Expected — the consumers come next (the rule from CLAUDE.md). Now Step 2: wire the consumers.
+
+1. write_validation_event gains the parameter.
+2. watch-failure site computes and passes, plus the stderr clause.
+3. commands_risk.rs CLI site.
+4. None at the other sites.
+
+Let me do the writer first.
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — consumers come next. Now Step 2: the writer parameter.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (16 → 24 lines)
+    /// `snapshot_git_hash` records which snapshot this event graded — used by the
+    /// green-outcome dedup (grade each snapshot at most once). `None` omits the
+    /// key (all pre-existing event shapes).
+  + ///
+  + /// `unhittable_surprises` is how many of this event's `surprises` were **first
+  + /// scored after the snapshot that graded them** — files that did not exist when
+  + /// the prediction was made, so they are guaranteed misses that look exactly like
+  + /// real ones (see [`count_unhittable_surprises`]). `None` omits the key, which
+  + /// means *not measured* and must never be read as `Some(0)`; only the two call
+  + /// sites that hold a snapshot timestamp pass `Some`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn write_validation_event(
+        validation_path: &std::path::Path,
+  ···
+        severity: Option<&str>,
+        snapshot_git_hash: Option<&str>,
+        ci_run_id: Option<u64>,
+  +     unhittable_surprises: Option<u32>,
+    ) -> std::io::Result<()> {
+ ✓ (13.5s)
+    /// `snapshot_git_hash` records which snapshot this event graded — used by the
+    /// green-outcome dedup (grade each snapshot at most once). `None` omits the
+    /// key (all pre-existing event shapes).
+  + ///
+  + /// `unhittable_surprises` is how many of this event's `surprises` were **first
+  + /// scored after the snapshot that graded them** — files that did not exist when
+  + /// the prediction was made, so they are guaranteed misses that look exactly like
+  + /// real ones (see [`count_unhittable_surprises`]). `None` omits the key, which
+  ... (11 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Also I need to add the key insertion in the body. Let me find the body after ci_run_id insertion and add the unhittable insert.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (7 → 17 lines)
+        if let Some(run_id) = ci_run_id {
+            if let Some(obj) = event.as_object_mut() {
+                obj.insert("ci_run_id".to_string(), serde_json::json!(run_id));
+  +         }
+  +     }
+  + 
+  +     // Optional, like the four fields above: absent means "not measured"
+  +     // (legacy lines, and the two sites with no snapshot timestamp in scope),
+  +     // never `0` — a zero here is a measurement, and the difference matters to
+  +     // anyone reading a `0%` later.
+  +     if let Some(n) = unhittable_surprises {
+  +         if let Some(obj) = event.as_object_mut() {
+  +             obj.insert("unhittable_surprises".to_string(), serde_json::json!(n));
+            }
+        }
+ ✓ (13.5s)
+        if let Some(run_id) = ci_run_id {
+            if let Some(obj) = event.as_object_mut() {
+                obj.insert("ci_run_id".to_string(), serde_json::json!(run_id));
+  +         }
+  +     }
+  + 
+  +     // Optional, like the four fields above: absent means "not measured"
+  +     // (legacy lines, and the two sites with no snapshot timestamp in scope),
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now fix the call sites. Let me read each call site's exact text with read_file.
+
+Sites:
+- commands_risk_snapshots.rs:698 (record_green_validation_to) → None
+- commands_risk_snapshots.rs:~810 → compute
+- test sites 1411, 1439, 1475, 1479, 1567, 1759 → None
+- commands_risk.rs:2709 (CI harvest) → None
+- commands_risk.rs:2877 (CLI validate) → compute
+- commands_risk.rs:5935 (test) → None
+
+Let me read the specific lines. Line numbers shifted by ~+120. Let me grep again.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_validation_event(… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:795..825  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:815..840 ✓ (0ms)
+ ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (2 → 8 lines)
+            None, // green event — not a CI harvest
+  +         // #DREAM: no snapshot *timestamp* is in scope here — this site is
+  +         // handed a git hash, not the snapshot line — so the unhittable join
+  +         // (which compares timestamps, never hashes) passes None rather than
+  +         // guessing. Named limit, not an oversight: green events carry no 0%
+  +         // recall figure, so no unhittable zero can hide inside one.
+  +         None,
+        )?;
+ ✓ (13.4s)
+            None, // green event — not a CI harvest
+  +         // #DREAM: no snapshot *timestamp* is in scope here — this site is
+  +         // handed a git hash, not the snapshot line — so the unhittable join
+  +         // (which compares timestamps, never hashes) passes None rather than
+  +         // guessing. Named limit, not an oversight: green events carry no 0%
+  +         // recall figure, so no unhittable zero can hide inside one.
+  +         None,
+        )?;
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the watch-failure site — compute the count, pass it, and add the stderr clause.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:895..965 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (29 → 49 lines)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+  + 
+  +     // Say "unhittable" out loud. A surprise that did not exist when this
+  +     // snapshot was taken was never predictable, yet it is scored exactly like a
+  +     // real miss — both render as a lower accuracy with the file named under
+  +     // `surprises`. The join reads the first-scored ledger beside these
+  +     // snapshots (no git: the clone is shallow and old snapshot hashes are
+  +     // unresolvable, which is why the ledger proxy exists at all).
+  +     let unhittable = count_unhittable_surprises_at(
+  +         &surprises,
+  +         &last.ts,
+  +         &first_scored_ledger_path(snapshot_path),
+  +     );
+    
+        // Append the validation event via the shared writer (same shape the CLI
+        // `/risk validate` path uses).
+  ···
+            Some(severity),
+  ... (17 more lines)
+ ✓ (13.6s)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+  + 
+  +     // Say "unhittable" out loud. A surprise that did not exist when this
+  +     // snapshot was taken was never predictable, yet it is scored exactly like a
+  +     // real miss — both render as a lower accuracy with the file named under
+  +     // `surprises`. The join reads the first-scored ledger beside these
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need to check that `crate::format::is_quiet` and `is_plain_output` are accessible. Let me check exports.
+
+Also `crate::format::is_plain_output` — defined in format/tools.rs; is it re-exported from format? Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use\|pub(crate) use… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn is_plain_output\|fn… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, both are public in `crate::format::*`. Now `commands_risk_snapshots.rs` — does it import `crate::format::*`? Let me check the top of the file. I used fully-qualified `crate::format::is_quiet()`, which is fine.
+
+Now fix all the call sites. Let me do them one at a time with sed-like edits.
+
+1. `src/commands_risk.rs:2709` — ci_harvest — per task instructions pass `None` with a comment explaining: "CI-harvest path, where no ParsedSnapshot is in scope". Wait, actually in the CI harvest path, there IS a snapshot in scope: `snapshot` variable (`snapshot.predicted`, `snapshot.emerging`). But does it have `ts`? It's a `ParsedSnapshot` presumably. Let me check. The task says: "commands_risk.rs:2709 and :5930 pass None — say why in a one-line comment at each: they are the CI-harvest and test-fixture paths, where no ParsedSnapshot is in scope." Hmm, but actually it may be in scope. Let me look more carefully — the task's claim should be verified. But the task also says the honest approach. Let me check what `snapshot` is at 2709.
+
+Actually there's a complication: the first-scored ledger path for the CI harvest site — `first_scored_ledger_path` is private in snapshots, and the ledger for the real repo is `.yoyo/risk_first_scored.jsonl` = RISK_FIRST_SCORED_PATH. So it'd be possible. But the task explicitly says pass None at both sites if threading needs more than a few lines. Let me first check whether the snapshot there has a ts.
+
+Let me be efficient: fix the call sites first (make it compile), then decide.
+
+Let me look at 2690-2725 in commands_risk.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2600,2625p src/commands_r… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+At 2709 the snapshot IS a `ParsedSnapshot` with `.ts`. The task-file's claim ("no ParsedSnapshot is in scope") appears to be wrong at this site. Let me verify: `snapshot_before(&snapshots, ...)` returns `Option<&ParsedSnapshot>`? Let me check the signature.
+
+If it's a ParsedSnapshot with a `ts` field, I could compute the count here too — and that would be strictly better (more events graded honestly). But the task says: "If threading the count into `commands_risk.rs` turns out to need more than a few lines there, pass `None` at that site too and say so in the write-up."
+
+Given the snapshot IS in scope and `.ts` is available, computing it is a few lines: read ledger, count. But careful about cost: it's inside a loop over runs. Reading the ledger file each iteration is a file read per run — cheap-ish (8KB), and the loop is small.
+
+But wait — the ledger path. `first_scored_ledger_path` is private. The public constant is `RISK_FIRST_SCORED_PATH` (= ".yoyo/risk_first_scored.jsonl"). For the CI harvest path, the snapshot path is `.yoyo/risk_snapshots.jsonl` presumably → derived ledger `.yoyo/risk_first_scored.jsonl` = the same path. So I could export a helper taking the ledger path directly: `count_unhittable_surprises_at(&surprises, &snapshot.ts, Path::new(RISK_FIRST_SCORED_PATH))`.
+
+Hmm, but there's a risk: is `snapshot.ts` the right timestamp? For ci_harvest the snapshot is the one taken before the run started. Yes, `ts` is when the snapshot was taken. Good.
+
+Decision: this is a genuine improvement and cheap. But the task explicitly warns against widening. However it also says the fallback branch is chosen for the deliverable. The key question: does including ci_harvest events change the measured retrospective reading (which events carry ≥1 unhittable surprise)? The write-up's reading is over the existing 268 validation events in `.yoyo/risk_validations.jsonl` — those are historical, unaffected by which sites pass Some going forward. So the reading is independent.
+
+I'll follow the task's explicit instruction-shaped guidance but with the honest correction: at 2709, a ParsedSnapshot IS in scope (the task file said otherwise — I should say so in the write-up). Given "a few lines" is literally what it costs, I'll wire it. Actually wait — let me weigh: the instruction says pass `None` at that site if threading needs more than a few lines. It costs ~3 lines. And the value: CI-harvest events are a large fraction of the ledger (the watch_failure ones). Let me check the distribution of triggers in the ledger later during the reading.
+
+Hmm, but there's a countervailing consideration: minimality and risk. Adding a file read inside the harvest loop is fine.
+
+Actually, let me reconsider one more time. The task says explicitly: "**commands_risk.rs:2709 and :5930 pass `None`** — say why in a one-line comment at each: they are the CI-harvest and test-fixture paths, where no `ParsedSnapshot` is in scope." The premise is partly false at 2709. The task also says the honest thing to do when you find a discrepancy is to report it. Since wiring it is cheap and correct, and it makes the instrument cover the biggest trigger class, I'll wire 2709 and report the premise correction. For 5935 (test fixture) I'll pass None.
+
+Hmm, but wait: is there a risk this makes the "restrict to events at or after founding_ts" reading harder? No.
+
+Actually — one more consideration against wiring 2709: `unhittable` there is computed from the *surprises of the CI run*, and the file's birthday compare uses the snapshot ts. That's coherent.
+
+But hold on: risk of complexity creep and the task saying "do not widen this task into a second file's refactor". Wiring one call site with a 3-line expression is not a refactor. I'll do it.
+
+Hmm, but then, what about `/risk validate` at 2877? The task says to compute the count there. Let's look: in `handle_risk_validate`, the snapshot is parsed as a raw `serde_json::Value` (not ParsedSnapshot). Let me check whether it has "ts". The snapshot JSON built by `build_risk_snapshot_json` has "ts". Legacy lines may lack it → then "unknown". The task says compute it there. I'll extract `snapshot["ts"].as_str().unwrap_or("unknown")`.
+
+Let me check 2877 area and the day/git_hash setup. Also need the failures list. Let me do it.
+
+Note: `surprises` at that site is `Vec<String>` from `result.surprises`. Good.
+
+Let me now make the edits.
+
+First 2709: I need a ledger path. Options: use `crate::commands_risk_snapshots::RISK_FIRST_SCORED_PATH`. It's `pub(crate) const`. Note: the ledger beside the snapshot file — RISK_SNAPSHOT_PATH is presumably ".yoyo/risk_snapshots.jsonl". Let me check RISK_SNAPSHOT_PATH value.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RISK_SNAPSHOT_PATH" src… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: at 2709, `snapshot` is `&ParsedSnapshot` with `.ts`. The task file's premise ("no ParsedSnapshot is in scope") is false there. I'll wire it — it's ~4 lines — and report the correction.
+
+Now, the ledger path next to `.yoyo/risk_snapshots.jsonl` is `.yoyo/risk_first_scored.jsonl` = RISK_FIRST_SCORED_PATH. I'll use that constant via the snapshots module.
+
+Let me check whether commands_risk.rs imports RISK_FIRST_SCORED_PATH anywhere... It's in the re-export list? The list at top: `accuracy_of, auto_risk_snapshot, ... RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH`. Not RISK_FIRST_SCORED_PATH. I'll use the full path `crate::commands_risk_snapshots::RISK_FIRST_SCORED_PATH`.
+
+Now let's edit 2709.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (17 → 29 lines)
+            let emerging_grade = emerging_grade_of(&broke_refs, &snapshot.emerging);
+  + 
+  +         // Dream cycle 10: CI-harvested events know their snapshot's own `ts`,
+  +         // so they get the unhittable join too — a run that broke files created
+  +         // *after* the snapshot it is graded against is a guaranteed miss, and
+  +         // that is exactly the population this counter exists to name. (The
+  +         // ledger sits beside the snapshots it annotates; both are real paths.)
+  +         let unhittable = crate::commands_risk_snapshots::count_unhittable_surprises_at(
+  +             &surprises,
+  +             &snapshot.ts,
+  +             std::path::Path::new(crate::commands_risk_snapshots::RISK_FIRST_SCORED_PATH),
+  +         );
+    
+            // 7. Persist. `severity: "ci_failure"` is not `"watch_success"`, so
+            //    `is_green_event` is false and this grades on the RECALL side of
+  ···
+                Some("ci_failure"),
+                Some(&snapshot.git_hash), // the snapshot this event graded — auditability (#723), not a dedup key
+                Some(run.run_id),
+  +             Some(unhittable.unhittable), // measured from this snapshot's own ts, not guessed
+  ... (1 more lines)
+ ✓ (13.7s)
+            let emerging_grade = emerging_grade_of(&broke_refs, &snapshot.emerging);
+  + 
+  +         // Dream cycle 10: CI-harvested events know their snapshot's own `ts`,
+  +         // so they get the unhittable join too — a run that broke files created
+  +         // *after* the snapshot it is graded against is a guaranteed miss, and
+  +         // that is exactly the population this counter exists to name. (The
+  +         // ledger sits beside the snapshots it annotates; both are real paths.)
+  +         let unhittable = crate::commands_risk_snapshots::count_unhittable_surprises_at(
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the /risk validate CLI site.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (14 → 26 lines)
+            let emerging_accuracy_pct = emerging_grade.map(|(_, pct)| pct);
+  + 
+  +         // Dream cycle 10: the CLI path parses the snapshot as raw JSON, so its
+  +         // timestamp is read defensively — a legacy line without `ts` yields the
+  +         // sentinel, which the join treats as *undecidable*, never as "all
+  +         // hittable".
+  +         let snapshot_ts = snapshot["ts"].as_str().unwrap_or("unknown");
+  +         let unhittable = crate::commands_risk_snapshots::count_unhittable_surprises_at(
+  +             &surprises,
+  +             snapshot_ts,
+  +             std::path::Path::new(crate::commands_risk_snapshots::RISK_FIRST_SCORED_PATH),
+  +         );
+    
+            if let Err(e) = crate::commands_risk::write_validation_event(
+                std::path::Path::new(RISK_VALIDATION_PATH),
+  ···
+                None, // CLI manual grading — untagged severity
+                (git_hash != "unknown").then_some(git_hash.as_str()), // graded snapshot — auditability (#723); sentinel stays absent
+                None,                                                 // not a CI-harvest event
+  +             Some(unhittable.unhittable), // measured against this snapshot's own ts
+  ... (1 more lines)
+ ✓ (13.7s)
+            let emerging_accuracy_pct = emerging_grade.map(|(_, pct)| pct);
+  + 
+  +         // Dream cycle 10: the CLI path parses the snapshot as raw JSON, so its
+  +         // timestamp is read defensively — a legacy line without `ts` yields the
+  +         // sentinel, which the join treats as *undecidable*, never as "all
+  +         // hittable".
+  +         let snapshot_ts = snapshot["ts"].as_str().unwrap_or("unknown");
+  +         let unhittable = crate::commands_risk_snapshots::count_unhittable_surprises_at(
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:5952..5974 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (5 → 8 lines)
+                None, // no emerging forecast in this synthetic snapshot
+                None, // untagged severity — the shape handle_risk_validate writes
+  +             None,
+                None,
+  +             // Test fixture: no snapshot line, so no timestamp to join against.
+  +             // Absent (not Some(0)) — exactly what a legacy line looks like.
+                None,
+            )
+ ✓ (13.6s)
+                None, // no emerging forecast in this synthetic snapshot
+                None, // untagged severity — the shape handle_risk_validate writes
+  +             None,
+                None,
+  +             // Test fixture: no snapshot line, so no timestamp to join against.
+  +             // Absent (not Some(0)) — exactly what a legacy line looks like.
+                None,
+            )
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now fix the test call sites in commands_risk_snapshots.rs. Let me see them and use sed carefully. Lines 1561, 1589, 1625, 1629, 1717, 1883 (approximately, shifting as I edit). Let me view each and patch.
+
+Efficient approach: use python to add `None,` before each closing paren of these calls. But safer to do individual edits. Let me view them.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_validation_event(… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (31ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (23 lines) ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (23 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (19 lines) ✓ (9.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Build passes. Now add the tests. Then measure the reading.
+
+Let me add tests to the `first_scored_tests` module (beside the other ledger tests) — table-shaped. Let me find the end of that module structure and add there. Actually the task says "Tests, table-shaped, in the module's `#[cfg(test)]`". I'll add a new test module `unhittable_tests` after `first_scored_tests`, or add into first_scored_tests. Let me add a dedicated module for clarity.
+
+Where does first_scored_tests end? Let me find.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1955,2065p src/commands_r… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check state: build succeeded. Now I need to add the tests for Step 1 (the pure join), then the stderr clause test, then run all checks, then measure the reading, then ARCHITECTURE.md, then commit.
+
+Let me add the tests now into the `first_scored_tests` module.
+────────────────────────────────────────────────────────────────────────────────
+
+Build is green. Now the table-shaped tests for the join.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2120,2175p src/commands_r… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/commands_risk_snaps… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (276 lines) ✓ (9.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now add the end-to-end test that the watch-failure record carries the field and the near-miss accuracy_pct is unchanged. Let me add to the existing tests module (not unhittable_tests) since it needs tempdir + auto_validate_after_failure_to.
+
+Let me find a good place — right after `test_failure_event_records_graded_snapshot_hash`. Actually I'll add a new test in the main `tests` module. But the `tests` module ends at line ~1990. Let me add right after `test_failure_event_records_graded_snapshot_hash`.
+
+Note: auto_validate_after_failure_to writes with `first_scored_ledger_path(snapshot_path)` — so with the tempdir snapshot path, the ledger is `dir/risk_first_scored.jsonl`. Good, I can pre-seed it.
+
+Also: the stderr clause calls `crate::format::is_quiet()` — in tests, quiet mode is a global; other tests might set it. Default is presumably false. Let's keep the stderr assertion simple: assert the note computes from the same values... Actually I can assert the note string directly at the emission point via `unhittable_note` (already done). For the end-to-end I'll assert the JSON field is present and accuracy_pct unchanged.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_failure_event_r… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (126 lines) ✓ (136ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo unhittable… ✓ (26.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+My test fixtures are wrong: I used `founding_ts(&map)` which returns the EARLIEST ts in the fixture map — so a fixture whose earliest row is "2026-08-25T10:00:00Z" makes that row the founding batch (unmeasurable). That's actually my test bug, not a code bug — but it also reveals something true about the real ledger: the founding batch is the global minimum.
+
+In the real ledger, founding = global min. So any fixture path whose ts equals the fixture's minimum gets treated as founding. That's faithful behavior — `first_scored_age` is reused, and the founding rule is global.
+
+So in my tests I must include a founding row that is NOT in the surprise list. Let me fix the fixtures:
+
+1. `a_surprise_first_scored_before_the_snapshot_is_hittable`: map has src/old.rs at founding (2026-08-22...) and src/later.rs at 09-10. Then old.rs would be founding → unmeasurable. Fix: make map = [("src/seed.rs", founding), ("src/old.rs","2026-08-25T10:00:00Z"), ("src/later.rs","2026-09-10T00:00:00Z")]. Then old.rs is measured & hittable.
+
+2. `a_normal_surprise_list_...`: same — add a founding seed row not in the list.
+
+3. `the_string_compare...`: map only had src/x.rs at 09-03T18:03 → that's the min → founding → unmeasurable. Add a seed row earlier.
+
+4. `the_mixed_row_partitions_every_surprise` passed (founding.rs is the min and is in the list, correctly unmeasurable).
+
+5. `a_surprise_first_scored_after_the_snapshot_is_unhittable` passed because map had src/old.rs at 08-22 as the min and src/born.rs after — good.
+
+Let me fix those three fixtures.
+────────────────────────────────────────────────────────────────────────────────
+
+Test fixtures hit a real property: founding_ts is the fixture's global minimum, so a lone row is always founding-batch. Fixing the fixtures to include a non-surprise founding row.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (44 lines) ✓ (25.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 16 pass. Now, wait — `the_mixed_row_partitions_every_surprise` uses founding = min = src/founding.rs at 08-22, and src/old.rs at 08-25 → measured & hittable, src/born.rs → unhittable, src/absent.rs → unmeasurable. Good.
+
+Now let me run the watch-failure tests.
+
+Also I'm worried about `a_normal_surprise_list_is_all_measured_and_hittable` — the founding row is now src/seed.rs and a/b/c are all after. measured=3. Good.
+
+Now let me run the new end-to-end tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo watch_fail… ✓ (197ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Oops — a duplicated `#[test]` attribute because my inserted block ended with `#[test]\n    fn test_failure_event_records_graded_snapshot_hash() {` and the original already had `#[test]` before it. Let me check line 1975-1982.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1972,1984p src/commands_r… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (25.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — my three new tests: `test_watch_failure_records_unhittable_count_without_moving_accuracy` isn't in that list? It says 4 tests: test_write_validation_event_watch_failure_trigger, ... let me see the full list. The filter "watch_failure" matches test names containing it: test_write_validation_event_watch_failure_trigger, test_watch_failure_records_unhittable_count_without_moving_accuracy, test_watch_failure_records_a_zero_when_nothing_is_unhittable, and one more (maybe test_watch_failure_with_an_unknown_snapshot_ts...). That's 4 with one omitted/truncated. Good.
+
+Now run fmt, clippy, full test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.6s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Clippy is green. Now check module size gate, then run the retrospective reading (the deliverable), then docs, then full test suite.
+
+Let me check the module size first and run the reading.
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy green. Now let me check the module-size gate and compute the retrospective reading.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_snapshot… ✓ (9.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The gate fires. Options: (a) update register with reason, (b) move the new code to a smaller module.
+
++555 lines is a lot mostly because of tests. The right move per the gate's own message: "move the new code to a smaller module" is preferred but the purity of the live code is small — ~110 lines of live code + ~330 lines of tests. Total 555.
+
+The cleanest, in-house-style fix: extract the new live code + its tests into a new module `src/commands_risk_unhittable.rs`, which is a small new module (well under cap). That keeps `commands_risk_snapshots.rs` from growing, and the register entry untouched (it stays at 2047, and the file shrinks back to ~2047+small). Let me compute: current 2602 minus what I added. My insertion in the live area was 109 lines (the join + note) minus 1 replaced... actually the edit replaced 3 lines with 109, so +106. The writer param additions: +24-16=+8; the fields block +17-7=+10; green site +8-2=+6; watch site +49-29=+20; test arg fixes +~8. Then tests module appended: let me count. The appended unhittable_tests module plus the 3 e2e tests in the parent tests module.
+
+Simplest robust route: move the live helpers (UnhittableCount, count_unhittable_surprises, count_unhittable_surprises_at, unhittable_note) and the `unhittable_tests` module into a new file `src/commands_risk_unhittable.rs`, re-exporting from `commands_risk_snapshots` so call sites keep working. That removes ~106 live + ~330 test lines = ~440 lines from commands_risk_snapshots.rs.
+
+Hmm, but the module needs `read_first_scored`/`founding_ts`/`first_scored_age` from commands_risk_snapshots (or from commands_risk_parse). Those are in commands_risk_snapshots. Cross-module use is fine within the crate.
+
+But wait — does this create a circular dependency? commands_risk_snapshots would re-export from commands_risk_unhittable; commands_risk_unhittable uses `crate::commands_risk_snapshots::{read_first_scored, founding_ts, first_scored_age}`. Rust allows circular module references within a crate. Fine.
+
+But the task brief says "Add to the same module (beside first_scored_age)". Deviating for the size gate is justified and the gate itself instructs it. Alternatively, just bump the register with a reason — the gate explicitly permits that too ("add (...) with a reason in the commit message"). Given the task brief's scope note ("do not widen this task into a second file's refactor"), and that the register is the documented mechanism for acknowledged growth... but +555 lines of debt is real and the register's own philosophy is "the debt register only shrinks", plus growing a grandfathered file's ceiling by 27% for a feature is exactly what the gate exists to prevent.
+
+Better: move the new code+its tests to a new module. That's not a "second file's refactor" — it's placing my own new code. And then commands_risk_snapshots.rs shrinks back to ~2047 + e2e tests (~90 lines) — hmm, the 3 e2e tests in the parent tests module would still add ~90 lines, taking it to ~2140, which is within the 100-line drift grace (2047+100=2147). Tight but OK. Actually let me be careful: I should also move those 3 e2e tests to the new module. But they call `auto_validate_after_failure_to` which is a private fn in commands_risk_snapshots... not accessible from another module unless pub(crate).
+
+Hmm. Let me measure precisely instead of guessing.
+
+Actually, cleanest: move BOTH the live helpers and all new tests (including the 3 e2e ones) into the new module, and make `auto_validate_after_failure_to` pub(crate) so the new module's tests can call it. That's a small visibility change, justified.
+
+Let me first measure the exact line deltas with git diff.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && git stash && … ✓ (39ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+561 lines added to commands_risk_snapshots.rs. I need to move ~500 of them into a new module to get back under 2147.
+
+Plan: create `src/commands_risk_unhittable.rs` containing:
+- UnhittableCount struct
+- count_unhittable_surprises
+- count_unhittable_surprises_at
+- unhittable_note
+- the whole `unhittable_tests` module
+- the 3 e2e watch-failure tests (requires auto_validate_after_failure_to to be pub(crate))
+
+And in commands_risk_snapshots.rs keep `pub(crate) use crate::commands_risk_unhittable::{...};` so the existing call sites (which reference `count_unhittable_surprises_at`, `unhittable_note`, `UnhittableCount` inside the module) keep working.
+
+Wait — inside commands_risk_snapshots.rs the call site uses bare `count_unhittable_surprises_at(...)` and `unhittable_note(...)`. A `pub(crate) use` in that module brings them into scope. Good.
+
+Also `is_quiet`/`is_plain_output` calls are in commands_risk_snapshots — I could put the quiet-gating inside a helper in the new module instead to keep it tidy. Let me add a helper `print_unhittable_note(count)` in the new module that does the quiet+plain gating and eprintln. Then commands_risk_snapshots just calls it. That's cleaner.
+
+Let me do it.
+
+First, find the exact line ranges to remove. Let me get the current content of my additions.
+
+Let me find boundaries:
+- Struct doc comment starts at the line with "/// Split a surprise list into files that were *hittable*"
+- Ends before "/// I/O half: read the first-scored ledger."
+
+And the test modules:
+- `#[cfg(test)] mod unhittable_tests {` ... to end of file? No — I appended unhittable_tests with `cat >>` at the end of file. And the 3 e2e tests are inside `mod tests`.
+
+Let me check what's at the end now after the register... Actually order: my appended `unhittable_tests` module is at the very end of file (appended). The 3 e2e tests are inside `mod tests` which comes before `first_scored_tests`.
+
+Wait — I inserted the e2e tests before `test_failure_event_records_graded_snapshot_hash` which is in `mod tests` (the first test module, ends at line ~1994 with `}`). Then `first_scored_tests` starts at 2000. Then my appended `unhittable_tests` at end of file.
+
+Let me locate line numbers precisely.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^/// Split a surprise l… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1965,1980p src/commands_r… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now plan the extraction with a script:
+
+1. Extract lines 299..404 (the live helpers block: from "/// Split a surprise list..." up to just before "/// I/O half: read the first-scored ledger.") → move to new file.
+   Note: the block starts with `/// Split...` comment for the struct. Line 299 to 404 inclusive? Line 405 is "/// I/O half". So extract 299..=404.
+
+2. Extract the `#[cfg(test)] mod unhittable_tests {...}` at 2327..EOF → new file.
+
+3. Extract the 3 e2e tests: from line 1972 ("    /// End-to-end: ...") to 2088 (end of the unknown-ts test, `    }` at 2088). Let me verify: 2088 is `    }` then blank 2089? Actually sed showed 2085-2090:
+```
+2085        assert_eq!(
+2086            raw["unhittable_surprises"].as_u64(),
+2087            Some(0),
+2088            "an unorderable snapshot decides nothing: {contents}"
+2089        );
+2090    }
+```
+So end is line 2090 `    }`. And start is 1972 (`    /// End-to-end:`).
+
+Hmm wait sed -n 1965,1980 showed line 1972 as `    /// End-to-end:`? Let's count: 1965 is `r#"{"severity"...`, 1966 `);`, 1967 `assert!(`, 1968 `green_event_exists_for(&green, "deadbee")`, 1969 `);`, 1970 `}`, 1971 blank, 1972 `    /// End-to-end: the watch-failure path measures...`. Yes.
+
+So extract 1972..=2090, then also remove one blank line after (2091 blank) — actually keep structure: after removal, line 1971 blank then 2091 blank → two blanks. I'll remove the range 1972..=2091 (including the trailing blank).
+
+4. Also I should move the quiet/plain gating into the new module as an emitter, and reduce commands_risk_snapshots' call site.
+
+Then counts: removed 106 (live) + 119 (e2e tests) + 275 (unhittable_tests) ≈ 500. That brings 2602 → ~2102, which is within 2147 grace. 
+
+Hmm, that's still 55 over 2047 — within the 100-line drift grace (non-fatal warning only). Actually wait: the grace is "grew past its recorded ceiling by at most REGISTER_DRIFT_GRACE_LINES (100)" → non-fatal. 2102-2047 = 55 ≤ 100 → warning only. Acceptable but it'd be nicer to paste the new count into the register... but the gate says growing an already-capped module is "information" and the fix is to paste the new number. 
+
+Hmm, but is a warning acceptable? The gate is designed to allow it. But cleaner: make the call-site change in commands_risk_snapshots minimal (I'll have the new module own the eprintln), which reduces lines further. Let me do the extraction and then measure; if ≤2147 I'll paste the new number into the register? No wait — pasting the number INCREASES the ceiling, which the register's own doc discourages ("the debt register only shrinks"). But the gate's instruction explicitly offers it as the fix for growth. Since 55 lines of live wiring genuinely belong in that file (the watch-failure site), and the tests moved out...
+
+Actually, better idea: can I avoid growing commands_risk_snapshots.rs at all? The live additions there are:
+- call in auto_validate_after_failure_to: compute count + pass + print → ~20 lines
+- writer param + field + doc → ~15 lines
+- green site None + comment → ~7 lines
+
+That's ~45 lines of genuine live wiring in that file. Plus test-arg fixes (~5). So the file would end at ~2097 → 50 over ceiling → warning, non-fatal.
+
+That's the honest outcome: the file grew by 50 lines of real wiring. The gate allows it as a warning. I'll paste the new count into the register with a reason (the gate's own sanctioned fix), OR leave the warning. 
+
+Hmm, the register instruction says if growth is genuinely intended, paste the new number. 50 lines of wiring is genuine. But I'd rather not inflate. Let me just do the extraction, measure, and decide. Actually — the cleanest is: extraction leaves it ~2097; the register entry says 2047; difference 50 < 100 → warning only, run stays green. That's acceptable and honest. I'll leave the register alone (it only shrinks — a warning is the designed state for small growth).
+
+Hmm, but leaving a warning forever is the same as an unexamined ceiling. The gate's message for `GrewPastCeiling` says "Fix: paste (...) over its entry". Warnings are meant to be acted on. Since the growth is real and intended, pasting 2097 with a reason is the sanctioned, honest move. I'll do that.
+
+Let me now do the extraction.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll extract the new code into its own module so the grandfathered file doesn't absorb 560 lines.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (24 lines) ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+E2E head is blank — so line 1972 is blank and 1973 is the doc comment. Let me adjust: e2e = 1973..2090 plus removing the preceding blank appropriately. Let me recheck line numbering.
+
+Earlier grep said `fn test_watch_failure_records_unhittable_count_without_moving_accuracy()` is at 1979, and the doc comment `/// End-to-end` at 1973-1976 probably. Let me print lines 1968-1980.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1968 && NR<=1980 {print… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (21 lines) ✓ (222ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+line 405 index 404. Let me check exactly: earlier grep said `405:/// I/O half: read the first-scored ledger.` so lines[404] is that doc line, not blank. The live block should be 299..403, and lines[403] (line 404) is blank.
+
+Let me verify.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=296 && NR<=302 {printf … ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `unhittable_tests` doc comment starts at ~2319 ("Tests for the unhittable-surprise join..."). Let me find its start.
+
+grep output earlier: `2327:#[cfg(test)]` and `2328:mod unhittable_tests {`. The doc comment before it — from the `cat >>` heredoc, the module started with a doc comment. Let me find where it begins.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=2313 && NR<=2322 {print… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll perform the extraction with exact boundaries.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (22 lines) ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now check the seams in commands_risk_snapshots.rs are clean.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=294 && NR<=302 {printf … ✓ (7ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_green_dedup_ignore… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1864 && NR<=1872 {print… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Good seam. Now create the new module file:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && {  (35 lines) ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need the e2e tests in the new module to have access to `RISK_FIRST_SCORED_FILE`, `auto_validate_after_failure_to` (private in snapshots), `parse_validation_events` (from commands_risk_parse), `tempfile`, `serde_json`.
+
+- `RISK_FIRST_SCORED_FILE` is a private const in snapshots. I'll change it to `pub(crate)`.
+- `auto_validate_after_failure_to` is private → change to `pub(crate)`.
+- `parse_validation_events` → import from crate::commands_risk_parse.
+
+Also the e2e tests in /tmp/e2e.rs are indented as module-level items inside `mod tests` — they use `tempfile::tempdir()` and `serde_json::json!`. In the new module they'll need `use` statements at the top of a `#[cfg(test)] mod` block. Better: wrap e2e + umod in a `#[cfg(test)] mod tests` or keep them directly under `#[cfg(test)]` attributes at module level.
+
+The e2e functions are already `#[test] fn ...` so they can live at module level with `#[cfg(test)]` prefix. The umod block is `#[cfg(test)] mod unhittable_tests { use super::*; use std::collections::BTreeMap; ... }`.
+
+Simplest: prefix the e2e tests' `#[test]` with `#[cfg(test)]` and add a `#[cfg(test)] use ...` for tempfile/serde_json/parse_validation_events? Actually `use tempfile::tempdir()` at module level under cfg(test) — but the functions themselves are cfg(test) so imports must be too. Cleaner: wrap e2e tests in their own `#[cfg(test)] mod e2e_tests { use super::*; ... }`.
+
+But the e2e functions reference `RISK_FIRST_SCORED_FILE` (from super::super? no, from crate::commands_risk_snapshots) and `auto_validate_after_failure_to` and `parse_validation_events`.
+
+Plan: add to the header (non-test) nothing extra. Then in the module body, wrap e2e in:
+
+```rust
+#[cfg(test)]
+mod end_to_end_tests {
+    use super::*;
+    use crate::commands_risk_parse::parse_validation_events;
+    use crate::commands_risk_snapshots::{auto_validate_after_failure_to, RISK_FIRST_SCORED_FILE};
+
+    ... three tests ...
+}
+```
+
+And keep umod as `#[cfg(test)] mod unhittable_tests { use super::*; ... }` (already has its own use statements).
+
+The live helpers use `std::collections::BTreeMap` fully-qualified — fine.
+
+Also `unhittable_note` used by umod via `super::*` → good.
+
+Let me restructure /tmp/e2e.rs: strip the leading 4-space indentation I might have added — I wrote it with original indentation (4 spaces, as they were inside `mod tests`). I need to dedent by 4. My python wrote e2e as raw lines with original indent. Let me dedent when wrapping.
+
+Let me build the final file with python.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (33 lines) ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wire the module in and make the two snapshots symbols pub(crate).
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod commands_risk_snaps… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 70,80p src/main.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs:70..84 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (2 → 3 lines)
+    mod commands_risk_snapshots;
+  + mod commands_risk_unhittable;
+    mod commands_risk_ungraded;
+ ✓ (13.7s)
+    mod commands_risk_snapshots;
+  + mod commands_risk_unhittable;
+    mod commands_risk_ungraded;
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (31 lines) ✓ (9.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.4s)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.18 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: unused import: `super::*`[0m
+   [1m[94m--> [0msrc/commands_risk_unhittable.rs:138:9
+    [1m[94m|[0m
+[1m[94m138[0m [1m[94m|[0m     use super::*;
+    [1m[94m|[0m         [1m[91m^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D unused-imports` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(unused_imports)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (3 → 2 lines)
+    mod end_to_end_tests {
+  -     use super::*;
+        use crate::commands_risk_parse::parse_validation_events;
+ ✓ (2m 5s)
+    mod end_to_end_tests {
+  -     use super::*;
+        use crate::commands_risk_parse::parse_validation_events;
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_snapshot… ✓ (1m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green. Full test suite passes (5733 lib + integration). Now the retrospective reading.
+
+I need to compute:
+1. How many of the existing validation events carry ≥1 surprise whose first-scored ts is after that event's snapshot ts, restricted to events at or after founding_ts.
+2. Day-205 row (`src/commands_risk_epistemic_tests.rs`) and day-203 row (`src/format/highlight/highlight_tests.rs`): which is marked unhittable.
+
+Problem: validation events don't record snapshot ts directly... they record `snapshot_git_hash` and `ts` (event ts) and `day`. My join compares surprise first-scored ts against the *snapshot's* ts. Retrospectively I need the snapshot ts for each event. The event has `snapshot_git_hash` — I can find the snapshot with that git_hash in `.yoyo/risk_snapshots.jsonl` and read its `ts`.
+
+For the retrospective reading, the task says: "how many of the existing 268 validation events carry ≥1 surprise whose first-scored ts is after that event's snapshot ts... restrict to events at or after founding_ts". Hmm, "restrict to events at or after founding_ts" — the events are events; the dream's prior reading was over "the 115 grading events that happened after the ledger itself began". So restrict events whose own ts >= founding_ts.
+
+Let me write a python script. Need:
+- ledger: path -> min ts
+- founding = min ts
+- snapshots: git_hash -> ts (from risk_snapshots.jsonl)
+- events: from risk_validations.jsonl, each with ts, day, trigger, surprises, snapshot_git_hash
+- for each event with event.ts >= founding: find snapshot ts by git_hash; count surprises where first_scored_age is Some and > snapshot ts.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+All green (5733 unit + integration). Now the retrospective reading the task requires.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (64 lines) ✓ (34ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Output truncated the 4 HIT rows (showed 2, "(2 more similar lines)"). Let me re-print explicitly to see all 4.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (36 lines) ✓ (33ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting - output truncated again (3 shown + "2 more similar lines"). Let me print with a separator to avoid truncation - the tool seems to collapse similar lines. Use repr with distinct formatting, or print a count plus explicit join into one line each with unique prefixes. Let me add index prefix.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (36 lines) ✓ (34ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I have the readings:
+
+- 116 events at/after founding (of 268 total)
+- 4 events carry ≥1 unhittable surprise (of 116) — the dream's prior was 1 over a 115-event post-ledger population. 4 rows.
+- Day-205 row (`src/commands_risk_epistemic_tests.rs`) ledger ts = 2026-08-22T16:35:02Z = **the founding ts** → its age is `None` → `unmeasurable`, NOT unhittable.
+- Day-203 row (`src/format/highlight/highlight_tests.rs`) ledger ts = 2026-09-20T10:26:23Z, which is AFTER the day-203 watch_failure snapshot ts (2026-09-19T23:43:06Z) → **unhittable**. And ROW4 confirms it end-to-end.
+
+So the join marks the day-203 row unhittable and the day-205 row unmeasurable (founding batch). The archive's two instruments disagree about day-205's file birth (day 205's session created it at 10:33 while the ledger stamps it at the founding instant, i.e. the ledger says "at least as old as the record"). Record the reading, don't adjudicate.
+
+Wait — careful. The dream says the day-205 row is `src/commands_risk_epistemic_tests.rs` and it was "first scored after the event that graded it" per my archive's day-205 claim. But the ledger says its ts == founding → unmeasurable. So the join refutes the day-205 claim and confirms the day-203 one. That's exactly the disagreement the dream describes; I record both readings and do not adjudicate.
+
+Also note: 135 of 144 surprises over post-founding events are unmeasurable. That's a big honest number — the ledger has only 97 paths, all from Aug 22 founding batch mostly. Actually let me sanity check: 97 ledger paths, 116 post-founding events with 144 surprises; 135 unmeasurable means only 9 surprises were decidable. Hmm, that means the ledger's non-founding entries are few. Let me check how many ledger entries are non-founding.
+
+That's a strong honest limit to record: the join can only decide 9 of 144 surprises. Let me verify.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Only 5 non-founding ledger entries. So the join can decide almost nothing over history — honest and important to report. 4 of the 5 non-founding paths happen to be graded as unhittable; the 5th (day 202's src/commands_config_mcp.rs? no, wait) — one of the 5 is not unhittable.
+
+Let me get the full picture for the write-up:
+- 268 events total, 116 post-founding, 4 with ≥1 unhittable.
+- 144 surprises over those 116 events; 9 decidable (4 unhittable, 5 hittable); 135 unmeasurable.
+- Only 5 non-founding ledger entries exist.
+
+Now update ARCHITECTURE.md, and also I should add the `unhittable_surprises` to the snapshot writers module — but note the green path passes None (documented). And read_validation_events / readers ignore unknown keys — fine.
+
+Wait: one more thing from the task — "`write_validation_event` gains one parameter" — done. "The existing watch-failure stderr summary gains one clause... Glyph-free under `format::is_plain_output()` and silent under `format::is_quiet()`". Done. But I should also make sure the CLI `/risk validate` prints something? The task only requires the watch-failure stderr clause. It says step 2.2: "The watch-failure call site (:816) and the /risk validate site (src/commands_risk.rs:2883) compute the count." — both do. Fine.
+
+Now, I need a test for the silence/glyph behavior of the actual stderr at the emission point? The task says "When both are zero, print nothing new — an ordinary session's stderr must stay byte-identical (pin that with a test or an assert_eq!)". I pinned `unhittable_note(...) == None` for the zero row (the composer). Good enough per "pin that with a test".
+
+Now: module_size register. src/commands_risk_snapshots.rs is 2099 vs recorded 2047 → +52, within the 100-line drift grace → warning, not fatal. But the task's spirit: I did the split to avoid growing it. Can I get it below 2047? It's now 2099, i.e. 52 above. Before my change it was 2047 exactly. So I still net-added 52 lines to it (doc comment on the new param + the re-export + the call-site comments + e2e test removal...). Hmm.
+
+Options: (a) update the register to 2099 with a reason in the commit message; (b) trim 52 lines. 
+
+Actually let me check: is the gate currently green? The earlier run failed at 2602 (fatal). Now 2099 is within grace → warning only. Let me confirm by running the module_size test.
+
+But the register says 2047 and the file is 2099 → ShrankWithinGrace/GrewPastCeiling → not fatal. Let me run it.
+
+Better: update the register to 2099 with a reason — that's the documented remedy and acknowledges growth. But "the debt register only shrinks" — hmm, the gate's own message says paste the new number and say why. Day 202's lesson warns about writing the past tense wrongly in the register. I'll paste the accurate number with a reason stating exactly what was added and why the split landed elsewhere.
+
+Actually — can I reduce it? The 52 lines: doc comment for the new param (~7), re-export block (~4), two call-site comments (~12), the removed three e2e tests (-119), unhittable computation at watch site (~11 lines), the stderr clause (~8 lines), the `None,` argument lines added at 6 test call sites (~6), RISK_FIRST_SCORED_FILE pub (~0), auto_validate pub (~0). Net +52. That's honest: the feature genuinely needed ~10 lines of logic in the snapshot file, and I moved 396 lines of tests/helpers out. 
+
+Hmm wait, without the split it would have been 2602 → the split saved 503 lines. So the file at 2099 is close to its old size. I could trim a bit more by moving the three remaining additions... but honestly updating the register by +52 with a reason is the documented path and it's within grace. However the spirit of the register is that it only ratchets DOWN. Growing it from 2047 → 2099 makes the ceiling higher permanently.
+
+Better: get it back under 2047. 52 lines to shave. What's left in that file that belongs elsewhere? Let me look for something clean: the `first_scored_tests` module (in-file, ~208 lines: 2122-2319 formerly). Wait — I could move `first_scored_tests` into the new `commands_risk_unhittable.rs` module too? No, it's about the ledger, and it's the module `commands_risk_snapshots`'s own tests. Hmm, but the new module already re-exports from snapshots.
+
+Alternative clean move: move the `mod first_scored_tests` (≈200 lines) into the new module file — it tests ledger semantics, which is where the join's proxy lives. That would take the snapshot file to ~1900 and let me ratchet the register DOWN... but then the register entry must be deleted (under 2000 → StaleGrandfatherEntry → fatal if left). Deleting is the "NICE" direction and the register only shrinks.
+
+That's bigger scope though. The task said "two steps, do not add a third". Adding a module split is arguably part of step 2's delivery, but it risks the "one thing done well" rule.
+
+Pragmatic: update the register with the accurate number 2099 and a reason that names the split. That is exactly what the gate's message instructs and what the `ShrankWithinGrace`/`GrewPastCeiling` band is for (non-fatal = "growth of an already-capped module is information"). But the register's own doc says it exists so growth is acknowledged. And +52 within grace means I *can* leave the entry as-is and just get a warning... but then the register becomes stale/wrong (it records 2047 while the file is 2099), which day 202 taught me is a lie in the ledger.
+
+Hmm, but wait: REGISTER_DRIFT_GRACE_LINES = 100, so 2099 vs 2047 = 52 is within grace → the gate says nothing at all? Let me check `check_module_sizes` for the grandfathered path: GrewPastCeiling is non-fatal warning; within grace it emits `GrewPastCeiling`. So a warning prints. Non-fatal.
+
+Decision: update the register to 2099 with a reason. Clean, honest, documented, and I state the split in the commit message and ARCHITECTURE. Actually hold on — let me reconsider trimming to keep it at/below 2047, since "the debt register only shrinks" is a strong norm here and I have budget.
+
+Cheapest 52-line trim: move the `mod first_scored_tests` block (198 lines) out of the snapshot file into `commands_risk_unhittable.rs`? That file would then be 542+198=740 lines — fine. And the snapshot file drops to ~1900, which is UNDER the 2000 cap → its register entry must be deleted (StaleGrandfatherEntry is fatal if the entry remains). Deleting an entry = the register ratchets down = the celebrated direction. And it's a real, verifiable cleanup.
+
+But is that "a third step"? It's a consequence of my extraction, not new work. And it's low-risk: moving a `#[cfg(test)] mod` verbatim.
+
+Risk: the tests use `use super::*` and refer to `RISK_FIRST_SCORED_FILE`, `read_first_scored`, `append_first_scored_to`, `founding_ts`, `first_scored_age`, `write_risk_snapshot_to`, `forecast_opportunities`, `ledger()` helper. Many of these are private to commands_risk_snapshots (`append_first_scored_to` is private fn). Moving the tests would require making more things pub(crate) — that's scope creep into visibility edits.
+
+Hmm. Alternatively: trim less aggressively — just remove the three e2e tests I added? No, they're valuable, and they'd re-add to the other file... they're already in the new module.
+
+Alternative: shave 52 lines by moving only the *new* code out further — but all the new code is already out (542 lines in the new module), and the snapshot file still grew 52 because of the doc comment, re-exports, call sites, and per-callsite `None` args.
+
+Let me just count precisely what those 52 lines are and see if the doc comment can be tightened. git diff on that file:
+- +7 doc for `unhittable_surprises` param
+- +8 for the insert block
+- +5 re-export
+- +7 green-site comment + `None,`
+- +11 watch-site computation + comment
+- +9 stderr clause
+- +6 test call-site `None,` lines (6 sites × 1 line)
+- -3 (well, net)
+
+Total ≈ +53. To get under 2047 I'd need to remove 53 lines — that's essentially reverting the feature. Not feasible without deleting the doc comments, which is worse.
+
+So: update the register to 2099 with a reason. That's the right call. The reason goes in the commit message and the register comment.
+
+Hmm, but hold on — is that acceptable given "the debt register only shrinks"? The alternative reading: I should have put the watch-failure stderr clause etc. in the new module too. But the writer's param and the call-site wiring must live with the writer.
+
+Actually — one more idea that's clean and in-scope: the watch-failure *call site* and its stderr summary are in `auto_validate_after_failure_to`, which I made `pub(crate)`. I could move the whole `auto_validate_after_failure_to` function (≈150 lines) into the new module... but it's called from `commands_risk_snapshots`'s own wrapper and tests. Hmm, it uses many private items (`parse_all_snapshots`, `emerging_grade_of`, `write_validation_event`, `RISK_SNAPSHOT_PATH`). All are pub(crate) already except maybe none. That would drop the snapshot file well under 2047 → delete register entry.
+
+That's tempting but it's a bigger refactor with real risk of breaking things, and it's beyond "two steps". Given the budget I've already burned, the disciplined move is: paste the accurate number (2099) with a reason. The gate explicitly instructs this and treats it as non-fatal.
+
+Let me do that. And verify the gate passes.
+
+Actually wait — let me re-read: `GrewPastCeiling` is not fatal. So the gate passes as-is with a warning AND a stale register. But leaving a stale register entry is the lie. I'll update it. The gate's message literally says the fix is "paste (path, lines) over its entry ... (and say why in the commit message)". So updating is the sanctioned remedy.
+
+Let me update the register entry with a reason comment.
+
+Then ARCHITECTURE.md entry, then the reading in the write-up (my final message) + ARCHITECTURE.md.
+
+Let me look at the register entry context.
+────────────────────────────────────────────────────────────────────────────────
+
+Full suite green. Now the module-size register — the split kept the grandfathered file from absorbing 503 lines, but it still netted +52.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (191ms)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+
