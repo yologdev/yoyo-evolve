@@ -1,0 +1,145 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the diff against the task. Key checks:
+
+1. `infer_provider_from_model` widened to pub(crate) — yes.
+2. Pure helper `model_provider_mismatch_warning` in cli.rs — yes.
+3. Emitted once at resolution time — in `parse_model_config` after unknown_model_warning. Need to confirm parse_model_config is called once at resolution. Let me check.
+4. Tests table-driven with the four rows — yes, present.
+5. Doc update — docs/src/troubleshooting/common-issues.md updated.
+
+Concerns:
+- The helper returns `None` for provider not in KNOWN_PROVIDERS and MULTI_VENDOR_PROVIDERS. That's reasonable extra.
+- Does the emission happen before the session starts and only once? Need to look at parse_model_config.
+- Does `create_model_config` exist in agent_builder with that signature? Need to verify it compiles — build passed, so yes.
+- Endpoint string: need to check whether it contains "https://api.deepseek.com/v1". Test asserts it. Tests pass presumably (harness said PASS). But let me check quickly.
+
+Wait — the test asserts `got.contains("https://api.deepseek.com/v1")`. Tests passed, so presumably that holds. But careful: `create_model_config(provider, model, None).base_url` — does it append "/v1"? The test passing indicates yes.
+
+Actually, one thing to be careful about: the harness says tests PASS. Let me do a quick focused check with the binary — run the warning. Actually the task says step 2 for user-facing features: run the binary. Let's do a quick check: `cargo run -- -p ... ` would require API. Hmm, maybe simpler: check if there's a way. Actually maybe just verify quickly by running a small test with nocapture. But that's re-running tests, which is discouraged... but one focused check is allowed.
+
+Let me check the emission site and count of call sites, plus verify MULTI_VENDOR_PROVIDERS/KNOWN_PROVIDERS exist.
+
+Let me look at parse_model_config.
+
+Also check: is parse_model_config called once? And does `--model` given but provider resolution fail? Let's read.
+
+Also there's a potential issue: the task said "Max 2 source files" — diff touches src/cli.rs, src/prompt_retry.rs (visibility), plus ARCHITECTURE.md, docs, tests/module_size.rs. ARCHITECTURE.md and module_size.rs are required by project gates (module size register). That's fine.
+
+Let me do focused greps.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "infer_provider_from_mo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1000,1120p src/cli.rs ✓ (2ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+parse_model_config is called once at line 2587 in parse_args_with_config presumably. Let's verify the context of line 2587 to make sure it's once per run at resolution time.
+
+Also verify MULTI_VENDOR_PROVIDERS isn't an unnecessary restriction... fine.
+
+Let me check `providers::model_is_known_for_provider` visibility and that claude-fable-5-1 is recognized by anthropic preset. Test asserts this, and tests pass. But let's run the focused test with nocapture to get the actual measured rows — that's a legitimate focused check (<30s).
+
+Also check the binary behavior end-to-end quickly? Running the binary would need API key and would try session start. Actually the warning prints before session start, so `cargo run -- --provider deepseek --model claude-fable-5-1 -p hi` would print the warning but then fail on API. Might be quicker to just run the test with nocapture. Let me do that.
+
+Also verify docs update — yes common-issues.md. CLAUDE.md not touched, ARCHITECTURE.md updated. Fine.
+
+Let me run the focused test.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.3s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2580,2600p src/cli.rs && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --lib cli… ✓ (4ms)
+ ✓ (103ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The package is a binary crate. Let's run with `cargo test --bin yoyo` or find the bin name.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^\[\[bin\]\]" -A3 Cargo… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 420 cargo test --bin yoy… ✓ (95ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The test passes and the census shows the rows. I only saw a portion; let me see the full census rows to paste them. Actually I need "paste the four table rows as measured" — but I'm the evaluator, not the implementer. Still, could be useful. Let me capture full output.
+
+Actually, let's also verify the end-to-end emission: run binary with --provider deepseek --model claude-fable-5-1 to see the warning printed at startup. That requires no API key for the warning to print (it prints before session). But it may attempt to start session and fail. Let's try with -p and no key; warning should appear first. Careful about time.
+
+Let's do it quickly with a timeout.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 420 cargo test --bin yoy…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && env -u ANTHROPIC_API_KEY -u API_… ✓ (113ms)
+ ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The feature works end-to-end: the warning is emitted once at startup, before the session, to stderr.
+
+Let me also verify silence for the matching pair (deepseek + deepseek-v4-flash) end-to-end — but that would call the API. Actually it would call API with our key... it might succeed and cost tokens. Skip; the unit test asserts None with full-string assert_eq!.
+
+Wait — one thing: the diff's test asserts silent rows include `"deepseek-v4-pro"` under deepseek. But is `deepseek-v4-pro` in the known list? Yes per the warning listing.
+
+Now check forgotten_touchpoints: new function `model_provider_mismatch_warning` has its consumer at line 1108 in the same diff ✓. New const MULTI_VENDOR_PROVIDERS is consumed ✓. pub(crate) widening has consumer ✓. Module size register updated ✓.
+
+Doc sync: docs/src/troubleshooting/common-issues.md updated ✓, ARCHITECTURE.md register entry ✓.
+
+Product surface: warning only, not a refusal; hard-coded default unchanged. The task Kind: product. Is the warning a behavior change to product surface? Yes, it adds a startup stderr warning — but it's the feature itself, and it's a warning naming a real misconfiguration. Not an evolve-convenience default. The task didn't require opt-in. Note the `MULTI_VENDOR_PROVIDERS` guard... hmm, is there a risk of false positives on legitimate setups not covered? E.g. a provider "openai" with model "gpt-*" → inferred openai, matches. `--provider anthropic --model claude-...` fine. What about `--provider google --model gemini-...`? infer → google, matches. What about azure with claude-...? Not in MULTI_VENDOR. But model_is_known_for_provider("anthropic", model) must be true — anthropic_preset covers claude-* ids. A user pointing `--provider azure` (is azure a known provider?) at an Anthropic-on-Azure gateway without --base-url... would get a warning, which is arguably correct/legit. Also key-lookup-check says `providers::model_is_known_for_provider` for anthropic uses anthropic_preset which returns Some for any claude-* id presumably. Fine.
+
+Potential false positive: a user with `provider = "deepseek"` using a proxy but setting base_url in config file — base_url from config also counts as `base_url.is_some()` ✓ since base_url resolves from both CLI and config.
+
+Also: what about a user who sets model in config file to an anthropic id with provider deepseek — warned, appropriate.
+
+The warning says "Pass --provider {inferred}" — fine.
+
+One consideration: does the test's claim that `infer_provider_from_model("claude-fable-5-1")` = "anthropic" hold? Yes it passed.
+
+Also verify the task's step 1 claim: infer_provider_from_model called from only retry site + now cli.rs. grep showed prompt_retry.rs:681 (call), 1777 (test), plus cli.rs new. ✓ visibility widened instead of restating.
+
+Potential concern: unused-function warning if helper were private but used — it is used. Clippy passed per harness.
+
+Another concern: `MULTI_VENDOR_PROVIDERS` and also `KNOWN_PROVIDERS` includes which? If "anthropic" is a known provider and model is e.g. "gpt-4o" with provider anthropic → inferred openai, model_is_known_for_provider("openai","gpt-4o") true → warns, endpoint printed for anthropic. Correct behavior.
+
+Anti-vacuous check: the test asserts separately that the fixture disagrees ✓.
+
+One more: is the warning emitted once "not per turn"? It's inside parse_model_config, called from parse_args_with_config, which runs once at startup ✓.
+
+Everything checks. Files touched beyond the two allowed source files: ARCHITECTURE.md, docs, tests/module_size.rs — all required project surfaces (module size register gate is enforced by tests/module_size.rs). That's acceptable, not a violation of "max 2 source files" since those are docs/gate registers, not source files. Good.
+
+I'm confident: PASS. Write the verdict.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.3s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (56.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+What I verified beyond the diff (no full suite re-run):
+• `infer_provider_from_model is pub(crate) now and is called from src/cli.rs:1198` plus the pre-existing retry site — visibility widened, not restated (body/tests unchanged).
+• The warning is emitted once, at resolution time, from parse_model_config (called once from parse_args_with_config).
+• Ran the binary end-to-end (--provider deepseek --model claude-fable-5-1 -p hi): one startup warning naming the model, deepseek, and https://api.deepseek.com/v1, printed before the session banner.
+• Ran the focused table test with --nocapture: mismatch → WARN (with anti-vacuous assertion that the fixture's inferred family really disagrees), deepseek-v4-flash/deepseek → None, totally-unknown-model → None, mismatch + --base-url → None.
+• Consumers present in the same diff; tests/module_size.rs registers and docs/src/troubleshooting/common-issues.md updated in the same commit.
+
+One cleanup note (not a failure): tests/module_size.rs counter edits and the ARCHITECTURE.md record push the diff past the two-file source budget nominally, but those are the enforced gate registers/docs, not extra source files.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,302 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me plan this session. I need to write task files. Let me consider the evidence.
+
+Key facts:
+- Release not due (7 days since v0.1.18).
+- Subsystem concentration warning: format took 4 of last 8 self-driven diffs — send this session's self-driven slot to a different subsystem; favor cli/agent_builder/providers/config-resolution work.
+- Backlog: 11 open agent-self issues, not >12, so no mandatory backlog drain, but oldest still valid is #738 (40d), #858 (23d), #869 (21d), #870 (21d), #879 (19d), #881 (19d), #902 (12d), plus the fresh cluster #937, #941, #942, #943.
+- The config-resolution cluster (#941/#942/#943) is fresh, in cli/agent_builder/providers — exactly the subsystem the concentration warning names. That's a great fit for the self-driven slot.
+
+Also 4 unverified receipts: #917, #912, #904, + 1 older.
+
+Priority 1 is capability gaps; the config-resolution cluster is self-discovered bugs (priority 2) and in the right subsystem.
+
+Task sizing: at most 3 source files each, 30 min each.
+
+Let me pick:
+
+Task 1 (self-driven, config-resolution): #941 — three lookups over one model id, two matching rules. Fix: make the unknown-model warning use the same prefix resolution as `anthropic_preset`, or better, add a single helper `model_is_known_for_provider` / guard asserting every id `anthropic_preset` resolves is also in `known_models_for_provider`. Files: `src/cli.rs`, `src/providers.rs`, maybe `src/agent_builder.rs`. That's 3 files. Hmm, could be cli.rs + providers.rs + agent_builder.rs. Let's see.
+
+Actually a tight scope: make `known_models_for_provider` (or the warning site) agree with `anthropic_preset`'s prefix rule, plus add a test that asserts agreement. Files: `src/cli.rs` (warning site), `src/providers.rs` (list), `src/agent_builder.rs` (preset — probably not needed to modify, only read). So 2 files modified + test. Good.
+
+Task 2: #942 — model/provider mismatch warning using `infer_provider_from_model`. Files: `src/cli.rs` (resolution site). Maybe need to expose `infer_provider_from_model` — it's in `src/prompt_retry.rs` pub? It's called from prompt_retry.rs only; need check visibility. Plan says make it `pub(crate)` if needed. So files: `src/cli.rs`, `src/prompt_retry.rs`, maybe `src/providers.rs`. 3 files max.
+
+Hmm, but the backup slot might be better used on the oldest backlog item (#738 is a dream/experiment infrastructure issue; #858 is skill-evolve spec which is creator-owned — can't fix). Let me consider #938? Not present.
+
+The instruction says: "The other slot: highest-priority remaining item — community issues by net score, or a second self-driven item if nothing from the community queue is actionable." COMMUNITY ISSUES section says "Read ISSUES_TODAY.md" — but the harness didn't show any community issues content. Hmm, the section just says to read ISSUES_TODAY.md. Let me check if that file exists.
+
+Also BACKLOG DRAIN: index lists 11 open agent-self issues; not more than 12, so no forced drain. But it's good practice.
+
+Actually the two slots: one self-driven (dream milestone or capability gap), the other highest-priority remaining. The config cluster gives me two strong candidates (#941 and #942), both in the right subsystem, both fresh with verified claims at HEAD.
+
+Let's think about which is more valuable and safest to implement in 30 min each.
+
+#941: warning false positive. Fix: make matching consistent. Risk: low. Value: medium (removes cry-wolf warning on every turn for models resolved by prefix).
+
+#942: model/provider mismatch warning. Fix: warn at resolution when inferred provider differs and no --base-url. Risk: warning could fire spuriously on legitimate configs (proxy). Ask says warn only when no explicit --base-url. Requires `infer_provider_from_model` accessible from cli.rs. Files: cli.rs + prompt_retry.rs (visibility) — 2 files. Fine.
+
+Alternative second slot: #943 (max_tokens unchecked vs resolved ceiling). Files: agent_builder.rs (where applied), possibly cli.rs. Also in the right subsystem. Hmm, three tasks all in the same cluster would be... the concentration warning is about subsystem concentration: format 4/8. Doing cli/agent_builder is exactly what's suggested. But doing three... no, only 2 slots.
+
+Which two? I think #941 and #942 compose well: both are about model/provider resolution consistency at the warning site. Actually #941 and #942 could even be one task but they're separate fixes; keep them separate for verifiability.
+
+Hmm, but there's a risk: both touch `src/cli.rs` around the same lines (1001-1099). Two separate tasks in the same session by separate implementation agents — the second might conflict? No, they execute sequentially in separate sessions, both committed. Since they touch nearby code, the second task agent will re-read the file. It's fine.
+
+Alternatively pick #941 + a backlog drain of the oldest valid: #869 (/cd reloads no other project config) — but that's a big design-heavy task with a blocker (write-once OnceLock). Too big for 30 min.
+
+#902 (seventh trust door) — design-heavy, has a blocker. Too big.
+
+#881/#879 — design-heavy composition issues. Too big.
+
+#858 — creator-owned skill file; can't edit. Could close as not-planned? It's an agent-self issue requesting the human adopt. Actually it's filed as an issue for the human. Hmm.
+
+I think the second slot is best spent on #942 or #943. Between them: #943 (max_tokens unchecked) — the fix needs the resolved ModelConfig ceiling. The issue says the ceiling is already in hand in agent_builder. Applied at line 1337. So modify `src/agent_builder.rs` (apply bound check + warning) and maybe `src/cli.rs` for warning plumbing... Actually warning: where does the config value get into agent_builder? `self.max_tokens`. We can warn directly in agent_builder (it has access to output? maybe uses eprintln). Let me keep it simple: agent_builder.rs + tests. Possibly the cli.rs unknown-model warning area. 2 files.
+
+Which has more user impact? #941 happens on every turn (cry-wolf warning) for affected models — but only for prefix-resolved ids. #943 can 400 every request. #942 can 401.
+
+I'd rank: #941 (guaranteed to be hit by the current dream.yml config — claude-fable-5-1 warns unknown every week) — high certainty, low risk. #942 — high value, moderate risk of false positive. #943 — high value, needs ceiling access; moderate.
+
+Given the "verify against current code, small and surgical" preference, and that the assessment verified #941's exact lines at HEAD, I'll do #941 as task 1 and #942 as task 2. Both explicitly verified in the assessment ("#941 verified at HEAD, not taken on the issue's word", and #942's line numbers cited).
+
+Hmm, but wait: maybe pair one config-resolution fix with one dream-milestone/DREAM.md advance? The instructions say the self-driven slot should prefer advancing the next milestone in DREAM.md. The dream's next milestone: "keep counting that, and if the census ever reports a `register-paid-to-empty` whose removed guard is split, that row — not the foreign zeros — is the one that proves the join earned its keep." That's a counting obligation in the evolve instrument (format/check_assertion_weakening.py — scripts/, not src/). Hmm, scripts/check_assertion_weakening.py is an instrument. That would be `evolve` kind. But the concentration warning says format took 4/8 — scripts aren't src/format though. The subsystem classifier probably maps scripts/check_assertion_weakening.py to... unclear. The trajectory says "format: 4/8" and "cli: 3/8". The dream milestone counting task is likely classified under "format" (check_assertion_weakening... no, that's scripts/). Hmm.
+
+Actually a DREAM counting obligation would be a low-value task (count rows, report). The dream explicitly says next milestone is "keep counting that" — passive. So the active work is the backlog/issues.
+
+I'll go with the two config-resolution tasks — they're the highest-value, freshly-verified, in the recommended subsystem, and each is surgical. Also this addresses the capability/bug priority tiers.
+
+Hmm, but should one of them be a "capability gap" (tier 1)? The config cluster is tier 2 (self-discovered bugs). It's fine — tier 2 outranks tier 6/7 broadly, and the backlog drain rule is only mandatory >12.
+
+Actually, let me reconsider: maybe better to spend slot 2 on the backlog drain of an older issue to counterbalance the backlog. Oldest first: #738 (40d) — "Blind-round prediction mirror (survives task reverts)". That's about mirroring prediction lines to GitHub issues before reading the target. Could be actionable? It says rounds 14, 33, 39 are missing from dreams/experiments.jsonl because reverts erased them. The ask: one comment per round posted before the first read of the target. That's a process/script change in scripts/dream.sh or evolve.sh — both protected files! scripts/evolve.sh is protected. scripts/dream.sh is protected too (mentioned in safety rules: never modify scripts/evolve.sh, format_issues.py, build_site.py, .github/workflows/... dream.sh isn't listed. Hmm, safety rules list: IDENTITY.md, PERSONALITY.md, ECONOMICS.md, scripts/evolve.sh, scripts/format_issues.py, scripts/build_site.py, .github/workflows/. dream.sh not protected. But #738's fix would be in the dream loop script and would need gh posting.
+
+That's risky and process-heavy; and the trajectory says 0 reverts recently, and dream commits landed. Also "Rounds 14, 33, 39" — the blind rounds. Hmm, this would be an evolve task touching scripts/ + maybe docs. Meh, it's coin-flippy. The config bugs are cleaner.
+
+Let me also check ISSUES_TODAY.md for community issues, since the plan must list responses per community issue shown above. The community issues section is empty basically. Let me check the file quickly.
+
+Let me do a quick look at the repo state (without reading source files — I'm told not to read source; I can list session_plan and check ISSUES_TODAY.md existence).
+
+Actually the instruction: "Do NOT read source code files." I can do mkdir, rm, check ISSUES_TODAY.md.
+
+Let me run the bash commands.
+
+Then write the two task files + issue_responses.md, commit, stop.
+
+Let me be careful about task file content: precise, with steps, files, verification, and honesty about null outcomes.
+
+Task 1: #941 — One matching rule for model ids across resolve, price, and warn.
+Files: `src/cli.rs` (the unknown-model warning, ~1072/1099), `src/providers.rs` (`known_models_for_provider`), tests.
+Approach options: (a) add `claude-fable-5-1` (and any other prefix-resolvable ids) to the list — but that's the smaller half and will drift again; (b) make the warning consult the same predicate that resolution uses. Best: introduce one pure function, e.g. `crate::agent_builder::model_is_known_for_provider(provider, model)` — hmm, but that adds a definition; must add its consumer in the same edit (fine).
+
+Simplest robust shape: change the warning condition so a model that `anthropic_preset` resolves (prefix) is not warned as unknown, i.e. `known.contains(id) || resolved_by_preset(id)`. Plus a test asserting that for every model id `anthropic_preset` resolves for a given provider, the warning is silent, and a near-miss guard that a genuinely unknown id still warns.
+
+Which file holds the warning? cli.rs. Does cli.rs have access to agent_builder::anthropic_preset? It already uses `infer_provider_from_model`? Probably not. Let me not over-specify; give the implementation agent the intent and the constraint that only 2-3 files may change, plus a guard test.
+
+Also the issue asks: "A guard that asserts every id `anthropic_preset` resolves is also present in `known_models_for_provider` would catch the whole class once." That's a test-only addition. But a test can't enumerate ids anthropic_preset resolves unless there's a list — it can be a table test with a fixed list of representative ids including `claude-fable-5-1`, `claude-fable-5`, etc.
+
+I'll specify: (1) fix the warning to share one predicate; (2) add a table test with the prefix-family ids asserting no warning, and a near-miss guard that a truly unknown id (`claude-fable-9`) still warns. Keep it to cli.rs + providers.rs (+ tests in whichever file is the natural home). That's ≤3 files.
+
+Task 2: #942 — warn at resolution when the model id's inferred provider disagrees with the resolved provider and no `--base-url` was given.
+Files: `src/cli.rs` (resolution site ~1001/1064), `src/prompt_retry.rs` (make `infer_provider_from_model` `pub(crate)` if it isn't).
+Steps: verify visibility; add pure helper `model_provider_mismatch_note(model, provider, base_url_given) -> Option<String>` (table-tested); wire at resolution time after both are known; glyph-free/no-color considerations? It's a warning on stderr; follow existing warning idiom in cli.rs. Zero/None case must be byte-identical (no warning when they agree or when no inference is available or when --base-url given).
+
+Wait — careful: is `infer_provider_from_model` in prompt_retry.rs or providers.rs? The issue says `src/prompt_retry.rs:791` and assessment says `prompt_retry.rs:681` call site. Also the assessment mentions `src/agent_builder.rs:880` for base URL. OK.
+
+Risk of task 2: if `--base-url` explicit is common (e.g., deepseek config uses base_url?). Hmm! `.yoyo.toml` sets model deepseek-v4-flash, provider deepseek — matches, no warning. But if provider = "openai" with a base_url and a claude model... the guard would suppress via base-url. But what if a user sets provider = "deepseek" with an OpenAI-compatible gateway and a deepseek model? infer_provider_from_model("deepseek-v4-flash") → deepseek presumably; matches. Fine.
+
+What about models infer_provider_from_model doesn't know? It should return Option/None → no warning. Need to specify: only warn when inference returns Some and disagrees.
+
+Potential false-positive risk: `.yoyo.toml`'s `provider = "deepseek"` + `model = "deepseek-v4-flash"` — fine. But what about the workflows' `MODEL || 'claude-opus-4-6'` with provider deepseek — that's exactly the latent bug they want warned.
+
+Hmm, but wait: could this warning fire in my own loop and spam? My loop uses matching provider/model. OK.
+
+Also risk: the warning must not fire when the provider is explicitly configured and the model is a legit proxy id. Handled.
+
+Let me also consider: should the second task instead be #943? #942 requires cross-module visibility change which adds a bit of risk; #941 and #942 both are in cli.rs warning logic, which risks the two tasks stepping on each other... but sequential sessions are fine.
+
+Alternatively pick #941 and #943 (agent_builder.rs — different file, no collision). Hmm. #943's fix: warn/clamp when configured max_tokens exceeds the resolved model ceiling. Requires the resolved ModelConfig in agent_builder at the point where `self.max_tokens` is applied (line 1337). The issue says the ceiling is already in hand at that place ("anthropic_preset has already produced that struct by the time the config value is applied"). Hmm — anthropic_preset only covers Anthropic presets. For DeepSeek the ceiling would come from... yoagent's model config via provider? The issue says "the resolved ModelConfig carries max_tokens". Risky: for non-Anthropic providers there may be no resolved ModelConfig in scope, and building one could be a bigger change. So #943 might be less bounded than it appears. #942 is a single predicate call plus a pure helper.
+
+I'll go with #941 and #942. Both are bounded, both verified at HEAD, both fit the "favor cli/config-resolution" guidance.
+
+Hmm, one more consideration: the assessment says the three issues are "one cluster: model/provider/limit resolution happens in three places with three different matching rules and no cross-check." Doing two of the three in one session leaves #943 for later. That's fine and honest — I'll note it in issue_responses.md.
+
+Now write files.
+
+Also issue_responses.md must cover: community issues (none shown — note that), and the unverified receipts (#917, #912, #904, #871?) — those get planned or closed. Hmm, the SHIPPED UNVERIFIED block says route each: plan a task or close with a line. I have only 2 slots and both used. So for receipts I could add lines saying "defer / no slot this session"? The instruction says do exactly ONE of the two per receipt. Hmm. But I can't plan 4 tasks. The guidance for receipts: "plan it -> a small task... or close it -> a line in issue_responses.md". With no slots, the honest thing is to note them as deferred with reason, or plan them next session. But "silence is better than noise" is for issues comments; issue_responses.md is internal planning. Phase C posts issue_responses.md — hmm, does it post comments to issues? "Phase C posts issue_responses.md." That likely means it comments on the issues based on the responses. So writing "- #917: need more time" would post a comment. That's noise-ish. Hmm.
+
+Let me check what previous sessions did — read session_plan/issue_responses.md if it exists? It's likely deleted each session (rm -f session_plan/task_*.md only). Let me check the file list: session_plan/assessment.md exists. Let me check if issue_responses.md exists from a previous session... The rm only removes task_*.md. Let me look.
+
+Let me run some quick bash.
+
+Actually let me be efficient: run bash to mkdir/rm, ls session_plan, check ISSUES_TODAY.md, and look at git log for prior issue_responses.md content.
+
+Let me go.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null; ec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/issue_responses… ✓ (4ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No community issues today. Good — so the two slots go to self-driven work.
+
+One slot must be self-driven; the other highest-priority remaining = a second self-driven item (backlog drain or the config cluster).
+
+Let me now decide final: Task 1 = #941, Task 2 = #942. Both self-driven (agent-self). The backlog drain rule: 11 issues, not >12, so not mandated. But hmm — "The other slot: highest-priority remaining item — community issues by net score, or a second self-driven item if nothing from the community queue is actionable." Both are fine.
+
+Actually wait. Let me reconsider using slot 2 for draining the OLDEST issue to keep the stack moving. The oldest actionable is #738 (40d) or #858 (23d). #858 is about skill-evolve's spec which is creator-owned — the issue itself is asking a human. Hmm, but there's a concrete, agent-fixable piece? No — "I cannot edit the file."
+
+#738: blind-round prediction mirror. Actionable in dream.sh? The dream loop isn't necessarily where blind rounds happen (rounds 14/33/39 — blind-round predictions are in DREAMS/experiments). Let me not guess; the file is dreams/experiments.jsonl and scripts/dream.sh. Hmm, risky.
+
+Given the instruction "If the oldest is no longer worth doing, CLOSE it as not-planned with the reason written down — that also drains", and I shouldn't close things without reading their bodies (I can, via gh issue view). But the two config-fix tasks are clearly higher impact.
+
+I'll do #941 + #942, and note in issue_responses.md the backlog situation (11 open, both slots to the config-resolution cluster; next session drain #738/#858).
+
+Let me also consider whether both tasks touch cli.rs heavily → two sessions editing cli.rs sequentially is fine.
+
+Now — writing the task files. I need to be very concrete since the implementation agent reads source (they can).
+
+Task 1 details:
+
+Title: #941 — one matching rule for model ids: stop warning "Unknown model" for ids `anthropic_preset` resolves
+Kind: product
+Files: src/cli.rs, src/providers.rs (+ test in whichever file)
+Issue: #941
+
+Steps:
+1. Verify the claim at HEAD: `src/cli.rs` warns with exact match `known.contains(&model.as_str())` while `src/agent_builder.rs`'s `anthropic_preset` resolves with `model.starts_with("claude-fable-5")`. Confirm `claude-fable-5-1` resolves (grep the prefix arms).
+2. Fix by making the warning consult the SAME predicate the resolution uses, not by adding a string to the list. Concretely: extract/expose a single pure predicate (e.g. `pub(crate) fn model_resolves_for_provider(provider: &str, model: &str) -> bool` — name is the implementer's choice) that returns true when `known_models_for_provider(provider)` contains the id OR `anthropic_preset(model)` resolves it; call it at the warning site. Keep `known_models_for_provider` as the data source; do not duplicate the prefix list.
+   - Must keep: genuinely unknown ids still warn (near-miss guard).
+   - Must keep: no new warning behavior, only suppression of the false positive.
+3. Tests (in the file that owns the helper or in `src/cli.rs` tests):
+   - table test: for each prefix-family id (`claude-fable-5`, `claude-fable-5-1`, any other prefix arms found in step 1), the predicate is true and the warning is silent;
+   - near-miss: `claude-fable-9` / `gpt-9-nope`-style id → predicate false, warning emitted (assert on the message string at the emission point, not the helper);
+   - anti-vacuous: assert the fixture ids are actually resolvable-by-prefix (so the test can't pass by agreeing with itself).
+4. Docs: if the warning text is documented anywhere (docs/src/troubleshooting/common-issues.md, help text), no change needed unless the message text changes. State explicitly in the task that the message stays byte-identical for genuinely unknown ids.
+5. Run `cargo build && cargo test` and `cargo clippy --all-targets -- -D warnings`.
+
+Evidence/constraint: only 2-3 files.
+
+Hmm — one caution: the warning may be emitted for models resolved via a non-Anthropic provider's exact list too. Fine.
+
+Also careful: `anthropic_preset` might return a preset regardless of provider; the warning is provider-scoped. Only treat preset-resolved as known when the provider is anthropic? The issue's table: warning says "for provider 'anthropic'". If provider is deepseek and model is claude-fable-5-1, that's #942's territory (mismatch), not #941. So the fix should be provider-aware: when the provider is anthropic (or a provider whose model family uses prefix resolution), prefix-resolved ⇒ known. Simplest and safest: treat a model as known when `anthropic_preset(model)` resolves AND the provider is the one the preset belongs to. I'll say: the predicate takes the provider, and for providers without a preset resolver it falls back to the exact list. State it so the implementer doesn't silence a real warning for a mismatch (that's #942, separate).
+
+Hmm, this is getting complicated. Simplify: the warning-site predicate = `known_models_for_provider(provider).contains(id) || (provider_uses_preset_resolution(provider) && anthropic_preset(id).is_some())`. Where provider_uses_preset_resolution is true for the provider(s) whose presets come from anthropic_preset. Let me phrase it as: "resolved by the same preset lookup that pricing and the model config use, scoped to the provider named in the warning."
+
+I'll let the implementer pick and require a test that: (a) `--model claude-fable-5-1` with provider anthropic → no warning; (b) `--model claude-fable-9` with provider anthropic → warning; (c) `--model claude-fable-5-1` with provider deepseek → still warns (that's the mismatch case; must not be silenced by this fix).
+
+Good, (c) is a nice near-miss guard.
+
+Task 2 details:
+
+Title: #942 — warn once at resolution time when the model id's inferred provider disagrees with the resolved provider
+Kind: product
+Files: src/cli.rs, src/prompt_retry.rs (visibility of infer_provider_from_model, if needed)
+Issue: #942
+
+Steps:
+1. Verify at HEAD: `src/cli.rs:1001` provider resolution, `:1064` model resolution; `src/prompt_retry.rs` `infer_provider_from_model` (line per issue ~791) called from exactly one place (~681).
+2. Make `infer_provider_from_model` visible to cli.rs (only if needed) — moving/`pub(crate)` is the only allowed change to prompt_retry.rs; its existing test at `:1697-1720` must stay green and untouched.
+3. Add one pure, table-tested helper in cli.rs, e.g. `model_provider_mismatch_warning(model, provider, base_url_given: bool) -> Option<String>`, returning None when: inference is None (unknown family), inferred == provider, or base_url_given is true. Returns the warning naming the resolved endpoint host. No caps/escaping? The model id comes from CLI/config (user-authored). Keep the existing warning idiom for the file (check how `warning: Unknown model` is printed). If it prints a URL, print the base-url that requests will actually use.
+4. Emit it once at resolution time (before the session starts), not per turn.
+5. Tests at the emission point: table rows for (mismatch, deepseek+claude id, no base-url) → warning contains model id, provider, endpoint; (match) → None; (unknown family) → None; (mismatch + --base-url) → None. Anti-vacuous assertion that the mismatch fixture really is inferred-mismatching.
+6. Near-miss guard: my own loop's config (deepseek + deepseek-v4-flash) produces zero output — assert byte-identical to before (no warning).
+7. Docs: don't change CLAUDE.md for this; the warning is self-describing. (Maybe mention docs/src/troubleshooting/common-issues.md has a "wrong provider" entry? Only if it exists — instruct to check and add one line if a section exists.)
+
+Verification: cargo build && cargo test && clippy.
+
+Also each task must note the revert class? Not applicable.
+
+Also mention: "Do not change `.yoyo.toml` (the sample/working config) as part of this" — hmm, actually could the fix warn on my own repo's config? provider=deepseek, model=deepseek-v4-flash → match. Fine.
+
+Also note for task 2: the five workflows pass MODEL without provider — the warning would fire there; that's intended and is the discovery. But the secrets are there... nothing to change in workflows (they're protected). Note it.
+
+Now issue_responses.md:
+- No community issues today (ISSUES_TODAY.md: "No community issues today.").
+- #941, #942: planned as task_01/task_02.
+- #943: deferred, next session (same cluster; verification of the resolved ceiling for non-Anthropic providers is a bigger read).
+- #937: deferred (needs vendor pricing page; drift alarm option 1 is a task candidate).
+- #917/#912/#904/older receipt: not closed; deferred with reason — hmm, the phase C posting. Let me phrase each as a plan note: "#917: not closed — no slot this session; will re-check against HEAD next session." That could post a comment. Risky noise? It says "Phase C posts issue_responses.md" — probably posts comments for the entries. To be safe and honest, I'll write entries clearly as internal notes with explicit "no comment needed" for the deferrals? Hmm, the format spec is "plan it / close it". Given no slots, I'll mark them "deferred — no decision made, no comment needed" so Phase C hopefully doesn't comment. Actually Phase C is another agent that reads this file; ambiguity is bad. I'll write directives explicitly: "#912: no comment this session (deferred to a later session — both slots spent on #941/#942); do not close."
+
+Hmm, but the harness rule says for each receipt do exactly one of two actions. Since I'm not doing either, the honest form is "deferred". I'll state that plainly with the reason. Better than closing on no evidence.
+
+Wait — should I instead use slot 2 for a receipt (#912 or #917) which are auto-filed *shipped unverified*? Those are real open loops: code shipped with an objection never resolved. The backlog-drain spirit. E.g. #917: "`## Productivity`'s IDLE verdict cannot tell a real idle day from a day-label artifact — MEASURE first, then make it report its own evidence" — that's in scripts/extract_trajectory.py. Hmm, and it's tied to my day-205 lesson (the ledger row). Interesting but it's a script instrument task.
+
+Given priority ordering: tier 2 (self-discovered bugs) vs receipts (no explicit tier; they fall under... hmm). The config cluster is explicitly called out by the assessment as a "cluster" with verified evidence, and matches the concentration warning. I'll stick with it.
+
+Let me write the files now.
+
+Also the task files must state Kind. #941 and #942 are product (user-facing warnings)? #942 touches only warning output for CLI users — product. #941 — product. Yes.
+
+Let me write.
+
+One more check on the "3 files" limit for task 1: cli.rs + providers.rs = 2. Good.
+Task 2: cli.rs + prompt_retry.rs = 2. Good.
+
+Write files, commit, stop.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.5s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now write task_01.md and task_02.md and issue_responses.md.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (60 lines)  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (62 lines) ✓ (46.7s)
+ ✓ (1m 33s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 38s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (45 lines) ✓ (45.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && git add … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+session_plan is gitignored, so the commit fails. The instruction says to commit `git add session_plan/ || true`. Previous sessions committed session_plan/assessment.md (it's tracked — the earlier commit shows `session_plan/assessment.md | 80 +++`). So it's tracked despite gitignore (gitignore only affects untracked files). My new files are untracked and ignored.
+
+Hmm, but the previous commit added session_plan/assessment.md — the harness probably uses `git add -f`. Let me try `git add -f session_plan/task_*.md session_plan/issue_responses.md`. Is committing these wise? The evolve harness expects the plan files; the assessment was committed. Committing with -f should be fine and matches what the harness does (assessment.md got committed somehow).
+
+Let me do git add -f and commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/task_01.… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Done. Note: session_plan is gitignored; I used -f, matching the assessment commit that landed earlier. Report and stop.
+────────────────────────────────────────────────────────────────────────────────
+
+Plan written and committed (6f70b7e1). Planning only — no implementation.
+
+Context read: no community issues today (ISSUES_TODAY.md: "No community issues today"), release not due (v0.1.18, 7d, cadence says not due), CI green, 0 reverts in the window, 11 open agent-self issues (under the 12 drain threshold). So both slots went to self-driven work, and I pointed them at cli/agent_builder/providers because the trajectory's concentration warning says format took 4 of the last 8 self-driven diffs.
+
+session_plan/task_01.md — #941, one matching rule for model ids (product, 2 files: src/cli.rs, src/providers.rs)
+The unknown-model warning uses an exact match while the preset lookup resolves by prefix, so claude-fable-5-1 resolves, prices, and warns about itself every turn. The plan fixes the rule (one provider-scoped predicate, called from the warning site) rather than adding the string — #923 already did that twice and it drifts at the next rename. Includes three guards: prefix-family ids silent, a genuinely unknown same-shape id still warns byte-identically, and a Claude id under provider = "deepseek" still warns so this fix cannot widen into task 2's territory.
+
+session_plan/task_02.md — #942, model/provider mismatch is silent (product, 2 files: src/cli.rs, src/prompt_retry.rs for visibility only)
+infer_provider_from_model exists, is tested, and is called from exactly one place (retry) — never at resolution time, the only cheap moment. One pure table-tested helper returning None for the regression surface (match / unknown family / explicit --base-url), warning otherwise and naming the endpoint. Warn, never refuse.
+
+session_plan/issue_responses.md
+Records the two planned tasks, defers #943/#937 with the specific reason each needs a step-0 check first, lists the remaining backlog as still-valid, and explicitly instructs Phase C not to comment on or close the four shipped-unverified receipts (#917/#912/#904/+1) — I have not re-checked those against HEAD and both slots are spent, so closing them would be a guess.
+
+One thing worth flagging: session_plan/ is gitignored, so git add session_plan/ failed; I committed with git add -f, which is how session_plan/assessment.md landed in 2157c8ec earlier today. If the harness expects a plain git add, that step silently does nothing for these files.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

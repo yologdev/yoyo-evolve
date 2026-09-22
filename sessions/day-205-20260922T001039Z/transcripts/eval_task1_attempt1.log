@@ -1,0 +1,128 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me judge the diff. The task asked: add `model_is_known_for_provider` predicate in providers.rs, use it in the warning site in cli.rs, provider-scoped, tests at emission point.
+
+Let me verify the key claim: does `agent_builder::anthropic_preset` exist and is it pub? And do the prefix families match the test rows? The test claims five prefix families: claude-fable-5, claude-opus-5, claude-opus-4-8, claude-sonnet-5, claude-haiku-4-5. And they claim claude-fable-9 → None (no warning... wait, must_warn=true for claude-fable-9). Hmm, "claude-fable-9" does not start with "claude-fable-5", so preset lookup returns None → warns. Good.
+
+But wait — near-miss A says a genuinely unknown id of the same shape (`claude-fable-9`) → warning still emitted. OK.
+
+Let me check the actual code to verify: anthropic_preset existence, pub visibility, prefix arms, and the test expectations for known models lists (claude-opus-5, claude-fable-5, ... order matters for the byte-identical assertion).
+
+Also check: providers.rs `model_is_known_for_provider` is `pub`, that's fine (task suggested pub(crate), minor). Also does cli.rs know `known_models_for_provider` is imported? It was used before, so yes.
+
+Potential issue: in `unknown_model_warning`, the early return when `known.is_empty()` — but the predicate for anthropic... if a provider has an empty list, no warning. Fine.
+
+Another potential issue: `model_is_known_for_provider` checks `known.contains(&model)` where known is `&[&'static str]` and model is `&str` — `contains(&model)` requires `&&str` vs `&&str`? `known.contains(&model)`: contains takes `&T` where T = `&'static str`, so `&&str`. `&model` is `&&str` — but with lifetimes, `&'static str` vs `&str`... Actually `[&'static str].contains(&&'static str)` — passing `&model` where model: &str — needs coercion of `&&'a str` to `&&'static str`? Rust's autoderef... Hmm, `contains` signature is `fn contains(&self, x: &T) -> bool where T: PartialEq<T>`. T = `&'static str`. So x: `&&'static str`. `&model` is `&&'a str` where 'a is the fn param lifetime. Since `&'static str` can coerce (subtype) to `&'a str`, but `&&'static str` → `&&'a str` is a covariant coercion which is allowed. Actually for the argument, Rust would need exact type `&&'static str`; it can coerce `&&'a str` to `&&'static str`? No — that's the wrong direction. Hmm, but variance: `&'a str` is a subtype of `&'static str`? No: `&'static str` <: `&'a str` (longer lifetime is subtype). So `&&'a str` is not a subtype of `&&'static str`. But does Rust require the argument type? The original code `known.contains(&model.as_str())` compiled before. `model.as_str()` yields `&str` tied to model's lifetime, `&(...)` gives `&&str`. It compiled in existing code — since the build passed, this compiles fine. Actually inference can unify: T is inferred from known first (`&'static str`), then the argument coerces... Since the existing code did the same thing and built, fine. And the diff says build PASS.
+
+Wait, actually, the existing code was `known.contains(&model.as_str())`, which is the same shape. Good.
+
+Now the tests: byte-identical wording assertion with specific known model lists. Since build/tests passed, presumably those literals match. But I should verify that the test literals actually reflect the real lists — well, tests pass, so they do.
+
+Hmm, but wait: the task said tests should be at the emission point and the diff did that. It also mentions the prefix-arm count. Let me check the anthropic_preset function to count prefix arms and confirm all five test rows are actually preset-backed (anti-vacuous assertions would catch that, and tests pass).
+
+Let me also check whether there's any concern about the `tests/module_size.rs` change — cli.rs grew to 7397 lines; the register entry updated. That's within the gate rules (register line owed). But is cli.rs grandfathered? Yes it's in the list. The module_size test passes.
+
+Also ARCHITECTURE.md updated — good doc practice.
+
+Let me do a quick focused check: grep anthropic_preset and confirm the prefix arms and visibility, and check that `known_models_for_provider` remains data source. Also verify no stray debug files.
+
+Let me run a couple of quick commands.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn anthropic_preset" -A…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,175p' src/providers.r… ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Five prefix arms confirmed: claude-fable-5, claude-opus-5, claude-opus-4-8, claude-sonnet-5, claude-haiku-4-5. All five test rows match, and each has a suffix suffix not in the list? Let's check: the anthropic list — need to confirm "claude-opus-5-1" etc. not in list. The anti-vacuous assertion asserts that and tests pass, so fine.
+
+Wait — "claude-haiku-4-5-1": is "claude-haiku-4-5-20251001" in the list? Yes (truncated in output). "claude-haiku-4-5-1" is not equal to that. Good.
+
+Now check that model_is_known_for_provider is used... yes, cli.rs composer calls it. Also the composer is called at the warning site. Good.
+
+Now, is anthropic_preset also invoked from providers.rs creating a circular module dependency? Both are in the same crate, fine.
+
+One more check: does the warning site actually keep provider scoping for the resolved provider? In cli.rs, the warning uses `provider` variable. Fine.
+
+Also note the task said `pub(crate)` but they used `pub` — trivial, not a fail.
+
+Let me quickly verify the "emission point" test actually exercises the real feature end-to-end, and check the other provider list ordering in test matches. Since tests pass, ok.
+
+One concern: does the diff touch `tests/module_size.rs` which is a test file — allowed (max 2 source files; tests count?). Task said "Max 2 source files" — src/cli.rs and src/providers.rs are 2. ARCHITECTURE.md and tests/module_size.rs are not source. Fine.
+
+Let me do one quick check: is there any other place that warns "Unknown model" that still uses exact match (a forgotten touchpoint)? grep.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.6s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Unknown model" src/ te…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && git lo… ✓ (6ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The single warning site is covered. No other "Unknown model" warning sites remain (only comments/tests elsewhere).
+
+Wait — the anthropic list includes "claude-opus-4-8"? Line 47-58 shows claude-opus-5, claude-fable-5, ... claude-haiku-4-5. The test's byte-identical assertion expects "claude-opus-5, claude-fable-5, claude-opus-4-8, claude-sonnet-5, claude-opus-4-7" as the first five. So list order: opus-5, fable-5, opus-4-8, sonnet-5, opus-4-7. Consistent with grep lines 47,48,50.
+
+Now, the test row "claude-opus-4-8-1" — is that preset-resolved? starts_with("claude-opus-4-8") yes. And not in the list. Good.
+
+Everything checks out. The feature is tested at emission point plus the doc updated. Product surface: this changes startup behavior (the warning fires less often) — it's a product-kind task and the change is a fix, arguably narrowing the warning. Is it "opt-in"? #448 concern is about evolve conveniences shipping as product defaults. Here the change makes the warning more correct for all users — removing a false positive. The task is declared Kind: product and the change is product-appropriate (not an evolve-loop convenience). PASS.
+
+One small note: providers.rs's `model_is_known_for_provider` is `pub` while the task suggested `pub(crate)` — trivial, not a fail.
+
+Let me quickly verify at the emission point by running the binary? The instruction says if user-facing feature, actually try it. Let me do a quick run: `./target/debug/yoyo --provider anthropic --model claude-fable-5-1 ...` but might need API key. There's a focused check <30s. Let me check if binary exists.
+
+Actually the tests assert the exact string the composer returns, and the composer output goes to eprintln. But an end-to-end check with the binary would be stronger. Let me try quickly with a flag that triggers the warning and exits, e.g. `--model X --help`? Order of parsing—parse_model_config runs during parse_args, so warning prints before anything. Let's try.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.9s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, grep found nothing for all three? The fable-9 and deepseek cases should have printed the warning. Maybe --help exits before parse_model_config, or the warning goes to stderr but with color codes... grep -i "unknown model" should still match. Let me check output raw.
+
+Maybe the binary is stale (built before the change) — target/debug/yoyo build status says PASS so it should be current. Let me run without grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== fable-9 ==="; ./target… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+--help short-circuits before parse_model_config presumably. Let me instead trigger by running with a prompt but no API key — it'll fail but the warning should print first. E.g. `./target/debug/yoyo --provider anthropic --model claude-fable-9 "hi"` with a bogus key and short timeout. Actually it might hang trying network. Use `--no-...`? Let's just try with a 15s timeout and pipe.
+
+Alternatively call the warning path with a non-network flag like `--print-...`? Let's try running with a prompt and unset API key so it errors fast.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for m in "anthropic claude-fable… ✓ (2.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+End-to-end confirmed: the bug fix works, provider scoping held, wording byte-identical.
+
+Verdict PASS. Write the file.
+────────────────────────────────────────────────────────────────────────────────
+
+End-to-end verified. Writing verdict.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (46.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS — written to session_plan/eval_task_1.md.
+
+Verified against the task:
+• **Step 1 count: exactly five** prefix arms in `anthropic_preset` (`claude-fable-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5`, `claude-haiku-4-5`), all preset-backed and all present as silent table rows.
+• **One rule, not two: `model_is_known_for_provider` (providers.rs:158) is the union of the provider list or** the anthropic preset lookup; the prefix list is read through `anthropic_preset`, never copied. The only warning site now calls it via `unknown_model_warning`.
+• **Live emission-point check** (not just helper tests): `anthropic/claude-fable-5-1` → no warning; `anthropic/claude-fable-9` → warns with unchanged wording; `deepseek/claude-fable-5-1` → still warns, so provider scoping held and it did not widen into #942.
+• Docs updated in ARCHITECTURE.md; the cli.rs module-size register entry was bumped in the same diff. No stray files.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

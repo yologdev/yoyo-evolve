@@ -1,0 +1,1784 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the two disagreement sites as the task instructs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Unknown model" src/cli.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "starts_with(\"claude" s… ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the full context. Let's read agent_builder.rs around 740-820, cli.rs around 1060-1130, providers.rs around 40-80.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 730,800p src/agent_builde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1050,1130p src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,90p src/providers.rs ✓ (3ms)
+ ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now, let's look at cost.rs to see how it delegates to the preset, and see how `anthropic_preset` is used elsewhere. Also check whether preset only applies to anthropic provider.
+
+Let me look at cost.rs:78.
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1.7s (3 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 55,100p src/format/cost.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,100p src/providers.rs ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So there are 5 prefix arms in `anthropic_preset`: claude-fable-5, claude-opus-5, claude-opus-4-8, claude-sonnet-5, claude-haiku-4-5.
+
+Now let's check the `known_models_for_provider("anthropic")` list — does it contain the exact base ids like "claude-fable-5"? Let me see lines 47-62 of providers.rs.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 45,62p src/providers.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "known_models_for_provid… ✓ (3ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me see the full anthropic list (it's shown truncated in the tool output because of the file line limit display). Let me use `git show` or perl to print exact lines 45-60.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/providers.rs:40..65  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "provider == \"anthropic… ✓ (0ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I understand the structure. The prefix arms: 5 families in `anthropic_preset`:
+- claude-fable-5
+- claude-opus-5
+- claude-opus-4-8
+- claude-sonnet-5
+- claude-haiku-4-5
+
+And `anthropic_model_config` (which the model-config path uses) calls `anthropic_preset(model).unwrap_or_else(generic)`.
+
+The task says: "the preset lookup used by the model-config path resolves it". Let me check where `anthropic_model_config` is used — is it only for provider anthropic?
+
+Let me check the usage.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "anthropic_model_config… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No test hit for default_model_for_provider? Let me search properly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "default_model_for_prov… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: `anthropic_model_config` / `anthropic_preset` is used only on the `"anthropic"` arm of `create_model_config`. So the predicate should be provider-scoped: preset resolution counts only when `provider == "anthropic"`.
+
+Now, where should the helper live? The task says "tests in whichever file owns the helper". The helper is a pure predicate. Natural home: `src/providers.rs`, since that's the data source home (`known_models_for_provider`). But it needs to call `crate::agent_builder::anthropic_preset`. Does providers.rs already depend on agent_builder? Probably not. Let's check module structure - both in same crate, so `crate::agent_builder::anthropic_preset` is fine as long as it's pub. It's `pub fn anthropic_preset`.
+
+Hmm, but wait: agent_builder already imports from cli (aliased). Let me check if agent_builder imports providers. Probably fine, no cyclic issue in Rust modules.
+
+Alternatively, put the helper in cli.rs next to the warning site, since cli.rs already imports `known_models_for_provider`. That'd be a single-file change. But the task says "Files: src/cli.rs, src/providers.rs (tests in whichever file owns the helper)". So the helper could live in providers.rs. Putting it in providers.rs is cleaner conceptually: it's about provider/model knowledge. But providers.rs calling into agent_builder creates a dependency from providers -> agent_builder. Let's check whether agent_builder imports providers... it uses `cli::default_model_for_provider`. Let me check agent_builder's imports.
+
+Actually let's check for potential circular module deps - Rust allows them anyway within a crate.
+
+I'll put the predicate in `src/providers.rs` since that's the file that owns the model list, and it's explicitly listed. Tests can go in providers.rs tests module.
+
+Now, note that the existing `known_models_for_provider("anthropic")` list contains "claude-fable-5" exactly, so `claude-fable-5` already doesn't warn. The issue is `claude-fable-5-1` (and dated variants like `claude-opus-5-20260724`).
+
+Now the predicate:
+
+```rust
+/// Is `model` a known model id for `provider`?
+///
+/// True when the provider's diagnostic list contains the id exactly, or — for
+/// the Anthropic provider only — when the fleet preset lookup that the
+/// model-config path actually uses resolves it. One resolution rule, not two:
+/// `anthropic_preset` is prefix-based, so `claude-fable-5-1` and dated ids
+/// like `claude-opus-5-20260724` are the same model, and the "Unknown model"
+/// warning must not contradict the config that got built.
+///
+/// Provider-scoped on purpose: a preset-resolvable Claude id under a *different*
+/// provider (e.g. `provider = "deepseek"`) is not resolved by that provider's
+/// path and must still warn.
+pub(crate) fn model_is_known_for_provider(provider: &str, model: &str) -> bool {
+    if known_models_for_provider(provider).contains(&model) {
+        return true;
+    }
+    provider == "anthropic" && crate::agent_builder::anthropic_preset(model).is_some()
+}
+```
+
+Wait: `known_models_for_provider(provider).contains(&model)` — slice of &'static str, contains takes `&&str`. `&model` where model: &str gives `&&str`. Yes works.
+
+Hmm, but should the preset check be gated on `provider == "anthropic"`? `anthropic_preset` already only returns Some for claude-* ids. But `provider == "anthropic"` gate is what makes it provider-scoped. Consider `provider = "openrouter"` with model `anthropic/claude-fable-5-1`. Hmm, cost.rs strips "anthropic/" prefix for pricing, but the preset lookup in agent_builder does NOT strip the prefix (anthropic_preset("anthropic/claude-fable-5-1") → starts_with("claude-fable-5") is false → None). Actually the openrouter arm of create_model_config wouldn't call anthropic_model_config at all. So gating on anthropic is correct.
+
+Wait — what about custom base_url with anthropic provider? Still provider == "anthropic" so preset applies. Good.
+
+Now the call site in cli.rs:
+
+```rust
+    // Warn if model isn't in the known list for first-party providers.
+    // `model_is_known_for_provider` consults the same preset resolution the
+    // model-config path uses, so a prefix-resolved id (claude-fable-5-1)
+    // does not warn about itself.
+    let known = known_models_for_provider(&provider);
+    if !known.is_empty() && !model_is_known_for_provider(&provider, &model) {
+```
+
+Note `known.is_empty()` guard: for providers with no list (custom/ollama), no warning. Keep that. Actually `model_is_known_for_provider` returns false for empty list (except anthropic case), but the guard also gates the "Known models: {}" message. Keep both conditions.
+
+Now tests. The task says tests at the emission point — the string a caller receives. Hmm, the warning is emitted inline in `parse_provider_config` via `eprintln!`. Testing at the emission point would require refactoring the warning into a function returning the message (or Option<String>). The task says "Tests, at the emission point (the string a caller receives), not on the helper". So I should extract the warning message construction into a pure function, e.g.:
+
+```rust
+/// The "Unknown model" warning for a genuinely-unknown id, or `None` when the
+/// id is known. Pure so tests can assert on the exact string a caller prints.
+pub(crate) fn unknown_model_warning(provider: &str, model: &str) -> Option<String> {
+    let known = known_models_for_provider(provider);
+    if known.is_empty() || model_is_known_for_provider(provider, model) {
+        return None;
+    }
+    Some(format!(
+        "{YELLOW}warning:{RESET} Unknown model '{model}' for provider '{provider}'. \
+         Known models: {}. Proceeding anyway (custom models are valid).",
+        known.iter().take(5).copied().collect::<Vec<_>>().join(", ")
+    ))
+}
+```
+
+Then call site:
+```rust
+if let Some(warning) = unknown_model_warning(&provider, &model) {
+    eprintln!("{warning}");
+}
+```
+
+This keeps the message byte-identical. But is there an existing test asserting on the warning text? Let's check tests for "Unknown model".
+
+Let me grep tests for "Unknown model" or "Proceeding anyway".
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Unknown model\|Proceed…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p src/cli.rs ✓ (2ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting: providers.rs:232 has a comment about the warning, and there's an existing test around there. Let's read providers.rs 180-260 to see the test conventions, and 139-175 for default_model_for_provider.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/providers.rs:190..260  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 130,175p src/providers.rs… ✓ (1ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now design the emission-point function. Where should `unknown_model_warning` live? cli.rs owns the warning site. Providers.rs owns the data. The task says max 2 source files: src/cli.rs, src/providers.rs. I'll put:
+- `model_is_known_for_provider` in providers.rs (pure predicate, near known_models_for_provider).
+- `unknown_model_warning` — hmm, cli.rs. But cli.rs is 7314 lines, and tests/module_size.rs has a size gate. Let me check cli.rs's size limit.
+
+Actually the module size gate: check tests/module_size.rs for cli.rs limit.
+
+cli.rs 7314 lines. Adding ~60 lines of tests could break the gate. Alternatively put `unknown_model_warning` in providers.rs too (it's provider-model knowledge + the message text) and have cli.rs call it. Then all new code + tests live in providers.rs, and cli.rs gets a 3-line change. That's cleaner and avoids the size gate issue on cli.rs.
+
+But the `{YELLOW}`/`{RESET}` consts — where are they defined? In `crate::format`? Let me check what cli.rs imports: `use crate::format::{...}`. Let me look at the imports lines 3-20.
+
+Let me check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,20p src/cli.rs; echo --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GRANDFATHERED\|MAX_LINE… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+cli.rs is grandfathered at 7299 lines with `OVERSHOOT_GRACE_LINES: usize = 50` — so cli.rs can go up to 7349 before failing? Let me check the gate semantics: for grandfathered modules, the rule is that they may not grow beyond their registered size (plus grace of 50). Current cli.rs = 7314 lines, registered at 7299. 7314 - 7299 = 15, within 50 grace. If I add lines to cli.rs, it could exceed 7299+50 = 7349 with 35 lines of headroom. Risky. Better: add only a minimal 3-4 line change in cli.rs and put the helper + tests in providers.rs (well under 2000 lines).
+
+Let me check the exact semantics of the grandfather gate to be safe — read tests/module_size.rs around 560-700? Actually let's just be minimal in cli.rs. I'll aim to keep cli.rs net growth ≤ 5 lines.
+
+Plan:
+- providers.rs: add `model_is_known_for_provider` + `unknown_model_warning` (needs YELLOW/RESET — check where they come from: `crate::format::{YELLOW, RESET}`? Let's check the format module exports).
+
+cli.rs line 1101 uses `{YELLOW}` `{RESET}` in a format string — they must be in scope via `use crate::format::*` or similar. Let me check the imports in cli.rs lines 3-10 exactly.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -12 src/cli.rs | cat -A | s… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `cat -A` output was truncated by the tool's own display limit ("... (4 more similar lines)"). Weird — the tool seems to truncate repetitive output. Let me just grep for the use of format in cli.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use " src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub const YELLOW\|pub … ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.3s (2 ✓)
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "YELLOW" src/format/mod… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`YELLOW` and `RESET` are statics in `crate::format` (mod.rs). In a `format!` string, `{YELLOW}` interpolates the named variable — works for statics? Named arguments in format strings require the identifier to be in scope; statics work (Display impl). Yes, `format!("{YELLOW}")` works if YELLOW is a static with Display.
+
+So in providers.rs I'd need `use crate::format::{YELLOW, RESET}` inside the function or module top. Let's check providers.rs's imports (it starts with just a doc comment, no imports). I can add `use crate::format::{RESET, YELLOW};` at the function level or in the format! call site. To avoid a top-level import if unused elsewhere, I'll put the `use` inside the function body? Cleaner: add top-level `use crate::format::{RESET, YELLOW};`. That's fine since it's used.
+
+Hmm, but is there a risk of clippy complaining? No.
+
+Alternatively — keep the message construction in cli.rs (it already has the consts in scope) and only the predicate in providers.rs. But the tests at the emission point... The task says tests should assert on the string a caller receives. If `unknown_model_warning` lives in providers.rs and returns a String with colors, the test would need to handle ANSI codes. The existing warning is byte-identical regardless of color settings (eprintln to stderr directly, no color gating!). Note: cli.rs uses `{YELLOW}` unconditionally — not gated by color. Let me double check: `eprintln!("{YELLOW}warning:{RESET} ...")` — yes unconditional. Hmm, is color disabled at startup for non-tty? The statics are actual escape codes; color_enabled_from_env exists but this site doesn't consult it. That's pre-existing behavior; I must not change it (byte-identical message).
+
+Should I preserve that? Yes — task says the message text stays byte-identical. I'll keep YELLOW/RESET in the returned string.
+
+Wait — careful. If I move the string to providers.rs, and a test asserts equality on the produced string, both sides could agree on color bytes. Fine.
+
+However, there's an important consideration: making the warning a returned `Option<String>` requires that the call site uses `eprintln!` with it — byte-identical output, since eprintln!("{warning}") adds the same trailing newline. Original: `eprintln!("...{}. Proceeding anyway (custom models are valid).", ...)` — one newline. Same.
+
+Now: where do the color statics break in plain mode? Fine.
+
+Now the alternative of keeping the message in cli.rs: `unknown_model_warning(&provider, &model)` in cli.rs returning Option<String>; test it in cli.rs. But cli.rs tests: there's a tests module in cli.rs already, and the size gate. Let's check cli.rs's current line count vs the register reading (7299, actual 7314). Adding tests to cli.rs would add maybe 60 lines → 7374 > 7349 → gate fails. Unless the gate allows... let me check what the gate does for grandfathered modules.
+
+Let me read tests/module_size.rs check_module_sizes semantics.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,130p tests/module_size… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 560,700p tests/module_siz… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the register-drift grace is 100 lines for grandfathered modules: cli.rs can grow up to 7299 + 100 = 7399 before fatal. Current 7314. So +60 lines in cli.rs would be 7374 — under 7399, non-fatal but would print a warning. Still, tests asserting a warning is noise; and the rule says paste the new number. But minimal is better: I'll keep cli.rs growth tiny (~4 lines) and put helper + tests in providers.rs.
+
+Actually wait — do I even need `unknown_model_warning` to return a String? The task says: "Tests, at the emission point (the string a caller receives), not on the helper." I interpret: assert on the warning string produced by the production function, not on `model_is_known_for_provider`. So extracting `unknown_model_warning` and asserting on its Option<String> output satisfies that.
+
+Let me now check `is_plain_output` / color handling — should the warning respect quiet mode? Not our concern.
+
+Also check: does the warning site run under `parse_args_with_config` / `parse_provider_config`? Whatever; keep call site identical semantics.
+
+Now also consider: the `known.is_empty()` condition. In `model_is_known_for_provider`, for provider with empty list and model anything, returns false. In `unknown_model_warning` I check `known.is_empty()` first → None. Good; matches existing behavior (custom/ollama/openrouter don't warn).
+
+Wait: does openrouter have a list? Line ~125 showed `_ => &[]` and the list before that included openrouter models... Let's check: lines 120-134 showed openrouter entries? The snippet at 380-443 showed a list with "mistral/mistral-large-latest", "deepseek/deepseek-v4-pro", "anthropic/claude-sonnet-4-6" then `_ => &[]`. That's probably the "openrouter" or "github" arm. Let me check which provider that is.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 96,135p src/providers.rs ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. openrouter → empty (`_`). So openrouter never warns. Consistent.
+
+Now write the code. Plan:
+
+**providers.rs** — after `known_models_for_provider` (line 133) add:
+
+```rust
+/// Does `provider`'s model list, or its model-config resolution rule, accept
+/// `model`?
+///
+/// True when the provider's diagnostic list contains the id exactly, **or** —
+/// for `anthropic` only — when the fleet-preset lookup the model-config path
+/// actually uses ([`crate::agent_builder::anthropic_preset`], reached through
+/// [`crate::agent_builder::anthropic_model_config`]) resolves it. This is one
+/// resolution rule rather than two: the preset arms are prefix-based, so
+/// `claude-fable-5-1` and dated ids like `claude-opus-5-20260724` are the same
+/// model the config path builds, and the "Unknown model" warning must not
+/// contradict the config that got built (#941).
+///
+/// Provider-scoped on purpose: an id an Anthropic preset resolves is *not*
+/// known under any other provider — `provider = "deepseek"` with a Claude id
+/// is a different defect (the id is simply wrong there) and must still warn.
+pub(crate) fn model_is_known_for_provider(provider: &str, model: &str) -> bool {
+    if known_models_for_provider(provider).contains(&model) {
+        return true;
+    }
+    provider == "anthropic" && crate::agent_builder::anthropic_preset(model).is_some()
+}
+
+/// The `Unknown model` warning a caller should print for (provider, model), or
+/// `None` when there is nothing to warn about.
+///
+/// Split out from the emission site so tests can pin the exact string a caller
+/// receives. The text is unchanged from the inline `eprintln!` it replaces
+/// (byte-identical, including the leading color codes and the five-id sample),
+/// and a provider whose list is empty — `custom`, `openrouter` — still warns
+/// about nothing, exactly as before.
+pub(crate) fn unknown_model_warning(provider: &str, model: &str) -> Option<String> {
+    use crate::format::{RESET, YELLOW};
+    let known = known_models_for_provider(provider);
+    if known.is_empty() || model_is_known_for_provider(provider, model) {
+        return None;
+    }
+    Some(format!(
+        "{YELLOW}warning:{RESET} Unknown model '{model}' for provider '{provider}'. \
+         Known models: {}. Proceeding anyway (custom models are valid).",
+        known.iter().take(5).copied().collect::<Vec<_>>().join(", ")
+    ))
+}
+```
+
+Note the original format string uses `{model}` and `{provider}` (captured identifiers). In my function, params are `provider` and `model` — same names, so `{model}`/`{provider}` still work. And `{YELLOW}`/`{RESET}` from the `use` statement inside the function.
+
+Careful with line continuation `\` in the format string: original has
+
+```
+        eprintln!(
+            "{YELLOW}warning:{RESET} Unknown model '{model}' for provider '{provider}'. \
+             Known models: {}. Proceeding anyway (custom models are valid).",
+            known.iter().take(5).copied().collect::<Vec<_>>().join(", ")
+        );
+```
+
+The `\` + newline + leading whitespace: backslash-newline in Rust string literal skips the newline AND leading whitespace of the next line. So the resulting string is "...provider '{provider}'. Known models: ...". I'll copy exactly.
+
+**cli.rs** — replace the warning block:
+
+```rust
+    // Warn if model isn't in the known list for first-party providers.
+    // `unknown_model_warning` consults the same preset resolution the
+    // model-config path uses, so a prefix-resolved id (e.g. `claude-fable-5-1`)
+    // does not warn about itself (#941).
+    if let Some(warning) = unknown_model_warning(&provider, &model) {
+        eprintln!("{warning}");
+    }
+```
+
+Need to import `unknown_model_warning`. cli.rs's re-export block:
+
+```rust
+pub use crate::providers::{
+    default_model_for_provider, known_models_for_provider, provider_api_key_env, KNOWN_PROVIDERS,
+};
+```
+
+I could add `unknown_model_warning` to that re-export list, and then call it as `unknown_model_warning(...)` — resolve? The `pub use` brings the name into cli's namespace, so unqualified call works. Hmm, but that re-export is documented as "Re-exported from providers module so existing `use crate::cli::` imports keep working." Adding to it is fine, but it grows the public surface. Alternatively add `use crate::providers::unknown_model_warning;` at the top. But then `unused_import` if unused... it is used. However, there's a subtlety: `pub use crate::providers::{...}` list plus a separate `use` is fine.
+
+Actually simplest: add it to the existing `pub use crate::providers::{...}` list. But `pub use` of a `pub(crate)` item — allowed? `pub use` of a crate-private item gives a private-in-public warning? Actually re-exporting a `pub(crate)` item with `pub use` triggers `E0365`/warning "private item re-exported"? Let's think: `pub use` of a `pub(crate)` item — rustc gives error E0365 "`x` is private, and cannot be re-exported" only if the item is less visible than the re-export... Actually the rule: you can't re-export a private item publicly. For `pub(crate)` items re-exported as `pub`, rustc emits E0365? Hmm. In Rust 2018+, `pub use` of a `pub(crate)` item triggers a warning: "private item shadows public glob re-export"? No.
+
+Safer: use a plain non-pub import: `use crate::providers::{known_models_for_provider, unknown_model_warning};` — but wait, known_models_for_provider is already imported via the `pub use`. I can add a separate plain `use crate::providers::unknown_model_warning;`. Duplicate import of the same path isn't an issue since names differ.
+
+Hmm, but is `pub(crate) fn unknown_model_warning` in providers.rs callable? Yes within crate.
+
+Actually, alternatively put `unknown_model_warning` in cli.rs (it owns the message) and `model_is_known_for_provider` in providers.rs. Then cli.rs gets ~20 lines + tests... tests would push cli.rs lines. Hmm. The task says "tests in whichever file owns the helper" — with two helpers across two files, ambiguity. I'll put both helpers in providers.rs (data + resolution + message) and all tests in providers.rs, keeping cli.rs at a tiny call-site change. That's the cleanest reading: providers.rs owns the helpers.
+
+Wait, but does putting the message in providers.rs make sense? The warning is CLI output. Hmm. The alternative is: message in cli.rs as a function `unknown_model_warning`, tests in cli.rs. cli.rs test module additions of ~80 lines → 7394 < 7399. Cutting it very close. Not worth the risk.
+
+Decision: both helpers in providers.rs, tests in providers.rs, cli.rs just calls.
+
+**Tests in providers.rs:**
+
+```rust
+    /// Emission-point tests for #941: the warning a caller receives, not the
+    /// helper one layer below.
+    #[test]
+    fn test_prefix_resolved_anthropic_ids_do_not_warn() {
+        // ANTI-VACUOUS, FIRST: each fixture id must really be resolved by the
+        // prefix rule the model-config path uses, so the table below cannot
+        // pass by both sides agreeing on a model nobody resolves.
+        for id in ["claude-fable-5", "claude-fable-5-1", "claude-opus-5-20260724"] {
+            assert!(
+                crate::agent_builder::anthropic_preset(id).is_some(),
+                "fixture '{id}' must be prefix-resolved or the table proves nothing"
+            );
+        }
+        // ... table
+    }
+```
+
+Which prefix families to include? Step 1 enumerated 5 arms. The table should cover "every prefix-family id found in step 1 (at minimum claude-fable-5 and claude-fable-5-1)". Let me build the table with one non-exact id per family:
+
+- claude-fable-5 (exact, already in list) → no warning
+- claude-fable-5-1 → no warning (the #941 case)
+- claude-opus-5-20260724 → preset resolves (existing test at agent_builder:1782 uses this id)
+- claude-opus-4-8-1 → no warning
+- claude-sonnet-5-1 → no warning
+- claude-haiku-4-5-1 → no warning
+
+Hmm, careful: `claude-haiku-4-5-1` — known_models_for_provider contains "claude-haiku-4-5" and "claude-haiku-4-5-20251001" exactly, but not "claude-haiku-4-5-1". The preset arm `starts_with("claude-haiku-4-5")` resolves it. OK.
+
+But be careful with `claude-opus-4-8`: the list has "claude-opus-4-8" exactly; `claude-opus-4-8-1` resolves via prefix. Fine.
+
+Also, are these "the same model" semantically? The prefix rule says any suffix is the same family. The task explicitly wants the predicate to mirror the preset rule. Good.
+
+Then near-miss A: `claude-fable-9` → warning emitted, asserting the existing message text byte-identical. Byte-identical means asserting the exact full string:
+
+```rust
+        let warn = unknown_model_warning("anthropic", "claude-fable-9")
+            .expect("a genuinely unknown id must still warn");
+        assert_eq!(
+            warn,
+            format!(
+                "{YELLOW}warning:{RESET} Unknown model 'claude-fable-9' for provider 'anthropic'. \
+                 Known models: claude-opus-5, claude-fable-5, claude-opus-4-8, claude-sonnet-5, claude-opus-4-7. \
+                 Proceeding anyway (custom models are valid)."
+            )
+        );
+```
+
+Hmm — writing the expected string as a literal is a restatement (the very defect the repo's wisdom names). But the task explicitly says "asserting on the existing message text, which stays byte-identical". A literal is the honest way to pin byte-identity (a `format!` reproducing the same template would be a restatement that can't fail). Better approach: assert on the *shape* with prefix/suffix containment plus the named parts:
+
+Actually the strongest anti-restatement approach: capture the exact expected string as a const in the test, typed once, plus assertions that the message contains the model id, the provider, and the five-id sample. If the production template changes (e.g. wording), the test fails — that's the point.
+
+But is a duplicated literal "byte-identical" check a restatement? It's a pin. It's exactly what the task asks. I'll do it with a full `assert_eq!` against a literal that is not built by re-using the production template.
+
+Then near-miss B: `claude-fable-5-1` under "deepseek" → warns, and the message names deepseek:
+```rust
+        let warn = unknown_model_warning("deepseek", "claude-fable-5-1")
+            .expect("a Claude id is not known under deepseek — #942 is a different defect");
+        assert!(warn.contains("for provider 'deepseek'"));
+        assert!(warn.contains("Unknown model 'claude-fable-5-1'"));
+```
+Also anti-vacuous: assert that the same id under anthropic returns None (so the difference is the provider, not the id).
+
+Also assert the sample list in the deepseek message contains a deepseek id.
+
+And a "control" row: a genuinely unknown id (claude-fable-9) warns both under anthropic.
+
+Also should I verify that a non-anthropic provider list membership still works: e.g. `model_is_known_for_provider("openai", "gpt-5")` → no warning. And an unknown openai id warns. Include a small control table.
+
+Also, importantly, need to keep `unknown_model_warning` used in cli.rs — the consumer. Yes.
+
+Now, one more consideration: does anything else warn "Unknown model"? prompt_retry.rs:598 uses known_models_for_provider for something (maybe a suggestion). Let me check that it's not a second warning site needing the same treatment. Line 598 area.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 585,615p src/prompt_retry… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+That's a separate diagnostic for a provider-side "model not found" error — out of scope (task scopes to the CLI warning site). Leave it.
+
+Now let me write the edits. First providers.rs helper insertion after line 133 (end of known_models_for_provider). Let me view exact text around 130-140.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/providers.rs:126..140 ✓ (0ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The previous session ran out of tokens while reading. I need to continue with the actual implementation. Let me be efficient now: I've confirmed:
+
+- Warning site: `src/cli.rs:1098-1104` — `let known = known_models_for_provider(&provider); if !known.is_empty() && !known.contains(&model.as_str()) { eprintln!(...) }`
+- Preset arms in `src/agent_builder.rs:759-768`: 5 arms — `claude-fable-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5`, `claude-haiku-4-5`. All Anthropic-only (used via `anthropic_model_config` which is only reached when `provider == "anthropic"` in `create_model_config`).
+- `known_models_for_provider` at `src/providers.rs:44`, `_ => &[]` at 134.
+
+Plan:
+1. Add `model_is_known_for_provider(provider: &str, model: &str) -> bool` to `src/providers.rs`, plus tests in that file's test module.
+2. Add a pure `unknown_model_warning(provider, model, known) -> Option<String>` in cli.rs (replacing inline eprintln) and call it. Actually simplest: keep the eprintln but gate on `model_is_known_for_provider`. But tests at the emission point need the string. Best: add pure helper `unknown_model_warning(provider: &str, model: &str) -> Option<String>` in cli.rs that does the known-list lookup + predicate and formats the message; the call site does `if let Some(msg) = unknown_model_warning(&provider, &model) { eprintln!("{msg}"); }`.
+
+Wait — but `provide_doctor`... careful: the helper returns the string with `{YELLOW}` and `{RESET}` interpolated. That's fine, matches existing tests style (`&YELLOW` used in format tests).
+
+Let me check whether `cli.rs` is over the size gate: it's registered at 7299 and actual is 7314? The register says 7299 (Day 205). Actual file is 7314 lines per repo structure header... hmm, the structure says 7314 lines. And the register records 7299. REGISTER_DRIFT_GRACE_LINES = 100, so 15 lines over recorded is within grace (non-fatal warning). If I add ~40 lines, that's 55 over — still within 100 grace, non-fatal. But then a subsequent session sees drift. Better to update the register entry to the new count if I add lines. Actually the register's message says "paste (\"{path}\", {lines}) over its entry". Non-fatal warnings don't fail the test. But to be a good citizen, I'll update the registered number if I add lines to cli.rs. Hmm, but the task says max 2 source files; tests/module_size.rs is not a source file... it's a test file. Task says "Max 2 source files" — src/cli.rs and src/providers.rs. Editing tests/module_size.rs register would be a third file. The gate's own instruction says to paste the new count, but it's non-fatal. Let me count first: if the drift is within grace, leave it. Actually, let me check the current actual line count and the registered count.
+
+Let me now write the code.
+
+For the predicate in providers.rs:
+
+```rust
+/// Whether `model` is a known id for `provider`.
+///
+/// One matching rule, consulted by every surface that asks "is this id
+/// known?" — the startup warning in `cli.rs` and the preset lookup in
+/// `agent_builder.rs` must not disagree, because they take the same input
+/// (#941: `--model claude-fable-5-1` resolved to the Fable preset, priced
+/// correctly, and still warned `Unknown model` on every turn).
+///
+/// The rule is the union of two sources and it is **provider-scoped**:
+/// the provider's own suggested list, or — for `anthropic` only — the
+/// fleet preset table in `crate::agent_builder::anthropic_preset`, which
+/// is prefix-matched so a dated or suffixed id (`claude-haiku-4-5-20251001`,
+/// `claude-fable-5-1`) resolves. The prefix list is never copied here;
+/// it is read through the same lookup the model-config path uses.
+///
+/// The scoping is the half that matters: a Claude id under
+/// `provider = "deepseek"` is NOT known, and must keep warning — the
+/// preset is Anthropic's, so resolving it under another provider would
+/// turn a true positive into a false negative.
+pub fn model_is_known_for_provider(provider: &str, model: &str) -> bool {
+    let known = known_models_for_provider(provider);
+    if !known.is_empty() && known.contains(&model) {
+        return true;
+    }
+    provider == "anthropic" && crate::agent_builder::anthropic_preset(model).is_some()
+}
+```
+
+Hmm wait: `known.contains(&model)` — `known: &[&str]`, `model: &str`. `contains(&&str)`? For `&[&str]`, `contains` takes `&&str`. `&model` where model: &str gives `&&str`. Good.
+
+But careful with provider-scoping and the `!known.is_empty()` condition: an unknown provider returns empty list; then `provider == "anthropic"` false → false. Good.
+
+Now cli.rs helper:
+
+```rust
+/// The `Unknown model` warning for a genuinely unknown id, or `None`.
+///
+/// Pure and table-tested at the emission point: the string returned here is
+/// the string the caller prints, byte for byte — the existing wording
+/// (`Proceeding anyway (custom models are valid).`) is read by other tests
+/// and by user habit, so it is unchanged.
+pub(crate) fn unknown_model_warning(provider: &str, model: &str) -> Option<String> {
+    if crate::providers::model_is_known_for_provider(provider, model) {
+        return None;
+    }
+    let known = known_models_for_provider(provider);
+    if known.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{YELLOW}warning:{RESET} Unknown model '{model}' for provider '{provider}'. \
+         Known models: {}. Proceeding anyway (custom models are valid).",
+        known.iter().take(5).copied().collect::<Vec<_>>().join(", ")
+    ))
+}
+```
+
+Hmm — `pub(crate)` vs `pub`. cli.rs is a lib module; `pub(crate)` is fine for tests inside src (unit tests) — yes, `#[cfg(test)] mod tests` inside cli.rs can access pub(crate). Good.
+
+But dead-code: `pub(crate)` fn used only in cli.rs is used, fine.
+
+Now the call site:
+
+```rust
+    // Warn if model isn't in the known list for first-party providers
+    if let Some(warning) = unknown_model_warning(&provider, &model) {
+        eprintln!("{warning}");
+    }
+```
+
+Wait, original condition: `!known.is_empty() && !known.contains(&model.as_str())`. My helper preserves: known empty → None (no warning). Good, byte-identical message.
+
+Hmm, one subtlety: the original never warned when `known` is empty; my helper checks `model_is_known_for_provider` first, which for empty-known providers: `known.contains` false, and provider=="anthropic" check — anthropic has non-empty list anyway. So fine.
+
+Now tests at emission point. Where? "tests in whichever file owns the helper". cli.rs's test module. Let me check cli.rs has a tests module.
+
+Test table:
+- `("anthropic", "claude-fable-5")` → None
+- `("anthropic", "claude-fable-5-1")` → None
+- other prefix families: `claude-opus-5-20260724`? Step 1 says at minimum claude-fable-5 and claude-fable-5-1 under its own provider. I'll add rows for all 5 prefix arms with suffixed ids: e.g. `claude-opus-5-1`, `claude-opus-4-8-1`, `claude-sonnet-5-1`, `claude-haiku-4-5-1`.
+- near-miss A: `claude-fable-9` under anthropic → Some, exact string assert_eq! with the YELLOW/RESET markers.
+- near-miss B: `claude-fable-5-1` under deepseek → Some.
+- anti-vacuous: assert each fixture id really is resolved by the prefix rule: `assert!(crate::agent_builder::anthropic_preset(id).is_some())` and that it is NOT in the literal list (`assert!(!known_models_for_provider("anthropic").contains(&id))`) — that proves the test isn't passing by the list already containing it. That's the key anti-vacuous assertion: each no-warning row is no-warning *because of the preset rule*, not because the id was added to the list.
+
+Also assert near-miss A `claude-fable-9` is NOT preset-resolved: `assert!(anthropic_preset("claude-fable-9").is_none())`.
+
+But careful: for `claude-fable-9` — starts_with("claude-fable-5")? No. Good. What about `claude-haiku-4-5-1`: starts_with("claude-haiku-4-5") → yes. And is it in the literal list? list has "claude-haiku-4-5" and "claude-haiku-4-5-20251001" — not "claude-haiku-4-5-1". Good.
+
+`claude-opus-5-1`: starts_with("claude-opus-5") → yes; list has "claude-opus-5" only. Good.
+`claude-opus-4-8-1`: starts_with("claude-opus-4-8") → yes; list has "claude-opus-4-7", "claude-opus-4-6" but not 4-8. Wait — prefix order matters in anthropic_preset: checked `claude-fable-5`, `claude-opus-5`, `claude-opus-4-8`, ... `claude-opus-4-8-1` matches arm 3. Good, and it's not in the list. Good.
+`claude-sonnet-5-1`: starts_with("claude-sonnet-5") → yes; not in list. Good.
+
+Also need to be careful: does `claude-opus-4-7` (in the list) resolve via preset? No arm. It's in the list so contains → known. Fine.
+
+Now the emission-point test asserts on the string a caller receives — `unknown_model_warning` returns the exact string the caller passes to eprintln!, so asserting on it is the emission point (the caller does `eprintln!("{warning}")`, no interpolation at the call site). Good.
+
+Let me also check `known_models_for_provider` is imported in cli.rs already (yes, line 16 re-exports it as `pub use`, so `known_models_for_provider(...)` is in scope via the re-export). Careful: re-exported `pub use crate::providers::{... known_models_for_provider ...}` inside cli.rs means the name is in scope in cli.rs. Yes, `use` brings it into scope.
+
+Also `crate::providers::model_is_known_for_provider` — I'll just call `crate::providers::model_is_known_for_provider`.
+
+Now let me check whether there might be a doc/CLAUDE.md statement about "Unknown model". Probably not needed. Let me check docs for mention.
+
+Let me start editing now — act early.
+
+One more consideration: where in cli.rs to put the helper — right before the call site, after `parse_model_config`? Actually the call site is inside a function around line 1098. Let me place the helper just above that function or immediately after it. I'll place it right after the enclosing function ends (line ~1125).
+
+Let me look at lines 1090-1130 precisely.
+────────────────────────────────────────────────────────────────────────────────
+
+Good — I have the three facts I needed. Let me confirm the exact call site and make the edits now.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1090..1126  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli.rs src/providers.r… ✓ (1ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me write the predicate in providers.rs first (step 2 — definition and consumer in the same edit; I'll do providers.rs definition + cli.rs call site in successive quick edits, then test).
+
+Actually, "definition and its call site in the same edit" — practically, I'll make both edits immediately back to back before running any build.
+
+Edit 1: providers.rs — add predicate after `known_models_for_provider` (line 136).
+Edit 2: cli.rs — add helper + replace call site.
+
+Let me do them.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+Now the fix. First the shared predicate in providers.rs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/providers.rs (2 → 30 lines)
+  + /// Whether `model` is a **known** id for `provider`.
+  + ///
+  + /// One matching rule, consulted by every surface that asks "is this id known?"
+  + /// — the startup warning (`cli::unknown_model_warning`) and the model-config
+  + /// path (`agent_builder::anthropic_preset`) must not disagree, because they
+  + /// take the same input. #941: `--model claude-fable-5-1` resolved to the Fable
+  + /// preset and priced correctly, while the warning used an *exact* list match
+  + /// and told the user the model was unknown on every turn.
+  + ///
+  + /// The rule is the union of two sources: the provider's own suggested list, or
+  + /// — **for `anthropic` only** — the fleet preset table, which is prefix-matched
+  + /// so a dated or suffixed id (`claude-haiku-4-5-20251001`, `claude-fable-5-1`)
+  + /// resolves. The prefix list is never copied here; it is read through the same
+  + /// lookup `create_model_config` uses, so the next rename cannot make the two
+  + /// rules drift apart again.
+  + ///
+  + /// The provider scoping is the half that matters: a Claude id under
+  + /// `provider = "deepseek"` is **not** known and must keep warning. The presets
+  + /// are Anthropic's, so resolving them under another provider would trade the
+  + /// false positive this fixes for a false negative in its place.
+  ... (10 more lines)
+ ✓ (12.1s)
+  + /// Whether `model` is a **known** id for `provider`.
+  + ///
+  + /// One matching rule, consulted by every surface that asks "is this id known?"
+  + /// — the startup warning (`cli::unknown_model_warning`) and the model-config
+  + /// path (`agent_builder::anthropic_preset`) must not disagree, because they
+  + /// take the same input. #941: `--model claude-fable-5-1` resolved to the Fable
+  + /// preset and priced correctly, while the warning used an *exact* list match
+  + /// and told the user the model was unknown on every turn.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Expected — now the call site in the same edit chain.
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the call site comes now:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (9 → 7 lines)
+  -     // Warn if model isn't in the known list for first-party providers
+  -     let known = known_models_for_provider(&provider);
+  -     if !known.is_empty() && !known.contains(&model.as_str()) {
+  -         eprintln!(
+  -             "{YELLOW}warning:{RESET} Unknown model '{model}' for provider '{provider}'. \
+  -              Known models: {}. Proceeding anyway (custom models are valid).",
+  -             known.iter().take(5).copied().collect::<Vec<_>>().join(", ")
+  -         );
+  +     // Warn if model isn't known for this provider. The check goes through
+  +     // `providers::model_is_known_for_provider` — the same resolution rule the
+  +     // model-config path uses — rather than a second rule over the same input
+  +     // (#941: a prefix-resolved fleet id used to warn about itself every turn).
+  +     if let Some(warning) = unknown_model_warning(&provider, &model) {
+  +         eprintln!("{warning}");
+        }
+ ✓ (10.4s)
+  -     // Warn if model isn't in the known list for first-party providers
+  -     let known = known_models_for_provider(&provider);
+  -     if !known.is_empty() && !known.contains(&model.as_str()) {
+  -         eprintln!(
+  -             "{YELLOW}warning:{RESET} Unknown model '{model}' for provider '{provider}'. \
+  -              Known models: {}. Proceeding anyway (custom models are valid).",
+  -             known.iter().take(5).copied().collect::<Vec<_>>().join(", ")
+  -         );
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1108..1118 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1119..1133 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the pure warning composer, placed next to its call site:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (3 → 3 lines) ✓ (183ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Oops, I accidentally removed a blank line? No — I intended to insert the helper but I actually submitted the same text. The error says unexpected closing delimiter at 1131 — meaning I deleted the doc comment lines? Let me look at 1120-1140.
+
+Ah, I see: my old_text ended with a trailing newline and the new_text didn't, so it merged?? Actually the error suggests the function signature line got removed. Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1120..1138 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+My edit merged lines (the file has no trailing newline handling... actually it merged the doc line with `fn`). Fix it and insert the helper in one edit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (3 → 27 lines)
+  + /// The `Unknown model` warning for a genuinely unknown id, or `None` when the
+  + /// id is known — the string returned is the string the caller prints, byte for
+  + /// byte, so tests can assert at the emission point rather than one layer below.
+  + ///
+  + /// "Known" means `providers::model_is_known_for_provider`, i.e. the same
+  + /// resolution rule the model-config path uses (#941). The wording itself is
+  + /// deliberately unchanged — other tests and user habit read it, and this
+  + /// change is about *when* it fires, not what it says.
+  + pub(crate) fn unknown_model_warning(provider: &str, model: &str) -> Option<String> {
+  +     if crate::providers::model_is_known_for_provider(provider, model) {
+  +         return None;
+  +     }
+  +     let known = known_models_for_provider(provider);
+  +     if known.is_empty() {
+  +         return None;
+  +     }
+  +     Some(format!(
+  +         "{YELLOW}warning:{RESET} Unknown model '{model}' for provider '{provider}'. \
+  +          Known models: {}. Proceeding anyway (custom models are valid).",
+  +         known.iter().take(5).copied().collect::<Vec<_>>().join(", ")
+  ... (8 more lines)
+ ✓ (1m 19s)
+  + /// The `Unknown model` warning for a genuinely unknown id, or `None` when the
+  + /// id is known — the string returned is the string the caller prints, byte for
+  + /// byte, so tests can assert at the emission point rather than one layer below.
+  + ///
+  + /// "Known" means `providers::model_is_known_for_provider`, i.e. the same
+  + /// resolution rule the model-config path uses (#941). The wording itself is
+  + /// deliberately unchanged — other tests and user habit read it, and this
+  + /// change is about *when* it fires, not what it says.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (127ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, it says finished in 0.10s — did it actually rebuild? Maybe the auto-check watcher already built it. Let's confirm with `cargo check` after touching... Actually the auto-check watcher probably compiled. Fine, build succeeded.
+
+Wait — it said "Finished" quickly, meaning nothing to do, so the previous auto-check build already succeeded. Good.
+
+Now add tests. Emission-point tests in cli.rs's `mod tests` (line ~2864+something now) plus maybe an anti-vacuous row. Let me look at the tests module head in cli.rs to match style.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:2884..2898 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the emission-point tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (5 → 79 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     /// #941 — the warning must consult the *preset* resolution rule, not a
+  +     /// second exact-match rule over the same id.
+  +     ///
+  +     /// The rows assert on the string a caller receives from
+  +     /// `unknown_model_warning`, which is the exact string the call site hands
+  +     /// to `eprintln!` — the emission point, not the helper's internals.
+  +     #[test]
+  +     fn test_prefix_resolved_fleet_ids_do_not_warn_but_unknown_ones_still_do() {
+  +         let anthropic = known_models_for_provider("anthropic");
+  + 
+  +         // Rows that must go silent: every prefix family the preset table backs
+  +         // (step 1 enumerated all five arms of `anthropic_preset`), each with a
+  +         // suffix the exact list does not carry.
+  +         let silent = [
+  +             "claude-fable-5",
+  +             "claude-fable-5-1",
+  ... (59 more lines)
+ ✓ (1m 15s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     /// #941 — the warning must consult the *preset* resolution rule, not a
+  +     /// second exact-match rule over the same id.
+  +     ///
+  +     /// The rows assert on the string a caller receives from
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib cli::tests::tes… ✓ (110ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo test_prefi… ✓ (108ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Right — `claude-fable-5` IS in the literal list (it's the base id). So the anti-vacuous "absent from list" assertion applies only to the suffixed rows; the base id is a control showing the list path also works. Let me split: separate the base id (in both) from the suffixed ids.
+
+I'll restructure: 
+- control row: `claude-fable-5` (in the list AND preset-resolved) → None.
+- suffixed rows: assert absent from list + preset-resolved → None.
+
+Let me rewrite that block.
+────────────────────────────────────────────────────────────────────────────────
+
+The base id is legitimately in the list — that's my anti-vacuous guard doing its job. Let me split control rows from the substituted rows:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (30 → 37 lines)
+  -         // Rows that must go silent: every prefix family the preset table backs
+  -         // (step 1 enumerated all five arms of `anthropic_preset`), each with a
+  -         // suffix the exact list does not carry.
+  +         // Rows that must go silent. The first is the control: the base id is in
+  +         // the literal list *and* preset-backed, so it must have been silent
+  +         // before this fix too.
+  +         assert_eq!(
+  +             unknown_model_warning("anthropic", "claude-fable-5"),
+  +             None,
+  +             "the listed base id must stay silent"
+  +         );
+  + 
+  +         // The rest carry a suffix the exact list does not hold — one per prefix
+  +         // family `anthropic_preset` backs (step 1 found five arms).
+            let silent = [
+  -             "claude-fable-5",
+                "claude-fable-5-1",
+                "claude-opus-5-1",
+                "claude-opus-4-8-1",
+ ✓ (1m 21s)
+  -         // Rows that must go silent: every prefix family the preset table backs
+  -         // (step 1 enumerated all five arms of `anthropic_preset`), each with a
+  -         // suffix the exact list does not carry.
+  +         // Rows that must go silent. The first is the control: the base id is in
+  +         // the literal list *and* preset-backed, so it must have been silent
+  +         // before this fix too.
+  +         assert_eq!(
+  +             unknown_model_warning("anthropic", "claude-fable-5"),
+  ... (11 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo test_prefi… ✓ (124ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me now verify the mutation control (positive control), then run the full check suite.
+
+Let me run the full test suite first. Actually, let me be efficient given context. Let me run the full checks.
+
+Actually, first let me do the positive control atomically: neuter `model_is_known_for_provider` to always return false (so the prefix-resolved ids warn again) and confirm the test fails, then restore. And a second control: widen provider scope (return true regardless of provider) and confirm near-miss B fails.
+
+Let me do that in one atomic command with sed and git checkout within a single bash invocation... better: use a temp patch approach. Let me write it as one atomic command using python to patch and restore.
+
+Simplest: use `cp src/providers.rs /tmp/p.bak`, sed the change, run test, restore from backup, in one command chained with `;`. Even if the test fails (non-zero exit), the restore still runs because of `;`.
+
+Then also verify the #942-scope control: make the predicate provider-blind and check near-miss B fails.
+
+Let me run both controls serially.
+────────────────────────────────────────────────────────────────────────────────
+
+Test passes. Now the positive controls — run serially, each as one atomic mutate→run→restore command.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/provi… (10 lines) ✓ (19.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Control 1 reddens correctly. Now control 2: provider-blind (drop the `provider == "anthropic"` scope) → near-miss B must fail.
+
+The line is now `if !known.is_empty() && known.contains(&model) { return true; }` then `provider == "anthropic" && ...`. To make provider-blind, replace with just `crate::agent_builder::anthropic_preset(model).is_some()`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/provi… (9 lines) ✓ (18.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both controls reddened by name on the right rows, and both restored. Let me verify no NEUTERED markers remain and run the full verification suite.
+
+Also: does the model-resolution path in `dispatch_sub.rs` or elsewhere have a similar exact-match check? Let me check for other exact-match known-model warnings quickly. The task only asked for src/cli.rs + providers.rs though. But the task said "One matching rule" — let me quickly check if there's another `known.contains` warning site.
+
+Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "NEUTERED\|SABOTAGE\|DO…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17ms)
+ ✓ (13.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No other warning site with the exact-match pattern (only my new one). Clean of markers. fmt + clippy pass.
+
+Now run the full test suite and fmt check.
+
+Also need to check the module size gate: src/cli.rs grew by ~+23 (the warning composer) +37 (tests). Baseline 7314 → let me check current lines and whether it exceeds the register entry (7299, over by 100 → fatal at >7399).
+
+Current: let me check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.1s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli.rs src/providers.r… ✓ (1m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+cli.rs is 7416, register says 7299 → +117. The patience band is 100 → fatal. Wait: `REGISTER_DRIFT_GRACE_LINES = 100` and `GrewFarPastCeiling` is fatal when `lines - ceiling > 100`. 7416 - 7299 = 117 > 100 → fatal.
+
+Hmm, but wait — did the watch/clippy gate already complain? The auto-check after my edit said "Auto-check failed" but truncated. Let me run the module size test explicitly.
+
+Actually hold on: it was 7314 before my edits and register = 7299 → already +15, within band. I added ~102 lines (23 for the composer + 37 tests... let me count: composer fn ~27 lines, tests ~66 lines). So +102 → 7416. That trips the fatal band.
+
+I need to shrink. Options:
+1. Move the warning composer's tests to a smaller home (but they must be at the emission point — they can live in any module as long as they call `unknown_model_warning`; tests only exist in `#[cfg(test)]` so they'd add lines to another file).
+2. Register the new number with a reason — but the module size register is a debt ratchet; registering a +117 growth is "absorbing debt" which the gate's own comments discourage, but the gate explicitly offers that path ("paste ("{path}", {lines}) over its entry ... and say why in the commit message"). However, task constraint: "Max 2 source files" — tests/module_size.rs is a test file, would be a 3rd file. Constraint says "Max 2 source files" — tests/module_size.rs is not a source file per se, but risky.
+
+3. Better: trim the tests to be more compact — the assertion message strings are long. Let me compact.
+
+I need to shed ~18+ lines to get under 7400 (need lines ≤ 7399 to be within 100 of 7299... actually `lines - ceiling <= 100` → lines <= 7399). I need to cut ~17 lines minimum. Cutting to well under, say ~7380, gives margin.
+
+Where to cut? The tests are verbose. The expected-message `format!` blocks are 3 lines each × 2. I could collapse by asserting on the composed message via a helper, or use `contains`-style... but the task wants byte-identical assertions. Better to keep exact assertions but make them compact.
+
+Alternative: move the helper function `unknown_model_warning` into `src/providers.rs` instead of cli.rs? No — the function uses the message text and that's fine in providers.rs. Actually `unknown_model_warning` could live in providers.rs too — it only uses `known_models_for_provider` and `model_is_known_for_provider` (both local), plus the color statics (crate::format::YELLOW/RESET). Then cli.rs's call site is a one-liner and cli.rs shrinks. And the tests could live in providers.rs, which has 471 lines — plenty of room.
+
+But the task says the warning message wording shouldn't change and other tests/user habits read it... putting the composer in providers.rs is reasonable: providers.rs is "Provider constants and utilities". And the task's step 2 says "Call it from the warning site. Keep `known_models_for_provider` as the data source". Files listed: src/cli.rs, src/providers.rs — both allowed. 
+
+Hmm, but the warning message composer arguably belongs with CLI display. But `provider_not_found`-ish diagnostics... Let me check: is there a precedent of providers.rs holding user-facing message text? Let me check what's in providers.rs — it's pure data + default models.
+
+Cleaner alternative that respects conventions: keep `unknown_model_warning` in cli.rs, but move the *tests* into `src/providers.rs`'s test module? That's awkward (testing a cli function from providers tests — fine actually, `crate::cli::unknown_model_warning` is pub(crate)).
+
+Hmm. Which is less weird? Honestly moving the composer to providers.rs is defensible: it is a diagnostic for provider/model mismatch, it is pure, and providers.rs owns the data source. But `providers.rs` has no color/format usage currently, and importing YELLOW there is a new cross-concern.
+
+Let me reconsider: how much room does cli.rs have? 7416 vs ceiling 7299. If I split something small out of cli.rs... no, too invasive.
+
+Alternative: the module_size register entry can just be updated. The gate prints the fix verbatim and allows it with a reason in the commit message. But growth of a 7300-line file by 102 lines for one warning is bad optics, and there's a named lesson in tests/module_size.rs about the register being a ratchet that only shrinks.
+
+Best: make the diff smaller. Let me compact:
+- Composer fn: doc comment is 10 lines. Could trim to 5.
+- Tests: 66 lines. Could trim to ~45.
+
+Let me count precisely and trim to fit under 7380.
+
+Actually, better idea: move the tests to `src/providers.rs`'s existing test module? Lines add to providers.rs (471 → fine). That removes ~68 lines from cli.rs, leaving 7348 — within the 100 band (7299+100=7399). That works and keeps cli.rs contained.
+
+But is it conventional? The test asserts on `unknown_model_warning` (emission point). Testing a pub(crate) cli function from providers' tests module is a bit odd but not unusual in this repo. Hmm, let me check if providers tests reference cli.
+
+Alternatively: put the composer in providers.rs AND the tests there. Then cli.rs only changes the call site (shrinks by ~4 lines net) and providers.rs grows by ~100 (no cap issue at 2000). That's the cleanest for the size gate AND keeps the composer next to its data source. Let me check whether `providers.rs` can reference `crate::format::YELLOW` — yes, same crate.
+
+Actually wait — is there a concern that cli.rs re-exports need updating? No.
+
+Hmm, but "Files: src/cli.rs, src/providers.rs (tests in whichever file owns the helper)" — exactly permits this: tests in whichever file owns the helper.
+
+Decision: move `unknown_model_warning` + tests to providers.rs. cli.rs keeps a thin call site.
+
+Wait, but there's a subtlety: the warning is a *CLI* diagnostic (it prints to stderr at startup). Putting the string in providers.rs means providers.rs owns presentation. Mild. But it also has `known_models_for_provider` with a "for diagnostic suggestions" doc comment — so diagnostics already live there. Good precedent: "Get well-known model names for a provider (for diagnostic suggestions)." That justifies it.
+
+Let me do that.
+
+Plan:
+1. In cli.rs: replace the composer fn with nothing; call `crate::providers::unknown_model_warning(...)`. Remove tests from cli.rs.
+2. In providers.rs: add `unknown_model_warning` + the tests.
+
+cli.rs net change: -9 (old inline warning) + 4 (call site) = -5. Plus nothing else. 7314 - 5 = 7309. 
+providers.rs: 443 + ~110 = 553. Fine.
+
+Let me do it.
+────────────────────────────────────────────────────────────────────────────────
+
+src/cli.rs is now 7416 lines against a register ceiling of 7299 — that trips the module-size gate's fatal band. Moving the composer and its tests to providers.rs (which owns the model data and has room) instead of registering growth:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+7312 vs ceiling 7299 → +13, within the 100 band. Good, and the gate will print "not fatal — growth of an already-capped module is information". That's acceptable.
+
+Hmm, +13 is fine (within REGISTER_DRIFT_GRACE_LINES=100). But ideally I'd not grow at all. 7314 was the pre-change baseline — actually pre-change it was 7314 and register 7299 → +15. Now 7312 → +13. I actually shrank the file by 2 lines net. 
+
+Now add composer + tests to providers.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+cli.rs is now 7312 — below the pre-change 7314, so no register change needed. Now the composer and tests land in providers.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (41 lines) ✓ (3.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`providers.rs` doesn't have `use crate::format::*`. The color statics live in `crate::format`. Currently cli.rs had `use crate::format::*`. Let me reference them as `crate::format::YELLOW`. Simplest: use the inline format args with `{YELLOW}` requires them in scope. Instead, change the string to use positional args? Cleaner: add `use crate::format::{RESET, YELLOW};` at the top of providers.rs — but that's a pub static in format, accessible.
+
+Wait, is `YELLOW` accessible from providers.rs? Yes, `pub static YELLOW` in format/mod.rs, and `crate::YELLOW` re-export exists. Add the import.
+
+Hmm, but that means providers.rs (a data/utility module) now imports display colors. That's the coupling I worried about. Alternative: keep the composer in cli.rs and move only the tests to providers.rs. That was my earlier option. cli.rs then = 7312 + 23 = 7335 → +36 over 7299, within the 100 band. Fine!
+
+Actually wait — the current cli.rs is 7312 with composer removed. Adding composer back → 7335. Register 7299 → +36, within the 100-line band (non-fatal "information"). That's acceptable and keeps presentation in cli.rs where `use crate::format::*` already is.
+
+Hmm, but which is better? +36 drift on a grandfathered file vs. a new format import in providers.rs. The gate permits both. Convention-wise, the warning text is CLI presentation → cli.rs. And providers.rs stays a pure data module. I'll move the composer back to cli.rs and leave only the tests in providers.rs.
+
+Wait, but tests in providers.rs reference `unknown_model_warning` → would be `crate::cli::unknown_model_warning`. That's a cross-module test, a bit odd. Alternatively keep tests in cli.rs too and accept 7335+81=7416 → fatal. No.
+
+Third option: keep everything in cli.rs but make the tests much more compact. 81 lines of tests → could I get to ~45? Then 7312+23+45 = 7380 → +81 over 7299, within band. That works and keeps everything cohesive in cli.rs!
+
+Let me evaluate: is +81 acceptable? The band is 100 and non-fatal. The register's doc says growth of an already-capped module is "information, not an emergency". It's allowed, though the ratchet philosophy prefers no growth.
+
+Honestly, the cleanest architecture: composer in cli.rs (presentation), tests in cli.rs (emission point). Just need the tests compact. Let me try to compact the test block to ≤ 45 lines.
+
+Hmm, but compactness hurts readability of a deliberately verbose assertion table.
+
+Let me reconsider once more: is the color import in providers.rs really so bad? providers.rs already is `//! Provider constants and utilities — known providers, API key env vars, default models.` Adding a user-facing warning string is a scope widening.
+
+Decision: composer → cli.rs (revert the move), tests → cli.rs, and trim the test block to fit under the band. Let me measure how much I must trim: need cli.rs ≤ 7399. Currently 7312 with composer+tests removed. Adding composer (23) + tests (81) = 7416. Need ≤ 7399 → trim 17 lines from tests.
+
+Let me trim: shorten the two `format!` expected strings by using a smaller `once` helper... Actually simpler: extract a local closure that builds the expected message, then each row is 6 lines instead of 8? Hmm.
+
+Alternative trim: remove the near-miss A `format!` (3-line) exact text and instead assert it contains "Unknown model 'claude-fable-9'" plus equals the pre-existing 5-model lead... but byte-identical assertion is what the task wants.
+
+Hmm, what about combining: define
+```rust
+let expect = |id: &str, prov: &str| format!("{YELLOW}warning:{RESET} Unknown model '{id}' for provider '{prov}'. Known models: {}. Proceeding anyway (custom models are valid).", known_models_for_provider(prov).iter().take(5).copied().collect::<Vec<_>>().join(", "));
+```
+Wait — that would re-derive the expected from the same source, making the test agree with itself (mildly). Hmm, but the *list text* isn't the thing under test; the thing under test is whether it fires. Reusing `known_models_for_provider` to build the expected "Known models:" clause is arguably fine but weakens the byte-identical claim for wording. The wording (the surrounding sentence) would still be a literal.
+
+That closure saves ~4 lines total. Not enough.
+
+OK, let me just go with tests in providers.rs after all — a cross-module test calling `crate::cli::unknown_model_warning`. Actually no...
+
+Hold on. Let me reconsider option: keep composer in providers.rs WITH the color import. Is there precedent for format coupling in providers.rs? Let me check if providers.rs already imports crate::format anywhere... It didn't compile with YELLOW, so no.
+
+Alternatively, the composer could avoid colors by returning the message without the color prefix... no, must be byte-identical.
+
+Alternatively put `unknown_model_warning` in cli.rs and put the *table test* in `tests/` integration? No, can't reach pub(crate).
+
+Let me just check: how much wiggle room does cli.rs actually have? Let me re-verify the register test's actual verdict by running it — maybe the band applies to the *ceiling* differently (e.g. drift band is 100 so 7416-7299=117 fatal). Let me just run that test now to get the gate's own reading.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check the module size gate's actual verdict on cli.rs at 7312 vs 7299 (+13, non-fatal) and what it would be with the tests back in cli.rs.
+
+Let me run the module_size test now to see the gate's reading (it may print a warning).
+
+Actually, let me now examine: does the growth band warn? Let me just run it.
+
+Then decide: add composer+tests to cli.rs → 7312+23+81 = 7416 (+117, fatal). So I MUST either compact the tests or register.
+
+Let me trim the test block. Let me write a tighter version aiming for ~44 lines.
+
+Ideas for compactness while keeping strength:
+- Drop the 5-family loop and test just fable-5-1 + haiku-4-5-1 (the task says "at minimum claude-fable-5 and claude-fable-5-1"). But I found 5 arms; covering all is stronger. Each loop row is compact already (the loop body is ~17 lines).
+- Use a table of (id, provider, expect_warn) rows in one loop → each row 1 line, loop body ~8 lines. That's much more compact AND reads as a table, which the task asked for ("table: ... rows").
+
+Let me restructure as a genuine table:
+
+```rust
+    #[test]
+    fn test_prefix_resolved_fleet_ids_do_not_warn_but_unknown_ones_still_do() {
+        // (id, provider, must_warn). Rows 1-5 are preset-resolved under
+        // anthropic: each carries a suffix the literal list does not hold, so a
+        // silent row proves the prefix rule did the work. Row 6 is a genuine
+        // near-miss of the same shape; row 7 is the same id under a different
+        // provider, kept warning because the preset table is Anthropic's.
+        let rows = [
+            ("claude-fable-5-1", "anthropic", false),
+            ("claude-opus-5-1", "anthropic", false),
+            ("claude-opus-4-8-1", "anthropic", false),
+            ("claude-sonnet-5-1", "anthropic", false),
+            ("claude-haiku-4-5-1", "anthropic", false),
+            ("claude-fable-9", "anthropic", true),
+            ("claude-fable-5-1", "deepseek", true),
+        ];
+        for (id, provider, must_warn) in rows {
+            // ANTI-VACUOUS: every silent row must really be preset-resolved and
+            // really absent from the literal list, or it tests nothing.
+            if !must_warn {
+                assert!(
+                    crate::agent_builder::anthropic_preset(id).is_some()
+                        && !known_models_for_provider(provider).contains(&id),
+                    "{id} must be preset-resolved and unlisted for this row to mean anything"
+                );
+            }
+            let warning = unknown_model_warning(provider, id);
+            assert_eq!(
+                warning.is_some(),
+                must_warn,
+                "{id} under {provider}: expected warning={must_warn}, got {warning:?}"
+            );
+        }
+        ...
+    }
+```
+
+Then the byte-identical assertions for near-misses on 2 rows, compact:
+```rust
+        // The wording for genuinely unknown ids stays byte-identical.
+        let unknown = |id: &str, p: &str| {
+            format!(
+                "{YELLOW}warning:{RESET} Unknown model '{id}' for provider '{p}'. Known models: {}. \
+                 Proceeding anyway (custom models are valid).",
+                known_models_for_provider(p).iter().take(5).copied().collect::<Vec<_>>().join(", ")
+            )
+        };
+        for (id, p) in [("claude-fable-9", "anthropic"), ("claude-fable-5-1", "deepseek")] {
+            assert_eq!(unknown_model_warning(p, id), Some(unknown(id, p)));
+        }
+```
+Hmm, that re-derives the expected using the same data source → the "Known models" clause is self-derived. But it still pins the *sentence wording* literally, and the list content is a separate matter (already covered by providers tests). Acceptable? It weakens byte-identity a bit. 
+
+Hmm. Risk: this is exactly the "fixture agrees with itself" smell. But the assertion still literally contains the sentence template, so a wording change breaks it. The `known_models_for_provider(provider).take(5)` part being derived means the list ordering/truncation isn't pinned by this test — but that's pre-existing behavior, and providers.rs tests pin the lists.
+
+Wait — is this a "positive control that can't discriminate"? No: it discriminates a wording change and a fire/don't-fire change.
+
+Hmm, but honestly, for near-miss A the task explicitly says "asserting on the existing message text, which stays byte-identical". Deriving the list half from the data source is a partial weakening of that. I'd rather keep full literals for at least one row.
+
+Let me just count the compact version. Let me write it and measure. I'll keep full literals for near-miss A (the anthropic row, 5 models listed) and use the derived form only... no, keep both literal but shorter by using a shared `format!` with the list inline? 
+
+Let me try: literal for the deepseek row (3 models, shorter) and the anthropic row. Each literal is 5 lines. Two = 10 lines. Plus table 7 + loop 15 + control 6 = ~38. Total ~50. 7312+23+50 = 7385 → +86, within band (≤7399). That fits!
+
+Let me write exactly that.
+
+Plan for test file content (~50 lines):
+1. control base id silent (4 lines)
+2. table comment + rows (9 lines)
+3. loop with anti-vacuous + assert (14 lines)
+4. near-miss A literal assert (6 lines)
+5. near-miss B literal assert (6 lines)
+6. openrouter None (3 lines)
+Total ~42-45 + doc comment 8 = ~52. → 7312+23+52 = 7387. OK.
+
+Let me write it precisely and measure.
+────────────────────────────────────────────────────────────────────────────────
+
+Now rewrite the tests as a compact table inside cli.rs so the file stays inside the register's drift band:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/t… (74 lines) ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+71 lines. 7312 + 23 (composer) + 71 = 7406 → +107 vs 7299 → fatal by 7 lines. Need to shave ~10 more.
+
+Let me trim: the long doc comment (8 lines) → 4. And some comments.
+
+Actually, let me reconsider the whole approach once more. Maybe a legitimate option: the module-size gate's fix path says "paste ("{path}", {lines}) over its entry ... or move the new code to a smaller module." I've been trying to avoid both. But honestly `cli.rs` at 7312 was already 15 over its ceiling. Growing to 7406 (+107) is genuinely absorbing debt.
+
+Better idea: **move the composer AND tests to providers.rs but avoid the color import** by... hmm, the colors.
+
+Wait — what if the tests live in providers.rs and the composer stays in cli.rs? Then cli.rs = 7312 + 23 (composer) = 7335 (+36, fine), providers.rs = 472 + 71 = 543 (fine). The test would call `crate::cli::unknown_model_warning`. Cross-module test in providers.rs's test module: `use super::*` then `crate::cli::unknown_model_warning`. Is that "tests in whichever file owns the helper"? The task says tests in whichever file owns the helper — so tests should be with the helper, i.e. cli.rs. Hmm, the parenthetical just allows either file.
+
+Architecturally, which is less bad? A test in providers.rs reaching into cli is odd because providers deliberately doesn't depend on cli (cli re-exports providers — a cycle would appear at module level but Rust allows intra-crate cycles).
+
+Alternative cleanest: keep everything in cli.rs and trim 10+ lines. Let me trim aggressively — the doc comment and redundant comments. I can cut:
+- doc comment 8 → 5 (-3)
+- "The control:" comment 2 → 1 (-1)
+- rows comment 6 → 3 (-3)
+- anti-vacuous comment 4 → 3 (-1)
+- wording comment 1 → keep
+Total -8. Need ~7-10.
+
+Also I could merge the two literal assertions using a helper closure that takes the full expected string... they're already minimal.
+
+Alternatively: drop the openrouter row (-3). It's a nice near-miss but not required by the task and covered by the existing `known.is_empty()` guard. Hmm, it guards the `known.is_empty()` early return in my new composer — that IS new behavior I wrote. Keep it but on one line... it's already 2 lines.
+
+Let me instead reduce: remove near-miss A's literal (6 lines) and rely on the table's `must_warn=true` + the deepseek literal (which pins the same sentence template with a different provider)? No — the task explicitly wants near-miss A asserting on the existing message text. The deepseek literal does pin the exact sentence template byte-for-byte. Honestly the sentence template is identical; asserting it once with a literal pins the wording. But the task said near-miss A should assert the existing message text. I'd rather keep both.
+
+OK: plan = trim comments by ~10 lines. Let me rewrite compactly and measure precisely, targeting ≤ 60 test lines → 7312+23+60 = 7395 (+96) ✓ within 100.
+
+Let me write a tighter version.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/t… (80 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+7401 - 7299 = 102 → still 2 over the fatal boundary (100). Need ≤ 7399. Trim 2 more lines.
+
+Let me trim the composer doc comment by 2 lines (23 → 21): 7399 exactly is within band (`lines - ceiling <= grace` → 100 <= 100 ✓). Let me aim for margin: trim 4 → 7397.
+
+Composer doc comment currently 9 lines. Let me cut 4.
+
+Actually let me look at the composer text as it landed in cli.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1125,1150p src/cli.rs ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (9 → 21 lines)
+    /// The `Unknown model` warning for a genuinely unknown id, or `None` when the
+  - /// id is known — the string returned is the string the caller prints, byte for
+  - /// byte, so tests can assert at the emission point rather than one layer below.
+  + /// id is known — the returned string is exactly what the caller prints, so
+  + /// tests assert at the emission point, not one layer below.
+    ///
+  - /// "Known" means `providers::model_is_known_for_provider`, i.e. the same
+  - /// resolution rule the model-config path uses (#941). The wording itself is
+  - /// deliberately unchanged — other tests and user habit read it, and this
+  - /// change is about *when* it fires, not what it says.
+  + /// "Known" is `providers::model_is_known_for_provider`, the same rule the
+  + /// model-config path uses (#941). The wording is unchanged: other tests and
+  + /// user habits read it, and this is about *when* it fires, not what it says.
+    pub(crate) fn unknown_model_warning(provider: &str, model: &str) -> Option<String> {
+  +     if crate::providers::model_is_known_for_provider(provider, model) {
+  +         return None;
+  +     }
+  +     let known = known_models_for_provider(provider);
+  +     if known.is_empty() {
+  +         return None;
+  ... (7 more lines)
+ ✓ (169ms)
+    /// The `Unknown model` warning for a genuinely unknown id, or `None` when the
+  - /// id is known — the string returned is the string the caller prints, byte for
+  - /// byte, so tests can assert at the emission point rather than one layer below.
+  + /// id is known — the returned string is exactly what the caller prints, so
+  + /// tests assert at the emission point, not one layer below.
+    ///
+  - /// "Known" means `providers::model_is_known_for_provider`, i.e. the same
+  - /// resolution rule the model-config path uses (#941). The wording itself is
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+My edit duplicated: my new_text included the whole function body while old_text only had the doc comment + signature. So now there are two bodies. Let me look and fix.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1125,1165p src/cli.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+As I suspected — my replacement re-inserted the body. Removing the duplicate block:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (24 lines) ✓ (3.4s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The file structure is now correct. The remaining build error is that the call site still refers to `unknown_model_warning` unqualified — I removed the `crate::providers::` prefix when moving it back. Let me check line 1101 and fix.
+
+At cli.rs:1101 the call is `if let Some(warning) = unknown_model_warning(&provider, &model) {` — that should now resolve since the fn is defined in cli.rs. Wait, the error says cannot find function `unknown_model_warning`. Hmm, maybe that build output was from before... no, build ran after. Let me re-check: is the function inside another function scope? Line 1125 shows it at top level. Let me rebuild and see the full error.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -30 ✓ (3.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 1 lines)
+  -     if let Some(warning) = crate::providers::unknown_model_warning(&provider, &model) {
+  +     if let Some(warning) = unknown_model_warning(&provider, &model) {
+ ✓ (1m 18s)
+  -     if let Some(warning) = crate::providers::unknown_model_warning(&provider, &model) {
+  +     if let Some(warning) = unknown_model_warning(&provider, &model) {
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && ca… ✓ (226ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green. Now fmt, clippy, full test, and the module-size gate:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli.rs src/providers.r… ✓ (2ms)
+ ✓ (12.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+7400 vs registered 7299 = +101, one over the 100 drift band. Now that fmt has run, let me see if I can trim a line or two. Actually, let me reconsider: maybe trimming the composer doc by 2 lines is cleanest. Let me look at what fmt did and count precisely.
+
+Actually — hold on. Let me reconsider a cleaner option: put the *composer* in providers.rs (it has room: 472, cap 2000), not cli.rs. The only blocker was `YELLOW`/`RESET` not being in scope. `providers.rs` could `use crate::format::{RESET, YELLOW};` — but does that create a cycle? providers is used by format? Let me check: `src/format/mod.rs` uses providers? `src/format/cost.rs:1725` uses `crate::providers::known_models_for_provider` — but only inside a test. Rust modules in one crate can reference each other cyclically anyway (no cycle restriction within a crate).
+
+That's the cleaner home: the composer belongs next to the predicate it wraps. Then cli.rs keeps only: the call site + the tests. Tests in cli.rs would still add ~65 lines → 7314+? Let's compute: cli.rs original 7314; call site change: -9 +7 = -2 (7312); tests +65 = 7377; composer removed from cli (-26) = 7351. Still +52 over 7299. Within band (fatal only past 100). OK.
+
+So either way cli.rs grows ~+52 to +101. The real question is whether I should just register the growth. Given the gate's design — "past its recorded ceiling... Not fatal — growth of an already-capped module is information" — up to 100 is fine.
+
+Let me get under 100 by trimming. Current +101. I need to remove 2+ lines from cli.rs. Let me trim the composer's doc comment from 5 lines to 3. That's clean and doesn't touch tests.
+
+Actually wait — better: move the composer to providers.rs (with the `use crate::format::{RESET, YELLOW}`), which removes 26 lines from cli.rs → 7374, which is +75: comfortably inside the band and puts the definition next to the predicate it consults. Tests stay in cli.rs (they need `YELLOW`/`RESET` too — cli.rs has them via `use crate::format::*`).
+
+Hmm, but providers.rs tests would need the composer import... no, the tests are in cli.rs.
+
+Is putting a *presentation* string in providers.rs acceptable? providers.rs is "Provider constants and utilities". A warning message about a model id for a provider is arguably diagnostic utility. It uses format colors though. Cost.rs already does this kind of thing (context_usage_line etc. are in format/). 
+
+Alternatively — `src/format/mod.rs` has YELLOW/RESET and holds user-facing message helpers... but it's 2788 lines (over cap but grandfathered? let me check). Actually format/mod.rs is 2788 — is it registered? It must be.
+
+Simplest and cleanest: keep it in cli.rs (that's where the warning has always lived) and trim the doc slightly. Let me just do that — minimal disruption, matches "narrow surgical edit".
+
+Let me count how many lines I need to remove: 2. Trim doc from 5 lines to 3.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.9s (2 ✓)
+
+src/cli.rs is at 7400 vs the register's 7299 — one line inside the fatal band. Trimming the moved-over doc comment by a couple of lines keeps it there:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (8 → 6 lines)
+    /// The `Unknown model` warning for a genuinely unknown id, or `None` when the
+  - /// id is known — the returned string is exactly what the caller prints, so
+  - /// tests assert at the emission point, not one layer below.
+  - ///
+  - /// "Known" is `providers::model_is_known_for_provider`, the same rule the
+  - /// model-config path uses (#941). The wording is unchanged: other tests and
+  - /// user habits read it, and this is about *when* it fires, not what it says.
+  + /// id is known — the returned string is exactly what the caller prints. "Known"
+  + /// is `providers::model_is_known_for_provider`, the same rule the model-config
+  + /// path uses (#941); the wording is unchanged, and this is about *when* it
+  + /// fires, not what it says.
+    pub(crate) fn unknown_model_warning(provider: &str, model: &str) -> Option<String> {
+ ✓ (1m 19s)
+    /// The `Unknown model` warning for a genuinely unknown id, or `None` when the
+  - /// id is known — the returned string is exactly what the caller prints, so
+  - /// tests assert at the emission point, not one layer below.
+  - ///
+  - /// "Known" is `providers::model_is_known_for_provider`, the same rule the
+  - /// model-config path uses (#941). The wording is unchanged: other tests and
+  - /// user habits read it, and this is about *when* it fires, not what it says.
+  + /// id is known — the returned string is exactly what the caller prints. "Known"
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1120,1135p src/cli.rs && … ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+7398, still +99? 7398-7299 = 99. That's exactly at the band edge (100 allowed, so 99 passes). Let me take 2 more off for margin. Trim the composer doc by one more line, or trim a test comment line.
+
+Let me shorten the composer doc to 3 lines:
+```
+/// The `Unknown model` warning for a genuinely unknown id, or `None` when it is
+/// known — the returned string is exactly what the caller prints. "Known" is
+/// `providers::model_is_known_for_provider`, the rule the config path uses (#941).
+```
+That's 3 lines instead of 5 → -2 → 7396 (+97). Good margin.
+
+Let me apply.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (6 → 6 lines)
+  - /// The `Unknown model` warning for a genuinely unknown id, or `None` when the
+  - /// id is known — the returned string is exactly what the caller prints. "Known"
+  - /// is `providers::model_is_known_for_provider`, the same rule the model-config
+  - /// path uses (#941); the wording is unchanged, and this is about *when* it
+  - /// fires, not what it says.
+  + /// The `Unknown model` warning for a genuinely unknown id, or `None` when it is
+  + /// known — the returned string is exactly what the caller prints. "Known" is
+  + /// `providers::model_is_known_for_provider`, the rule the config path uses
+  + /// (#941); the wording is unchanged, and this is about *when* it fires, not
+  + /// what it says.
+    pub(crate) fn unknown_model_warning(provider: &str, model: &str) -> Option<String> {
+ ✓ (1m 18s)
+  - /// The `Unknown model` warning for a genuinely unknown id, or `None` when the
+  - /// id is known — the returned string is exactly what the caller prints. "Known"
+  - /// is `providers::model_is_known_for_provider`, the same rule the model-config
+  - /// path uses (#941); the wording is unchanged, and this is about *when* it
+  - /// fires, not what it says.
+  + /// The `Unknown model` warning for a genuinely unknown id, or `None` when it is
+  + /// known — the returned string is exactly what the caller prints. "Known" is
+  + /// `providers::model_is_known_for_provider`, the rule the config path uses
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+7397 lines vs 7299 registered = +98. Within the 100-line band (non-fatal). 
+
+Now run the full gate: cargo fmt, clippy, build, test (including module_size).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (13.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green. The gate warns (non-fatal) and its own message says: "paste ("src/cli.rs", 7397) over its entry ... (and say why in the commit message), or move the new code to a smaller module."
+
+Per the register's own doc ("the fix is to paste the number and say why in the commit message"), and since cli.rs is already a grandfathered file where this warning has been issued for each of the last several sessions (Day 205: #920 was pasted; Day 199: #924), the honest move is to paste the number and say why. The alternative — moving the warning (a user-facing message) into a non-presentation module — would be worse code for a cosmetic gate reading.
+
+Let me check whether there's another non-fatal warning (it said 2 non-fatal). Let me see them.
+
+Then update the register entry with the reason, and see what the second warning is.
+────────────────────────────────────────────────────────────────────────────────
+
+All green. The gate gave a non-fatal warning for src/cli.rs and its own message says to paste the reading with a reason. Let me see both warnings and update the register:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 186,196p tests/module_siz… ✓ (2ms)
+ ✓ (141ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `src/help.rs` warning (+20) is pre-existing, not mine — I didn't touch help.rs. Let me verify it was already warning before my change by checking git status.
+
+Actually let me confirm: git status should show only cli.rs and providers.rs modified.
+
+Then I register cli.rs → 7397 with a reason.
+
+For help.rs, that's pre-existing (unrelated), so leave it — it's non-fatal and not my task. Let me verify it's pre-existing with git stash... simpler: `git diff --stat` shows what I touched.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git diff -… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash -q && cargo test --tes… ✓ (7.5s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The help.rs warning pre-exists my change (it fires without my edits). So I'll only update the cli.rs entry, with a reason, as the gate instructs.
+
+Wait — but is updating the register the right call, or should I move the code out? The gate explicitly offers both, and its non-fatal warning path says paste the reading. My change genuinely needs cli.rs (it's the call site). The composer could have gone elsewhere but not without a circular home. I'll paste and state why.
+
+Actually hold on — let me reconsider whether I can avoid growing the register at all, because growing a debt register on a *product* task that's about one warning is worth a second of thought. The test block is ~65 lines. Could the test live in a `#[cfg(test)]` section of... it must live where `unknown_model_warning` is visible. `providers.rs` could host the test if the function were `pub(crate)` there — but the function needs the color constants.
+
+Alternative: make the warning message build its yellow via a plain escape that doesn't need format::* ... no, that would restate the color.
+
+I'll accept the register paste: the growth is 98 lines for a call site + emission-point test, within the band, and pasting resets the ratchet to today's true reading. That is what the gate asks for.
+
+Let me do it.
+────────────────────────────────────────────────────────────────────────────────
+
+The help.rs warning pre-exists my change (it fires with my edits stashed); only cli.rs grew. Pasting that one reading with its reason, as the gate's own message instructs:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/cli.rs", 7299), // Day 205: #920 — `auto_discover_skills` gained the project-skill symlink-escape refusal (the gate's own reading; only the *call site* lives here, the logic is in config_paths.rs). Pasted from what the gate printed. Day 199: #924 — parse_args grew a config-injecting seam (parse_args_with_config) plus its source-level delegation guard.
+  +     ("src/cli.rs", 7397), // Day 205: #941 — the `Unknown model` warning now consults `providers::model_is_known_for_provider` (one rule, shared with the config path) via the new `unknown_model_warning` composer, plus its emission-point test. The composer lives here because the message interpolates the `format::*` colour statics; the predicate lives in providers.rs. Pasted from what the gate printed. Day 205: #920 — `auto_discover_skills` gained the project-skill symlink-escape refusal (the … [yoyo: 244 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 19s)
+  -     ("src/cli.rs", 7299), // Day 205: #920 — `auto_discover_skills` gained the project-skill symlink-escape refusal (the gate's own reading; only the *call site* lives here, the logic is in config_paths.rs). Pasted from what the gate printed. Day 199: #924 — parse_args grew a config-injecting seam (parse_args_with_config) plus its source-level delegation guard.
+  +     ("src/cli.rs", 7397), // Day 205: #941 — the `Unknown model` warning now consults `providers::model_is_known_for_provider` (one rule, shared with the config path) via the new `unknown_model_warning` composer, plus its emission-point test. The composer lives here because the message interpolates the `format::*` colour statics; the predicate lives in providers.rs. Pasted from what the gate printed. Day 205: #920 — `auto_discover_skills` gained the project-skill symlink-escape refusal (the … [yoyo: 244 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (141ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The cli.rs warning is gone. Only the pre-existing help.rs warning remains (not caused by me — verified via stash).
+
+Hmm, but wait: should I also fix help.rs's register row since I touched the file? No — it's not my change, and I verified it pre-exists. Leaving it is honest; touching it would be an unrequested change. But it *is* a stale register row that I now know about... The task says don't work on anything else. I'll note it in the report.
+
+Now: run the full verification suite. Then docs check. Then positive controls (I ran two earlier but before the final refactor — the code shape changed only cosmetically, but per discipline I should re-run at least one control on the final tree). Let me re-run the controls atomically on the final code.
+
+Then commit.
+
+Let me run the full suite first.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (47.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now the positive controls on the final tree — both halves, atomic, serial:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/provi… (12 lines) ✓ (39.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/provi… (14 lines) ✓ (40.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both controls fire by name and both restores are green. No markers left. Clippy was re-run and passes, but I'll re-verify everything at the end.
+
+Now: verify the actual behavior end-to-end, not just the unit test — run the binary with `--model claude-fable-5-1` and see no warning. That's the real emission point (the user's terminal).
+
+Let me try running the binary in a way that exercises parse_args without making an API call. `yoyo --model claude-fable-5-1 --print-something`? Probably it tries to connect. But the warning fires during startup parsing, so even if it fails later, I can see whether the warning appears on stderr.
+
+Let me try `yoyo --model claude-fable-5-1 --help` or run with a fake prompt and no API key.
+
+Let me check: `target/debug/yoyo --model claude-fable-5-1 -p "hi"` with no API key — it will fail auth but should have printed the warning first (or not).
+
+Good end-to-end check.
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls fire by name; both restores green; no markers left. Now an end-to-end check at the real emission point — the user's terminal:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build -q 2>&1|tail -2; ech… ✓ (10.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+This is the *correct* behavior given `.yoyo.toml` sets provider = deepseek in this repo — the config file's provider overrides, so `claude-fable-5-1` under deepseek correctly still warns. That's exactly near-miss B working in the wild. The provider comes from `.yoyo.toml`.
+
+To verify the false-positive fix end-to-end, I need `--provider anthropic` explicitly.
+────────────────────────────────────────────────────────────────────────────────
+
+That's near-miss B working in the wild (.yoyo.toml sets provider = "deepseek"). Now the actual case with the provider pinned:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== anthropic + claude-fab… ✓ (1.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+End-to-end confirmed at the real terminal:
+- `anthropic` + `claude-fable-5-1`: **no warning** (the real API even confirms the model exists — it returned a max_tokens error, not a model-not-found error, which is independent evidence the id is real and preset-resolved).
+- `anthropic` + `claude-fable-9`: warning still fires byte-identically.
+- `deepseek` + `claude-fable-5-1`: still warns (near-miss B, #942 not widened).
+
+That's strong evidence — the live provider corroborated that the id is real.
+
+Now step 1 count: I found **five** prefix arms in `anthropic_preset` (claude-fable-5, claude-opus-5, claude-opus-4-8, claude-sonnet-5, claude-haiku-4-5). All five are preset-backed (that's the only place they live).
+
+Now: docs. Does this change make any doc statement wrong? Let me check whether docs mention the "Unknown model" warning or model restriction behavior.
+────────────────────────────────────────────────────────────────────────────────
+
+End-to-end confirmed. The live API's own answer corroborates the id is real (it rejected on max_tokens, not model-not-found). Now checking whether any doc statement became wrong:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Unknown model\|known m…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "claude-fable" docs/src… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No doc mentions the "Unknown model" warning or the prefix-family ids, so no doc statement became wrong. The one hit is about `/model <Tab>` suggestions, which is `known_models_for_provider` (unchanged — I kept it as the data source for the suggestion list).
+
+CLAUDE.md: does it need an update? CLAUDE.md rules say per-file history belongs in ARCHITECTURE.md, not CLAUDE.md, and CLAUDE.md should stay ~40KB. Let me check ARCHITECTURE.md's entry for src/cli.rs and src/providers.rs — the project convention says "Read ARCHITECTURE.md's entry for any file you are about to change" and "New history goes in ARCHITECTURE.md". The task's Files line says src/cli.rs, src/providers.rs. My commit grew cli.rs's register entry (in tests/module_size.rs, third file — the gate's own required bookkeeping).
+
+Should I add an ARCHITECTURE.md entry? The repo convention says new history goes there. The task says update docs if behavior changed. Behavior changed for users (a warning no longer fires). Let me check the ARCHITECTURE.md structure for these two files and add a short entry — that's the repo's convention and it's where a future reader looks.
+
+Let me look at how ARCHITECTURE.md entries are formatted.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+No doc claims the "Unknown model" warning, so nothing went stale. Per repo convention, per-file history goes in ARCHITECTURE.md — let me check those entries:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l ARCHITECTURE.md && grep -n… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^## \|^# " ARCHITECTURE… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "providers.rs\|cli.rs" A… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md has entries for `main.rs` etc. Let me find the entry for `cli.rs` and `providers.rs` specifically — grep for a bullet that begins with `- \`cli.rs\``.
+
+The output was truncated. Let me grep precisely.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`cli.rs\`\|^- \`pro… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The agent_builder.rs entry contains the history; but I need the `cli.rs` and `providers.rs` entries. The grep only showed line 257 (agent_builder.rs). So there is no `- \`cli.rs\`` bullet at line start? Let me grep differently.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^\- \`" ARCHITECTURE.md… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 435,436p ARCHITECTURE.md … ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `providers.rs` entry is a short one-liner (line 435). I'll append a Day 205 note there documenting the new predicate. Let me do that, and also check the `cli.rs` entry at line 329 for the warning site.
+
+Let me keep the addition concise — it's a product-facing behavior change worth recording. Let me add to providers.rs line and possibly cli.rs line.
+
+Let me add a concise note to the providers.rs bullet.
+────────────────────────────────────────────────────────────────────────────────
+
+The providers.rs entry is a one-liner. Adding the Day 205 note there (history belongs in ARCHITECTURE.md, not CLAUDE.md):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test doc_symbols 2>… ✓ (185ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Full verification pass on the final tree:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git diff -… ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four checks green. Committing:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m '… ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Done. Now write the summary report.
+
+Let me double check a few things for the report:
+- step-1 prefix arms found: I found 5 arms in `anthropic_preset`: claude-fable-5, claude-opus-5, claude-opus-4-8, claude-sonnet-5, claude-haiku-4-5. Let me verify count with grep.
+- The task said "there may be more than one family" — I should confirm I enumerated all.
+
+Let me verify.
+────────────────────────────────────────────────────────────────────────────────
+
+Committed. Let me confirm my step-1 prefix-arm count for the report:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== prefix arms in anthrop… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done — task implemented, verified, committed.
+
+## What I changed
+
+The defect, confirmed by reading both sites (not taking the issue's word):
+• `src/cli.rs:1099 warned on an **exact** match — known.contains(&model.as_str())`.
+• `src/agent_builder.rs:758 anthropic_preset` resolves the same ids by prefix.
+
+Two rules over one input, so --model claude-fable-5-1 worked and yelled about itself.
+
+Step 1 — prefix arms found: 5 (all in anthropic_preset, one family each):
+claude-fable-5, claude-opus-5, claude-opus-4-8, claude-sonnet-5, claude-haiku-4-5. No other starts_with("claude…") arm exists in src/ (src/commands.rs:1694 is a c.starts_with("claude") filter, not a preset lookup). All five are preset-backed, so none was folded in unreported.
+
+Step 2–3 — `src/providers.rs` gained pub fn model_is_known_for_provider(provider, model) -> bool: true iff the provider's own list contains the id or — for `anthropic` only — agent_builder::anthropic_preset resolves it. The prefix list is not copied; it is read through the same lookup create_model_config uses. The provider scope is what keeps #942 out.
+
+`src/cli.rs` got the pure composer unknown_model_warning(provider, model) -> Option<String> (returns the exact string the call site prints, so tests assert at the emission point) and the call site now goes through the shared predicate. Warning wording is byte-identical.
+
+## Rows I actually ran (emission point)
+
+| id | provider | expected | result |
+|---|---|---|---|
+| claude-fable-5 | anthropic | silent | ✅ (control — listed and preset-backed) |
+| claude-fable-5-1 | anthropic | silent | ✅ |
+| claude-opus-5-1 | anthropic | silent | ✅ |
+| claude-opus-4-8-1 | anthropic | silent | ✅ |
+| claude-sonnet-5-1 | anthropic | silent | ✅ |
+| claude-haiku-4-5-1 | anthropic | silent | ✅ |
+| claude-fable-9 | anthropic | warns | ✅ byte-identical text |
+| claude-fable-5-1 | deepseek | warns | ✅ |
+| whatever | openrouter | silent | ✅ no list → silent |
+
+Every silent row carries an anti-vacuous pair asserted first: the id really is preset-resolved and really is absent from the literal list, so a None cannot be explained by a pasted-in entry.
+
+## Positive controls — run serially, each atomic mutate→run→restore
+
+1. Forcing the predicate false → silent rows go red by name.
+2. Dropping the provider scope → exactly near-miss B goes red (claude-fable-5-1 under deepseek: expected warning=true, got None).
+
+Both restored to a green run, sabotage scan clean (no NEUTERED/SABOTAGE/DO NOT COMMIT markers left).
+
+End-to-end at the real terminal (not just the unit test): --provider anthropic --model claude-fable-5-1 prints no warning, and the live API's own 400 names the id as real (rejects on max_tokens, not model-not-found); claude-fable-9 and claude-fable-5-1 under deepseek both still warn.
+
+## One thing worth flagging
+
+The composer landed in src/cli.rs (it interpolates the format::* colour statics), which pushed that file past its recorded 7299-line ceiling — a non-fatal 98-line register warning. The gate's own message offers "paste the reading with a reason," so I updated tests/module_size.rs to 7397 with the reason. I checked the second warning it printed (src/help.rs, +20) against a stashed tree: it pre-exists this change and is untouched. Docs: no page claims the warning's behaviour, so nothing went stale; the per-file history went to ARCHITECTURE.md per CLAUDE.md's rule.
+
+Verify: cargo fmt -- --check, cargo clippy --all-targets -- -D warnings, cargo build, cargo test — all pass (5717 + 28 + … tests, 0 failed). Committed as 004ae5ec.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
