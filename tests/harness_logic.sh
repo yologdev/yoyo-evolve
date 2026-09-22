@@ -19,6 +19,14 @@ check() { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected '$3', got '$2'"; }
 require() { [ -n "$2" ] && return 0; bad "$1" "extraction produced nothing — pattern no longer matches evolve.sh"; return 1; }
 
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/scripts/evolve.sh"
+# dream.sh is the sibling harness script and, until 2026-09-22, had NO automated
+# coverage of any kind — not even `bash -n`, which ci.yml runs for neither file.
+# It is also unprotected (evolve.sh's protected list does not name it), so the
+# evolve agent can rewrite it. Two safety-relevant bugs were fixed in it that
+# evening, one of which was a documented way around the diff-scope guard its own
+# header calls "the sole safety belt". 96 assertions on evolve.sh and zero on
+# dream.sh was the asymmetry worth closing.
+DREAM="$(cd "$(dirname "$0")/.." && pwd)/scripts/dream.sh"
 
 # ── session budget helper ────────────────────────────────────────────────
 budget_left() { # $1=YOYO_SESSION_BUDGET_SECS  $2=JOB_DEADLINE_EPOCH
@@ -641,6 +649,64 @@ if require "push_main_with_retry extracted" "$PR_FN"; then
         check "pre-push sweep: dirty tracked file -> committed by name, tree clean" "$(ps_case dirty)" "2 clean Day 197 (15:47): session-end state reset"
         check "pre-push sweep: clean tree -> untouched"                              "$(ps_case clean)" "1 clean base"
     fi
+fi
+
+# ── dream.sh: post-agent outcome ─────────────────────────────────────────
+# The slice deliberately runs PAST the closing `fi`, through `cycle complete`.
+# The no-commit branch ends in `[ "${GITHUB_ACTIONS:-}" = "true" ] && echo …`,
+# which returns 1 whenever that variable is unset — i.e. every local run. A
+# slice stopping at `fi` therefore reports rc=1 even with the branch's `exit 1`
+# DELETED, and the assertion passes vacuously. Mutation-verified both ways:
+# with the short slice the delete-exit mutant went green; with this slice it
+# reddens "nothing committed -> rc 1" by name.
+DS_BLOCK=$(awk '/^# ── Diff-scope guard/{p=1} p{print} p && /^echo "dream: cycle complete"/{exit}' "$DREAM")
+ds_case() { # $1=moved|same $2=changed files $3=agent exit -> "<rc>|<gasp>|<reverted>"
+    ( set -euo pipefail
+      GATES_PASSED=1; GASP_OUTCOME=""; REVERTED=0
+      exit_code="$3"; HEAD_BEFORE=aaaaaaa; _m="$1"; _f="$2"
+      git() { case "$1 ${2:-}" in
+                "rev-parse HEAD")   if [ "$_m" = moved ]; then echo bbbbbbb; else echo aaaaaaa; fi ;;
+                "diff --name-only") printf '%s\n' $_f ;;
+                "reset --hard")     REVERTED=1 ;;
+              esac; }
+      # cleanup ends in `exit`, so results escape on fd 3 rather than by return.
+      trap 'printf "%s|%s|%s\n" "$?" "$GASP_OUTCOME" "$REVERTED" >&3' EXIT
+      eval "$DS_BLOCK"
+    ) 3>&1 >/dev/null 2>/dev/null | tail -1
+}
+if require "dream: outcome block extracted" "$DS_BLOCK"; then
+    # The two near-miss guards: a dream that landed must stay landed, however
+    # the agent exited. 2026-08-23 committed Day 176 and was then killed by the
+    # wall clock; branching on the exit code first would have discarded it.
+    check "dream: in-scope commit -> kept, rc 0"             "$(ds_case moved DREAM.md 0)"    "0|dreamed: DREAM.md|0"
+    check "dream: in-scope commit + timeout -> still kept"   "$(ds_case moved DREAM.md 124)"  "0|dreamed: DREAM.md|0"
+    check "dream: nothing committed -> rc 1"                 "$(ds_case same '' 0)"           "1|failed: agent wrote nothing (exit 0)|0"
+    check "dream: nothing committed after error -> rc 1"     "$(ds_case same '' 1)"           "1|failed: agent wrote nothing (exit 1)|0"
+    check "dream: out-of-scope commit -> reverted, rc 1"     "$(ds_case moved IDENTITY.md 0)" "1|rejected: diff-scope violation|1"
+fi
+
+# ── dream.sh: the cooldown checkpoint is bounded to its own file ─────────
+# `git commit` with no pathspec commits the WHOLE INDEX, and the dream prompt
+# tells the agent to `git add` its own files — so a kill between its add and its
+# commit left those files staged, and they rode the checkpoint out to origin
+# past the diff-scope guard, which by then had already run.
+CK_BLOCK=$(awk '/# Stage ONLY the stamp/{p=1} p{print} p && /^        fi$/{exit}' "$DREAM")
+ck_case() { # $1=junk|clean -> comma-joined files in the resulting commit
+    ( set -uo pipefail
+      export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+      d=$(mktemp -d) && cd "$d" || exit 1
+      git init -q . && git config user.email t@t && git config user.name t
+      echo 0 > .dream_last_run && git add . && git commit -qm base
+      LAST_RUN_FILE=".dream_last_run"; echo 1789 > "$LAST_RUN_FILE"
+      [ "$1" = junk ] && { echo ROGUE > IDENTITY.md; git add IDENTITY.md; }
+      eval "$CK_BLOCK" >/dev/null 2>&1
+      git show --name-only --format='' HEAD | paste -sd, -
+      cd / && rm -rf "$d"
+    ) 2>/dev/null | tail -1
+}
+if require "dream: checkpoint block extracted" "$CK_BLOCK"; then
+    check "dream: checkpoint commits only the stamp"            "$(ck_case clean)" ".dream_last_run"
+    check "dream: staged out-of-scope file does NOT ride along" "$(ck_case junk)"  ".dream_last_run"
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
