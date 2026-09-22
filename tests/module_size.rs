@@ -320,7 +320,14 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // traced and never observed: the worker seam reads the safe-mode global, and
     // `--restricted` reaches that global by a road the pure seam never touches.
     // Number pasted from what the gate itself printed, after `cargo fmt`.
-    ("src/commands_spawn.rs", 4558),
+    //
+    // Day 206 (#902 slice): 4558 → 4639 (+81) — the one link the Day-194 test
+    // above still bypassed. That test writes the global itself
+    // (`set_safe_mode(true)`), so it stays green on a tree where `Config.safe_mode`
+    // never reaches it; the new test drives `parse_args("--safe-mode"/"--restricted")
+    // → Config.safe_mode → apply_config_flags → the global → the seam`. Number
+    // pasted from what the gate printed after `cargo fmt`, never hand-typed.
+    ("src/commands_spawn.rs", 4639),
     // Day 162 (#692): +108 lines — extract_last_assistant_text now stops at the
     // newest turn's boundary (no stale-turn fallback) plus the regression tests
     // pinning that a text-less newest turn yields None, not an older turn's text.

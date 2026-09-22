@@ -2621,6 +2621,87 @@ mod tests {
         );
     }
 
+    /// **The one edge the tests above do not touch, and the reason #902's slice
+    /// outlived them.** The pure pair exercises `spawn_project_context_with`
+    /// directly, the source guard reads this file's text, and
+    /// `a_restricted_parent_confines_its_worker_through_the_real_global` writes
+    /// the global **itself** (`set_safe_mode(true)`) — so all three stay green on
+    /// a tree where the real CLI never gets the flag into that global, and the
+    /// worker receives project context in production while every test agrees it
+    /// does not. The unverified link is `Config.safe_mode` →
+    /// `main.rs::apply_config_flags` → the global; its only consumer in the whole
+    /// crate is this file's seam.
+    ///
+    /// So this drives the flag the way a user does, end to end: the argv a user
+    /// types, through `cli::parse_args` (which resolves `--restricted` and
+    /// `--safe-mode` into **one** boolean — clause A, not a second copy of the
+    /// decision), through the `Config` field, through `apply_config_flags`, into
+    /// the global the seam reads, and out as the worker's project context.
+    /// `--restricted` is in the loop because it is the arm the two-door reading
+    /// leaves open: it never mentions safe mode in argv and reaches the global
+    /// only by setting `Config.safe_mode`.
+    ///
+    /// Measured at the CLI before this gate existed (Day 206, #902 slice, marker
+    /// `UNIQUE_MARKER_ZZ9` in a throwaway repo's `CLAUDE.md`):
+    /// `--print-system-prompt` carried the marker **once** with no flag and
+    /// **zero** times under `--safe-mode` and under `--restricted` — the parent
+    /// hatch measured clean, and the same predicate reaches the worker.
+    ///
+    /// **Stated limit:** this pins the *parent's* decision reaching the worker
+    /// through the real chain; it does not exercise the spawn path itself (that
+    /// needs a live model turn), so what it proves is `flag → Config → global →
+    /// seam`, one indirection short of the worker's prompt. A fork whose
+    /// instruction files are absent still reads `None` from the loader, so the
+    /// presence half of the anti-vacuous pair is what keeps this from passing by
+    /// agreeing with itself there.
+    #[test]
+    #[serial]
+    fn a_safe_mode_flag_reaches_the_worker_seam_through_config_and_the_real_global() {
+        let payload = "# Project Instructions\n\nUNIQUE_MARKER_ZZ9";
+
+        // Anti-vacuous FIRST: the loader genuinely has something to give, so a
+        // broken seam cannot pass by both sides agreeing on nothing.
+        let load = || Some(payload.to_string());
+        crate::cli_config::set_safe_mode(false);
+        assert_eq!(
+            spawn_project_context_with(crate::cli_config::is_safe_mode(), &load),
+            Some(payload.to_string()),
+            "anti-vacuous: with no flag the seam must return the loader's value"
+        );
+
+        for flag in ["--safe-mode", "--restricted"] {
+            std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+            // Start from the documented default so the row does not inherit
+            // whatever ran before it in this binary.
+            crate::cli_config::set_safe_mode(false);
+
+            let config = crate::cli::parse_args(&["yoyo".to_string(), flag.to_string()])
+                .unwrap_or_else(|| panic!("`{flag}` must parse"));
+            assert!(
+                config.safe_mode,
+                "`{flag}` must resolve to Config.safe_mode — this is the field \
+                 apply_config_flags copies, and the only road the global has"
+            );
+
+            assert!(
+                crate::apply_config_flags(&config),
+                "applying a config that does not exit early must return true"
+            );
+            assert!(
+                crate::cli_config::is_safe_mode(),
+                "`{flag}` must reach the global the worker seam reads"
+            );
+            assert_eq!(
+                spawn_project_context_with(crate::cli_config::is_safe_mode(), &load),
+                None,
+                "a `{flag}` parent must hand its worker no project context"
+            );
+        }
+
+        // Leave the documented default behind for whatever runs next.
+        crate::cli_config::set_safe_mode(false);
+    }
+
     #[test]
     fn test_parallel_suggestion_fires_on_independent_tasks() {
         // 3 genuinely independent tasks, no sequential markers, no path conflict.
