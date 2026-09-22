@@ -6,6 +6,11 @@
 
 use crate::format::*;
 
+// The retrospective half of the unhittable-surprise join (Day 206) — imported
+// directly, the way this file's other `commands_risk_unhittable` call sites name
+// the module, since its symbols are the feature's own and not a re-export seam.
+use crate::commands_risk_unhittable::{retrospective_note, retrospective_unhittable_at};
+
 // Snapshot/validation persistence lives in `commands_risk_snapshots.rs`.
 // Re-exported here so all call sites (watch.rs, commands_git.rs, and this
 // module's own scoring/reporting code) remain unchanged.
@@ -15,7 +20,7 @@ pub(crate) use crate::commands_risk_snapshots::{
     parse_all_snapshots, parse_ci_run_payload, parse_failed_ci_runs, parse_validation_events,
     read_snapshot_ledger, read_validation_ledger, risk_autosnapshot_enabled, snapshot_before,
     write_risk_snapshot_to, write_validation_event, SnapshotLedger, ValidationEvent,
-    ValidationLedger, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+    ValidationLedger, RISK_FIRST_SCORED_PATH, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
 };
 
 // Report/context formatting lives in `commands_risk_report.rs`.
@@ -701,6 +706,21 @@ pub(crate) fn handle_risk(input: &str) {
     let risks = compute_file_risk_scores();
     let report = format_risk_report(&risks, show_all);
     print!("{report}");
+
+    // The retrospective half of the Dream's unhittable milestone (Day 206): the
+    // live `unhittable_surprises` count on a watch event is ONE reading with no
+    // base rate, so the report also says how often the `0%`-vs-*could-not-exist*
+    // ambiguity has actually been in play across every post-ledger grading
+    // event. A **reader, not a gate**: nothing fails, reverts or files an issue
+    // on a nonzero count, and `None` (no ledger at all) keeps a project that has
+    // never recorded a risk grade byte-identical.
+    let retrospective = retrospective_unhittable_at(
+        std::path::Path::new(RISK_VALIDATION_PATH),
+        std::path::Path::new(RISK_FIRST_SCORED_PATH),
+    );
+    if let Some(note) = retrospective_note(&retrospective, is_plain_output()) {
+        println!("  {note}");
+    }
 
     // `⚡ Emerging Risks` printed here until Day 163 (#724) — deleted at 0% recall.
 }

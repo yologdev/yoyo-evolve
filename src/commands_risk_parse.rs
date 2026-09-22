@@ -76,24 +76,50 @@ pub(crate) enum ValidationLedger {
     },
 }
 
+/// The validation ledger's bytes, classified **before** they are parsed.
+///
+/// Two readers want two different parses of the same file — [`ValidationEvent`]
+/// for the accuracy report, `SurpriseRow` for the unhittable retrospective pass
+/// (`commands_risk_unhittable.rs`) — and only one of them may own the
+/// missing/unreadable policy. This is that policy, and both callers take it
+/// rather than each growing a copy that merely agrees today (the "two doors, one
+/// policy, one deaf" defect this repo has shipped six times).
+pub(crate) enum LedgerContent {
+    /// The path does not exist. Accuracy tracking genuinely hasn't started.
+    Missing,
+    /// The path exists but could not be read; the string names path + io error.
+    Unreadable(String),
+    /// The file was read. Parsing is the caller's business.
+    Present(String),
+}
+
+/// Read the validation ledger's raw text through the one classification policy
+/// ([`LedgerContent`]). One door, two readers.
+pub(crate) fn read_ledger_content(path: &std::path::Path) -> LedgerContent {
+    if !path.exists() {
+        return LedgerContent::Missing;
+    }
+    match std::fs::read_to_string(path) {
+        Ok(c) => LedgerContent::Present(c),
+        Err(e) => LedgerContent::Unreadable(format!("could not read {}: {e}", path.display())),
+    }
+}
+
 /// Read the validation ledger, keeping missing / unreadable / present-with-
 /// dropped-lines distinct. See [`ValidationLedger`] for what is and isn't
 /// covered.
 pub(crate) fn read_validation_ledger(path: &std::path::Path) -> ValidationLedger {
-    if !path.exists() {
-        return ValidationLedger::Missing;
-    }
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) => {
-            return ValidationLedger::Unreadable(format!("could not read {}: {e}", path.display()))
+    match read_ledger_content(path) {
+        LedgerContent::Missing => ValidationLedger::Missing,
+        LedgerContent::Unreadable(e) => ValidationLedger::Unreadable(e),
+        LedgerContent::Present(content) => {
+            let (events, dropped, ungradable) = parse_validation_events_counting(&content);
+            ValidationLedger::Present {
+                events,
+                dropped,
+                ungradable,
+            }
         }
-    };
-    let (events, dropped, ungradable) = parse_validation_events_counting(&content);
-    ValidationLedger::Present {
-        events,
-        dropped,
-        ungradable,
     }
 }
 

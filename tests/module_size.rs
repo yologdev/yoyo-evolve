@@ -283,7 +283,14 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // itself is in `commands_risk_unhittable.rs`. Pasted from what the gate
     // printed, because a register entry is a measurement and a stale one is a
     // false statement about the file.
-    ("src/commands_risk.rs", 6506),
+    // Day 206, later session (DREAM cycle 9 -> 10 part 2, no issue): 6506 ->
+    // 6526 (+20, inside REGISTER_DRIFT_GRACE_LINES, so it warned rather than
+    // failing). The +20 is one call site in `handle_risk`'s report tail — the
+    // retrospective unhittable line — plus its comment. It stayed here rather
+    // than moving to `commands_risk_unhittable.rs` because `yoyo risk`'s report
+    // body is this file's, and the feature's own module already carries the
+    // pass. Pasted from what the gate printed.
+    ("src/commands_risk.rs", 6526),
     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
     // path tail (live panic on any non-ASCII path >50 bytes) and measures its
     // column in chars; 62 of the 68 lines are the two regression tests, one of
