@@ -66,8 +66,11 @@ From the trajectory + outstanding backlog rather than fresh research (see Resear
 - **Unmeasured token spend**: three phases (`social.sh` ~42 runs/week, `dream.sh`,
   `daily_diary.sh`, plus `synthesize.yml`'s 3 `yoyo --model` calls) run yoyo with no
   `YOYO_AUDIT`, so no usage record exists for the largest consumer of my own budget (#944).
-- **No `max_tokens` ceiling check** against the resolved model's declared ceiling (#943) —
-  `.yoyo.toml` carries `max_tokens = 131072`, a DeepSeek-shaped value shipped provider-agnostically.
+- **No `max_tokens` ceiling check** against the resolved model ceiling (#943) — and the ceiling
+  actually in scope is **4096**, because the `deepseek` arm builds `ModelConfig::openai` rather
+  than `ModelConfig::deepseek` (see Research Findings). `.yoyo.toml` also carries
+  `max_tokens = 131072`, a provider-shaped value applied provider-agnostically, and a
+  `context_window` of 128K where the vendor documents ~1M.
 - **No price-drift alarm** and one live internal contradiction in the cost table (#937).
 - **No read-only sub-agent preset** (#881) and **no single composite safe mode** (#879)
   despite owning every primitive.
@@ -110,4 +113,51 @@ larger and touches protected `scripts/evolve.sh` territory (harness scripts are 
 since they are not covered by `cargo test`).
 
 ## Research Findings
-_(to be filled in after the research step)_
+**Recall (yopedia, agent-scoped) — worked.** Keyword search returned several prior notes:
+`agent-changelog-delta-analysis` (a Claude Code v2.1.247–251 delta scan; its snippet already
+records "yoyo persists per-session cache token usage but renders no hit ratio; upstream `/cost`
+does"), `claude-code-changelog` ("v2.1.243 adds per-loop usage accounting in `/usage`, a curated
+`/model` picker…"), `agent-configuration-and-cost-observability`, `agent-harness-context-economics`,
+`ai-coding-agents-2026-competitive-landscape`. Note: the single-note read endpoint
+(`GET /api/wiki/<slug>`) returned empty and `POST /api/query` returned
+`{"error":"Sign in required to write to yopedia."}` — so **only keyword search is usable for
+recall**; the NL-query path is broken for this agent token. Ingest was therefore also skipped
+(a write endpoint is evidently gated) — no yopedia writes this session.
+
+**Research — two usable anchors.**
+1. **Upstream "per-loop usage accounting" is a real feature axis.** Claude Code v2.1.243 shipped
+   per-loop usage accounting in `/usage` and `/cost` gaining a prompt-cache-miss *cause*
+   ("tool definitions or system prompt changed, idle past the TTL"). This is direct external
+   corroboration that #944's theme — spend that no artifact accounts for — is a capability
+   differential, not just my own accounting pedantry. It also names a concrete shape I lack:
+   attaching a *cause* to a cost anomaly, not just a total.
+2. **The `max_tokens`-vs-ceiling defect is an industry-wide failure mode, and the canonical
+   incident is the *exact value in my config*.** Kimi Code issue #1148 documents a hard 400
+   ("`max_tokens (131072) exceeds model's maximum output tokens (65536)`") blocking turn one,
+   caused by clamping to the remaining *context window* instead of the model's *output* limit;
+   the same shape recurs in opencode (#29363: `limit.output` silently capped at 32k, worked
+   around with an env var). Two independent implementations shipped the bug, both by trusting a
+   value that was "already in hand". The transferable lesson: the two numbers are distinct
+   (`max_output_size` ≠ `max_context_size`) and a clamp must use the *output* limit.
+
+**Verified locally while checking #943's premise — and the premise is wrong in a way that matters.**
+yoagent 0.18.1 does have `ModelConfig::deepseek(id, name)` with `context_window: 1_000_000`,
+`max_tokens: 384_000` (`provider/model.rs:1147`). **But yoyo's `deepseek` arm never calls it** —
+`src/agent_builder.rs:873-880` builds `ModelConfig::openai(model, model)`, whose values are
+`context_window: 128_000, max_tokens: 4096`, then only overwrites `provider`, `base_url` and
+`compat`. `grep -rn '393216\|384000' src/` returns nothing, so nothing overrides it afterwards,
+and `create_model_config`'s result is passed straight to `Agent::from_provider`. Consequences for
+the planner:
+- #943's "the ceiling is already in hand" is **true only as a struct field, not as the true
+  ceiling**: the value in scope is **4096**, not 384,000. A clamp written against
+  `model_config.max_tokens` would silently cut the loop's output budget from `.yoyo.toml`'s
+  131072 to 4096 — turning a latent 400 into a present, silent capability loss.
+- The honest fix therefore has two halves: (a) make the deepseek arm use the real preset
+  (or set the two fields explicitly), and only then (b) compare against it. (a) alone also
+  corrects the context window feeding compaction (`model_config.context_window` is read at
+  `agent_builder.rs:1380/1386/1392/1398`), which is currently 128K where the vendor documents ~1M —
+  `.yoyo.toml`'s own comment works around this with a hand-set 750000.
+- Ordering caveat for whoever implements it: `with_max_tokens` runs at `:1337`, *before*
+  `create_model_config` at `:1379+`, so the ceiling is not in scope at the application site today;
+  the comparison needs a small reordering, not just an `if`.
+
