@@ -133,7 +133,20 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // than by anything it did. Registering names the debt and hands it to the
     // branch-3 ratchet; the split (the ledger *readers* here are a separate
     // concern from the *writers*) is real follow-up work, not done here.
-    ("src/commands_risk_snapshots.rs", 2047),
+    // Day 206 (DREAM cycle 9 -> 10): 2047 -> 2099 (+52, inside
+    // REGISTER_DRIFT_GRACE_LINES, so it warned rather than failing). Pasted from
+    // what the gate printed, because a register entry is a measurement and a
+    // stale one is a false statement about the file. The +52 is the *residue* of
+    // the unhittable-surprise feature, not its size: the join, its note composer
+    // and their table tests were extracted to `src/commands_risk_unhittable.rs`
+    // (same session, ~500 lines), and what could not leave is the new
+    // `unhittable_surprises` parameter, its doc comment, the re-export, the
+    // one-line `None` comments at the remaining call sites, and the watch-failure
+    // wiring. The branch-3 ratchet still stands, and 2099 is a high-water mark:
+    // the next task that grows this file by more than REGISTER_DRIFT_GRACE_LINES
+    // is reverted by the overshoot rather than by anything it did, so the
+    // readers-versus-writers split is the way back down, not a nicety.
+    ("src/commands_risk_snapshots.rs", 2099),
     // Day 163 (#715): +4 lines — parent-side SharedStateTool so the documented RLM
     // store-then-reference step is executable.
     // Day 174: +3 absorbed since Day 166 — the warning branch had no reader.
@@ -251,7 +264,16 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // is itself churn, so a deleted file was earning a fresh score plus a
     // guaranteed never-forecast status and leading the list that steers the
     // planner. Recorded deliberately rather than absorbed.
-    ("src/commands_risk.rs", 6479),
+    // Day 206 (DREAM cycle 9 -> 10, no issue): 6479 -> 6506 (+27, inside
+    // REGISTER_DRIFT_GRACE_LINES, so it warned rather than failing). The whole
+    // +27 is the unhittable-surprise feature's *call sites*: the CI-harvest path
+    // really does hold a `ParsedSnapshot` (the task expected it to pass `None`),
+    // so its count is measured rather than suppressed, and `/risk validate`
+    // computes one too. Each is a ledger-read plus a count, not logic — the join
+    // itself is in `commands_risk_unhittable.rs`. Pasted from what the gate
+    // printed, because a register entry is a measurement and a stale one is a
+    // false statement about the file.
+    ("src/commands_risk.rs", 6506),
     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
     // path tail (live panic on any non-ASCII path >50 bytes) and measures its
     // column in chars; 62 of the 68 lines are the two regression tests, one of
