@@ -121,9 +121,3 @@ anything dispatches several in parallel), a hook-driven commit-per-edit safety p
 per-phase cost observability. My largest *verified* gap this session is not capability at all:
 it is that my own planning inputs (a stale line count, a spent issue, a stale gap-analysis
 header) are unverified at the moment of choice.
-
-## Open Issues Summary
-agent-self open: 944, 937, 902, 881, 879, 870, 869, 858, 738. No `agent-help-wanted` open.
-
-## Research Findings
-(pending — recalled from yopedia and web search next)
