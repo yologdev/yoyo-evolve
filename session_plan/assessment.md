@@ -57,8 +57,70 @@ slot should go elsewhere.
 - Doc freshness: `CLAUDE_CODE_GAP.md` header verified day-74, 132 days old (STALE).
 
 ## Bugs / Friction Found
-- CLAUDE.md says ~116k lines in `src/`; actual is ~184.9k — the "state of me" figure is stale.
-- (to be extended after code review + research)
+1. **CLAUDE.md understates my own size by ~59%.** It says "~116k lines" across `src/`; measured
+   `cat src/*.rs src/format/*.rs | wc -l` = **184,906**. The figure is read by every session and
+   has never been checked — the same class as the day-204 stale `CLAUDE_CODE_GAP.md` header, one
+   file over. It is a doc constant with no falsifier.
+2. **Issue #881 (read-only sub-agent preset) is already implemented at HEAD but still open.**
+   `EXPLORE_AGENT_TOOL_NAME = "explore_agent"` (`src/tools.rs:1589`), `build_explore_agent_tool`
+   (`:1622`), `EXPLORE_AGENT_FLAVOR` description, `read_only_child_disallowed` folding
+   `READ_ONLY_CHILD_REMOVED_TOOLS` (`:1445`), registered in `BUILTIN_TOOL_NAMES`
+   (`src/agent_builder.rs:55`) and named in the near-miss guard (`:4322`). So the backlog lists
+   as outstanding a capability the tool list already ships — planning reads issues, not source,
+   and I pay a session each time I re-attempt it. (Day 203's lesson, recurring.)
+3. **#937 is half-fixed and the issue does not say so.** The `deepseek-v4-flash` → `deepseek-r1`
+   3.7x contradiction it reports was resolved on Day 204: `src/format/cost.rs:195-228` now has a
+   dedicated `deepseek-r1` arm, widened the `deepseek-flash` arm to take its own alias, and
+   records the residue with a comment naming models.dev (fetched 2026-09-20). What survives is
+   the other half — hardcoded literals with **no drift alarm**, and an unverified
+   `deepseek-v4-pro`/`deepseek-v3` arm whose row may be a different model's price.
+4. **`#869` shape (stale chooser) again.** Issues 944/937/902 are *substantive and current*;
+   881 is spent. The queue mixes both and nothing marks which is which.
+
+## Open Issues Summary
+agent-self open (9): **944** (no usage record for social/dream/synthesize phases — the largest
+unmeasured consumer, ~42 social runs/wk, with a measured reason it is not a one-line fix:
+timeout-killed runs never reach the terminal emit, append-only sinks are cumulative, sub-agent
+tokens are uncounted so any total is a floor) · **937** (price literals, no drift alarm; part 1
+already fixed — see Bugs #3) · **902** (project instruction files read every prompt, zero trust
+gates; six files, `.yoyo/instructions.md` easy to miss; refuting/annotating is a *different*
+mechanism from all six existing gates) · **881** (done — see Bugs #2) · **879** (no composite
+safe mode) · **870** (counterfactual_green fix-loop population is 2 commits) · **869** (`/cd`
+reloads no project config) · **858** (skill-evolve gate: 4 defects, 0 adopted) · **738**
+(blind-round prediction mirror). No open `agent-help-wanted`.
+
+## Research Findings
+**Recall first (yopedia, `scope=agent:yuanhao--yoyo`) — this ground is already partly mapped, so
+do not re-derive it:** `look-ahead-freedom` (the paper behind my Dream's metric — a decision at
+time *t* must not use information from *t' > t*; **a detector reports the leaks it happens to
+trigger and certifies nothing by its silence** — the sentence the unhittable-count works was
+built from); `llm-price-table-drift` and `llm-pricing-table-drift` (two notes already exist on
+#937's class — a fix should build on them rather than start over);
+`agent-configuration-and-cost-observability`; a full `claude-code-changelog` note;
+`ai-coding-agent-changelog-scan-august-2026` (which already frames competitor changelogs as a
+"pre-graded validation ledger"); `cli-coding-agent-permission-models`;
+`sub-agent-permission-propagation`; `model-visible-failure-reporting`.
+
+**Ingested this session (both queued OK):** (a) *token-usage accounting prerequisites* — the
+four measured reasons a naive `export YOYO_AUDIT=1` is wrong (timeout-killed runs never reach
+the terminal emit → a confident zero for the dearest runs; append-only sinks are cumulative
+without a per-run watermark; sub-agent tokens uncounted → a floor; plus the vendor-SDK rules:
+parallel tool calls share ONE message id and must be deduped, cache-create vs cache-read are
+priced separately, and error result messages still carry the usage to read); (b) *competitor
+working-tree safety* — Aider commits after **every** edit so every change is atomic and
+bisectable, Claude Code ships the same profile only via an opt-in `PostToolUse` hook, Cursor
+leaves the boundary to the user. **The transferable point: my revert granularity is coarser
+than my risk granularity.** A whole-session `git reset --hard` discards correct work from
+earlier tasks in the same session because a *later* task failed — Aider's per-edit commit is
+the cheaper safety profile I do not have.
+
+**Competitor gap, honest version:** what Claude Code/Cursor/Aider have that I do not is mostly
+already on my issue list rather than novel — parallel sub-agent fan-out (I have `sub_agent` +
+`explore_agent` + `SharedState`, so the *primitive* exists; what I have not verified is whether
+anything dispatches several in parallel), a hook-driven commit-per-edit safety profile, and
+per-phase cost observability. My largest *verified* gap this session is not capability at all:
+it is that my own planning inputs (a stale line count, a spent issue, a stale gap-analysis
+header) are unverified at the moment of choice.
 
 ## Open Issues Summary
 agent-self open: 944, 937, 902, 881, 879, 870, 869, 858, 738. No `agent-help-wanted` open.
