@@ -873,8 +873,21 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
             config.compat = Some(OpenAiCompat::groq());
             config
         }
+        // #943: built from yoagent's own DeepSeek preset, NOT `ModelConfig::openai`.
+        // The OpenAI base config declares `context_window: 128_000, max_tokens:
+        // 4096`, and the 4096 was the arm's declared output ceiling — which is
+        // the number Step 2's warning compares a user's configured `max_tokens`
+        // against. Building the ceiling check on the wrong preset would have
+        // silently cut this loop's own 131072 down to 4096 (a latent 400
+        // becoming a present, silent capability loss), so the preset came first
+        // and the check second. The preset declares 1_000_000 / 384_000.
+        //
+        // The explicit `base_url` line is KEPT deliberately and is not tidiness:
+        // the preset sets `https://api.deepseek.com` (no `/v1`), so dropping the
+        // override would be a live wire change on the provider this repo runs
+        // on. Keeping it confines the diff to the two numbers.
         "deepseek" => {
-            let mut config = ModelConfig::openai(model, model);
+            let mut config = ModelConfig::deepseek(model, model);
             config.provider = "deepseek".into();
             config.base_url = base_url
                 .unwrap_or("https://api.deepseek.com/v1")
@@ -1105,6 +1118,42 @@ pub struct AgentConfig {
     pub bash_cwd: Option<String>,
 }
 
+/// Warn when the user's configured `max_tokens` exceeds the output ceiling the
+/// resolved model config declares (#943).
+///
+/// **Why a warning and not a clamp**, written here so the next reader does not
+/// "simplify" it into one: a preset ceiling can itself be stale (it is a
+/// statement about a vendor's API at the time yoagent shipped), and silently
+/// sending a different number than the user configured turns a visible 400 into
+/// an invisible change in behaviour. Naming both numbers lets the user decide.
+///
+/// Pure and table-tested, so the exact string is pinned at the emission point,
+/// and **`None` when `configured <= ceiling` is the entire regression surface**
+/// — that is every user who configured nothing, and every user whose config sits
+/// under the ceiling, including this repo's own `.yoyo.toml` (131072 against
+/// DeepSeek's 384000).
+///
+/// #943's own premise said the ceiling "is already in hand" at this comparison.
+/// Measured at HEAD it was **4096**, because the DeepSeek arm built
+/// `ModelConfig::openai` — so a clamp written against it would have cut this
+/// loop's configured 131072 to 4096. The preset fix landed first, deliberately.
+pub(crate) fn max_tokens_ceiling_warning(
+    configured: u32,
+    ceiling: u32,
+    model: &str,
+    plain: bool,
+) -> Option<String> {
+    if configured <= ceiling {
+        return None;
+    }
+    let marker = if plain { "" } else { "⚠ " };
+    Some(format!(
+        "{marker}max_tokens: configured {configured} exceeds {model}'s declared output \
+ceiling {ceiling}. The provider may reject the request with a 400. Lower max_tokens to \
+{ceiling} or below, or pick a model that allows more."
+    ))
+}
+
 impl AgentConfig {
     /// Apply common configuration to an agent (system prompt, model, API key,
     /// thinking level, skills, tools, and optional limits).
@@ -1112,7 +1161,18 @@ impl AgentConfig {
     /// This is the single source of truth for agent configuration — every field
     /// is applied here, so adding a new `AgentConfig` field only requires one
     /// update instead of one per provider branch.
-    fn configure_agent(&self, mut agent: Agent, model_context_window: u32) -> Agent {
+    /// `model_context_window` and `model_output_ceiling` are both fields of the
+    /// **resolved** `ModelConfig` — the caller has already applied the provider
+    /// arm's preset, so these are the numbers the request will actually be made
+    /// against. They are passed in rather than re-derived here because
+    /// `create_model_config` lives in `build_agent`'s branches, which run after
+    /// this function is reached through the call chain (#943).
+    fn configure_agent(
+        &self,
+        mut agent: Agent,
+        model_context_window: u32,
+        model_output_ceiling: u32,
+    ) -> Agent {
         // User override takes precedence; otherwise use the model's actual context window
         let effective_window = self.context_window.unwrap_or(model_context_window);
         let effective_tokens = (effective_window as u64) * 80 / 100;
@@ -1335,6 +1395,21 @@ impl AgentConfig {
         );
 
         if let Some(max) = self.max_tokens {
+            // #943: compare the user's configured value against the resolved
+            // model's own declared output ceiling. Warn, never clamp — see
+            // `max_tokens_ceiling_warning` for why that is a decision and not
+            // an oversight. Sits BEFORE `with_max_tokens` so the number warned
+            // about is the number that is applied.
+            if !crate::format::is_quiet() {
+                if let Some(warning) = max_tokens_ceiling_warning(
+                    max,
+                    model_output_ceiling,
+                    &self.model,
+                    crate::format::is_plain_output(),
+                ) {
+                    eprintln!("{warning}");
+                }
+            }
             agent = agent.with_max_tokens(max);
         }
         if let Some(temp) = self.temperature {
@@ -1378,26 +1453,30 @@ impl AgentConfig {
             // OpenAI-compat unknown-provider path.
             let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
+            let output_ceiling = model_config.max_tokens;
             let agent = Agent::from_provider(AnthropicProvider, model_config);
-            self.configure_agent(agent, context_window)
+            self.configure_agent(agent, context_window, output_ceiling)
         } else if self.provider == "google" {
             // Google uses its own provider
             let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
+            let output_ceiling = model_config.max_tokens;
             let agent = Agent::from_provider(GoogleProvider, model_config);
-            self.configure_agent(agent, context_window)
+            self.configure_agent(agent, context_window, output_ceiling)
         } else if self.provider == "bedrock" {
             // Bedrock uses AWS SigV4 signing with ConverseStream protocol
             let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
+            let output_ceiling = model_config.max_tokens;
             let agent = Agent::from_provider(BedrockProvider, model_config);
-            self.configure_agent(agent, context_window)
+            self.configure_agent(agent, context_window, output_ceiling)
         } else {
             // All other providers use OpenAI-compatible API
             let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
+            let output_ceiling = model_config.max_tokens;
             let agent = Agent::from_provider(OpenAiCompatProvider, model_config);
-            self.configure_agent(agent, context_window)
+            self.configure_agent(agent, context_window, output_ceiling)
         }
     }
 
@@ -2267,6 +2346,25 @@ mod tests {
     }
 
     #[test]
+    fn test_create_model_config_deepseek_uses_the_deepseek_preset() {
+        // #943 near-miss guard. The arm used to build `ModelConfig::openai`,
+        // which declares 128_000 / 4096 — so the "declared ceiling" a
+        // max_tokens check would read was 4096, not the vendor's 384_000.
+        // Asserted by value here (not by calling the preset), so a future
+        // edit that swaps the constructor back is caught by these three
+        // numbers rather than by agreeing with itself.
+        let config = create_model_config("deepseek", "deepseek-v4-flash", None);
+        assert_eq!(config.context_window, 1_000_000);
+        assert_eq!(config.max_tokens, 384_000);
+        // The explicit `/v1` override is kept on purpose: the preset's own
+        // base_url is `https://api.deepseek.com` (no `/v1`), and this repo runs
+        // on this provider, so dropping the override would be a live wire
+        // change rather than a number.
+        assert_eq!(config.base_url, "https://api.deepseek.com/v1");
+        assert_eq!(config.provider, "deepseek");
+    }
+
+    #[test]
     fn test_create_model_config_non_anthropic_base_url_unaffected() {
         // Non-anthropic providers take the base_url verbatim — no /v1
         // appended, no trimming beyond what the user typed.
@@ -2698,6 +2796,7 @@ mod tests {
                 yoagent::provider::ModelConfig::mock(),
             ),
             200_000,
+            200_000,
         );
         // Agent built successfully with context config
         let _ = agent;
@@ -2741,6 +2840,7 @@ mod tests {
                 yoagent::provider::ModelConfig::mock(),
             ),
             200_000,
+            200_000,
         );
         let _ = agent;
 
@@ -2777,6 +2877,7 @@ mod tests {
                 yoagent::provider::AnthropicProvider,
                 yoagent::provider::ModelConfig::mock(),
             ),
+            200_000,
             200_000,
         );
         let _ = agent;
@@ -3431,6 +3532,71 @@ session will fail on the first turn with 'Tool names must be unique'."
             drain_failure_note(&store),
             None,
             "the note must not re-fire on the next turn"
+        );
+    }
+
+    /// Table test for the #943 ceiling warning. Pin the exact emission string,
+    /// and pin `None` for the ordinary case — **that `None` is the entire
+    /// regression surface**: every user who configured nothing, and every user
+    /// whose config sits at or under the ceiling (including this repo's own
+    /// `.yoyo.toml`: 131072 against DeepSeek's 384000).
+    #[test]
+    fn max_tokens_ceiling_warning_table() {
+        // The ordinary case: configured at or under the ceiling → silent.
+        assert_eq!(
+            max_tokens_ceiling_warning(384_000, 384_000, "deepseek-v4-flash", false),
+            None,
+            "at the ceiling is legal and must be byte-identical to before"
+        );
+        assert_eq!(
+            max_tokens_ceiling_warning(4096, 384_000, "deepseek-v4-flash", false),
+            None
+        );
+        // This repo's own reading, asserted rather than assumed: .yoyo.toml
+        // sets 131072 and the DeepSeek preset declares 384000, so the loop
+        // must NOT start warning after this change.
+        assert_eq!(
+            max_tokens_ceiling_warning(131_072, 384_000, "deepseek-v4-flash", false),
+            None
+        );
+
+        // Over the ceiling → both numbers and the model id, all named.
+        let over = max_tokens_ceiling_warning(500_000, 384_000, "deepseek-v4-flash", false)
+            .expect("over the ceiling must speak");
+        assert!(over.contains("500000"), "must name configured: {over}");
+        assert!(over.contains("384000"), "must name the ceiling: {over}");
+        assert!(
+            over.contains("deepseek-v4-flash"),
+            "must name the model it is talking about: {over}"
+        );
+        assert!(over.starts_with('⚠'), "non-plain keeps its marker: {over}");
+
+        // Plain output is glyph-free, and the payload survives the strip.
+        let plain = max_tokens_ceiling_warning(500_000, 384_000, "deepseek-v4-flash", true)
+            .expect("over the ceiling must speak");
+        for glyph in ['⚠', '—', '•', '✓', '✗', '🔒'] {
+            assert!(
+                !plain.contains(glyph),
+                "plain output must carry no glyph '{glyph}': {plain}"
+            );
+        }
+        assert!(
+            !plain.as_bytes().contains(&0x1b),
+            "plain output must carry no ESC byte"
+        );
+        assert!(plain.contains("500000"), "stripping glyphs keeps payload");
+        assert_ne!(
+            plain,
+            max_tokens_ceiling_warning(500_000, 384_000, "deepseek-v4-flash", false).unwrap(),
+            "the plain branch must differ, or the parameter is vacuous"
+        );
+
+        // The near-miss that matters: one over the ceiling is enough — off-by-one
+        // in the comparison would make the guard never fire for the realistic
+        // "I raised it by one" case.
+        assert!(
+            max_tokens_ceiling_warning(384_001, 384_000, "m", true).is_some(),
+            "one above the ceiling must fire"
         );
     }
 

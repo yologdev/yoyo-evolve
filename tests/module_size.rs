@@ -173,7 +173,17 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // a confinement claim nothing built — plus `"explore_agent"` in
     // BUILTIN_TOOL_NAMES and the comment at that const. Number pasted from what
     // the gate itself printed, after cargo fmt.
-    ("src/agent_builder.rs", 4347),
+    // Day 206 (#943): 4347 -> 4513 (+166, past REGISTER_DRIFT_GRACE_LINES, so
+    // this one is fatal and the number is pasted anyway — the register is
+    // monotonically updated, never silently absorbed). The DeepSeek arm now
+    // builds `ModelConfig::deepseek` instead of `ModelConfig::openai`, so the
+    // arm's declared output ceiling is 384000 rather than the base config's
+    // 4096; `configure_agent` gained a `model_output_ceiling` parameter and the
+    // new pure `max_tokens_ceiling_warning` (plus its table test and the
+    // near-miss guard on the preset's two numbers) compares the user's
+    // configured `max_tokens` against it. The +166 is mostly comment and test:
+    // the two deltas at the arm, the near-miss guard, and the warning table.
+    ("src/agent_builder.rs", 4513),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
