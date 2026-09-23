@@ -1,0 +1,174 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the diff and verify. The task: print wall block. The diff adds functions and tests and architecture doc line. Let's verify a few things:
+
+1. Definitions all have consumers: `diff_mentions_assertion_shape`, `commit_fix_loop_wall_facts`, `fix_loop_wall_split`, `fix_loop_wall_verdict`, `render_fix_loop_wall`, constants. `FIX_LOOP_WALL_MEASURABLE` etc. all used. Consumers in main. Yes.
+
+2. Does the renderer actually print on every census run? In main, `wall_block` computed and passed. Yes.
+
+3. Doc sync: ARCHITECTURE.md updated (the task said ARCHITECTURE.md). CLAUDE.md says new history goes in ARCHITECTURE.md. Good.
+
+4. Product surface: this is a script in the evolve loop, not product surface. N/A-ish but the census is invoked in evolve... it's a dev script, so N/A. Actually the script's `--census` output changes but it's an evolve instrument. Not product surface. N/A.
+
+Let me actually run a quick check: run `--self-test` maybe too heavy (they said script's self-tests green? The harness ran build/tests, but does it run python self-tests? Probably not). Let me run the self-test for the python script quickly, it's `python3 scripts/counterfactual_green.py --test` maybe. Actually CLAUDE says the file's self-tests. Let me check the runtime ~ could be fast.
+
+Also check the shallow-gating logic bug: `fix_loop_wall_verdict` step 2: `if shallow is not False and commits < DREAM_MIN_TASK_COMMITS` → COULD NOT CHECK. Hmm, but the task said a shallow/unreadable history → could not check, distinct from both. And "<20 → the wall plus STRUCTURALLY UNMEASURABLE". With a shallow clone and commits < 20, it reports COULD NOT CHECK. That's per the task's own verification spec: "a shallow/unreadable history → could not check, distinct from both." Fine.
+
+But wait: in main, the census with shallow clone (53 commits) gives commits maybe 1 for fix loop (per architecture: "the un-deepened 1-commit run still reads COULD NOT CHECK: the clone is SHALLOW"). Actually with 1 commit < 20 and shallow True → COULD NOT CHECK. Good.
+
+Let me run the python self-test quickly to confirm green (it's part of verification the task demanded). It might be quick. Let's do it with a timeout.
+
+Also check that fixtures are real output shapes — the architecture claims the numbers come from a real run. Hard to verify; acceptable.
+
+Let me run the self-test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && grep -n …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat ✓ (8ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Run the python self-tests.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/coun… ✓ (74ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Self-tests pass. Now, run a real census to see the block appears (task requires the observable). The clone is shallow (53 commits). Let's try `--census --limit 40`? That might do a lot of git calls but shallow → cheap. Let's check census args.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 180 python3 scripts/coun… ✓ (117ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The block prints on a real run. Three-way split, WHY, range, verdict.
+
+One thing to verify: does the pre-#870 report byte-identity hold and was the plain arm's BEHAVIOURAL rate printed? Not necessary.
+
+Also verify docs line exists in ARCHITECTURE.md (yes in diff). And no scratch files: the diff only touches two files. Note `bar` file? not in diff. Good.
+
+One check: task said "a table test for the renderer: ≥20 → a rate; <20 → wall + STRUCTURALLY UNMEASURABLE; a shallow/unreadable history → could not check". All present. Anti-vacuous assertions present.
+
+Potential issue: in the MEASURABLE branch, if shallow is True and commits >= 20 the verdict is MEASURABLE (by design, per test "a shallow window does NOT veto a well-populated arm"). Task spec said "<20 → the wall plus STRUCTURALLY UNMEASURABLE" — but with shallow + <20 it's COULD NOT CHECK, which the task explicitly also demanded ("a shallow/unreadable history → could not check, distinct from both"). Consistent.
+
+Also check the "structural unmeasurable" path is reachable — depends on deepened clone. Architecture admits at restored shallow depth prints COULD NOT CHECK. That's honest and documented.
+
+Is that a problem for the deliverable? The task said the observable is the block appearing on a real run — it does. The wall verdict requires depth; documented.
+
+One more: the task said reuse the file's existing cap for diff text ("Whatever reads or truncates diff text must go through the file's existing cap; do not re-derive one."). In `commit_fix_loop_wall_facts`, they call `run_cmd(["git",... "diff","--unified=0",... "--","src/"])` — full diff with no cap. Hmm. Does the file have an existing cap for diff text? Let's check whether run_cmd or something truncates. The task instruction says whatever reads or truncates diff text must go through the file's existing cap. Let's look for an existing cap constant/fn in the file, e.g., something in `src_census_fix_loop` or `commit_test_diff_shape`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cap\|truncat\|MAX.*BYTE… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Look at `commit_test_diff_shape` and `src_census_fix_loop` to see how existing diff reads handle output size/caps. Search for "unified=0" and "git diff".
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unified=0\|--name-statu… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Existing code also uses `git diff --unified=0` — let's check line 2651 context: does the existing src-census cap the diff? Let's look at ~2640-2660 and also check if `run_cmd` caps output. Line 1978 run_cmd: let me read.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py:1978..2008  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py:2635..2665 ✓ (2ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Does the file have an existing diff-text cap? Search for something like "DIFF_CAP" or "cap" of diff text. The task said "Whatever reads or truncates diff text must go through the file's existing cap; do not re-derive one." Maybe there is a cap in the `--src-census` path when reading file contents — e.g. `readable_at_depth` reads test files with some size cap? Let's search for byte caps.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MAX_BYTES\|_CAP\b\|MAX_… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So there's no explicit diff-text cap in the file; the existing code reads full diffs (`--name-status` only). The task instruction "Whatever reads or truncates diff text must go through the file's existing cap; do not re-derive one" — the new code reads the full `-U0` diff without truncation, which is what the instruction wanted (no re-derived cap). Actually the file's "existing cap" might refer to something in `cap_output`? Let's check `cap_output` in extract_trajectory (different file). In counterfactual_green there's no cap. Hmm — the instruction says if it reads/truncates diff text it must go through the existing cap. Since there's no truncation, it reads whole diff; that's arguably fine and arguably memory-heavy for a huge commit, but this is an evolve instrument over the fix-loop arm and the diff of one commit. Not a fail-worthy issue. Let me quickly verify there's no existing "cap" helper for diff text that they bypassed. Search "def cap" in the file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^def \|^    def " scrip… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No cap helper exists in this file. Fine.
+
+Now check the docs: ARCHITECTURE.md line added under scripts/counterfactual_green.py section — yes appears at line ~1016 area (the section is for the script). Let me confirm the entry is within the counterfactual_green.py section.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^## \|^### " ARCHITECTU… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "counterfactual_green.py… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE entries exist. The new entry at line ~1019 - let me confirm it's in the counterfactual_green.py section (line 604 belongs to it presumably). Fine — the diff inserted it at line 1016, in a section about the counterfactual script (mentions #870, splice etc.). Let's just verify the section header context around 1000-1020.
+
+Actually, it's enough. One more: does the self-test's real census values matter? They claim 328/38/138/103/9 from a deepened run — can't reproduce. Not a fail reason.
+
+Let me double check one potential bug: in `render_fix_loop_wall`, the `unreadable` line counting and in `fix_loop_wall_split` `isinstance(facts, dict)`. In the self-test, `wall_of` returning `True` → not a dict → unreadable. In `commit_fix_loop_wall_facts`, returns dict or None. Fine.
+
+Another potential issue: the value `shallow` passed to render in main — check main has `shallow` variable defined in that scope. Let's view main around 3780-3810.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3765,3815p scripts/counte… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All good. One consideration: the wall block is gated behind `--census` with `POP_FIX_LOOP` key existence in `census_by_population(rows)` — the census run above printed it fine, so no KeyError.
+
+Also check `--census --limit` path? same code.
+
+Also the ARCHITECTURE line about the fix-loop arm being structurally unmeasurable — present.
+
+Product surface: this is a dev script inside the repo (evolve instrument), not shipped product surface. N/A.
+
+Doc sync: ARCHITECTURE.md updated (the repo's designated place for history). Task explicitly said one line in ARCHITECTURE.md. PASS.
+
+forgotten_touchpoints: all new defs consumed; `POP_FIX_LOOP`, `POP_PLAIN` reused. `FIX_LOOP_WALL_ASSERTION_MARKERS` used in diff_mentions_assertion_shape. `DREAM_MIN_TASK_COMMITS` used in verdict and tests. No dangling. `render_fix_loop_wall` param `window` used. OK.
+
+Verdict: PASS. Write eval file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 39s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+Evidence I actually gathered:
+• Commit 0ec456e0 touches only ARCHITECTURE.md and scripts/counterfactual_green.py (+548/-2).
+• `python3 scripts/counterfactual_green.py --test → ALL PASSED (self-tests over 6 run verdicts + census fold)`.
+• Real run: --census prints the new FIX-LOOP ARM — THE STRUCTURAL WALL (#870) block with the named range (54 commits reachable from HEAD (54 total, shallow=yes)), the three-way split, the WHY line about the backward counterfactual and #[cfg(test)], and COULD NOT CHECK: the clone is SHALLOW instead of a rate over a tiny arm.
+• Consumer check: each new helper/const has a reader in this diff (diff_mentions_assertion_shape ← commit_fix_loop_wall_facts ← fix_loop_wall_split/main ← render_fix_loop_wall ← the fix_loop_wall= kwarg at the render_census call site), and fix_loop_wall=None is the byte-identity regression surface.
+• Docs: the ARCHITECTURE.md entry under the counterfactual_green.py section records the structural-unmeasurability finding and that the block prints every run; CLAUDE.md was correctly not appended to.
+• Product surface: only an evolve-loop instrument script changed; no defaults/flags/wizard/startup behavior touched.
+
+One non-blocking note: a shallow clone still cannot reach the STRUCTURALLY UNMEASURABLE verdict (it reports COULD NOT CHECK), which the diff discloses honestly in both the code comment and ARCHITECTURE.md and which its self-tests pin deliberately.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

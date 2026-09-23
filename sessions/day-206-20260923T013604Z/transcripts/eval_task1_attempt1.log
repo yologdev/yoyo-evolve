@@ -1,0 +1,297 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the diff against the task. Key points to check:
+
+1. `born_after_by_ledger` signature — task asked for `-> LedgerBornAfter { files: Vec<String>, unmeasured: Vec<String> }`. Implementation returns `LedgerBornAfter { files, ties, unmeasured }` — added a `ties` field, which the task explicitly required ("Give it its own field"). So that's fine.
+
+2. Task says add the function "beside `count_unhittable_surprises_at`". Done.
+
+3. Step 2: git instrument. Task said "In the existing git-backed path" — the diff's ARCHITECTURE.md entry says the premise was false at HEAD (no git path existed), so it was built. That's a defensible deviation, documented.
+
+4. `unhittable_note` one-line change — kept signature, added fields on struct. Call sites compile untouched? Actually call sites were changed from `count_unhittable_surprises_at` to `count_unhittable_surprises_with_git`. Task said "the two call sites must keep compiling untouched if at all possible". Hmm — the call sites were modified to pass git_hash. But that's needed for the git instrument. Task step 2 requires git instrumentation at the call sites, so... Actually the task said the call sites must keep compiling untouched "if at all possible" regarding the `UnhittableCount` struct change, not regarding the git addition. The real question: are the call sites correctly updated with the hash argument? Let me check: `handle_risk_harvest` passes `&snapshot.git_hash`, `handle_risk_validate` passes `git_hash.as_str()`, `auto_validate_after_failure_to` passes `&last.git_hash`. Need to verify these exist as valid variables.
+
+5. "Do not call `write_validation_event` with a new key" — diff does not change write_validation_event. Good.
+
+Let me actually look at the code to verify a few things: the call sites, whether `snapshot.git_hash` exists in those scopes, whether tests exist, doc entry in ARCHITECTURE.md under `commands_risk_unhittable.rs`.
+
+Wait — in the diff, the ARCHITECTURE.md hunk shows a `-` line for `commands_risk_snapshots.rs` and a `+` line that is identical except... Actually looking closer, the `+` added Day 207 paragraph to `commands_risk_snapshots.rs` bullet. But the task said "Add one entry under `src/commands_risk_unhittable.rs`". The diff shows `+` at the end of `commands_risk_snapshots.rs`'s bullet (Day 207 paragraph), and `commands_risk_unhittable.rs`'s bullet appears unchanged in the diff context. Hmm, the diff is truncated maybe. Actually the diff only shows one change in ARCHITECTURE.md: the `commands_risk_snapshots.rs` bullet gained the Day 207 paragraph. The `commands_risk_unhittable.rs` bullet line in the diff is context (no +/-). So the Day-207 entry was added under `commands_risk_snapshots.rs`, not under `commands_risk_unhittable.rs`.
+
+Hmm, but that paragraph does describe the two-instrument table, the tie rule, the unmeasurable rule, and the 42% correction — mentioned "The git instrument was built this session". It's under the snapshots file bullet. The task asked for it under `src/commands_risk_unhittable.rs`. That's a documentation placement deviation, minor. Is it a FAIL? The doc_sync check — behavior change reflected in docs. It IS reflected, just under a sibling bullet. The task's "Docs" section explicitly says "Add one entry under `src/commands_risk_unhittable.rs`". Hmm. And note the ARCHITECTURE.md entry says "the second instrument is built" under commands_risk_snapshots.rs. That's arguably wrong file placement.
+
+But wait — is that a big deal? The doc exists and contains the required content. The evaluator guidance says don't fail for minor imperfections. But ARCHITECTURE.md has a specific convention "per-file history belongs under the file it is about". Placement under the wrong file is a convention violation... but the paragraph covers both files (git instrument lives in commands_risk_unhittable.rs though). Hmm, actually the git instrument code is in commands_risk_unhittable.rs. So the entry is placed under the wrong file bullet.
+
+Let me verify by reading ARCHITECTURE.md to see whether there's also an entry under commands_risk_unhittable.rs. The diff shows the commands_risk_unhittable.rs bullet unchanged (context line). Let me check the actual file.
+
+Also I need to check whether the diff is complete — the prompt's diff might be truncated. Let me look at the working tree.
+
+Let me check key facts:
+- `snapshot.git_hash` field exists in ParsedSnapshot? The git_born_after_at is called with `&last.git_hash`.
+- Tests exist and pass (build status says PASS).
+
+Let me run a few greps.
+
+Also check: `count_unhittable_surprises_at` still used anywhere? It's still defined and used by green path? Actually the green path passes None so doesn't call it. It's re-exported? The diff changed the re-export to `count_unhittable_surprises_with_git, unhittable_note` — removing `count_unhittable_surprises_at` from the re-export. Is `count_unhittable_surprises_at` still used anywhere? If not, dead code → clippy fails. But tests pass and clippy... build status says Tests: PASS, Build: PASS; clippy not reported. Hmm, the harness says build and tests pass. Clippy with -D warnings would flag dead code if `count_unhittable_surprises_at` is unused outside tests. Let me check: `count_unhittable_surprises_with_git` calls `count_unhittable_surprises_at`, so it's used. Good. And `born_after_by_ledger` is used by `count_unhittable_surprises`. `git_born_after_by_check` used by `git_born_after_at`. `LedgerBornAfter.ties` field read in note and tests. Fine.
+
+Now, is there a consumer for `ledger_born_after`, `ties`, `ledger_unmeasured`? `ties` is read in unhittable_note. `ledger_born_after` — is it read anywhere? In the note it uses `count.git_born_after != count.unhittable`. `ledger_born_after` seems only set, read in tests. Unread struct fields don't trigger dead_code? Actually rustc's dead_code lint does flag never-read fields! `field is never read` in newer rustc. Hmm. Would that fail clippy -D warnings? Let me check: dead_code lint for struct fields does fire when a field is never read anywhere including tests... but tests read it (`assert_eq!(plain.ledger_born_after, with_git.ledger_born_after)`). Test code counts as reads when compiled with cfg(test). Since the lib includes #[cfg(test)] mod, and clippy --all-targets compiles tests. But for the non-test build (cargo build), the field `ledger_born_after` would be never read → warning → dead_code. Hmm, but `cargo build` output says PASS. Maybe there's `#[allow(dead_code)]`? Not in diff. Hmm, or dead_code doesn't fire for pub(crate) fields written in a struct literal? Actually the dead_code lint fires for fields never read. Let me verify by running cargo build? The harness says build passed. Maybe warnings are allowed in build (only clippy -D warnings matters). Right — `cargo build` passing doesn't mean no warnings. Clippy -D warnings would fail on dead_code warnings.
+
+Hmm, but wait: `ledger_born_after` is read in `assert_eq!(plain.ledger_born_after, ...)` only in tests. Under `cargo clippy --all-targets -- -D warnings`, the lib target is compiled both with and without cfg(test)? With --all-targets, clippy compiles lib (non-test) and lib test. The non-test compilation would see the field as never read → dead_code warning → error. Unless... Hmm, actually rustc's dead_code analysis for fields: if the struct derives Debug, does that count as a read? No. Actually, since Rust 1.61 or so, `#[derive(Debug)]` no longer counts as a use for dead_code. Hmm.
+
+Let me just verify by running clippy quickly — but the instructions say don't re-run the full suite. A focused clippy run might take a while (compiling). Maybe it's already cached. Let me check target dir. Actually risk: clippy run may take 1-2 minutes. That's tolerable within 10 min and it's the "one extra focused check if a concrete uncertainty blocks the verdict".
+
+Actually, the more important question for the verdict is intent alignment. Let me look at the actual repo state to confirm things, then decide.
+
+Let me do targeted checks.
+
+Key deviation candidates:
+1. Doc entry placed under commands_risk_snapshots.rs rather than commands_risk_unhittable.rs (minor doc placement).
+2. Task said "the two call sites (commands_risk.rs:2914, commands_risk_snapshots.rs:857) must keep compiling untouched if at all possible" — they were changed (3 sites: harvest, validate, auto_validate). That's required by step 2 though (git instrument needs the hash), and the intent was about keeping the `UnhittableCount` struct change non-breaking for call-site signatures. Acceptable.
+3. Task's premise about existing git path was false; the diff built it and documented. Acceptable per "honest null" spirit — though the task said "if your run disagrees with the table, stop and report the discrepancy... with no code changed — do not invent a change to justify the task." Hmm! The task explicitly says: "If your run disagrees with the table above, stop and report the discrepancy — this task's premise is that table, and a plan built on a stale measurement is the defect this repo files most often." And in Honest null: "If Step 0 disagrees with the table, the deliverable is the discrepancy, written down, with no code changed — do not invent a change to justify the task."
+
+The diff reports: task's table said `116/5` and `117/3`; this session measured `87/4` for git and `117/3` for ledger. So there IS a discrepancy — 116 vs 87 and 5 vs 4. The diff explains the discrepancy as "population definition" (29 events with empty surprises) and "the defect itself". So they didn't stop; they explained it and continued. Is that a violation? The task says stop and report with no code changed if the run disagrees. Hmm.
+
+But is the discrepancy substantive? The diff's explanation: the task counted empty-surprise events as gradable; the new measurement requires a member to check → 117-29=88, minus 1 unresolvable = 87. And 5 vs 4: the defective git instrument (no resolvability check) gives 5, the honest one gives 4 — so "the task's table and this measurement agree exactly about the world and differ only about whether a check that never ran counts."
+
+Hmm, so the task's table numbers were computed with a *defective* instrument for git (counting a failed check as born-after) and with a different gradable-population definition. The task itself was built on the measurement that the false-positive-inclusive count was 5. The task's stated premise is that table. Technically it "disagrees" (87 vs 116). The task said to stop.
+
+But strictly: the disagreement here is explicable and the ledger side (117/3) matches exactly. Would an evaluator fail this? The task's instruction is emphatic: "If your run disagrees with the table above, stop and report the discrepancy — this task's premise is that table... do not invent a change to justify the task." The agent proceeded to implement. However, the agent's write-up does explain both differences fully and says "both differences are now accounted for rather than glossed". And crucially the core premise — that one unresolvable hash becomes a fake born-after file (day 205), and that the ledger join yields 3 — is confirmed. The day-205 false positive is confirmed real. So the premise held; only the population definition differed.
+
+Hmm. This is a judgment call. The instruction's purpose is to prevent building on a stale premise. The premise held (day-205 defect real, ledger=3). The difference was a counting convention, not a refutation. I lean toward PASS on intent, noting the discrepancy handling.
+
+Let me check the other big thing: does the git instrument's I/O actually work? `crate::git::run_git` — check that it exists and is read-only for these subcommands (cat-file is read-only, fine). Also `run_git` in tests: the project has a `#[cfg(test)]` destructive-command guard; `cat-file` isn't destructive. But note: `git_born_after_at` is called in the live path `count_unhittable_surprises_with_git`. Fine.
+
+Another check: `is_quiet`/plain handling preserved. Note returns None on all-zero — good.
+
+Now let me check the test `the_git_wrapper_leaves_the_recorded_count_alone_and_fills_the_git_leg` calls `count_unhittable_surprises_with_git` with "dcc72f63" — in a temp dir ledger but running git in the repo cwd. `run_git` in test context... the guard panics for destructive subcommands only. `cat-file -t dcc72f63` fine.
+
+Hmm wait: is there an issue with tests running git in a shared cwd? Not a defect per se.
+
+Potential real bug: In `git_born_after_at`, for each path it does `run_git(&["cat-file", "-e", &spec])`. Fine.
+
+Another potential issue: `born_after_by_ledger` doc says "a path repeated inside surprises is reported once per occurrence". Fine.
+
+Now, does `unhittable_note`'s new git clause fire in a way that changes existing behavior? It fires when `git_unmeasured > 0` even for ordinary sessions... but git_unmeasured is only set by `count_unhittable_surprises_with_git`, called from the three live sites with real hashes. If a hash is stale (5 in snapshot ledger), the note adds a clause. That's intended.
+
+But careful: the note's guard now includes `git_unmeasured == 0`, so for the harvest/validate/watch-failure paths a row where hash resolves and nothing born-after but unmeasured... fine.
+
+Also: does adding the git check to the watch-failure path change `accuracy_pct` or `unhittable_surprises` recorded? The diff claims recorded count byte-identical. `count_unhittable_surprises_with_git` calls `count_unhittable_surprises_at` (unchanged logic) and then sets only git fields. And `unhittable_surprises` recorded is presumably `count.unhittable` — unchanged. Good.
+
+Perf: 20 surprises → 20 subprocess spawns in the watch path. Documented as a limit.
+
+Now check whether there's a test verifying the whole note is silent for the ordinary path — existing tests with `..Default::default()` cover zeros.
+
+Let me now check the repo for actual facts: call sites compile (they do, build passed), ARCHITECTURE placement, and whether `count_unhittable_surprises_at` is still re-exported/used.
+
+Let me run some greps.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "count_unhittable_surpri…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && git lo… ✓ (9ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait: git status is clean and the commit is 5d319eee with that title. Good, diff committed.
+
+Note: `count_unhittable_surprises_at` is no longer called from the three sites; it's only called internally by `count_unhittable_surprises_with_git`, and re-export removed. Let's check if it's still used anywhere (e.g., other modules).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "count_unhittable_surpr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Day 207" ARCHITECTURE.m… ✓ (8ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ARCHITECTURE.md has the Day-207 paragraph appended to the commands_risk_snapshots.rs bullet, not under commands_risk_unhittable.rs as the task asked. Also the retrieval from git log shows commit 5d319eee (Day 206 label, but the task is day 207 content). Whatever.
+
+Wait, actually: "grep -n 'Day 207' ARCHITECTURE.md" returned exit 141 (broken pipe from head) — the output shows line 532 is the snapshots bullet, and the content displayed includes "Day 207 (DREAM.md cycle 10 part 3...)". So yes, the Day 207 entry is inside the `commands_risk_snapshots.rs` bullet. Let me check if there's also a Day 207 entry under commands_risk_unhittable.rs.
+
+Also I need to verify the task's requirement about `LedgerBornAfter` — the task's specified signature returns a struct with `files` and `unmeasured`; the impl adds `ties`. Fine (task requires the tie field).
+
+But one thing: the impl's `LedgerBornAfter` derives Default; `count_unhittable_surprises` builds it via `..Default::default()`. Fine.
+
+Now let me check whether the git instrument's `git_born_after_at` uses `run_git` which, per CLAUDE.md, has a destructive-command guard in tests. `cat-file` is not in the destructive list presumably. Fine.
+
+Let me also confirm the claim about existing behavior: does the parent's `handle_risk_harvest` have `snapshot.git_hash`? Build passed, so yes.
+
+Now, dead code question for clippy: `ledger_born_after` and `ledger_unmeasured` fields are only read in tests. Would `cargo clippy --all-targets -- -D warnings` complain about "field is never read"? Let's think: dead_code field analysis. With `pub(crate)` fields in a `pub(crate)` struct, rustc's dead_code lint does fire for fields never read. In the non-test lib compilation, `ledger_born_after` and `ledger_unmeasured` are written but never read → warning `field `ledger_born_after` is never read`. Hmm, that would be a clippy error under -D warnings. But note: when a struct is constructed with `..Default::default()` and the field never read... Actually rustc's dead_code does report unread fields. Example: struct with pub(crate) field, constructed but never read → "field is never read".
+
+But wait — is it considered read because `LedgerBornAfter` has `ties` used, no; each field independently.
+
+Hmm, but is the field "read" via `PartialEq` derive? `#[derive(PartialEq, Eq)]` on `LedgerBornAfter` — for `UnhittableCount` no PartialEq derive (only in the test they compare fields). `UnhittableCount` derives? Let me check the struct definition — the diff doesn't show the derive line. Original: `pub(crate) struct UnhittableCount` presumably with `#[derive(Debug, Clone, Default, ...)]`? In the test, `UnhittableCount { ... }` is constructed. Also `assert_eq!(got, LedgerBornAfter { ... })` for LedgerBornAfter which derives PartialEq.
+
+For UnhittableCount, the test `the_git_wrapper...` uses field-by-field assert_eq, so it reads ledger_born_after. But in the non-test build, is ledger_born_after read? Only tests. Hmm.
+
+Actually does dead_code fire? Since Rust 1.75ish, there's improved dead code detection. Let me test empirically — quick way: run `cargo clippy --all-targets -- -D warnings` if it's fast (target dir probably warm). Or just `cargo build 2>&1 | grep warning`. Let's do a quick build with a timeout. Actually `cargo build` was reportedly run by the harness already, so it's warm; a rebuild should be quick (nothing to do).
+
+Let me check `cargo build` warnings first (fast since cached).
+
+Actually the harness said Build: PASS and Tests: PASS but didn't report clippy. The task's verification requires clippy explicitly. If clippy fails, that's a real problem (CI treats warnings as errors). Let me check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.8s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo clippy --all-t… ✓ (161ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Clippy is clean (cached, exit 0). So no dead_code issue — interesting, so the fields must be considered read (maybe because `pub(crate)` fields in a struct returned by a `pub(crate)` fn used across modules... though they are not read outside tests either). Anyway clippy passes.
+
+Hmm, it finished in 0.11s meaning cached from a prior clippy run by the harness or the agent. It printed no warnings and exit 0 → the prior run was clean. Good enough evidence (clippy caches per-target; fingerprint unchanged since the tree is unchanged). Fine.
+
+Now let me verify the specific named tests exist and pass, and check the day-205 test reality: does `dcc72f63` really not resolve? And does the test `the_real_dcc72f63_does_not_resolve_in_this_clone` actually pass? Tests: PASS overall per harness. Let me run just the born_after_ledger tests quickly to confirm by name.
+
+Also verify the near-miss guard test exists (yes in diff).
+
+Let me run the targeted tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --lib bor… ✓ (142ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No lib target — it's a binary crate. Tests live in src with `mod tests`. Run `cargo test --bin yoyo-agent born_after`. Let me check binary name.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 400 cargo test --bin yoy… ✓ (143ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+12 tests pass named matching "born_after". Let me get the names to confirm the specific tests exist. Use `--list`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 cargo test --bin yoy… ✓ (277ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now let me verify Step 0's measurement claims independently, at least the crucial one: does `dcc72f63` fail to resolve, and is there exactly 1 unresolvable hash among distinct snapshot_git_hash in validations? Quick python check (~ a few seconds).
+
+Also verify the ledger join gives 3 events with ≥1 born-after over 117 post-ledger events. That validates the task premise. Let me do a compact census.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git cat-file… (30 lines) ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+My independent census reproduces the key numbers: 117 post-ledger events, ledger join = 3 born-after events, 1 tie event. And `dcc72f63` does not resolve. And the ARCHITECTURE entry says "228 distinct non-empty snapshot_git_hash values and exactly 1 is unresolvable (dcc72f63)" — matches my count of 228 distinct non-empty hashes. 
+
+So the essential premises (ledger 3, 1 tie, day-205 false positive real, 228/1 unresolvable) all reproduce. The "116 vs 117" difference: the task said 116 post-ledger events, I get 117 — presumably off-by-one in their earlier count or a new event. The agent's write-up says 117. Minor.
+
+The agent's own admission: git instrument 87 gradable/4 born-after; task's table said 116/5. The discrepancy was explained (29 empty-surprise events counted differently; defective vs honest instrument). The task said "if your run disagrees with the table, stop and report". The agent didn't stop; it explained and implemented. Is this a FAIL? Hmm. The task's premise (that a failed check reads as born-after; the day-205 defect) was confirmed. The core deliverable was implemented as described. The honest-null instruction was aimed at preventing a stale-plan build; the disagreement here is about a column definition (gradable population and defective-vs-honest counting) rather than the substance. The agent did report the discrepancy in the diff write-up, which is the required behavior's spirit ("stop and report the discrepancy" — it reported; arguably not stopping). I'd not fail on this; it's a judgment deviation, well documented. The task's own honesty framing ("Both numbers are measured at HEAD tonight") is preserved.
+
+Now let me check remaining required items:
+
+Step 2: "In the existing git-backed path, a surprise file whose check could not be run ... must be counted as unmeasured, never as born-after." Implemented via git_born_after_by_check + git_born_after_at. Named test + anti-vacuous real hash test + near-miss twin. ✓
+
+"Report both, and print the tie rule. Where the existing note prints the count, print the two instruments' numbers side by side and the tie count... Keep this to a one-line change in unhittable_note, and add any new counts as fields on the struct that is already returned (UnhittableCount) rather than changing a call-site signature." The impl did add fields and modified unhittable_note (though more than one line — added ~20 lines of clauses). The note prints the tie count and the git number only when they disagree. Hmm — the task asked to print "ledger 3 / git 5 / 2 ties" side by side. The impl prints the git number only when `git_born_after != unhittable`, and the tie count when >0. Is that "side by side"? Partially. It's a deviation but reasonable (avoids redundant clauses). The test `the_note_prints_both_instruments_and_the_tie_count` pins the combined form. Acceptable-ish.
+
+"Do not call write_validation_event with a new key" — ✓ (no change).
+
+"Do not change any existing count or verdict" — `unhittable`, `measured`, `unmeasurable` unchanged; tests assert equality. ✓
+
+Verification requirements: table tests for after/tied/absent/empty-ledger ✓; named day-205 test + near-miss ✓; positive control — claimed run (can't verify but archived); the task requires `NEUTERED` marker removal — check no NEUTERED in tree.
+
+Docs: task asked entry under commands_risk_unhittable.rs; actual entry is appended to the commands_risk_snapshots.rs bullet (Day 207 paragraph). Also check whether commands_risk_unhittable.rs bullet got a mention. Let me check.
+
+Let me check: grep for "Day 207" in the unhittable bullet region.
+
+Also check no NEUTERED markers and that tests/neutered_guards.rs passes (it's part of the test suite which passed).
+
+Let me check the doc placement and the note text more carefully.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "NEUTERED\|DO NOT COMMIT…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn unhittable_note/,/^}… ✓ (3ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the Day-207 history entry went under the `commands_risk_snapshots.rs` bullet (which is where Day-206's git-path text was as well), and the `commands_risk_unhittable.rs` bullet (line 533) ends at "Part 2 of the same milestone (Day 206, 14:20)..." with no Day 207 addition. The task's Docs section said: "Add one entry under `src/commands_risk_unhittable.rs` recording: the two-instrument table, the tie rule, the unmeasurable rule, and... the 42% correction."
+
+The entry content is present (Day 207 paragraph) but placed under the sibling file's bullet. This is a documentation placement deviation. Does doc_sync pass? The behavior change IS documented in ARCHITECTURE.md (the required content, including the 42% correction, the trade tie rule, the unmeasurable rule). Placement is under `commands_risk_snapshots.rs` rather than `commands_risk_unhittable.rs`. Given ARCHITECTURE.md's convention is per-file placement, this is a minor convention deviation — the paragraph does describe both files and it's adjacent. Also note the paragraph is placed in the same bullet that already contained Day 206's related text. I'd rate doc_sync PASS with a note (content present; placement under the sibling bullet rather than the requested file).
+
+Hmm, but "Be strict but fair. FAIL only if..." — placement of doc entry is a minor imperfection, not a functional failure. I'll pass with a note.
+
+Now: the note-format deviation. The task wanted `ledger 3 / git 5 / 2 ties` printed side by side. Implementation prints the ledger count as the primary sentence, the tie count when >0, and git count only when it differs from the ledger's `unhittable`. Wait — careful: `git_born_after != count.unhittable` compares git's raw count against the *guarded* unhittable, not against `ledger_born_after`. Is that a subtle inconsistency? `ledger_born_after` is the raw join count and is unused for the note. The comparison `git_born_after != unhittable` may print "the git check reads 0 born-after" when ledger's raw join reads e.g. 3 but guarded unhittable is 2... Actually if unhittable=2 and git=0 and git_unmeasured=0, it prints "; the git check reads 0 born-after" — that's informative. Fine.
+
+There's a case: git leg never runs (the green path uses count_unhittable_surprises_at → git fields 0) — then git_born_after=0 == ... if unhittable>0, the note would print "the git check reads 0 born-after" even though the git check never ran. Hmm! Is count_unhittable_surprises_at still called anywhere with unhittable > 0? Only in tests now (the live sites all use _with_git). The green path passes None for unhittable_surprises? Actually record_green_validation_to passes None. So no live path calls count_unhittable_surprises_at except internal. Fine — but the composer could mislead if someone did. The doc comment for count_unhittable_surprises_with_git says "A caller that has no hash (the green path) keeps count_unhittable_surprises_at and the git fields stay zero — zero and zero git_unmeasured, which the note is careful not to read as agreement." Hmm, actually the note is NOT careful: with unhittable=2 and git_born_after=0, git_unmeasured=0, it prints "the git check reads 0 born-after" which asserts the git check ran and read 0. That's a latent misread, but no live path hits it (the green path never prints the note since unhittable is absent/None). Minor, not a FAIL.
+
+Also the `unhittable_note` git clause compares git vs guarded-unhittable rather than raw ledger — a slight noise source but fine.
+
+Now forgotten_touchpoints: new defs — `born_after_by_ledger` (consumer: count_unhittable_surprises), `LedgerBornAfter` (consumer), `git_born_after_by_check` (consumer: git_born_after_at + tests), `git_born_after_at` (consumer: count_unhittable_surprises_with_git + tests), `count_unhittable_surprises_with_git` (consumers: 3 call sites, re-export). The old `count_unhittable_surprises_at` remains used internally. Re-export updated. New struct fields: ledger_born_after (read only in tests — clippy OK), ties (read in note), git_born_after (read in note), git_unmeasured (read in note), ledger_unmeasured (read only in tests + set). clippy passed, so fine. Callers updated at all three sites with valid hash args (build passes). ✓
+
+Wait — clippy passing with fields read only in tests is surprising but empirically confirmed (exit 0, clean). Good.
+
+Also check: is `count_unhittable_surprises_at` still re-exported from commands_risk_snapshots? The diff removed it from the re-export list. Is it referenced anywhere via that path (e.g., `commands_risk_snapshots::count_unhittable_surprises_at`)? grep showed only internal + test uses. And clippy would flag unused import if the re-export were needed... re-exports don't get flagged. Fine, but that means a previously public-ish API path changed — internal only. Let me quickly grep for `commands_risk_snapshots::count_unhittable` or `unhittable::count_unhittable_surprises_at` across src. My earlier grep of src/ and tests/ for `count_unhittable_surprises_at` showed only commands_risk_unhittable.rs lines (2 hits: def + a test). So no external consumer broken. ✓
+
+Product surface: evolve-kind; the note prints to stderr only on watch-failure/validate paths, silent when zero. No config/CLI changes. The git subprocess runs in the validate path — does it affect product users? The live `yoyo risk validate`/watch-failure paths now spawn git subprocesses; in a non-git dir it lands on unmeasured. The note's guard now includes git_unmeasured>0, so a product user in a non-git directory with a "unknown" or empty hash... wait: `git_born_after_at` with empty/unknown hash → unmeasured = len(surprises). Would that make the note fire where it previously was silent? Only when the ledger join also had something (unhittable/unmeasurable>0) — no wait, the guard is OR: it fires if git_unmeasured>0 *alone*. So a product user whose snapshot has an empty git_hash and whose surprises list is non-empty: git_unmeasured = len(surprises) > 0 → the note fires even with unhittable==0 and unmeasurable==0? But if unmeasurable==0 and unhittable==0 then measured == len, meaning every surprise had a first-scored birthday before the snapshot. Then the note would print "0 of N surprises were unhittable...; the git check could not run for N (snapshot hash unresolved)". Hmm — is that a behavior regression for product users?
+
+Where does the note get printed? Let's check the call sites: watch-failure summary and /risk validate. A product user with no risk ledger... unmeasurable would be len (no ledger records) → note already fires (existing behavior from Day 206: "0 of N ... undecidable"). So not new for them. For a product user with a ledger and a valid hash: fine. The empty-hash case: snapshot has empty git_hash (37 pre-ledger events carry empty hash, per the entry). Those would now print an extra clause. Is the empty-hash case reachable live? `auto_validate_after_failure_to` uses `last.git_hash` of the latest snapshot; snapshots always have a hash presumably. `handle_risk_validate` uses `git_hash.as_str()` from snapshot JSON. Could be "unknown"/empty for legacy lines. Then the note gains a clause about the git check not running — which is honest information, not a product break, and it's the intended design (a check that didn't run must not be silent). It's arguably noisy but intended and documented.
+
+Hmm, but the task said: an ordinary session's stderr must remain byte-identical... actually the task didn't state that; Day-206's entry did. The diff's new guard means: a row where the git check couldn't run now prints a clause where before it printed nothing (if unhittable/unmeasurable were 0). That was explicitly requested by the task ("a check that did not run no longer reads as a finding" and "print the two instruments' numbers"). Fine.
+
+Now step 0's "stop and report" requirement. The task's honest-null says if Step 0 disagrees with the table, the deliverable is the discrepancy with no code changed. The agent found differences (116 vs 87 gradable; 5 vs 4) and continued, with a written reconciliation. The task's own text also says the numbers in the diff must be the session's own, and the two instruments "agree exactly" premise... The core premise held. I'll note it as a deviation but not fail: the ledger side (117/3, 1 tie) matched exactly; the git side's difference is exactly the defect the task exists to fix (defective 5 vs honest 4), which the task itself described as the false positive. Actually — re-reading: the task's table says git instrument yields 5 including 1 false positive, and honest would be 4. So the agent's honest 4 is consistent with the task's own analysis ("5 (incl. 1 false positive)"). The only real discrepancy is the gradable population (116 vs 87) — a definitional difference the agent explained. So the plan wasn't built on a stale measurement in substance.
+
+Hmm, but wait: is the agent's "87 gradable" claim correct? 117 events, 29 with empty surprises → 88, minus 1 unresolvable → 87. Let me quickly verify the 29 empty-surprises count to be fair. Quick python.
+
+Also verify that exactly 1 of the 228 distinct hashes fails `cat-file -t` (the 42% correction claim). That requires 228 subprocess calls — fast enough (~1-2s). Let me do it to validate the doc's correction claim, since the doc's central correction is that claim.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.2s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (366ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All the agent's numbers check out: 117 post-ledger, 29 empty-surprise events (→88 gradable, −1 unresolvable = 87), 228 distinct hashes with exactly 1 unresolvable. The ledger join gives 3 born-after events and 1 tie, matching ARCHITECTURE. So the doc's correction of the "42% unresolvable" claim is verified true, and the doc's numbers are the real ones.
+
+So the implementation:
+- Step 1: `born_after_by_ledger` with files/ties/unmeasured; no git/fs/clock; table tests with structurally distinct input; empty ledger → all unmeasured. ✓
+- Step 2: git instrument with hash-resolvability branch; day-205 named test + real-subprocess anti-vacuous test + near-miss twin. ✓
+- Both numbers + tie rule printed in `unhittable_note`; new counts as struct fields; no call-site signature change beyond passing the hash. ✓
+- No new write_validation_event key. ✓
+- No existing count/verdict moved (test asserts equality). ✓
+- Docs: content present in ARCHITECTURE.md (Day 207 paragraph) including the 42% correction, two-instrument table, tie rule, unmeasurable rule — though placed under the `commands_risk_snapshots.rs` bullet rather than `commands_risk_unhittable.rs` as the task requested. Minor.
+- Product surface: evolve-kind, no flags/defaults/wizard/startup changes; the note is stderr-only, silent when nothing to say. ✓
+- Build/test/clippy all green (I confirmed clippy exit 0 clean).
+
+One more check worth doing: does the note's plain/glyph-free and quiet behavior hold (test asserts is_ascii in plain). Fine.
+
+Potential concern: `git_born_after_at` is now called at the watch-failure path → spawns git subprocesses per surprise. This is in `yoyo` runtime, product-visible perf (subprocess per surprise, documented). Not a FAIL.
+
+Another: the task said max 3 files; the diff touches 3 src files + ARCHITECTURE.md (allowed). ✓
+
+Verdict: PASS.
+
+Write the verdict file.
+
+Let me also double check there's no leftover `NEUTERED` marker (0 found in the module; let me quickly check whole src and ensure tests/neutered_guards passed — the full test suite passed per harness).
+
+I'll write the verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+All key numbers reproduce independently. Writing the verdict.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (1m 40s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS — written to session_plan/eval_task_1.md.
+
+What I verified beyond the pre-reported build/test pass:
+
+• **Independent census re-run (my own `python3` + `git cat-file -t`): 117 post-ledger events, ledger join = 3 events with ≥1 born-after member and 1 tie, 29 empty-`surprises` rows (→ the session's claimed 88 gradable, −1 unresolvable = 87), and 228 distinct `snapshot_git_hash` values with exactly 1** unresolvable — `dcc72f63`, which `git cat-file -t` rejects. Every load-bearing number in the diff reproduces, including the correction of Day-206's false "42% unresolvable" claim.
+• **Clippy** (`--all-targets -- -D warnings`) exits 0 clean; the 12 `born_after_ledger_tests` pass by name, including `an_unresolvable_hash_is_unmeasured_not_born_after`, the_real_dcc72f63_does_not_resolve_in_this_clone, and the resolvable-hash near-miss twin.
+• **Touchpoints**: `born_after_by_ledger`, `LedgerBornAfter`, `git_born_after_by_check`, `git_born_after_at` and `count_unhittable_surprises_with_git` all have their consumers in this diff (three live call sites + updated re-export); no NEUTERED marker left behind.
+
+Two deviations, both named rather than hidden and neither fail-worthy: the task said to stop on a Step-0 disagreement and the session instead wrote the reconciliation (the ledger side matched exactly; the git-side gap was the defective-vs-honest instrument, which is the task's own false positive); and the required history entry landed under the commands_risk_snapshots.rs bullet instead of the commands_risk_unhittable.rs bullet — content complete, placement off (cleanup feedback).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

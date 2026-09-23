@@ -1,0 +1,1658 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the issue and the tool itself.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline | head -5 && e… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The gh issue view seemed to fail. Let me check the file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l scripts/counterfactual_gre… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+A 5852-line Python file. Let me look at the structure: the usage, main, census functions.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^def \|^class \|^[A-Z_]… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3305,3450p scripts/counte… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's already substantial #870 work in place (--src-census, --splice-src-tests, --include-src-test-commits). Let me continue reading main and see the census output rendering.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3450,3620p scripts/counte… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now, step 0: measure whether the wall is already visible. Let's run the census at HEAD and look at output. But do I have enough git history? shallow clone 53 commits. Let's run `--census`.
+
+Also `--src-census`. Let me check the src census renderer and whether it prints the wall. Let's run it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 python3 scripts/coun… ✓ (114ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 python3 scripts/coun… ✓ (111ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+At HEAD, the plain census does NOT print the tests/src/assertion-shaped three-way split for the fix-loop arm. There's `--src-census` which prints something. Let's run that too.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 900 python3 scripts/coun… ✓ (110ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So Step 0 answered: the tool does NOT print the fix-loop arm's structural wall (tests/ vs src/ vs assertion-shaped split). It prints src+tests readability (READABLE/NONE/UNKNOWN) and splice eligibility, which are about a *different thing* — whether a src+tests counterfactual could lay back a module. But it does NOT print the three-way split of fix-loop commits: touch tests/ | touch src/ | assertion-shaped in src/ (the 11/117/88 from the issue). Nor does it print `STRUCTURALLY UNMEASURABLE` when the fix-loop behavioural denominator is below 20.
+
+So Step 1 is real work.
+
+Note: at HEAD with 53 commits, fix-loop commits = 1 (register-only). The census prints "BEHAVIOURAL rate 0%" for the fix-loop arm without saying the sample is 0 and structurally unmeasurable. That's precisely the defect: a "0%" over 0.
+
+Now let me look at the relevant helpers to reuse:
+- `is_dedicated_test_file` — hmm that's in check_assertion_weakening.py, not here. Let me grep.
+- `top_level_test_files`, `behavioural_test_files`, task-commit collection, census renderer.
+
+Let me look at key parts.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 628,800p scripts/counterf… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the census renderer and the src census renderer to fit the new block into idiom.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1874,2030p scripts/counte… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the issue asks for a NEW block. But careful — the task says: the census output gains one block for the fix-loop arm:
+- three-way split (touch tests/ / touch src/ / assertion-shaped in src/) with counts and range;
+- explicit `STRUCTURALLY UNMEASURABLE` verdict for the fix-loop BEHAVIOURAL arm when the wall leaves fewer than 20 commits;
+- one-line statement of why.
+
+Hmm, but there's an existing `--src-census` block scoped to fix-loop NO_TEST_CHANGE rows. The new block is different: the three-way split over ALL fix-loop commits (touch tests/, touch src/, assertion-shaped in src/), and the STRUCTURALLY UNMEASURABLE verdict.
+
+Key design decision: should this be part of `--src-census` (default off) or always printed in `--census`? The issue says "the split prints on every run so the wall cannot go invisible again" (in the Docs section). So it should print on every `--census` run — not gated behind a flag. But the existing rule is that a plain `--census` run is byte-identical without `--src-census`... that comment is about `--src-census` entering no denominator. Adding a new always-on block changes plain `--census` output. Hmm.
+
+Wait — "the split prints on every run so the wall cannot go invisible again" is in the Docs section for ARCHITECTURE.md: "that the fix-loop arm is structurally unmeasurable (not under-sampled), why, and that the split prints on every run so the wall cannot go invisible again."
+
+So yes, print on every census run. That's the point: the wall must be visible without asking for a flag. And the block should not enter any denominator.
+
+But how expensive? touch tests/ = already known from rows (addressable). touch src/ = needs `git diff --name-status parent sha -- src/` per fix-loop commit. assertion-shaped in src/ = needs `-U0` diff text scan for `#[test]`/`cfg(test)`/`assert`. That is a per-commit cost, but scoped to the fix-loop arm (small: 1 at HEAD, ~199 at full depth). That's fine — bounded.
+
+Hmm, but adding git calls to a plain `--census` run... at HEAD the fix-loop arm is tiny. At full depth 199 commits × a `-U0` diff = maybe slow but tolerable. The existing `--src-census` does per-src-file `git show`, more expensive. Two `git diff` calls per fix-loop commit is cheap.
+
+Now, the key: the "assertion-shaped in src/" count must never be printed as a count of loosened assertions. Preserve that framing verbatim.
+
+Also need: when the fix-loop BEHAVIOURAL count < 20 → verdict STRUCTURALLY UNMEASURABLE. And shallow/unreadable → `could not check`, distinct from both.
+
+Let me now think about the structure:
+
+```python
+FIX_LOOP_WALL = "STRUCTURALLY UNMEASURABLE"
+```
+
+Function:
+```python
+def fix_loop_wall(rows, src_touch_of, assertion_shaped_of) -> dict:
+    """..."""
+```
+Pure, injected resolvers. Counts: `commits`, `touch_tests`, `touch_src`, `assertion_shaped`, plus maybe `no_git`? Let's think about the three counts:
+
+- `touch_tests` = commits with any top-level tests/*.rs in test_files (i.e. `r.addressable`). Note: at HEAD the fix-loop arm has 1 commit which does touch tests/module_size.rs → touch_tests=1.
+- `touch_src` = commits whose diff touches any `src/*.rs`.
+- `assertion_shaped` = commits whose `src/` diff added/removed lines mention `#[test]`/`cfg(test)`/`assert`.
+
+Then the BEHAVIOURAL count comes from census_by_population (existing) — the denominator. If behavioural < 20 → STRUCTURALLY UNMEASURABLE.
+
+Hmm, what should "the wall leaves fewer than DREAM.md's ≥20 commits" mean exactly? The behavioural denominator for the fix-loop arm. Yes.
+
+Where to get DREAM.md's ≥20? Is it a constant already? Let me grep for "20" and "MIN" constants.
+
+Let me also check `commit_test_diff_shape` and `commit_src_test_readability` to copy the git-call idiom (run_cmd usage, error handling).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1676,1830p scripts/counte… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check `render_census` to see the whole census output and where I'd add the block, plus the LIMITS text (should I add an item 11? The task says "one-line statement of why" in the block).
+
+Also need to check the self-tests style at the end of file.
+
+Let me view render_census.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2640,2735p scripts/counte… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I have a good picture. Design decision: where to put the new block. The task says "The census output gains one block for the fix-loop arm". It should print on every run (per Docs line). But `render_census` is pure and must not shell out. So the wall counts must be computed in main and passed in, like `shape_split`.
+
+I'll follow the `shape_split` precedent exactly: an optional kwarg `fix_loop_wall=None`; absent → byte-identical. But the Docs line says "the split prints on every run". Hmm — with `fix_loop_wall` computed in main on every `--census` run, the split does print on every run. The optional-kwarg default is just for the pure renderer / self-tests. That's fine and matches existing discipline (shape_split is also always computed in main now).
+
+But wait: `--src-census` exists and its block is fix-loop scoped. Adding another always-on block for the fix-loop arm creates two blocks about the fix-loop arm. That's a bit redundant but they measure different things (readability of NO_TEST_CHANGE vs. the three-way split of ALL fix-loop commits). The issue explicitly asks for the three-way split. Given the Step-0 finding (the wall is not printed), it's licensed.
+
+Hmm, but should the three-way split be gated behind `--src-census`? The issue says Step 1 "The census output gains one block for the fix-loop arm". And the Docs line: "the split prints on every run so the wall cannot go invisible again". So always on. Good.
+
+However: there's a risk of confusing the reader. Let me name the block clearly: "FIX-LOOP ARM — THE STRUCTURAL WALL (#870)". And include:
+- the range (`window` string)
+- three counts: touch tests/ (from rows, free), touch src/ , assertion-shaped in src/
+- the wall verdict.
+
+Now cost: touch src/ requires `git diff --name-status <sha>^ <sha> -- src/` per fix-loop commit; assertion-shaped requires `git diff -U0` over src/ per fix-loop commit. Can combine into ONE diff call without `--name-status`? Actually `-U0` diff output includes the `diff --git a/src/x.rs b/src/x.rs` headers, so one `git diff -U0 <sha>^ <sha> -- src/` gives both: paths from headers, and added/removed lines for assertion shape. That's ONE git call per fix-loop commit. And the file's existing cap for diff text — "Whatever reads or truncates diff text must go through the file's existing cap; do not re-derive one." Let me find the cap.
+
+Let me grep for a cap constant in this file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CAP\|cap\b\|_MAX\|MAX_"… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2502,2600p scripts/counte… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+"There is no existing diff-text cap in this file" — let me check for the cap mentioned. `test_diff_is_register_only` takes diff_text. Let me look at how it's called and whether there's a cap in the file (`DIFF_CAP`, `cap_text`).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_diff_is_register_o… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2030,2110p scripts/counte… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's look at the self-test infrastructure (run_self_tests) to add tests, and the `check` helper.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3817,3860p scripts/counte… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's design.
+
+Constants:
+```python
+# DREAM.md's bar for a published rate: >= 20 task commits.
+DREAM_MIN_COMMITS = 20
+
+WALL_MEASURED = ...?
+```
+
+States for the fix-loop wall block:
+- The three counts (touch_tests, touch_src, assertion_shaped) over the window.
+- The behavioural denominator (from by_pop[POP_FIX_LOOP]['behavioural']).
+- Verdict:
+  - `STRUCTURALLY UNMEASURABLE` when behavioural < DREAM_MIN_COMMITS (>= measures over fewer than 20)
+  - also could-not-check when the src/ diff could not be read for some commit? The task says "a shallow/unreadable history → `could not check`, distinct from both."
+
+Hmm — the third test: `a shallow/unreadable history → could not check, distinct from both`. That's about main returning 1 when the census can't read the log (existing behaviour). But my table test should cover: a renderer given "unreadable" input prints `could not check`.
+
+Let me design `fix_loop_wall` to return a dict:
+```python
+{
+  "commits": N,          # fix-loop commits in the window
+  "touch_tests": N,
+  "touch_src": N,
+  "assertion_shaped": N,
+  "unreadable": N,       # src/ diffs that could not be read -> those commits are counted in `unreadable` and are in neither touch_src nor assertion_shaped... 
+  "behavioural": N,      # the denominator that carries signal
+}
+```
+Hmm, careful about double counting. Let's be precise and simple:
+
+For each fix-loop row:
+- if row.addressable → touch_tests += 1
+- src_state = src_touch_of(sha) returns one of:
+  - `SRC_DIFF_TOUCHES` — the src/ diff is non-empty
+  - `SRC_DIFF_NONE` — read, empty
+  - `SRC_DIFF_UNKNOWN` — could not read
+- assertion_shaped: `assertion_of(sha)` returns True/False/None? Better to fold: if the resolver fails, mark the commit's assertion state unknown.
+
+Simplest and honest: one resolver `src_diff_of(sha)` returning `(state, text)`? But purity/table-testability wants injected closures. Let me follow `src_census_fix_loop`'s shape: two injected resolvers, each returning a vocabulary string, with unknown folded out of real buckets:
+
+```python
+SRC_TOUCHED = "SRC_TOUCHED"
+SRC_UNTOUCHED = "SRC_UNTOUCHED"
+SRC_TOUCH_UNKNOWN = "SRC_TOUCH_UNKNOWN"
+
+SRC_ASSERT_SHAPED = "SRC_ASSERT_SHAPED"
+SRC_ASSERT_NONE = "SRC_ASSERT_NONE"
+SRC_ASSERT_UNKNOWN = "SRC_ASSERT_UNKNOWN"
+```
+
+Then counts keys: `commits`, `touch_tests`, SRC_TOUCHED, SRC_UNTOUCHED, SRC_TOUCH_UNKNOWN, SRC_ASSERT_SHAPED, SRC_ASSERT_NONE, SRC_ASSERT_UNKNOWN, `behavioural`.
+
+Wait: but the assertion-shaped scan is presumably only over commits that touched src/. A commit with no src/ diff has zero assertion-shaped lines trivially. So for `assertion_of` we can return SRC_ASSERT_NONE when no src/ diff. But to keep it simple, resolve assertion over all fix-loop commits with a single `git diff -U0 -- src/` call.
+
+Actually, one git call per commit can answer both: `git diff -U0 <sha>^ <sha> -- src/`. If it fails → both UNKNOWN. If the output is empty → UNTOUCHED + ASSERT_NONE. Else → TOUCHED, and scan added/removed lines for assertion markers.
+
+So create `commit_src_diff_state(root, sha) -> (touch_state, assertion_state, unknown_reason)` — one git call. Then a resolver builder that caches per sha.
+
+Now the "cap": "Whatever reads or truncates diff text must go through the file's existing cap; do not re-derive one." Hmm, is there an existing cap for diff text? `test_diff_is_register_only` reads full diff text uncapped in collect_census (`git diff <sha>^ <sha> -- path`). So there is no cap in this file for diff text. Maybe the instruction refers to a cap in another script (check_assertion_weakening.py has caps). Since this file has no such cap/helper, I should not invent one; but I should not truncate either. Hmm. "Whatever reads or truncates diff text must go through the file's existing cap; do not re-derive one." — Since the file has no existing cap, the honest reading is: don't re-derive one; just don't truncate. I'll state in the write-up that this file has no diff-text cap (the census already reads whole diffs uncapped in `collect_census`), so nothing needed re-deriving. Let me double check there's no cap helper: grep for 'cap' as a function name.
+
+grep -n "def .*cap\|truncate" gave nothing except truncate in a docstring. And "cap_output" is in extract_trajectory.py, not here. So confirmed: no cap in counterfactual_green.py. Good — I'll note that.
+
+Now the assertion-shaped scan. Use a regex. There's `_REGISTER_ENTRY_RE` style. Define:
+
+```python
+ASSERTION_SHAPED_RE = re.compile(r"#\[test\]|cfg\(test\)|assert")
+```
+Careful: `assert` matches `assert!`, `assert_eq!`, `debug_assert`, and also identifiers like `assertions`. The issue says the 88 is a `-U0` text heuristic that is an upper bound — it "cannot tell a test edit from an assert! in production code, cannot tell a tightened assertion from a loosened one, and cannot tell either from a rename." So a loose match is intended as an upper bound. I'll match `#[test]`, `cfg(test)`, `assert`. Preserve the framing verbatim in the docstring and renderer.
+
+Now the "must not be printed as a count of loosened assertions" — the renderer must label it "assertion-shaped in src/ (an UPPER BOUND, not a count of loosened assertions)".
+
+Now where to add the block: in `render_census` after the population blocks and before/after the roster? I think right after the FIX-LOOP population block would be most visible but the roster comes after. Let me put it after the roster+legend, i.e. at the very end of render_census — similar to how `render_src_census` is a separate printed block after the census. Hmm, actually simpler and cleaner: make it a separate render function `render_fix_loop_wall(counts, window)` and print it in main right after `print(render_census(...))`. That mirrors `render_src_census` exactly — a separate block after the census, printed on every `--census` run. And it keeps `render_census` pure/simple without another optional kwarg.
+
+But the task says "The census output gains one block for the fix-loop arm". Separate print = still "the census output gains one block". Good, and consistent with the file's existing idiom (render_src_census is its own block). And "the split prints on every run" — yes, unconditionally in the --census branch.
+
+Now cost concern: main's --census path already computes shape_split (one git diff per behavioural row) and, only with --src-census, the readability walk. Adding one `git diff -U0 -- src/` per fix-loop commit is bounded by the fix-loop arm size. At HEAD that's 1 commit. Fine. At full depth ~199 commits — two git calls each? No, one. OK.
+
+Hmm, but wait: does the assertion-shaped scan need `-U0`? Yes to avoid context lines containing `assert`. Use `-U0`.
+
+Now let's think about what counts as "assertion-shaped in src/": the task says "assertion-shaped in src/" in the three-way split `(touch tests/ / touch src/ / assertion-shaped in src/)`. These aren't mutually exclusive — a commit can touch tests/ AND src/ AND have assertion-shaped src lines. The issue's table shows they're counted independently (11 / 117 / 88 out of 199). And "the 88" is a subset of the 117. So print them as three independent counts and say they can overlap. Good.
+
+Now the STRUCTURALLY UNMEASURABLE verdict. When behavioural (fix-loop) < 20:
+```
+  VERDICT: STRUCTURALLY UNMEASURABLE — the fix-loop BEHAVIOURAL arm holds N commit(s) over
+  <range>, below DREAM.md's >= 20 bar. This is not under-sampling: the wall leaves it that
+  small. WHY: the backward counterfactual lays post-task src/ over pre-task tests/, so it
+  needs the test edit in the top-level tests/ tree; #[cfg(test)] blocks inside src/ are
+  outside that tree by construction. A rate printed over N here would be a rate over a
+  population the method cannot reach.
+```
+When >= 20: print a rate (the behavioural rate) and explicitly say the bar is cleared.
+
+When the history is shallow/too shallow → hmm. The task's third test: "a shallow/unreadable history → `could not check`, distinct from both." So if the window is too shallow to clear the bar... wait, `<20` covers shallow. The distinction: shallow+0 commits → the behavioural count is 0, which is < 20 → STRUCTURALLY UNMEASURABLE would be a claim about structure when the real reason is depth. That's the danger the window_note already flags ("this BOUNDS THE DENOMINATOR BELOW DOWNWARD"). The issue's Step 0 says: 'The print must therefore carry the range it actually measured, and say "could not check" when the history is too shallow to clear the ≥20-commit bar — never reprint a 22-day-old number as though it were fresh.'
+
+So: if the window is shallow AND the fix-loop arm's total commits < ... hmm. What's the honest rule?
+
+Think: STRUCTURALLY UNMEASURABLE is a claim about the wall — the fix-loop arm has ≥20 commits but <20 of them are behavioural because the wall eats them. If the fix-loop arm has very few commits AT ALL (1 at HEAD), then the reason isn't the wall at all — it's the shallow clone. So the honest distinction:
+
+- If the fix-loop arm has ≥ 20 commits in the window but behavioural < 20 → STRUCTURALLY UNMEASURABLE (the wall is what bounds it). This is the issue's case (199 commits, 2 behavioural).
+- If the fix-loop arm has < 20 commits in the window → COULD NOT CHECK: the window itself is too small to reach the bar (whether because the clone is shallow or the loop is young), so the wall verdict cannot be made. Print the counts anyway, with the range, and `could not check`.
+- If the history is unreadable (git log/diff fails) → COULD NOT CHECK too.
+
+That's a clean three-state table matching the required test: `≥20 commits → a rate; <20 → the wall plus STRUCTURALLY UNMEASURABLE; a shallow/unreadable history → could not check, distinct from both.`
+
+Hmm, but the test says `<20 → the wall plus STRUCTURALLY UNMEASURABLE`. Which <20? "≥20 commits → a rate" probably refers to the behavioural denominator (DREAM.md's bar). And "<20 → the wall plus STRUCTURALLY UNMEASURABLE". And "shallow/unreadable → could not check".
+
+I need to reconcile. Let me define with two inputs: `commits` (fix-loop task commits in window) and `behavioural`. And `unreadable` flag.
+
+Three states:
+1. `unreadable` (git could not answer) → COULD NOT CHECK.
+2. `commits < DREAM_MIN_COMMITS` and behavioural < DREAM_MIN_COMMITS → the window cannot reach the bar for a reason that is about the WINDOW, not the wall → COULD NOT CHECK (with the counts printed and the range named). At HEAD: 1 commit → COULD NOT CHECK. This is the honest outcome at HEAD, and it's exactly what Step 0 demands (don't reprint a stale number, say could-not-check when too shallow).
+
+Hmm, but then `STRUCTURALLY UNMEASURABLE` is never reachable at HEAD, and my table test must construct a fixture with ≥20 fix-loop commits and <20 behavioural — that's fine and is a "real output shape" (it's what a full clone gives: 199 commits, 2 behavioural).
+
+But careful: is `commits >= 20 && behavioural < 20` always the wall? Consider 199 commits, 199 touch tests/, but 180 register-only → behavioural = 19 < 20. Then the wall isn't the tests/-vs-src/ wall... it's register-only. Hmm. But the point stands: the arm cannot clear the bar and the output must say why. I could name the dominant cause. Let's keep it simple but honest: name the wall AND the register-only subtraction as the two things that can shrink the behavioural set, with the three-way split printed right there so the reader sees which one did it. I'll phrase the verdict as naming the wall as the structural cause while the split shows the arithmetic.
+
+Actually, I should be more careful and precise. The claim is: the fix-loop BEHAVIOURAL arm is structurally unmeasurable here — i.e., the method cannot reach the bar over this arm — and the reason is that the method requires the test edit in the top-level tests/ tree. Evidence in the block: of N fix-loop commits, K touch tests/, and of those R are register-only, leaving B behavioural. Plus M touch src/, A assertion-shaped in src/ (where the actual test edits live).
+
+That's the split. Good.
+
+3. `commits >= 20` and `behavioural >= 20` → print the rate (behavioural / ...). What rate exactly? The existing BEHAVIOURAL rate = behavioural/addressable? Let's check render_population_block.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2600,2640p scripts/counte… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me continue. I've done Step 0: measured whether the wall is already printed. Answer: NO — the fix-loop arm prints "BEHAVIOURAL rate 0%" over 1 task commit with no statement of the `tests/`-vs-`src/` wall. The `--src-census` flag prints a *readability* block, but it also does not print the three-way split (touch tests/ vs touch src/ vs assertion-shaped in src/) nor a `STRUCTURALLY UNMEASURABLE` verdict tied to DREAM.md's ≥20 bar. Actually it prints readability for fix-loop NO_TEST_CHANGE commits only.
+
+Let me be precise. Step 0 shows: the census's FIX-LOOP block prints BEHAVIOURAL rate 0% over a denominator of 1 (I saw "task commits found 1"), with no naming of the wall. So the falsifiable reading that licenses the code change is satisfied.
+
+Now I need to implement:
+- A fix-loop arm block in the census output that prints the three-way split (touch tests/ / touch src/ / assertion-shaped in src/) with counts and the range measured (HEAD~N..HEAD or --per-commit, named).
+- An explicit `STRUCTURALLY UNMEASURABLE` verdict for the fix-loop BEHAVIOURAL arm when wall leaves <20 commits, naming the wall rather than a rate over 1/2.
+- A one-line statement of why.
+- When history too shallow → "could not check", distinct from both.
+
+Reuse: `is_dedicated_test_file`, task-commit collection, existing census renderer. Diff text reads must go through the existing cap.
+
+Let me check: is there an existing cap for diff text? Let me search for is_dedicated_test_file and the cap.
+
+Let me first check the current state of the file — I need to check if the work has already been done (agent stopped mid-work). Let me check git status/diff.
+
+Let me proceed carefully. First check git status.
+
+Actually, given the token budget was reached, I should be efficient. Let me plan the implementation concretely.
+
+Plan:
+1. Add constants: `DREAM_MIN_TASK_COMMITS = 20`, `FIX_LOOP_WALL_*` markers, verdict `STRUCTURALLY_UNMEASURABLE`.
+2. Add a pure function `fix_loop_wall_split(rows, split_of)` that folds the fix-loop arm's commits into three buckets:
+   - `touch_tests`: commits whose diff touches a top-level `tests/*.rs` (i.e., `r.addressable` — but better: use the diff-derived predicate `is_dedicated_test_file`)? The task says: the three-way split (`touch tests/` / `touch src/` / `assertion-shaped in src/`).
+   - `touch_src`: commits whose diff touches `src/*.rs`
+   - `assertion_shaped_in_src`: commits whose src diff added/removed lines mention `#[test]` / `cfg(test)` / `assert`.
+   
+   These are per-commit booleans (a commit can be in multiple). Counts over the fix-loop population.
+3. A pure renderer/verdict function `fix_loop_wall_verdict(...)` that takes the counts, the behavioural count, the window/range and the readability of the history, and emits:
+   - the split lines with the range named
+   - `STRUCTURALLY UNMEASURABLE` when behavioural < 20
+   - else a rate
+   - `could not check` when shallow/unreadable.
+4. Wire into `main`'s census path, printing after `render_census` (or inside as an added block). The task says "The census output gains one block for the fix-loop arm". Reuse the existing census renderer — so insert it in `render_census` with an optional param, or print separately in main. Given `render_census` is pure and takes optional injected data (like shape_split), I'll add an optional `fix_loop_wall` dict param, defaulting to None → byte-identical output. That matches the file's established discipline.
+5. Add I/O collector: `commit_fix_loop_wall_facts(root, sha)` returning a dict of booleans derived from the diff — reusing `run_cmd`, `parse_name_status`... But for assertion-shaped we need the diff *text* with `-U0`. Task says: "Whatever reads or truncates diff text must go through the file's existing cap; do not re-derive one." Let me find the existing cap. Let me grep for `_MAX_BYTES` or a cap helper.
+
+Let me check the file for a truncation/cap helper.
+
+6. Self-tests: table test for the renderer with fixtures ≥20 → rate; <20 → wall + STRUCTURALLY UNMEASURABLE; shallow/unreadable → could not check. Anti-vacuous assertions.
+7. Docs: one line in ARCHITECTURE.md.
+8. Run at HEAD, paste real output.
+
+Let me get going. Check git status first, then find the cap helper.
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check where I am and find the existing diff-text cap.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No git changes — the tree is clean. Let me find the existing cap on diff text reads. Let me grep for `DIFF_MAX` or similar caps, and `is_dedicated_test_file`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "is_dedicated_test_file… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`is_dedicated_test_file` is NOT in counterfactual_green.py. But the task says "Reuse the constants and helpers already in the file — `is_dedicated_test_file`, the task-commit collection, the existing census renderer". Let me check check_assertion_weakening.py which has `is_dedicated_test_file`.
+
+Hmm, the task assumed it's in counterfactual_green.py. Let me check.
+
+Also the "existing cap" on diff text — the task says "Whatever reads or truncates diff text must go through the file's existing cap; do not re-derive one." Let me find where this file reads diff text with a cap. Let me search for `test_diff_is_register_only` callers — they call `git diff` and pass the whole text. Let me look for any truncation applied.
+
+Let me grep for "truncat" again - only line 3715 `for ln in detail.splitlines()[:6]`. That's the detail cap in batch reporting. Let me look at it.
+
+Also let me check if there's a cap in `run_cmd`. No.
+
+Let me check the `--src-census` path for reading diff text... `commit_src_test_readability` uses `--name-status` (no text).
+
+Let me search the whole scripts dir for a diff-cap helper naming.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "is_dedicated_test_file… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`is_dedicated_test_file` lives in `check_assertion_weakening.py`, not in `counterfactual_green.py`. The task premise about that helper being "in the file" is wrong. I should note this in the write-up (honest). I shouldn't import across scripts necessarily — that would create a cross-script dependency. Actually importing would be fine (same directory, `sys.path`), but the file's own discipline is "no third copy of a rule" — let me check whether counterfactual_green.py imports anything from other scripts.
+
+Let me check imports.
+
+Also there's no existing diff-text cap in counterfactual_green.py. Let me verify by grepping for how diffs are read and whether any cap exists. `test_diff_is_register_only(diff)` gets full text. Hmm.
+
+Let me check line 3715 context — the detail cap.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p scripts/counterfact… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's no existing diff-text cap in `counterfactual_green.py`. The task said reuse the existing cap. The closest existing cap is `LIMITS` (a text constant, not a byte cap) and `detail.splitlines()[:6]`.
+
+Hmm. Let me reconsider: "Whatever reads or truncates diff text must go through the file's existing cap; do not re-derive one." Maybe the intent is: if I read diff text, use the existing pattern. Since there IS no cap for diff text in this file, the honest approach: use `git diff --unified=0` with a bounded approach and reuse `run_cmd` (which has a timeout). I could avoid reading diff *text* entirely for the split by using `--numstat`/`--name-status` — but the assertion-shaped heuristic needs the added/removed lines, which requires `-U0` text.
+
+Alternative: use `git diff -U0 -- <path>` and reuse `test_diff_is_register_only`-style full-text read (the file already reads full diff text uncapped at line 2066). So the "existing cap" doesn't exist; I'll reuse the existing full-text diff read pattern via `run_cmd` and note honestly that the file has no diff-text cap, so I extended the existing read shape rather than inventing one. Actually, I can *avoid* re-deriving anything by making the assertion-shaped check operate on the same diff text that `test_diff_is_register_only` already receives? No — that's the tests/ diff, not src/.
+
+Hmm, wait. Let me reconsider the design to minimize risk and honor "reuse":
+
+Actually there IS a cleaner approach: the census already computes, per row, `touched` (top-level tests/*.rs) and `reg` (register-only set). For the src-side, `commit_src_test_readability` gives src candidates. Let me look at `src_splice_candidates` and the fix_loop_src_resolvers cache — it already computes `git diff --name-status <sha>^ <sha> -- src/` per fix-loop commit. I can reuse that! The cache is built in `fix_loop_src_resolvers`. But that's only built when `--src-census`. 
+
+The task wants the block printed on every census run (of the fix-loop arm). Hmm — "the split prints on every run so the wall cannot go invisible again".
+
+Let me design minimally and safely:
+
+Add a function `commit_fix_loop_wall_facts(root, sha)` — no. Better: make the collector return the three booleans:
+
+```python
+def fix_loop_wall_of(root, sha) -> dict:
+    """The I/O half: does THIS commit touch tests/, touch src/, and is its src/ diff
+    assertion-shaped? Reuses run_cmd; the src/ diff text is read with -U0."""
+```
+
+But then for each fix-loop commit we do one `git diff --name-status` (tests+src) and one `git diff -U0 -- src/`. To reuse `parse_name_status` for the path classification and `top_level_test_files` for the tests side.
+
+For "touch src/": paths under `src/` ending `.rs`. There's `src_splice_candidates(rows)` which scopes src paths. Let me look at it.
+
+Let me read `src_splice_candidates` and `parse_name_status`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 860,940p scripts/counterf… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at how `render_census` is called in main and where to add the block. And check the self-test section structure to add tests.
+
+Let me now design the implementation concretely and write it.
+
+### Design
+
+**Constants** (near the census section):
+
+```python
+# #870, Day 206. DREAM.md's milestone bars a RATE at >=20 task commits; below that the
+# arm is not under-sampled, it is STRUCTURALLY UNMEASURABLE. Named so the renderer and
+# the test read one number.
+DREAM_MIN_TASK_COMMITS = 20
+
+STRUCTURALLY_UNMEASURABLE = "STRUCTURALLY UNMEASURABLE"
+FIX_LOOP_WALL_UNREADABLE = "could-not-check"
+```
+
+**Pure fold** — `fix_loop_wall_split(rows, wall_of)`:
+
+```python
+def fix_loop_wall_split(rows, wall_of) -> dict:
+    """Fold the fix-loop arm into the three-way wall: tests/ vs src/ vs assertion-shaped src/.
+
+    Pure: `wall_of(sha) -> dict|None` is injected. ...
+    A commit can be in MORE THAN ONE bucket (a `src/` diff carrying `#[test]` is both
+    "touch src/" and "assertion-shaped"), so the three counts are NOT a partition and are
+    NEVER summed with each other. That is the same rule the READABLE/NONE/UNKNOWN split
+    above already carries.
+    """
+```
+
+`wall_of` returns `{"tests": bool, "src": bool, "assert": bool}` or None (unreadable).
+
+Counts:
+- `commits`: number of fix-loop task commits
+- `touch_tests`: those with wall["tests"]
+- `touch_src`: those with wall["src"]
+- `assertion_shaped`: those with wall["assert"]
+- `unreadable`: those where wall_of returned None
+- `behavioural`: from rows? Better: pass the census summary's behavioural for the fix-loop arm.
+
+Hmm, the renderer needs: behavioural count for the fix-loop arm (to compare against 20), the split, the window, and whether the history is shallow.
+
+**Pure verdict+render** — `render_fix_loop_wall(counts, window, behavioural, shallow)`.
+
+Task: 
+- `≥20` commits → a rate
+- `<20` → the wall plus `STRUCTURALLY UNMEASURABLE`
+- shallow/unreadable history → `could not check`, distinct from both.
+
+What decides "shallow/unreadable history"? The census already has 3-valued `shallow` (True/False/None) and `depth`. The existing window note says SHALLOW WINDOW. Hmm — but a shallow clone with 53 commits and 1 fix-loop commit: that's <20, so `STRUCTURALLY UNMEASURABLE` would be the verdict, but is that right? The wall says the fix-loop arm's rate is structurally unmeasurable — over a shallow window we also can't reach 20. The task says the print must "carry the range it actually measured, and say 'could not check' when the history is too shallow to clear the ≥20-commit bar — never reprint a 22-day-old number as though it were fresh."
+
+So: if the arm has fewer than 20 commits AND the history is shallow → prefer `COULD NOT CHECK`? Hmm, but that could mask the wall. Careful reading:
+
+"an explicit `STRUCTURALLY UNMEASURABLE` verdict for the fix-loop BEHAVIOURAL arm when the wall leaves fewer than DREAM.md's ≥20 commits, naming the wall rather than reporting a rate over 2"
+
+"say 'could not check' when the history is too shallow to clear the ≥20-commit bar"
+
+So there are two distinct readings:
+- The arm has ≥20 task commits and behavioural < 20 → STRUCTURALLY UNMEASURABLE (the wall robs it).
+- The whole window has <20 task commits and it's shallow → `could not check` (not enough history).
+
+Hmm, but how to distinguish "the wall is why we're below 20" from "the history is too short"? Honestly they can both be true. I think the honest renderer should state both, with precedence:
+
+1. If the whole window's task-commit count is below DREAM_MIN and the clone is shallow → the window itself is the binding constraint, so any figure is a fact about depth: print `COULD NOT CHECK (shallow window: N task commits over a M-commit clone — below the ≥20 bar)` AND still print the split with the range. That's not folding.
+2. Else if the fix-loop arm's behavioural count < 20 → STRUCTURALLY UNMEASURABLE, naming the wall.
+3. Else → rate.
+
+But then at HEAD (53-commit shallow clone, 10 task commits total, 1 fix-loop) we'd get `COULD NOT CHECK`. Then #870's wall isn't exercised at HEAD — but the split still prints, which is the actual deliverable ("the split prints on every run so the wall cannot go invisible again"). That seems honest and matches the task's language: "The print must therefore carry the range it actually measured, and say 'could not check' when the history is too shallow to clear the ≥20-commit bar."
+
+Hmm, but the task also says explicitly: "an explicit `STRUCTURALLY UNMEASURABLE` verdict for the fix-loop BEHAVIOURAL arm when the wall leaves fewer than DREAM.md's ≥20 commits". With a shallow window we can't tell whether the wall or the depth is why. But the wall is a *known structural fact* about the instrument (Rust unit tests live in src/), so it's arguably always true. Let me do precedence: if the behavioural count < 20, the arm cannot yield a rate. The reason is stated as a conjunction of the two possible constraints, with the wall named unconditionally and the depth named when the clone is shallow. That is: print `STRUCTURALLY UNMEASURABLE` with both causes named, plus a distinct `COULD NOT CHECK` line when shallow. Hmm, that risks blurring "could not check" vs "unmeasurable".
+
+Let me re-read once more, carefully:
+
+- "an explicit `STRUCTURALLY UNMEASURABLE` verdict for the fix-loop BEHAVIOURAL arm when the wall leaves fewer than DREAM.md's ≥20 commits, naming the wall rather than reporting a rate over 2;"
+- Verification: "A table test for the renderer: `≥20` commits → a rate; `<20` → the wall plus `STRUCTURALLY UNMEASURABLE`; a shallow/unreadable history → `could not check`, distinct from both."
+
+So the test table is over THREE inputs: (a) >=20, (b) <20, (c) shallow/unreadable. Three distinct outputs. So (c) is about history readability/shallowness, and it TAKES PRECEDENCE over (b) — it's a separate row. So:
+
+- if history not readable (shallow or depth unknown) → `COULD NOT CHECK`
+- elif commits >= 20 → rate
+- else → wall + `STRUCTURALLY UNMEASURABLE`
+
+Hmm but "shallow" alone with 53 commits... a shallow clone is the norm for this instrument (it always says SHALLOW WINDOW then). But the existing census already prints the shallow warning prominently and still prints rates. Making shallow → could-not-check for this block would mean the block NEVER prints a rate on this repo. That's... arguably honest, given the whole window is 53 commits.
+
+Hmm, but that would make the STRUCTURALLY UNMEASURABLE branch unreachable at HEAD. Careful — the task says the observable is "the block appearing on a real run". Let me think about which is more faithful.
+
+Actually, re-reading again: "How deep can this clone go? The runner's clone is shallow (51 commits at HEAD tonight). The 830/199/… table came from a full clone at depth 4402 and cannot be reproduced here. The print must therefore carry the range it actually measured, and say 'could not check' when the history is too shallow to clear the ≥20-commit bar."
+
+"when the history is too shallow to clear the ≥20-commit bar" — i.e., when the *history* (the window) is too shallow. Hmm, "too shallow" is about shal- *lowness*, i.e., the clone's depth. A 4402-commit clone isn't shallow. So: shallow clone → could not check.
+
+But hold on: with a shallow clone of 53 commits, could we still get >= 20 fix-loop commits? No. So `could not check` is the honest verdict at HEAD for the rate — and the structural wall statement should STILL print (it's a structural fact, true regardless of window). That reconciles everything: print the split (always), name the wall (always, as the structural reason), and the VERDICT is:
+- shallow/unreadable → `COULD NOT CHECK: the clone is shallow (N commits) — a rate here would be a fact about the clone depth, not the loop`
+- readable and >= 20 → rate
+- readable and < 20 → `STRUCTURALLY UNMEASURABLE`
+
+Hmm, but "readable and >=20 behavioural" — wait, the ≥20 bar is over *behavioural* commits, no? DREAM.md asks for a rate over ≥20 task commits, reported separately for fix-loop commits. The census's behavioural count is the denominator. So the bar applies to the behavioural count of the fix-loop arm.
+
+Hmm, actually re-reading the issue's table: "DREAM.md asks for a rate over ≥20 task commits reported separately for fix-loop commits. The plain arm clears it; the population the hypothesis is actually about has 2." Here 2 = the FIX-LOOP BEHAVIOURAL. So yes: the bar is on the fix-loop BEHAVIOURAL count.
+
+OK so my design:
+
+```python
+def fix_loop_wall_verdict(counts, window, shallow, behavioural) -> str
+```
+Returns one of three constants:
+- `FIX_LOOP_WALL_COULD_NOT_CHECK` (shallow is True, or shallow is None, or unreadable count > 0 covering everything?)
+- `FIX_LOOP_WALL_RATE` (behavioural >= DREAM_MIN_TASK_COMMITS)
+- `FIX_LOOP_WALL_UNMEASURABLE` (else)
+
+And a renderer that composes the block. Let me make one function `render_fix_loop_wall(...)` that returns list[str] and is table-testable — the verification asks for "A table test for the renderer". So the renderer itself should take injected data and be pure. 
+
+Let me define:
+
+```python
+def render_fix_loop_wall(counts: dict, behavioural: int, window: str, shallow) -> str
+```
+
+where `counts` is the fold from `fix_loop_wall_split`. And it decides the verdict internally. Table test then calls it with fabricated counts.
+
+Now the I/O half:
+
+```python
+FIX_LOOP_WALL_ASSERTION_MARKERS = ("#[test]", "cfg(test)", "assert")
+
+def commit_fix_loop_wall_facts(root, sha) -> dict | None:
+    """The I/O half: does this commit touch tests/, touch src/, and is its src/ diff
+    assertion-shaped (a -U0 TEXT heuristic, an UPPER BOUND -- never a count of loosened
+    assertions)?"""
+```
+
+Reuse: `run_cmd`, `parse_name_status`, `top_level_test_files`.
+
+For the src text: `git diff -U0 <sha>^ <sha> -- src/` and check added/removed lines (lines starting with + or -, excluding +++/---) for the markers.
+
+Hmm — "Whatever reads or truncates diff text must go through the file's existing cap; do not re-derive one." There is no diff-text cap in this file. I'll state that honestly and reuse the existing full-text read shape (`run_cmd` + full text, exactly what `test_diff_is_register_only` consumes at collect_census). And I'll bound the work by scoping to the fix-loop arm and by `-U0` (minimal text). I'll document that in the code and ARCHITECTURE.
+
+Hmm, wait. Actually let me reconsider — maybe there IS a cap intended: `LIMITS` string? No, that's the limits prose.
+
+Let me double check there's no `sys.setrecursionlimit`-style or `MAX_LINES` cap. Already grepped `MAX_`/`_MAX`. Only `MAX_MODULE_LINES` (a string in fixtures). So no cap exists. I'll note it.
+
+Actually — to reduce risk further and honor "reuse ... rather than writing a third pass over the git log": the fix-loop arm's commits are already in `rows`. For each fix-loop row I need one extra `git diff --name-status <sha>^ <sha>` (whole commit, no pathspec) — but `collect_census` already ran `git diff --name-only` per sha and `commit_test_diff_shape` runs `diff --name-status ... -- tests/`. I'll do one `--name-status` without pathspec to get both src/ and tests/ at once (1 git call), plus one `-U0` text diff scoped to `src/` (1 git call). That's 2 calls per fix-loop commit — bounded to that arm (1 commit here, ~199 in a full clone).
+
+Good. Now the wiring: in `main`'s census path, after printing `render_census`, compute the fold and print the block. But the task says "The census output gains one block for the fix-loop arm". The existing pattern for shape_split is to inject into `render_census` via a kwarg. But that renderer is pure and my block needs to be printed always (not behind --src-census). Injecting via `render_census(..., fix_loop_wall=...)` keeps it in the census output and pure. Let me do that: add optional param `fix_loop_wall=None` to `render_census`, default None → byte-identical. Then main computes it (only when needed) and injects.
+
+Wait — but byte-identity for the regression surface: with default None, output unchanged. Good. And on a census run, main always computes it (no flag) — that's the "prints on every run" requirement.
+
+Hmm, but cost: 2 git calls per fix-loop commit on every census run. Fix-loop is ~199/1014 → ~400 git calls. Fine.
+
+Now: the shallow question. `collect_census` returns `shallow`. Main has it. Pass to the block.
+
+Let me now also handle: the fix-loop arm behavioural count comes from `by_pop[POP_FIX_LOOP]["behavioural"]`.
+
+Now write the code.
+
+Let me write `fix_loop_wall_split`:
+
+```python
+FIX_LOOP_WALL_TESTS = "touch tests/"
+FIX_LOOP_WALL_SRC = "touch src/"
+FIX_LOOP_WALL_ASSERTION = "assertion-shaped in src/"
+
+def fix_loop_wall_split(rows, wall_of) -> dict:
+    arm = [r for r in rows if r.population == POP_FIX_LOOP]
+    counts = {
+        "commits": len(arm),
+        "tests": 0, "src": 0, "assertion_shaped": 0, "unreadable": 0,
+    }
+    for r in arm:
+        facts = wall_of(r.sha)
+        if facts is None:
+            counts["unreadable"] += 1
+            continue
+        if facts.get("tests"): counts["tests"] += 1
+        if facts.get("src"): counts["src"] += 1
+        if facts.get("assertion_shaped"): counts["assertion_shaped"] += 1
+    return counts
+```
+
+Hmm, "unreadable" — should a row be counted in neither? Yes, and reported.
+
+Now the verdict constants:
+
+```python
+FIX_LOOP_WALL_RATE = "rate"
+FIX_LOOP_WALL_UNMEASURABLE = "STRUCTURALLY UNMEASURABLE"
+FIX_LOOP_WALL_COULD_NOT_CHECK = "could not check"
+```
+
+Renderer:
+
+```python
+def render_fix_loop_wall(counts, behavioural, window, shallow) -> str:
+```
+
+Logic:
+```python
+lines = ["", "FIX-LOOP ARM — THE STRUCTURAL WALL (#870)", f"  range ........................ {window}",
+         f"  fix-loop task commits ........ {counts['commits']}"]
+lines.append(f"    touch tests/*.rs ............ {counts['tests']}   <- the ONLY region the backward counterfactual can read")
+lines.append(f"    touch src/*.rs .............. {counts['src']}   <- outside it by construction")
+lines.append(f"    assertion-shaped in src/ .... {counts['assertion_shaped']}   <- a -U0 TEXT heuristic; an UPPER BOUND on where to look, NEVER a count of loosened assertions")
+if counts['unreadable']:
+    lines.append(f"    unreadable commit(s) ........ {counts['unreadable']}   (counted, summed into NEITHER of the three above)")
+lines.append("")
+if counts['commits'] == 0:
+    lines.append("  COULD NOT CHECK: no fix-loop task commit in this range. A REFUSAL, not '0 unmeasurable'.")
+    return "\n".join(lines)
+if shallow is not False:
+    # True or None (the probe itself failed) -- neither is 'deep enough'.
+    lines.append(f"  COULD NOT CHECK: the clone is {'shallow' if shallow else 'of unreadable depth'} ...")
+    lines.append("  ...")
+elif behavioural >= DREAM_MIN_TASK_COMMITS:
+    rate...
+else:
+    lines.append(f"  {FIX_LOOP_WALL_UNMEASURABLE}: the fix-loop arm has {behavioural} behavioural commit(s), ...")
+```
+
+Hmm wait — for the "rate" case the renderer needs to print a rate over what denominator? The behavioural rate = behavioural / commits? That's ambiguous. Let me keep it simple: in the ≥20 case, print the BEHAVIOURAL count and note that DREAM.md's bar is cleared, so a rate over this arm is meaningful — but do NOT invent a rate (the rate isn't measured here; this block is about the wall). Hmm, "≥20 commits → a rate". 
+
+Simplest honest reading: when behavioural >= 20, the arm clears the bar, so report that no structural wall stands in the way, i.e. print the figure the census already reports: the BEHAVIOURAL rate from the summary. Hmm.
+
+Actually the cleanest: the block reports the split + a VERDICT LABEL. In the ≥20 case the label is "MEASURABLE" with the behavioural count and "≥ DREAM.md's 20-commit bar". Let me make the three verdicts symmetric:
+
+- `COULD NOT CHECK` — shallow/unreadable depth
+- `STRUCTURALLY UNMEASURABLE` — depth is fine, but the wall leaves < 20
+- (≥20) → print the arm's behavioural count and say the bar is cleared, so the census's BEHAVIOURAL rate above is the reading.
+
+Hmm, the test says "≥20 commits → a rate". OK — I'll print a rate line: `behavioural rate ... N%` computed as `100 * behavioural / counts['commits']`, matching the census's own definition of "BEHAVIOURAL rate" (behavioural / task_commits). Let me check: in render_population_block, `beh = 100.0 * summary["behavioural"] / summary["task_commits"]`. Yes — same denominator. So I'll compute it identically, and I must pass `commits` (= task_commits for the arm). Good, consistent.
+
+So the ≥20 branch prints `fix-loop BEHAVIOURAL rate ..... N%   (over M task commits; ≥20 bar cleared)`. Good.
+
+Now the "why" line — required on every verdict:
+"  WHY: the backward counterfactual lays post-task src/ over PRE-task tests/, so it can only"
+"       see a test edit that lives in the top-level tests/*.rs. Rust buries unit tests inside"
+"       src/ files behind #[cfg(test)], and that region is outside the instrument entirely."
+
+Now the I/O half. Let me write it.
+
+```python
+FIX_LOOP_ASSERTION_MARKERS = ("#[test]", "cfg(test)", "assert")
+
+def commit_fix_loop_wall_facts(root: str, sha: str):
+    rc, out = run_cmd(["git", "-C", root, "diff", "--name-status", f"{sha}^", sha], timeout=60)
+    if rc != 0:
+        return None
+    rows = parse_name_status(out)
+    src_paths = [p for s, p in rows if p.startswith("src/") and p.endswith(".rs")]
+    facts = {
+        "tests": bool(top_level_test_files([p for s, p in rows])),
+        "src": bool(src_paths),
+        "assertion_shaped": False,
+    }
+    if facts["src"]:
+        rc2, text = run_cmd(["git", "-C", root, "diff", "--unified=0", f"{sha}^", sha, "--", "src/"], timeout=60)
+        if rc2 != 0:
+            return None
+        facts["assertion_shaped"] = diff_mentions_assertion_shape(text)
+    return facts
+```
+
+Careful: `top_level_test_files` expects paths; it strips. Fine. But note `parse_name_status` returns both paths for renames — a rename of `tests/x.rs` yields both, fine.
+
+Wait: "touch tests/" should mean the *top-level tests/*.rs* region, which is what the instrument can read. `top_level_test_files` is exactly the right reuse.
+
+And a pure helper:
+```python
+def diff_mentions_assertion_shape(diff_text: str) -> bool:
+    """-U0 TEXT heuristic. NOT a count of loosened assertions."""
+    for line in diff_text.splitlines():
+        if not line or line[0] not in "+-":
+            continue
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        body = line[1:]
+        if any(m in body for m in FIX_LOOP_ASSERTION_MARKERS):
+            return True
+    return False
+```
+
+Now, an important detail: a diff header line like `--- a/src/x.rs` starts with `---` → skipped. Good. `@@ -1,2 +1,3 @@` starts with `@` → skipped. Good.
+
+Now wire into main census path.
+
+```python
+        wall = fix_loop_wall_split(
+            rows, lambda sha: commit_fix_loop_wall_facts(root, sha)
+        )
+        ...
+        print(render_census(rows, summary, window, args.limit, note,
+                            shape_split=shape_split, fix_loop_wall=wall))
+```
+But `render_census` needs `behavioural` and `shallow`. Pass `shallow` too: `fix_loop_shallow=shallow`. And behavioural from by_pop. Better: render_census already computes `by_pop`; pass the wall counts and shallow, and let render_census look up behavioural from by_pop. That keeps the injection to `(counts, shallow)`.
+
+But `render_census` signature has `by_pop=None` already. I'll compute `by_pop = by_pop if by_pop is not None else census_by_population(rows)` — already done. So inside, where I render the FIX-LOOP population block, I can append the wall right after it using `by_pop[POP_FIX_LOOP]["behavioural"]`. 
+
+Hmm, but ordering: the block should come after the FIX-LOOP population block. Let me insert it right after that block in `render_census`. And the note about the shallow window: render_census doesn't have `shallow`. I'll add a param `fix_loop_shallow=None` — but then "could not check" would need shallow. Alternatively pass a pre-computed rendered string from main:
+
+```python
+print(render_census(..., fix_loop_wall=render_fix_loop_wall(wall, behavioural, window, shallow)))
+```
+But then the renderer is called in main and injected as a string -> the block still appears in the census output and `render_fix_loop_wall` stays pure/table-testable. That's the simplest and lowest-risk. And `render_census` gets `fix_loop_wall: str | None = None` → inserted after the fix-loop population block; default None → byte-identical.
+
+That's clean. Let's do that.
+
+Now — where exactly? After the FIX-LOOP block and before the UNKNOWN-SUFFIX block. Let me restructure minimally:
+
+```python
+    out.extend(
+        render_population_block(
+            "FIX-LOOP — subject carries eval-fix / build-fix",
+            by_pop[POP_FIX_LOOP],
+            note="   <- DREAM.md's pre-registered population",
+            split=sp.get(POP_FIX_LOOP),
+        )
+    )
+    # #870, Day 206: the fix-loop arm's structural wall, injected as rendered text so the
+    # renderer stays pure. None -> byte-identical to the pre-#870 report, which is the
+    # whole regression surface for every caller that does not ask for it.
+    if fix_loop_wall:
+        out.append(fix_loop_wall)
+```
+
+Hmm, but `render_population_block` output ends with "" (blank). So appending the block right after is fine as long as the wall block starts with its own header. Actually `render_fix_loop_wall` will start with a header line. Let me make sure spacing is sane — I'll check the real output.
+
+Now, `render_fix_loop_wall` takes `window` which is the window string. Good — "the range it actually measured".
+
+Also required: "(`HEAD~N..HEAD` or `--per-commit`, named)". The `window` string is "53 commits reachable from HEAD (53 total, shallow=yes)". That names the range as a commit count from HEAD. I'll also include the window plus explicit `HEAD~M` where M = number of commits reachable. Hmm — the deeper concern: "the print must carry the range it actually measured". The `window` string says "53 commits reachable from HEAD". I'll print that verbatim as the range. Good enough and it's read from the tool, not invented.
+
+Now, the shallow gate. At HEAD, shallow=True → `COULD NOT CHECK`. Then STRUCTURALLY UNMEASURABLE is only reachable in the fixture tests, not on a real run here. Hmm. The task says: "Run at HEAD and paste the real output into the write-up — the observable is the block appearing on a real run, not the fixture passing." The block appears. But which verdict?
+
+Hmm, let me reconsider. I worry about making the real-run output `COULD NOT CHECK` only, since the issue's central ask is the STRUCTURALLY UNMEASURABLE verdict. Let me reconsider precedence: should shallow take precedence, or should the wall?
+
+Think about what's most honest and most useful. Two independent facts:
+1. The clone is shallow (53 commits) → the whole window is bounded.
+2. The wall: the method can only read tests/*.rs.
+
+At HEAD the fix-loop arm has 1 task commit, 0 behavioural. Both facts bind. Reporting `COULD NOT CHECK` alone would hide the wall. Reporting `STRUCTURALLY UNMEASURABLE` alone would hide the depth.
+
+Hmm, actually — how does the existing census handle this? It prints the shallow warning AND the rates, with a note "A behavioural count of 0 here is a fact about the clone depth as much as about the loop." So the established idiom is: print both, name the confound. I'll follow that idiom while still producing THREE DISTINCT primary verdicts for the table test:
+
+- If the *behavioural* count leads to a rate that clears 20 → rate.
+- If depth unreadable (shallow is None) → `COULD NOT CHECK` (depth literally unknown — must not read as measurable).
+- If behavioural < 20 → `STRUCTURALLY UNMEASURABLE`, with an added `COULD NOT CHECK (shallow window)` line when `shallow is True`, stating that the arm's size *also* cannot be read from this clone.
+
+But the verification demands "a shallow/unreadable history → `could not check`, distinct from both". So a shallow input must produce `could not check` as its distinct output. Ugh — conflicting.
+
+Resolution: make the table's three rows:
+(a) shallow=False, behavioural>=20 → rate
+(b) shallow=False, behavioural<20 → wall + STRUCTURALLY UNMEASURABLE
+(c) shallow=True (or None) → COULD NOT CHECK
+
+And in the COULD NOT CHECK output, ALSO print the split and the wall (so nothing goes invisible). That satisfies both: the verdict for shallow is `could not check`, and the wall statement is still present. And at HEAD, the real run shows the split + the wall line + `could not check`. 
+
+Hmm, but then does the wall get named at HEAD? Yes — I'll always print the wall lines (the three-way split + the WHY line), and the verdict line varies. So at HEAD we see the split and the WHY and `COULD NOT CHECK ... shallow`. That's honest and complete. And the fixture tests cover the `STRUCTURALLY UNMEASURABLE` verdict which becomes reachable once a deep clone is used.
+
+Hmm, but is the STRUCTURALLY UNMEASURABLE verdict then "unreachable on a real run" — a branch that can't fire? It can fire on a deep clone (--deepen or full clone) with <20 behavioural fix-loop commits. That's a real, reachable state (the 4402-clone had 2 behavioural fix-loop commits and a deep clone → would print STRUCTURALLY UNMEASURABLE). So it's reachable in general, just not at HEAD tonight. That's exactly why the task demands the honest `could not check` at HEAD. Good — and this matches the issue text very well: "a 22-day-old number cannot be reprinted as though fresh".
+
+OK. Let me now decide the exact predicate for "shallow": `shallow is not False` → could not check (covers True and None). I must state that None (probe failed) also refuses. Good; that's the "could not check must not read as checked; clean" rule.
+
+Wait, one more consideration. Is it right that the ≥20 bar applies to `behavioural`? Yes per the issue. And in the ≥20 branch do I print a "rate"? Yes: `100 * behavioural / commits`.
+
+But hmm — the rate the census prints is `behavioural / task_commits`, and DREAM.md wants a rate over ≥20 *task commits*. If behavioural >= 20 then commits > 20 too. Fine.
+
+Let me name the ≥20 verdict constant. Something like:
+
+```python
+FIX_LOOP_WALL_MEASURABLE = "MEASURABLE"
+```
+
+Hmm, the census already prints "BEHAVIOURAL rate ...". I'll print `  VERDICT ...... MEASURABLE — N behavioural commit(s), clearing DREAM.md's >=20 bar` plus `behavioural rate ...`.
+
+Let me write it now. Also self-tests.
+
+Let me also double-check the doc requirement: "One line in ARCHITECTURE.md under `scripts/counterfactual_green.py`". Let me find that section.
+
+Let me write the code now.
+────────────────────────────────────────────────────────────────────────────────
+
+Tree is clean. Step 0 is answered: the fix-loop arm prints BEHAVIOURAL rate 0% over a 1-commit arm and names no tests/-vs-src/ wall anywhere. Let me confirm what is_dedicated_test_file and the "existing cap" actually are.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 90,110p scripts/check_ass… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: `is_dedicated_test_file` is in `check_assertion_weakening.py`, not here, and there is no diff-text cap in `counterfactual_green.py`. I'll reuse `top_level_test_files` / `parse_name_status` / `run_cmd` (the file's own scope authority), and note honestly in the write-up + ARCHITECTURE that the issue's premise about those two helpers/cap being "in the file" was wrong, and what I did instead.
+
+Now let me write the code. Insert near the census section (after `census_shape_split_by_population`, before the deepen section).
+
+Let me find the insertion anchor line.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll implement. First, the pure constants + fold + renderer:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1566,1590p scripts/counte… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1550,1566p scripts/counte… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now insert the new constants, fold, and renderer:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (7 → 272 lines)
+        return {
+            pop: census_shape_split([r for r in rows if r.population == pop], shape_of)
+            for pop in (POP_PLAIN, POP_FIX_LOOP, POP_UNKNOWN_SUFFIX)
+  +     }
+  + 
+  + 
+  + # --------------------------------------------------------------------------------------
+  + # #870 (Day 206) — THE FIX-LOOP ARM'S STRUCTURAL WALL.
+  + #
+  + # DREAM.md's milestone pre-registers the fix-loop arm as a SEPARATE question and bars a
+  + # rate at >=20 task commits. Measured 2026-08-31 over a full clone (depth 4402): PLAIN had
+  + # 830 task commits / 28 behavioural, FIX-LOOP had 199 / **2**. The plain arm clears the bar;
+  + # the arm the hypothesis is actually about has two, and the reason is not under-sampling.
+  + #
+  + # It is STRUCTURAL. The counterfactual is BACKWARD -- post-task `src/` laid over PRE-task
+  + # `tests/` -- so the only test edit it can ever see is one that lives in the twelve
+  + # top-level `tests/*.rs`. Rust buries unit tests inside `src/` files behind `#[cfg(test)]`,
+  + # which is a region the method cannot address at all, and that region is where most of this
+  + # repo's test edits actually live. Reporting a rate over 2 hides the wall behind a number
+  + # that looks like a small sample.
+  ... (252 more lines)
+ ✗ (1ms)
+    │ old_text not found in scripts/counterfactual_green.py.
+
+── Thinking ────────────────────────────────────────────────────────────────
+The comment block between them contains `# ----...` lines. My old_text ended with `# ---...---` which is ambiguous/wrong. Let me instead anchor on the unique `census_shape_split_by_population` body ending.
+
+Let me use a more precise anchor: the closing of `census_shape_split_by_population` includes `POP_UNKNOWN_SUFFIX,\n        )\n    }`. Let me read exact lines 1546-1556.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1544,1557p scripts/counte… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (4 → 272 lines)
+        return {
+            pop: census_shape_split([r for r in rows if r.population == pop], shape_of)
+            for pop in (POP_PLAIN, POP_FIX_LOOP, POP_UNKNOWN_SUFFIX)
+  +     }
+  + 
+  + 
+  + # --------------------------------------------------------------------------------------
+  + # #870 (Day 206) — THE FIX-LOOP ARM'S STRUCTURAL WALL.
+  + #
+  + # DREAM.md's milestone pre-registers the fix-loop arm as a SEPARATE question and bars a
+  + # rate at >=20 task commits. Measured 2026-08-31 over a full clone (depth 4402): PLAIN had
+  + # 830 task commits / 28 behavioural, FIX-LOOP had 199 / **2**. The plain arm clears the bar;
+  + # the arm the hypothesis is actually about has two, and the reason is not under-sampling.
+  + #
+  + # It is STRUCTURAL. The counterfactual is BACKWARD -- post-task `src/` laid over PRE-task
+  + # `tests/` -- so the only test edit it can ever see is one that lives in the twelve
+  + # top-level `tests/*.rs`. Rust buries unit tests inside `src/` files behind `#[cfg(test)]`,
+  + # which is a region the method cannot address at all, and that region is where most of this
+  + # repo's test edits actually live. A rate over 2 hides the wall behind a number that looks
+  + # like a small sample.
+  ... (252 more lines)
+ ✓ (1m 55s)
+        return {
+            pop: census_shape_split([r for r in rows if r.population == pop], shape_of)
+            for pop in (POP_PLAIN, POP_FIX_LOOP, POP_UNKNOWN_SUFFIX)
+  +     }
+  + 
+  + 
+  + # --------------------------------------------------------------------------------------
+  + # #870 (Day 206) — THE FIX-LOOP ARM'S STRUCTURAL WALL.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now wire it into `render_census` and `main`. Also check I didn't leave a bare f-string without placeholder (clippy doesn't apply to python, but `f"  FIX-LOOP ARM \u2014 THE STRUCTURAL WALL (#870)"` has no placeholder — harmless but let me clean it to a plain string).
+
+Let me fix that and wire.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wire the block into render_census and main:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (2 → 2 lines)
+    def render_census(rows, summary, window, limit, note=None, by_pop=None,
+  -                   shape_split=None) -> str:
+  +                   shape_split=None, fix_loop_wall=None) -> str:
+ ✓ (1m 55s)
+    def render_census(rows, summary, window, limit, note=None, by_pop=None,
+  -                   shape_split=None) -> str:
+  +                   shape_split=None, fix_loop_wall=None) -> str:
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to continue: wire the fix_loop_wall into render_census output and main, add self-tests, run, and commit. I'm low on context budget so let me be efficient.
+
+First check current state.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2800,2840p scripts/counte… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "legend: \* behavioural"… ✓ (53ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need to:
+1. Add the block into render_census output (append fix_loop_wall after the legend).
+2. Wire in main: compute `wall_split` and `wall_behavioural`, pass to render_census.
+3. Note: `shallow` from collect_census is three-valued. render_census doesn't take `shallow`. I'll pass the pre-computed block string? Better: pass `fix_loop_wall` as a rendered string (like `note`). But the task wants a table test for the renderer → I have `render_fix_loop_wall` as its own pure function, testable directly. So render_census can accept `fix_loop_wall` as a pre-rendered string list/string. Let's have render_census accept `fix_loop_wall` (a str or None) and append it after the legend.
+
+Let me do that.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wire it into main:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (28 lines) ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait: `render_fix_loop_wall` takes `behavioural` — the fix-loop arm's behavioural count from `census_by_population(rows)[POP_FIX_LOOP]["behavioural"]`. And the verdict logic uses `commits` = fix-loop task commits (not behavioural). Hmm, in my verdict function I compare `behavioural >= DREAM_MIN_TASK_COMMITS` where behavioural is the fix-loop behavioural count. Good.
+
+Also the "MEASURABLE" branch computes rate = 100*behavioural/commits — that's the behavioural rate over the fix-loop arm, matching the census's own `BEHAVIOURAL rate` line (which divides by task_commits within the population). Good.
+
+I referenced a helper `by_pop_fix_loop_behavioural` which doesn't exist. Let me just use `census_by_population(rows)[POP_FIX_LOOP]["behavioural"]` directly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines) ✓ (91ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me run the real census to see the block appear:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 900 python3 scripts/coun… ✓ (113ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The block appears. Now: the shallow-clone path fires. Let me also verify the STRUCTURALLY UNMEASURABLE path on a deeper reading. Can I `--deepen`? No network probably. Let me test with `--deepen 0`? That won't change shallow. Let me check if `--deepen` works (network access maybe). The task says the print must carry the range it measured and say could not check when too shallow. Since the clone IS shallow, `COULD NOT CHECK` is the honest reading on this run. But the issue explicitly asks for a STRUCTURALLY UNMEASURABLE verdict when the wall leaves <20. Both are implemented; the shallow clone short-circuits. Let me try `--deepen 2000` quickly to see if we can get a full clone.
+
+Actually, that may take a long time. Let me try with a timeout.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun… ✓ (6.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`--deepen` worked (network available). Now: 318 fix-loop task commits, 9 behavioural (8 signal-bearing). Still <20. But the clone is STILL `shallow=yes` (deepened to 3053 but still shallow). So my verdict would be COULD NOT CHECK — because shallow is True.
+
+Hmm. That's a problem for usefulness: the deepened clone has 3053 commits and a real fix-loop arm of 318, but because it's technically still shallow, we say COULD NOT CHECK. That's defensible but let me think about what the issue asks.
+
+The issue says: "How deep can this clone go? The runner's clone is shallow (51 commits at HEAD tonight). ... The print must therefore carry the range it actually measured, and say 'could not check' when the history is too shallow to clear the ≥20-commit bar — never reprint a 22-day-old number as though it were fresh."
+
+So: "say could not check when the history is too shallow to clear the ≥20-commit bar". That's the criterion — too shallow to clear the bar, not "the clone is shallow per se". With 3053 commits and 9 behavioural fix-loop commits, the history is NOT too shallow to clear the bar in the sense that more history might bring more behavioural commits... Hmm, actually it is: deepening would add more commits. But we DO have 318 fix-loop task commits at this depth — so the arm is not under-sampled by depth; it's 9 behavioural out of 318, i.e. a real rate of non-addressability.
+
+I think the more honest construction: the shallow flag matters when the *arm itself* is poorly populated by depth. But the wall's point is the ratio of tests/-touching to src/-touching commits. With 318 fix-loop commits, we have a solid sample of the arm even if the clone is shallow.
+
+Let me reconsider: the issue's requirement is:
+- ≥20 commits → a rate
+- <20 → the wall plus STRUCTURALLY UNMEASURABLE
+- shallow/unreadable history → could not check, distinct from both
+
+So three states, as I built. But which bar? "≥20" is DREAM.md's bar on the rate denominator. The fix-loop arm has 9 behavioural — that's the denominator. Under my implementation it would be UNMEASURABLE if shallow were False, but it's COULD NOT CHECK because shallow is True.
+
+Hmm, but at depth 3053 the arm is well-sampled; the shallowness at the tip doesn't affect the 318 commits we can see. Yet strictly, if the clone were full (4402), we'd have ~199 fix-loop commits (per the 2026-08-31 measurement)... wait no, that measurement said 199 fix-loop task commits total at depth 4402. Here at 3053 we see 318 fix-loop. Different because the older measurement's window differed (maybe tasks only, or the regex changed). Anyway.
+
+I think the cleanest honest design: shallow matters as a *floor on the arm size*, not as an absolute veto. But my current implementation is more conservative and states it clearly. Which is better?
+
+Let me re-read: "The print must therefore carry the range it actually measured, and say 'could not check' when the history is too shallow to clear the ≥20-commit bar".
+
+So the trigger for could-not-check is: history too shallow to clear the bar. The deepened reading has 318 fix-loop task commits — the history is demonstrably NOT too shallow to populate the arm. So the deepened reading should be STRUCTURALLY UNMEASURABLE over 9 behavioural, with the range named.
+
+The way to capture "too shallow to clear the bar" mechanically: the arm's behavioural count is below the bar AND the clone is shallow → could not check (we might be missing commits). If the arm's behavioural count is below the bar but the arm has plenty of task commits, then more depth might add more... hmm, it always might.
+
+Alternative and I think better: use the `--deepen` state. If a bounded deepen was NOT attempted and the clone is shallow, then the reading is could-not-check. If the deepen TOOK and reached a real history (3053 commits), the reading is a real reading. That's what `window_note` already does.
+
+Hmm, but that makes the verdict depend on the operator having passed --deepen.
+
+Let me reconsider once more with a simpler, defensible rule that matches the issue's words:
+
+**The bar is on the arm, and a shallow window only makes COULD NOT CHECK when the arm has not cleared the bar AND the window is bounded below.** I.e. shallow only matters when it could plausibly explain the shortfall. If the arm itself is large (many task commits) but the behavioural count is small, the shortfall is the wall, not the depth.
+
+But we can't distinguish "9 of 318" from "9 of 9" ... actually we can! The fix-loop arm has 318 task commits at this depth. If the clone were truncated, the arm would be small. So: if `commits` (fix-loop task commits) is comfortably large (say ≥ the bar), then the shortfall in behavioural is a property of the wall, not the depth. Hmm, that's a heuristic, but a defensible one, and it's the direction that avoids the flattering reading (claiming unmeasurable when really we couldn't check).
+
+Hmm, but the risk: claiming STRUCTURALLY UNMEASURABLE over a shallow window can be wrong: deeper history might add fix-loop behavioural commits. That's the failure direction the issue warns about in the other sense.
+
+Let me weigh: the issue's own words — "say 'could not check' when the history is too shallow to clear the ≥20-commit bar". The over-riding rule in this repo is "could not check must not read as checked; clean". The conservative option (any shallow → could not check) errs toward COULD NOT CHECK, which is the safe direction. And the deepened reading (3053, still shallow) then says could-not-check — which is a bit unsatisfying but not wrong, and it *does* print the wall split with the real range, which is the actual deliverable.
+
+But then the STRUCTURALLY UNMEASURABLE verdict would be nearly unreachable — only reachable on a full clone, which is exactly the reading we can't take here. Is it reachable? On a full clone (not shallow), yes. So it's not dead code. But it would be unreachable *in the runner*, and a reviewer might call it structurally unreachable — same defect class as evt-0011.
+
+Better: I'll make the shallow veto conditional on the arm being small enough that depth could plausibly be the cause. Concretely:
+
+- If `commits == 0` → COULD NOT CHECK (refusal).
+- If `shallow is not False` AND `commits < DREAM_MIN_TASK_COMMITS` → COULD NOT CHECK (the arm itself is bounded below by the window; we cannot tell depth from wall).
+- If shallow and commits >= bar → the arm is populated; the wall is the finding... but hmm, do I then say UNMEASURABLE if behavioural < 20?
+
+Let's check numbers: deepened, commits=318 ≥ 20, behavioural=9 < 20 → UNMEASURABLE. That reads right: 318 fix-loop commits reachable, 38 touch tests/, 9 behavioural → the wall. And the shallow flag still shows in the range line.
+
+At the runner's 53-commit window: commits=1 < 20 and shallow → COULD NOT CHECK. Correct.
+
+This gives all three verdicts reachability in practice and the honest reading. And the rule is: **the shallow window only explains a shortfall it could actually have caused.** I'll document that reasoning.
+
+Hmm, but is it true that with 318 fix-loop commits and 9 behavioural, deeper history can't add behavioural ones? It could add more. But it would add them proportionally — 9/318 ≈ 2.8%, and the tests/-touching rate is 38/318 ≈ 12%. Deepening further would likely preserve the shape. The claim I'd be publishing isn't "the true rate is 2.8%" but "the reachable arm at this depth is far below the bar because the method can only see the tests/ region" — which is robust to depth. And the verdict wording says "below DREAM.md's bar", not "the true rate is X".
+
+Also the anti-vacuous framing: if the arm has 1 commit and behavioural 0 and shallow, saying UNMEASURABLE would be wrong — hence the commits < bar guard.
+
+Let me restructure `fix_loop_wall_verdict`:
+
+```
+if commits == 0: COULD_NOT_CHECK
+if shallow is not False and commits < DREAM_MIN_TASK_COMMITS: COULD_NOT_CHECK
+if behavioural >= DREAM_MIN_TASK_COMMITS: MEASURABLE
+return UNMEASURABLE
+```
+
+And when the shallow branch is skipped because the arm is populated, I should still disclose in the UNMEASURABLE text that the window is shallow at this depth. Let me add a line naming the shallow state whenever shallow is not False, in the verdict text — so the range caveat is never lost.
+
+Actually, cleaner: always print, in the header, a `shallow` marker line? The `range` line already includes `shallow=yes`. Good — the range is named. I'll add one extra sentence in the UNMEASURABLE branch when shallow is not False: "the window is SHALLOW at this depth; the shortfall that matters is the wall, and the counts above are the range measured."
+
+Hmm, that's honest but adds complexity. Simpler: keep a dedicated line under the split when shallow is not False, stating the window is bounded below regardless of the verdict. And the COULD NOT CHECK branch keeps its own reasoning.
+
+Let me implement:
+
+```
+shallow_line = None
+if shallow is not False:
+    shallow_line = ("    WINDOW IS BOUNDED BELOW (shallow=" + ("yes" if shallow else "UNKNOWN") + "): the counts above are the range actually measured, never a full-history total.")
+```
+
+Hmm wait, at 3053 with shallow=yes, is it fair to say counts are the range measured? Yes.
+
+Then verdict:
+- if commits < bar and shallow not False → COULD NOT CHECK with the depth explanation.
+- etc.
+
+Let me now rewrite the verdict function and renderer accordingly, and write the self-tests.
+
+Let me do it in one edit.
+────────────────────────────────────────────────────────────────────────────────
+
+The deepened reading reveals a design flaw: a still-shallow window would veto even a well-populated arm. Let me make the shallow veto conditional on the arm actually being too small for depth to be distinguishable from the wall.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (75 lines) ✓ (92ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun… ✓ (7.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Excellent! The deepen went all the way to a full clone now (`shallow=no`, 6129 commits) — because the earlier deepen had already fetched and now more. Let me see the verdict lines.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun… ✓ (4.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The real reading on a full clone: 328 fix-loop task commits, 38 touch tests/, 138 touch src/, 103 assertion-shaped, 9 behavioural → STRUCTURALLY UNMEASURABLE. That's exactly the deliverable.
+
+Now write the self-tests. Requirements:
+- table test for the renderer: ≥20 → a rate; <20 → wall + STRUCTURALLY UNMEASURABLE; shallow/unreadable → could not check, distinct from both.
+- anti-vacuous assertion on each fixture.
+- fixture must be a real output shape of the tool, not hand-typed ideal.
+
+For "fixture must be a real output shape" — I'll take the counts from the real run I just did (328/38/138/103, behavioural 9) and build the fixture from those. Let me also add tests for `diff_mentions_assertion_shape` and `fix_loop_wall_split`.
+
+Let me insert the tests before the final `if failures:` block.
+────────────────────────────────────────────────────────────────────────────────
+
+The real reading is exactly the deliverable. Now the self-tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (205 lines) ✓ (92ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Right: `_wall_real` has commits=328 ≥ 20, so with shallow=None it's UNMEASURABLE (not could-not-check). My test expectation was wrong — and actually, which is correct behavior?
+
+Hmm. Consider: the shallow probe itself failed (None). The arm has 328 commits and 9 behavioural. Should that be UNMEASURABLE or COULD-NOT-CHECK?
+
+The `commits < bar` clause was designed to distinguish "depth could explain the shortfall". With commits=328 ≥ 20, we know the arm is populated, and the wall is the shortfall — regardless of whether the shallow probe worked. Actually, wait: if the shallow probe failed, we don't know whether the clone is shallow. But the commits count is 328, which is well past the bar; depth isn't the explanation. So UNMEASURABLE is right, and the "WINDOW IS BOUNDED BELOW (shallow=UNKNOWN)" line... hmm, is that accurate? If the probe failed we don't know the window is bounded. Saying "BOUNDED BELOW (shallow=UNKNOWN -- the probe itself failed)" asserts boundedness we haven't verified. That's the over-claim direction.
+
+Better: when shallow is None, print a line saying the window's completeness COULD NOT BE CHECKED (not that it is bounded). And the verdict: None should not veto a well-populated arm, but should veto a small one (since we can't tell). Let me fix both:
+
+- verdict: `if shallow is not False and commits < DREAM_MIN_TASK_COMMITS: COULD_NOT_CHECK` — this already handles None correctly via `is not False`. Good, keep.
+- header line: split into two:
+  - shallow is True → "WINDOW IS BOUNDED BELOW (shallow=yes)"
+  - shallow is None → "WINDOW COMPLETENESS COULD NOT BE CHECKED (the shallow probe itself failed): ..." — that's the honest distinct statement.
+
+And fix the test for the probe-failed case to use a TINY arm (so it's the veto path) plus assert the unknown-probe wording, and add a separate check that a well-populated arm with an unreadable probe still reaches UNMEASURABLE.
+
+Let me implement.
+────────────────────────────────────────────────────────────────────────────────
+
+Good — the tests caught a real over-claim: with an unreadable probe I was asserting a bounded window I hadn't verified. Fixing:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (76 lines) ✓ (93ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Self-tests pass. Now let me add a positive control to verify the tests can actually fail — mutate the renderer and watch it redden. Then run the full check suite, update ARCHITECTURE.md, and commit.
+
+Let me do the positive control as one atomic command (mutate → run → restore).
+
+Actually, self-tests here are a Python script; the Rust checks are cargo fmt/clippy/build/test. Let me first run a positive control, then the docs, then commit.
+
+Let me do the positive control atomically.
+────────────────────────────────────────────────────────────────────────────────
+
+Self-tests pass. Now a positive control — neuter the verdict and confirm the tests actually fire (atomic mutate → run → restore):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (13 lines) ✓ (164ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Positive control worked: neutering returned MEASURABLE instead of UNMEASURABLE, and 6 tests reddened by name. Restored, all green, no NEUTERED markers left.
+
+The `.bak` file — I put it in /tmp, good, not in the tree.
+
+Now let me run the file's own self-test plus the rest of the checks. Also need to verify the full census output at HEAD one more time and the `--src-census` path still works. And check the lint script for evolve heredocs isn't involved (this is a .py file, not evolve.sh).
+
+Now update ARCHITECTURE.md under scripts/counterfactual_green.py.
+
+Let me look at the existing ARCHITECTURE.md entry.
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control confirmed — 6 tests reddened by name, restore green, no markers left. Now the docs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "counterfactual_green" A… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^### scripts/counterfac… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#" ARCHITECTURE.md | h… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Day 199\|Day 200\|Day 2… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md is a big file organized by file/subsystem. The task says: "One line in ARCHITECTURE.md under `scripts/counterfactual_green.py`". Let me find where counterfactual_green.py is mentioned as a heading or a per-file note — search for lines that start with "- `scripts/".
+
+Let me search for the scripts/ entries.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`scripts/\|^- \`src… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ARCHITECTURE.md entries are per-file notes indexed by filename. But there's no `scripts/counterfactual_green.py` heading entry — it's mentioned in prose only. Let me check: search for a line where counterfactual_green.py is a heading entry (starting with `- \`scripts/counterfactual_green.py\``).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^\*\*.*counterfactual_g… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's no dedicated `- \`scripts/counterfactual_green.py\`` entry — only prose mentions. The task says "One line in ARCHITECTURE.md under `scripts/counterfactual_green.py`". Let me check whether near line 1070 the scripts entries are ordered; there might be a section where I should add a bullet. Let me look at the tail of the scripts list to find where to add a bullet alphabetically/by convention.
+
+Let me look for the section containing those `- \`scripts/...\`` bullets and find the counterfactual_green bullet if it exists in the file — grep for it at the start of a line with `- `.
+
+Earlier grep `^- \`scripts/counterfactual` returned nothing. Let me look for the entry by searching for a line beginning with "- `scripts/" and see the full list.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1060 && NR<=1130' ARCHI… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's an entry convention: `- \`scripts/extract_trajectory.py\` — ...`. I should add a bullet for `scripts/counterfactual_green.py` in the same list. Let me find where in that list it would go — check if there's an existing bullet mentioning counterfactual_green.py as a top-level file entry. The grep earlier showed no `- \`scripts/counterfactual_green.py\`` line. But the task says "under `scripts/counterfactual_green.py`", meaning under the section/heading about that file. Let me search for a heading line that mentions counterfactual_green.py.
+
+Let me grep for lines that contain "counterfactual_green.py`" and are bullet starts.
+
+Actually earlier `grep -n "^- \`scripts/counterfactual_green"` returned nothing. Let me check the neighborhood of line 1070 more carefully — maybe the bullet list is alphabetical: skill_evolve.sh, skill_evolve_report.py, extract_trajectory.py... Let me search for a bullet that starts with `- `scripts/counterfactual_green.py``.
+
+Let me try a broader grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^[-*].*scripts/counterf… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line 791 is the entry for `scripts/counterfactual_green.py`. It's `**Counterfactual-green classifier** (scripts/counterfactual_green.py, Day 183, DREAM.md milestone): ...`.
+
+I need to add a Day 206 note. Let me look at the end of the entries for this file to find where to append (there are Day 187-192 entries as separate paragraphs). Let me look for where the counterfactual entries end.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^\*\*Counterfactual-gre… ✓ (10ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to find the counterfactual_green per-file section to append the doc line. Line 791 starts "**Counterfactual-green classifier** (`scripts/counterfactual_green.py`...". Let me find where that section ends — probably the last paragraph about it before the next `**...**` heading. Let me look for the most recent Day mention relating to counterfactual_green (Day 195?).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=780 && NR<=1050' ARCHIT… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md is a giant file with a per-file section. The counterfactual-green section starts at line 791 with the pattern `**Counterfactual-green classifier** (...)` followed by `**Day NNN ...**` paragraphs. I need to find where the counterfactual_green section ends (the next file's section or heading).
+
+Let me find the last paragraph about counterfactual_green and append a new one after it. Let me grep for paragraphs starting with `**Day 19` or `**Day 20` and check which mention counterfactual_green.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me find the end of the counterfactual_green section — i.e., the last paragraph before the next file section begins.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1006 && NR<=1060' ARCHI… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The counterfactual_green section runs from line 791 to the blank before line 1053ish ("**Skills**"). The last paragraph is at line 1033 (the "Two stated limits" one at offset 12 from 1020 → line 1031). Let me identify the exact last line of that section and insert my new paragraph after it.
+
+Let me find the line number.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (5 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (5 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The section ends at line 1018. Inserting the per-file note:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (33ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I used `\x2f` escapes which will render literally as "\x2f" in markdown — that was to avoid the `tests/*.rs` glob? No, it's fine to write `tests/*.rs` in markdown. Let me fix those to literal text for readability.
+
+Actually I wrote `tests\\x2f*.rs` in Python which produces `tests\x2f*.rs`. Let me replace with `tests/*.rs`.
+
+Wait, why did I do that? Probably leftover worry. Let me just fix it.
+
+Also the `\n\n` inside the paragraph string — in Python, `\n\n` inside a regular string in the triple-quoted `para` would be an actual newline. I used `\\n\\n`? Let me check: I wrote `the tool.\n\nThe reading` inside a triple-quoted regular string (not raw), so `\n` becomes a real newline. Good — that separates paragraphs. ✓ (Confirmed by the sed output showing a blank line.)
+
+Now fix the `\x2f`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (33ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Docs look good. Now let me run the full verification suite: cargo fmt, clippy, build, test — plus the python self-test and a real census run.
+
+Note: no src/ files touched, but the evolve skill requires running the checks anyway.
+
+Also I should add a line to session_plan/issue_responses.md per the task? The task says for the *null* outcome, a line in issue_responses.md. The null did not fire, so that's not required. But the task's "Docs" section asks for an ARCHITECTURE.md line — done.
+
+Let me run tests.
+────────────────────────────────────────────────────────────────────────────────
+
+Docs landed. Now the full verification suite:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (193ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 26s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Two failures in `commands_risk_unhittable` — these are explicitly about clone depth ("this is the day-205 fixture; if it now resolves..."). My `--deepen 3000` deepened the shared object store, so `dcc72f63` now resolves. That's the exact hazard documented: "test that depends on clone depth silently stops testing when the depth changes" (from Day 191's note) — and my deepen moved the graft boundary.
+
+This is a pre-existing test that depends on ambient clone depth and my `--deepen` broke it. I must verify this is not caused by my code change (it isn't — no src/ changes), and I must decide: it's a pre-existing fragile test whose failure I induced by deepening.
+
+Let me verify: (1) confirm it's depth-related, (2) check whether it fails at the original depth. I can't easily un-deepen... Actually `git fetch --deepen` can't be undone simply, but the CI clone will start shallow again so CI is unaffected. Still, the working tree must be green to commit.
+
+Let me look at the test to understand.
+────────────────────────────────────────────────────────────────────────────────
+
+My --deepen 3000 moved the shared clone's graft boundary and reddened two pre-existing depth-dependent tests. Let me confirm the cause:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1300,1370p src/commands_r… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: both tests depend on `dcc72f63` NOT resolving in the clone — a deliberate anti-vacuous fixture from Day 205 (Task 1 today, actually). My `--deepen 3000` made it resolve, so:
+- `the_real_dcc72f63_does_not_resolve_in_this_clone` fails by design (its message literally says "if it now resolves, ... both need re-reading").
+- `the_git_wrapper_...` fails because the git leg now measures 2 instead of 0.
+
+This is a pre-existing test whose fixture is clone-depth-dependent — exactly the Day-191 lesson ("a test that depends on clone depth silently stops testing when the depth changes between sessions"). It is NOT caused by my code change.
+
+Options:
+1. Leave it and note it — but the tree must be green to commit, and `cargo test` failing means the harness reverts.
+2. Restore the clone to its shallow state. Can't undo a fetch.
+3. Fix the fixture to be depth-independent. That's a real defect (Day 191 lesson verbatim, and it's in today's own Task 1 work by the same session). But the task says "Do NOT work on anything else."
+
+Hmm. This is a genuine dilemma. Let me think.
+
+Actually — is the deepened object store something the harness/CI sees? CI clones fresh and shallow. The deepen only affected this local working clone. So CI will be green. But *this session* must pass `cargo test` locally to commit (per the evolve skill: "Every code change must pass cargo build && cargo test"; evolve.sh also reverts on test failure).
+
+Wait — actually, does evolve.sh run `cargo test` before committing? Let me check what the harness does. The task instructions say to run the checks. If cargo test fails locally, the task gets reverted.
+
+The honest and minimal fix: make the two tests depth-independent. That is arguably part of the same class as my task (a measurement that must say "could not check" rather than a value that depends on ambient state) — and it's *caused* by my action, so it's mine to fix. It's a small, surgical fix within files I own.
+
+But "Do NOT work on anything else. This is your only task." — Yet leaving a red tree means no commit at all, which is worse.
+
+Hmm, but let me first check: is this failure actually pre-existing at the original clone depth? The test was written today (Day 206, Task 1 = "Cross-instrument check on born-after surprise files"). It asserted dcc72f63 does not resolve — true for the 53-commit shallow clone. At full depth it resolves. So the test is *already* broken for anyone with a deep clone — it's a latent defect my deepen exposed.
+
+The cleanest minimal action that doesn't expand scope: un-deepen the local clone so the tree is green again for this session, and record the finding. Can I? `git fetch --deepen` writes to the object store; the shallow boundary is recorded in `.git/shallow`. I could reconstruct `.git/shallow`... risky.
+
+Alternative: `git fetch --unshallow`? No, opposite.
+
+Hmm, actually: is there a way to re-shallow? Not supported cleanly.
+
+Let me reconsider. Which is more honest and lower risk?
+
+Option A: Fix the two tests to be depth-independent. The fix: instead of relying on a hash not resolving, pick the behavior deterministically. But the whole point of `the_real_dcc72f63_does_not_resolve_in_this_clone` is anti-vacuous verification against the REAL hash. If the hash resolves, the test's premise is gone. The right fix is to make the fixture assert the *conditional*: if it resolves, then the git leg measures it; if not, unmeasured. But then it stops being an anti-vacuous pin.
+
+Actually the more surgical and honest fix: make the test tolerate both worlds by asserting the *invariant* that holds either way, and cross-check `dcc72f63` resolution as the discriminator. That's a real change to a Day-206 file not in my task scope, and it weakens a just-written anti-vacuous guard — genuinely out of scope and risky to do hastily.
+
+Option B: restore the clone depth. Let me check whether the shallow file was modified and whether I can restore the original shallow boundary. `.git/shallow` initially had 2 lines (8ce866f9..., e2a7d66e...). After deepening, .git/shallow would have different content. 
+
+Hmm — could I instead just... no.
+
+Option C: Check whether cargo test passes if I DON'T count those. No, the harness runs full cargo test.
+
+Wait. Let me reconsider the real situation: does the runner actually run `cargo test` on this exact deepened clone, or does evolve.sh do the git reset? The task instructions to me list `cargo fmt && cargo clippy && cargo build && cargo test`. If cargo test fails, per the evolve skill rules I should fix or revert.
+
+Let me look more carefully — maybe I can simply un-deepen by rewriting `.git/shallow` and pruning. Actually git has no supported re-shallow. But there IS a trick: `git fetch --depth=53` (shallow fetch with a specific depth) re-shallows the repo! `git fetch --depth=N` sets the shallow boundary to N. Let me try that — it's the documented way to create a shallow clone and it does re-truncate.
+
+Let me try `git fetch --depth=53 origin` and see if dcc72f63 stops resolving.
+
+Actually careful: `--depth` on fetch from a remote should re-shallow. Let me check if origin exists and whether the depth matches 53.
+
+Risk: it could make things worse. But it's recoverable by deepening again. And it restores the state the tests were written against — which is the honest thing: *my* measurement action changed ambient state that a test depends on, and the fix that doesn't touch anyone's test is to put the state back.
+
+Hmm, but that leaves a latent defect (the tests are depth-dependent). I should note it in the write-up/ARCHITECTURE as a disclosed finding rather than silently restore.
+
+Actually wait. Let me reconsider once more, because "restore ambient state" is exactly the "make the test pass by changing the input" antipattern... no, not quite: the test asserts a property OF THE ENVIRONMENT ("this hash does not resolve in this clone"). The environment changed because I deepened it. Restoring the environment is legitimate — but it hides that the test is environment-dependent.
+
+The most honest path: restore the clone AND disclose the finding in ARCHITECTURE (the Day-191 lesson applied: a depth-dependent test silently stops testing when depth changes). That's a one-paragraph disclosure, no code change, and keeps my task scoped.
+
+Let me try the re-shallow.
+
+Actually, hold on. Let me first check git status for .git/shallow and whether `git fetch --depth` is even possible (no network? we do have network for gh). Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: both failures are pre-existing tests from today's Task 1 that assert dcc72f63 does not resolve — true only while the clone is shallow. My --deepen moved the graft boundary. No src/ change is involved. Let me restore the clone depth:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .git/shallow 2>/dev/null | w… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la .git/shallow 2>&1; echo "… ✓ (39ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5764 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::effective_disallowed_tools_pairs_shared_state_with_sub_agent ... ok
+test agent_builder::tests::every_connect_failure_arm_escapes_the_values_it_interpolates ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::every_connect_failure_arm_reports_the_error_it_was_handed ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::external_servers_json_table ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::max_tokens_ceiling_warning_table ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder:...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+The failure is caused by my `--deepen` moving the graft boundary, as I diagnosed. Restore the shallow state.
+
+`git fetch --deepen` moved shallow. Currently `git rev-list --count HEAD` = 6129 and no `.git/shallow`. Wait - `.git/shallow` doesn't exist now, meaning the repo is now UNSHALLOWED (full). So `dcc72f63` (a real old commit from day 205?) resolves... wait day 205 was yesterday. Hmm, dcc72f63 was truncated/not resolvable in a 53-commit clone. Now with 6129 commits it resolves.
+
+I need to restore the shallow state to what it was: depth 53 with 2 shallow boundary lines. The original .git/shallow had 2 entries:
+- 8ce866f91806c693bf08a4232f5fc48be7e6b342
+- e2a7d66e0fab3a9498a5d502dc1efc18f965b7ba
+
+I can just recreate `.git/shallow` with those two lines! That restores shallow=graft behavior without deleting objects.
+
+Let me verify: original output was:
+```
+cat .git/shallow 2>/dev/null | head -3
+8ce866f91806c693bf08a4232f5fc48be7e6b342
+e2a7d66e0fab3a9498a5d502dc1efc18f965b7ba
+```
+That was `head -3` so there may have been exactly 2 lines. Let me write those back.
+
+Actually, is 6129 the count now, or will restoring shallow file give 53? `git rev-list --count HEAD` respects .git/shallow grafts. So writing it back should give 53 again.
+
+Let me do that and verify both tests pass.
+
+Careful: this is modifying .git, which is not tracked, but it restores the environment the tests depend on. That's legitimate — I changed it, I restore it.
+
+Let me write the file.
+────────────────────────────────────────────────────────────────────────────────
+
+The two failures are entirely caused by my --deepen un-shallowing the clone (.git/shallow is now gone, so dcc72f63 resolves). Restoring the original graft boundary:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && printf '8ce866f91806c693bf08a423… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Count is back to 53. But `git cat-file -t dcc72f63` still returns "commit" because the object exists in the object store (it was fetched). The test uses `cat-file -t` which will still resolve. So the test would still fail.
+
+Hmm. The test asserts `!resolves`. The object is now in the object store permanently. `cat-file -t` doesn't respect shallow boundaries.
+
+So I need to actually remove the fetched objects. Options:
+1. `git reflog expire --expire=now --all && git gc --prune=now` — would prune unreachable objects. But the deepened history objects are reachable from HEAD? No — with .git/shallow restored, the shallow boundary makes those older commits unreachable, so gc should prune them.
+
+Actually with the shallow file restored, `git rev-list HEAD` = 53, so older objects are unreachable. `git gc --prune=now` should remove them.
+
+But careful: gc might be slow, and prune=now could remove other things. Let's try a targeted prune: `git prune` uses reachability. Let me just run `git gc --prune=now --quiet`.
+
+Risk: the repo has other worktrees? Let's check. Actually let's be careful — deleting objects is irreversible-ish. But we want to restore original state, and original state did not have dcc72f63.
+
+Alternative: is it truly required? The test is a pre-existing test from Task 1 (today, committed at 5d319eee — my HEAD). It asserts the day-205 fixture dcc72f63 does not resolve. It's checking that the clone depth makes an old hash unresolvable. Since the harness's real clone is shallow, the test passes in CI. In my session, I broke the environment.
+
+The cleanest restore: prune the newly-fetched objects.
+
+Let me do it.
+────────────────────────────────────────────────────────────────────────────────
+
+Count restored to 53, but the fetched objects are still in the object store. Pruning them (the graft boundary makes them unreachable again):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git worktree list && echo "--- g… ✓ (963ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The clone is fully restored to its original shallow state (53 commits, dcc72f63 unresolvable). Re-running the suite:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 ✓ (1m 25s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 24s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green: 5762 passed, 0 failed.
+
+Now let me also run the census once at the restored depth to paste the real output for the write-up (which I already have from earlier runs — the deepened run gave the 328/38/138/103/9 figures, but that was at depth 6129 which no longer exists).
+
+Wait — the task says "Run at HEAD and paste the real output into the write-up". But my ARCHITECTURE note quotes the 6129-commit reading, which I *did* observe. That's honest — I observed it. But now the tree is back at 53 commits and the block reads COULD NOT CHECK. That's fine and honest; I'll state both.
+
+Hmm, but the ARCHITECTURE paragraph says "The reading, pasted from the real run" — that's true, I ran it. But it no longer reproduces in this clone. Should I note that? The paragraph already says the clone depth was bought with `--deepen 3000` and reports 6129. Let me add a short honest note that the deepened objects were pruned back afterwards because the deepen un-shallowed the clone and reddened two depth-dependent tests.
+
+Actually that's genuinely valuable — it's a live instance of a real hazard. Let me add it concisely, and also record the restored-state reading (COULD NOT CHECK at 53 commits) since that's what a fresh run now prints. This is exactly the "state the range you measured" discipline.
+
+Let me add a short paragraph to ARCHITECTURE.md.
+
+Then commit.
+
+Let me be efficient with tokens now.
+────────────────────────────────────────────────────────────────────────────────
+
+All green (5762 passed). Let me record the honest note about the deepen side effect I hit and had to undo:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (215ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 400 python3 scripts/coun… ✓ (114ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The block prints correctly on a real run at HEAD, and the bounded-window line prints under the refusal. 
+
+Now final checks and commit.
+────────────────────────────────────────────────────────────────────────────────
+
+The block prints on a real run at HEAD, with the bounded-window disclosure. Final checks and commit:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "fm… ✓ (1m 58s)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+
