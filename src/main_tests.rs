@@ -1323,3 +1323,154 @@ fn the_piped_exit_decision_reads_the_post_loop_error_not_the_pre_loop_flag() {
         stale_flag
     );
 }
+
+// --- slash_command_refusal: the shared, door-aware refusal builder ---
+//
+// Both non-interactive prompt doors — piped/stdin and `-p`/`--prompt` — must
+// refuse a slash-command-shaped prompt *before* any API turn is paid for, and
+// they must agree on WHICH inputs are refused. Only the message differs.
+
+#[test]
+fn slash_command_refusal_agrees_across_doors_on_which_inputs_are_refused() {
+    // `true` = the shared policy refuses this input. Both doors read the same
+    // policy (`looks_like_slash_command`), so this table must hold for both.
+    let cases: &[(&str, bool)] = &[
+        ("/risk", true),
+        ("  /risk", true),
+        ("/risk now", true),
+        ("explain risk", false),
+        ("fix src/main.rs", false),
+        ("a /risk sentence", false),
+        ("", false),
+    ];
+
+    for (input, refused) in cases {
+        let piped = slash_command_refusal(input, PromptDoor::Piped);
+        let single = slash_command_refusal(input, PromptDoor::SinglePrompt);
+
+        assert_eq!(
+            piped.is_some(),
+            *refused,
+            "piped door disagreed with the shared policy for {input:?}"
+        );
+        assert_eq!(
+            single.is_some(),
+            *refused,
+            "single-prompt door disagreed with the shared policy for {input:?}"
+        );
+        assert_eq!(
+            piped.is_some(),
+            single.is_some(),
+            "the two doors must agree on which inputs are refused; they differ for {input:?}"
+        );
+
+        // Anti-vacuous: a refusal must be a non-empty message, not `Some("")`.
+        if *refused {
+            assert!(
+                !piped.as_deref().unwrap_or("").is_empty(),
+                "piped refusal for {input:?} must carry a message"
+            );
+            assert!(
+                !single.as_deref().unwrap_or("").is_empty(),
+                "single-prompt refusal for {input:?} must carry a message"
+            );
+        }
+    }
+}
+
+/// The near-miss guard for the door that **already worked**: piped mode's
+/// message is printed by pre-existing tooling and by users' muscle memory, so
+/// this refactor must not have moved a single byte of it.
+///
+/// `color_enabled()` is pinned to `true` under `cfg(test)`, so the `{YELLOW}`
+/// and `{RESET}` wrappers render as their real ANSI escapes here — the pin is
+/// on the exact bytes, including the colour wrapping the inline `eprintln!`
+/// block used before this builder existed.
+#[test]
+fn slash_command_refusal_piped_arm_is_byte_identical_to_the_inline_block() {
+    let msg = slash_command_refusal("/risk", PromptDoor::Piped)
+        .expect("anti-vacuous: /risk must be refused at the piped door");
+
+    let expected = concat!(
+        "\u{1b}[33myoyo: slash commands aren't available in piped mode.\u{1b}[0m\n",
+        "  Try one of:\n",
+        "    yoyo doctor                    # run a subcommand directly\n",
+        "    yoyo --prompt \"/risk\"        # send the literal text to the agent\n",
+        "    yoyo                           # interactive REPL\n",
+    );
+
+    assert_eq!(
+        msg, expected,
+        "piped mode's refusal changed bytes. It is the door that already \
+         worked; this refactor must be invisible to it."
+    );
+}
+
+/// The trap on the `-p` door: a reader who typed `yoyo -p "/risk"` is
+/// *already* in the `-p` door, so sending them back to `--prompt` is a dead
+/// end — the same prompt refused again.
+#[test]
+fn slash_command_refusal_single_prompt_arm_never_suggests_the_prompt_door() {
+    let msg = slash_command_refusal("/risk", PromptDoor::SinglePrompt)
+        .expect("anti-vacuous: /risk must be refused at the single-prompt door");
+
+    assert!(
+        !msg.contains("--prompt"),
+        "the single-prompt refusal must not offer --prompt: that is the door \
+         the reader is already in, so it composes into a dead end. Got: {msg}"
+    );
+
+    // Anti-vacuous companion: the negative above is satisfied by the empty
+    // string and by any message at all, so assert the positive content too.
+    assert!(
+        !msg.is_empty(),
+        "anti-vacuous: the refusal must actually carry a message"
+    );
+    assert!(
+        msg.contains("exit code 2") && msg.contains("stderr"),
+        "the refusal must tell a scripted caller what happened: refusal on \
+         stderr with exit code 2, no API call. Got: {msg}"
+    );
+    assert!(
+        msg.contains("interactive REPL"),
+        "the refusal must offer at least one door that works. Got: {msg}"
+    );
+}
+
+/// **Deliberately weak**, and documented as such: this only proves the shared
+/// builder is *referenced* — never that either refusal fires. Both call sites
+/// live in `async fn`s (`run_piped_mode` and the `-p` dispatch in `main`) that
+/// build an agent and touch the network, so exercising them for real is a
+/// harness job, not a unit test's.
+///
+/// `include_str!("main.rs")` reads this file's sibling, so the needle below
+/// cannot match the test that contains it.
+#[test]
+fn slash_command_refusal_is_referenced_at_both_doors() {
+    let src = include_str!("main.rs");
+    let builder = format!("slash_command_{}", "refusal(");
+    let def = format!("fn {builder}");
+
+    // Anti-vacuous: the definition must exist before the count means anything.
+    assert!(
+        src.contains(&def),
+        "anti-vacuous: {def} must exist in main.rs"
+    );
+
+    // 1 definition + 2 call sites. Counting only "at least twice" would be
+    // satisfied by the definition plus ONE door, which is exactly the
+    // "two doors, one policy, one deaf" defect this task closes.
+    let refs = src.matches(builder.as_str()).count();
+    assert!(
+        refs >= 3,
+        "expected the shared builder to be defined once and called from both \
+         prompt doors (>= 3 references), found {refs} in src/main.rs"
+    );
+
+    let piped = format!("PromptDoor::{}", "Piped");
+    let single = format!("PromptDoor::{}", "SinglePrompt");
+    assert!(
+        src.contains(&piped) && src.contains(&single),
+        "both doors must construct a PromptDoor variant"
+    );
+}

@@ -562,6 +562,60 @@ fn looks_like_slash_command(input: &str) -> bool {
     matches!(input.trim_start().chars().next(), Some('/'))
 }
 
+/// Which non-interactive door a prompt arrived through.
+///
+/// There are two: the piped/stdin door (`echo "/risk" | yoyo`) and the
+/// single-prompt door (`yoyo -p "/risk"`). Slash commands need REPL state, so
+/// neither can dispatch them — but only the piped door used to say so, and the
+/// `-p` door shipped the literal string to the model, which spent a whole paid
+/// turn reasoning about the text `"/risk"` instead of answering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptDoor {
+    /// `echo "/risk" | yoyo` — input read from stdin.
+    Piped,
+    /// `yoyo -p "/risk"` — input taken from `--prompt`.
+    SinglePrompt,
+}
+
+/// Build the refusal printed when a non-interactive prompt looks like a slash
+/// command. `None` when it does not, so the predicate itself stays the single
+/// authority for *which* inputs are refused (see the residue on the detector's
+/// breadth in ARCHITECTURE.md).
+///
+/// Pure and door-aware: both doors call this one builder, so they cannot drift
+/// into two copies that agree today. The [`PromptDoor::Piped`] arm is
+/// byte-identical to the five inline `eprintln!` lines it replaced — a
+/// pre-existing test pins it — including the `{YELLOW}`/`{RESET}` wrapping,
+/// which renders as the empty string when colour is off.
+///
+/// The [`PromptDoor::SinglePrompt`] arm names the door by its short `-p`
+/// spelling and offers only doors that work (`yoyo`, `yoyo <subcommand>`) plus
+/// the escape hatch, because a reader already standing in the `-p` door gains
+/// nothing from being sent back to it.
+fn slash_command_refusal(input: &str, door: PromptDoor) -> Option<String> {
+    if !looks_like_slash_command(input) {
+        return None;
+    }
+    Some(match door {
+        PromptDoor::Piped => format!(
+            "{YELLOW}yoyo: slash commands aren't available in piped mode.{RESET}\n\
+             \x20 Try one of:\n\
+             \x20   yoyo doctor                    # run a subcommand directly\n\
+             \x20   yoyo --prompt \"{input}\"        # send the literal text to the agent\n\
+             \x20   yoyo                           # interactive REPL\n"
+        ),
+        PromptDoor::SinglePrompt => format!(
+            "{YELLOW}yoyo: slash commands aren't available in -p (single-prompt) mode.{RESET}\n\
+             \x20 Try one of:\n\
+             \x20   yoyo                           # interactive REPL (slash commands work here)\n\
+             \x20   yoyo doctor                    # run a subcommand directly\n\
+             \x20 Refused on stderr with exit code 2; no API call is made.\n\
+             \x20 A prompt that merely *begins* with \"/\" counts as a command; rephrase it\n\
+             \x20 (for example, drop the leading slash) if you meant the text literally.\n"
+        ),
+    })
+}
+
 /// Per-iteration stop/continue decision for piped mode's auto-continue loop
 /// (#794 half (b)).
 ///
@@ -609,13 +663,11 @@ async fn run_piped_mode(
 
     // Piped mode can't dispatch slash commands (they need REPL state). If the
     // user piped one in, warn them and exit instead of burning tokens letting
-    // the model puzzle over the literal string.
-    if looks_like_slash_command(input) {
-        eprintln!("{YELLOW}yoyo: slash commands aren't available in piped mode.{RESET}");
-        eprintln!("  Try one of:");
-        eprintln!("    yoyo doctor                    # run a subcommand directly");
-        eprintln!("    yoyo --prompt \"{input}\"        # send the literal text to the agent");
-        eprintln!("    yoyo                           # interactive REPL");
+    // the model puzzle over the literal string. The message comes from the
+    // shared door-aware builder (`slash_command_refusal`) so this door and the
+    // `-p` door cannot drift apart.
+    if let Some(msg) = slash_command_refusal(input, PromptDoor::Piped) {
+        eprint!("{msg}");
         std::process::exit(2);
     }
 
@@ -1141,6 +1193,15 @@ async fn main() {
         // --print: suppress color on terminal stdout and disable color codes
         if print_mode {
             disable_color();
+        }
+        // Slash commands need REPL state, so `-p` can't dispatch them either.
+        // Refuse at the dispatch site — before `run_single_prompt` builds an
+        // agent and before the image/text branch splits — so no API turn is
+        // ever paid for. Same exit code (2) as the piped door, so a wrapper
+        // sees one contract across both non-interactive prompt doors.
+        if let Some(msg) = slash_command_refusal(&prompt_text, PromptDoor::SinglePrompt) {
+            eprint!("{msg}");
+            std::process::exit(2);
         }
         run_single_prompt(
             &mut agent_config,
