@@ -912,6 +912,13 @@ pub fn format_context_breakdown(breakdown: &crate::commands_info::ContextBreakdo
     lines.join("\n")
 }
 
+/// The general price-drift alarm — audits this file's `f64` rows against an
+/// external catalogue. It lives in its own file for the same reason
+/// `src/main_tests.rs` does: this file is already at its module-size register
+/// entry, so the instrument gets room without moving the register.
+#[cfg(test)]
+mod price_audit_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

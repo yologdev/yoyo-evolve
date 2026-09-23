@@ -86,6 +86,16 @@ pub(crate) struct UnhittableCount {
     /// exactly like a real one. A failed measurement is not a finding: it is
     /// `unmeasured`, on the same rule the ledger join already applies to a path
     /// it has never seen.
+    ///
+    /// **Day 207 correction, recorded rather than erased.** The ledger stores
+    /// `git_hash` as an **8-hex prefix**, and a prefix resolves the moment a
+    /// commit starting with it is inside the clone's window — measured today,
+    /// `dcc72f63` is `dcc72f6329bdf46b9558365833914f83ded4fc9f` (day 205) in a
+    /// 52-commit checkout and fails in a shallower one. So a row of this field
+    /// is a statement about **the checkout the reading was taken in**, not only
+    /// about the ledger: the same row is `unmeasured` on a shallow fetch and
+    /// `git_born_after` on a deep one. The day-205 example below is therefore
+    /// an example of the *shape*, not of a permanently unresolvable hash.
     pub(crate) git_unmeasured: u32,
     /// Surprises the raw join found **no** ledger record for at all. A subset
     /// of `unmeasurable` by construction, and the leg that keeps an unknown
@@ -1145,6 +1155,29 @@ mod born_after_ledger_tests {
         rows.iter().map(|s| (*s).to_string()).collect()
     }
 
+    /// A **well-formed id no checkout contains**, for the two subprocess tests
+    /// below.
+    ///
+    /// **Day 207: the fixture these two tests used to share was ambient machine
+    /// state.** It was `dcc72f63` — the real 8-hex `git_hash` the day-204
+    /// ledger row carries — and both tests pinned "this hash does not resolve".
+    /// A **prefix** resolves the moment a commit starting with it is inside the
+    /// clone's window, so the premise was a fact about the depth of whichever
+    /// clone ran the test: measured today `dcc72f63` is
+    /// `dcc72f6329bdf46b9558365833914f83ded4fc9f` (day 205) and resolves in a
+    /// 52-commit checkout while failing in a shallower one. It went red on a
+    /// re-shallowed clone for the reason the deepening note only half recorded:
+    /// `git fetch --depth=N` after a deep fetch leaves the deep objects **in the
+    /// pack**, so the id keeps resolving although it is no longer reachable.
+    /// The two tests therefore read the clone, not the code.
+    ///
+    /// The null oid is rejected by `git cat-file -t` in every repository, so the
+    /// premise cannot go stale — and it is 40 hex characters, so it is **not**
+    /// one of the sentinels `git_born_after_at` short-circuits on
+    /// ([`a_sentinel_or_empty_hash_does_not_shell_out`]) and the real subprocess
+    /// is the path under test.
+    const ABSENT_OBJECT_ID: &str = "0000000000000000000000000000000000000000";
+
     /// One event, four surprises, four different answers. This is the test the
     /// task's Step 1 asks for by name: after / tied / absent / before, in a
     /// single list.
@@ -1305,22 +1338,33 @@ mod born_after_ledger_tests {
         assert_ne!(resolved, unresolved);
     }
 
-    /// The real subprocess, on the real hash from the ledger — the anti-vacuous
-    /// half of the named test. If `dcc72f63` ever becomes resolvable (it will
-    /// not; it is truncated), this test says so instead of quietly agreeing
-    /// with a fixture.
+    /// The real subprocess on an id no checkout contains — the anti-vacuous
+    /// half, and the I/O twin of the pure `git_born_after_by_check(false, ..)`
+    /// test above. Resolvability is asserted **first and separately**: if this
+    /// id ever resolved, the two assertions below would be describing a
+    /// different world and both would need re-reading rather than silently
+    /// agreeing with a fixture. (The twin this replaces, keyed on the day-205
+    /// prefix `dcc72f63`, could not make that check at all — see
+    /// `ABSENT_OBJECT_ID`.)
     #[test]
-    fn the_real_dcc72f63_does_not_resolve_in_this_clone() {
-        let resolves = crate::git::run_git(&["cat-file", "-t", "dcc72f63"]).is_ok();
+    fn an_absent_object_id_reaches_unmeasured_through_the_real_subprocess() {
+        let resolves = crate::git::run_git(&["cat-file", "-t", ABSENT_OBJECT_ID]).is_ok();
         assert!(
             !resolves,
-            "dcc72f63 must NOT resolve — this is the day-205 fixture; if it now \
-             resolves, the fixture and the test above have stopped describing \
-             the same world and both need re-reading"
+            "{ABSENT_OBJECT_ID} must NOT resolve — this is the absent-id fixture; \
+             if it now resolves, the fixture and the test below have stopped \
+             describing the same world and both need re-reading"
         );
-        let got = git_born_after_at("dcc72f63", &paths(&["src/config_paths.rs"]));
+        let got = git_born_after_at(ABSENT_OBJECT_ID, &paths(&["src/config_paths.rs"]));
         assert!(got.files.is_empty(), "{got:?}");
         assert_eq!(got.unmeasured, paths(&["src/config_paths.rs"]), "{got:?}");
+        // The I/O half must agree with the pure half on the same input: a
+        // wrapper that reached the probes with `true` would answer differently
+        // here and nowhere else.
+        assert_eq!(
+            got,
+            git_born_after_by_check(false, &[("src/config_paths.rs".to_string(), false)])
+        );
     }
 
     /// A `git_hash` the ledgers actually contain as a sentinel is not a hash:
@@ -1354,7 +1398,7 @@ mod born_after_ledger_tests {
         let with_git = count_unhittable_surprises_with_git(
             &surprises,
             "2026-09-03T17:23:00Z",
-            "dcc72f63",
+            ABSENT_OBJECT_ID,
             &ledger,
         );
         // The recorded half is byte-identical: only the git fields are new.

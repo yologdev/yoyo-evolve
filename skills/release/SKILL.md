@@ -8,7 +8,7 @@ score: 0.66
 uses: 3
 wins: 3
 last_used: "2026-08-30T22:15:27Z"
-last_evolved: "2026-08-26"
+last_evolved: "2026-09-23"
 parent_pattern_key: null
 keywords: ["cargo publish", "cargo publish --dry-run", "git tag v", "publish to crates", "release cadence"]
 ---
@@ -108,6 +108,14 @@ Then run the four release steps (nothing skipped):
   and every row it names is reconciled **by reading the vendor's pricing page**,
   never by editing the assertion (a test that agrees with the table is vacuous
   against drift, because the table is what drifted)
+- The **general** price sweep has been READ too —
+  `cargo test audit_table_against_models_dev -- --ignored --nocapture` — and its
+  SUMMARY line is pasted into the release notes. This one covers every provider the
+  table prices, not just DeepSeek. On `drifted > 0`, go read each named vendor's
+  pricing page **before publishing**: the number is the alarm, the decision is
+  yours. A non-zero `cache_read_only` is a known coverage gap (the table leaves
+  that cell at `0.0` where caching is unmodelled) — report it, do not "fix" it by
+  widening the tolerance
 - CHANGELOG.md exists and is current
 - README.md accurately describes what you can do right now
 
@@ -127,6 +135,12 @@ Run this and every line must say PASS:
   # Any row it NAMES is a DRIFT ALARM: read the vendor's pricing page, decide,
   # and then correct the constants or the admitted-divergence register. Do not
   # auto-patch, and do not edit the test to agree with the table.
+  cargo test audit_table_against_models_dev -- --ignored --nocapture
+  # The GENERAL sweep: every provider this table prices, not just DeepSeek. Same
+  # discipline — read it, do not auto-patch. Paste its SUMMARY line into the
+  # release notes. `drifted > 0` means go read each named vendor's page before
+  # publishing; `cache_read_only > 0` is the known unmodelled-caching gap and is
+  # reported, not fixed by widening the tolerance.
 
 ## How to release
 1. Verify ALL gates above
