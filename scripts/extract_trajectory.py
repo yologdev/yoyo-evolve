@@ -141,16 +141,22 @@ def session_sort_key(name: str) -> tuple[int, int, str]:
     return (1, int(m.group(1)), m.group(2))
 
 
-def load_outcomes(audit_dir: Path) -> list[dict]:
-    """Read last N outcome.json files, sorted newest-first by session dir name
-    (`day-N-<timestamp>`), falling back to mtime only for dirs that don't match
-    the pattern (those rank below all parsed ones).
-    Returns dicts unchanged from outcome.json — sort metadata is kept on a
-    side tuple, never mutated into the parsed object (defends against keys
-    like `_mtime` colliding with future schema additions)."""
+def iter_session_outcomes(audit_dir: Path) -> list[tuple[str, dict]]:
+    """Read last N outcome.json files as (session dir name, data), newest-first,
+    sorted by session dir name (`day-N-<timestamp>`), falling back to mtime only
+    for dirs that don't match the pattern (those rank below all parsed ones).
+
+    ONE statement of WHICH sessions are in the window, shared by
+    `load_outcomes` (which drops the name) and `load_claim_sessions` (which
+    needs it — Receipt #912). Two copies of this selection would be the "two
+    doors, one policy" shape: they agree today and drift on their own schedule.
+
+    Sort metadata is kept on a side tuple, never mutated into the parsed
+    object (defends against keys like `_mtime` colliding with future schema
+    additions)."""
     if not audit_dir.exists() or not audit_dir.is_dir():
         return []
-    entries: list[tuple[tuple[int, int, str], float, dict]] = []
+    entries: list[tuple[tuple[int, int, str], float, str, dict]] = []
     for child in audit_dir.iterdir():
         if not child.is_dir():
             continue
@@ -167,13 +173,30 @@ def load_outcomes(audit_dir: Path) -> list[dict]:
         except OSError as e:
             warn(f"could not stat {outcome}: {e}")
             mtime = 0.0
-        entries.append((session_sort_key(child.name), mtime, data))
+        entries.append((session_sort_key(child.name), mtime, child.name, data))
     entries.sort(key=lambda t: (t[0], t[1]), reverse=True)
-    # Return only the data dicts, but keep the original keys intact.
-    return [t[2] for t in entries[:WINDOW_SESSIONS]]
+    # Return the name beside the data, with the keys intact.
+    return [(t[2], t[3]) for t in entries[:WINDOW_SESSIONS]]
 
 
-def render_outcomes(outcomes: list[dict]) -> str:
+def load_outcomes(audit_dir: Path) -> list[dict]:
+    """The outcome dicts of the window, unchanged from outcome.json.
+    Delegates the selection to `iter_session_outcomes` so there is exactly one
+    statement of which sessions are in the window."""
+    return [data for _, data in iter_session_outcomes(audit_dir)]
+
+
+def render_outcomes(outcomes: list[dict], session_claims=None) -> str:
+    """One line per session's CLAIM, plus — when `session_claims` is supplied —
+    the SESSION-level corroboration beside it (Receipt #912).
+
+    The rows themselves are UNCHANGED and are byte-identical to the
+    pre-#912 output when the argument is omitted, which is the whole
+    near-miss surface. A reader of the old block sees `tasks 2/2 ✅` and
+    cannot tell a corroborated session from an uncorroborated one; the
+    appended lines are what makes that answerable, and they are appended
+    rather than interleaved so the claim rows keep their pinned rendering.
+    """
     if not outcomes:
         return ""
     lines = ["## Recent session outcomes (last {})".format(len(outcomes))]
@@ -207,6 +230,7 @@ def render_outcomes(outcomes: list[dict]) -> str:
             note = ", ".join(issues) or "partial"
 
         lines.append(f"day-{day} ({ts}): tasks {succeeded}/{attempted} {icon} — {note}")
+    lines.extend(claim_corroboration_lines(session_claims or []))
     return "\n".join(lines)
 
 
@@ -2844,6 +2868,290 @@ def render_productivity(prod: Productivity) -> str:
     )
 
 
+# --- Session-level corroboration: one claim, one window (Receipt #912) ---
+#
+# THE DAY IS THE WRONG JOIN KEY, AND THIS IS THE SIBLING THAT FIXES IT.
+# `classify_productivity` above answers a DAY-level question and is left
+# EXACTLY as it is — it answers a different question and it is already tested.
+# But both of its joins key on the day number, and the cadence is now 3
+# sessions/day: on any day where ONE session lands a task commit the day is in
+# `days_with_task_commits`, so a SIBLING session on that same day which claimed
+# success and produced nothing is invisible. That is the exact case the
+# Day-196 design comment was written about, and it is the common case at this
+# cadence rather than an edge.
+#
+# So this reader joins on the SESSION: each claim is checked against the
+# session's OWN window, derived from the audit-log directory stamps. The two
+# readers sit side by side deliberately — neither replaces the other.
+
+CLAIM_CORROBORATED = "corroborated"
+CLAIM_NO_COMMITS = "claim-no-commits"
+CLAIM_NO_CLAIM = "no-claim"
+CLAIM_COULD_NOT_CHECK = "claim-could-not-check"
+# THE FIFTH VALUE, FOLDED INTO NONE OF THE FOUR. An OPEN window is a different
+# fact from CORROBORATED (nothing to corroborate yet is not a miss) and from
+# COULD_NOT_CHECK (the window IS resolvable — it simply has no closing bound
+# yet), so folding it into either would make the flag fire on a session that
+# has not finished committing. That is the confident-wrong-diagnosis defect.
+#
+# REACHABILITY, STATED RATHER THAN IMPLIED, because this is a FLOOR rather than
+# a live branch in the way `observed_label_clause`'s empty clause is:
+# `SESSION_DIR` is created at session END (`scripts/evolve.sh` Step 7c2), so
+# the newest audit directory read here always belongs to a session that has
+# already finished committing and reaches CORROBORATED instead. It is kept
+# because a session directory CAN exist before its commits do (a
+# pushed-but-unfinished session, a hand-built fixture) and flagging that would
+# be a false alarm on the one signal whose whole value is that it fires rarely.
+CLAIM_OPEN_WINDOW = "claim-open-window"
+
+
+@dataclass
+class ClaimSession:
+    """One audit-log session directory and what it CLAIMED (`tasks_succeeded`)."""
+
+    name: str
+    claimed: bool
+
+
+@dataclass
+class SessionClaim:
+    """One session's corroboration state.
+
+    `name` is carried rather than a day number, because the render site must be
+    able to NAME the session it is flagging and three sessions share a day — an
+    accusation a reader cannot attach to a session is unactionable.
+    """
+
+    name: str
+    state: str
+    # CARRIED APART FROM `state` ON PURPOSE. An open-window session that
+    # already holds a commit is CORROBORATED -- that is a true observation --
+    # but it is NOT a closed session, so it must not inflate the denominator
+    # the summary line names. Collapsing the two would make `M` in
+    # "N of M closed, claiming session(s)" count a session that has not
+    # finished, which is the same defect one level up.
+    window_open: bool = False
+
+
+def load_claim_sessions(audit_dir: Path) -> list[ClaimSession]:
+    """The window's sessions with their claims, newest-first.
+
+    The malformed-value rule is the SAME as `claims_by_day`'s: a
+    `tasks_succeeded` that is not a non-negative integer is treated as NO
+    claim. That is the refusing direction on purpose — a field this reader
+    cannot parse must not become an accusation — and sharing the rule keeps
+    the two readers from disagreeing about the same field.
+    """
+    ours: list[ClaimSession] = []
+    for name, data in iter_session_outcomes(audit_dir):
+        got = data.get("tasks_succeeded", 0)
+        if isinstance(got, bool) or not isinstance(got, int) or got < 0:
+            got = 0
+        ours.append(ClaimSession(name=name, claimed=got > 0))
+    return ours
+
+
+def compact_utc_epoch(stamp) -> int | None:
+    """Pure: the epoch second of a compact Zulu stamp, or None.
+
+    Reuses `compact_utc_stamp`, which is the ONE statement of "what instant is
+    this string", so the two shapes that occur here (the session-directory
+    stamp and git's ISO-8601 `%ct` neighbours) cannot diverge in the parser.
+    A malformed stamp stays UNKNOWN rather than being coerced into a
+    comparable value — the caller turns that into COULD_NOT_CHECK, never into
+    "produced nothing".
+    """
+    compact = compact_utc_stamp(stamp)
+    if compact is None:
+        return None
+    try:
+        dt = datetime.strptime(compact, "%Y%m%dT%H%M%SZ")
+    except ValueError:
+        return None
+    return int(dt.replace(tzinfo=timezone.utc).timestamp())
+
+
+def collect_task_commit_times() -> tuple[list[tuple[str, int, str]] | None, int | None]:
+    """ONE git pass: `[(sha, epoch_secs, subject)]` for task commits, plus the
+    epoch of the OLDEST commit reachable in this clone.
+
+    The oldest-commit epoch is not decoration: the harness checkout is shallow
+    (50 commits, ~1 day), so a session whose window lies before the clone's
+    first commit has NO evidence in this tree either way. Reporting that as
+    "zero task commits" would be the false alarm — measured on Day 207, a
+    still-recent session's task commits sit outside the clone while the only
+    commits inside its window are `bump counter` bookkeeping. So the caller
+    gets the boundary and refuses to accuse across it, exactly as
+    `PRODUCTIVITY_OUT_OF_RANGE` refuses to accuse a day the git slice never
+    spanned.
+
+    Returns `(None, None)` when git is unavailable or the log is empty —
+    "could not check" has its own name and is never a plausible-looking `[]`,
+    which the caller would otherwise read as "no commits landed".
+    """
+    rc, stdout, _ = run_cmd(
+        ["git", "log", "--format=%H%x09%ct%x09%s"], timeout=20
+    )
+    if rc != 0:
+        return None, None
+    tasks: list[tuple[str, int, str]] = []
+    oldest: int | None = None
+    for line in stdout.splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) != 3:
+            continue
+        sha, epoch_str, subject = parts
+        try:
+            epoch = int(epoch_str)
+        except ValueError:
+            # A line git printed in a shape we cannot read contributes no
+            # time, so it can neither corroborate nor set the clone boundary.
+            continue
+        oldest = epoch if oldest is None else min(oldest, epoch)
+        if TASK_COMMIT_RE.match(subject):
+            tasks.append((sha, epoch, subject))
+    if oldest is None:
+        return None, None
+    return tasks, oldest
+
+
+def classify_session_claims(
+    sessions: list[ClaimSession],
+    commits: list[tuple[str, int, str]] | None,
+    oldest_commit_epoch: int | None = None,
+) -> list[SessionClaim]:
+    """Pure: what did each session CLAIM, and does its own window corroborate it?
+
+    THE WINDOW IS THE SESSION'S OWN, and it is half-open: `[start, next_start)`.
+    Session directory stamps are written when the session's evidence is pushed,
+    so the NEXT session's stamp is the previous session's closing bound — one
+    session's window ends exactly where the next begins, and a commit can never
+    be counted for two sessions.
+
+    THE LAST SESSION HAS NO CLOSING BOUND. Its window is OPEN and it is never
+    accused: a session still running has not finished committing, and the
+    absence of its commits is not evidence about it. If its open window already
+    holds a task commit it is CORROBORATED (that is a real observation); if it
+    holds none it is CLAIM_OPEN_WINDOW, which is neither a finding nor a
+    refusal to look.
+
+    ANTI-VACUOUS: an empty session list returns an empty list. "No sessions to
+    read" is not "every session was fine", and a reader that cannot tell those
+    apart is the defect this section exists to avoid. Likewise `commits is
+    None` (git unavailable / empty log) is COULD_NOT_CHECK for every claiming
+    session rather than a full-blown alarm of zero-commit sessions.
+
+    NO_CLAIM IS ITS OWN STATE and is never an accusation: a session that
+    reported `tasks_succeeded == 0` attempted nothing or reverted, and there is
+    nothing to corroborate. That rule is checked FIRST, so a malformed claim
+    cannot reach the flag.
+    """
+    if not sessions:
+        return []
+
+    # THE LADDER IS BUILT FROM ALL SESSIONS, not only the claiming ones. A
+    # window's closing bound is the NEXT session's start, and a session that
+    # claimed nothing still closes the one before it. Building the ladder from
+    # claiming sessions alone would let a session's window swallow an
+    # intervening non-claiming session's commits AND would treat the newest
+    # claiming session as open when a newer non-claiming session already
+    # closed it -- both false negatives, but wrong is wrong.
+    stamps = {
+        s.name: compact_utc_epoch(session_dir_stamp(s.name)) for s in sessions
+    }
+    ladder = sorted(st for st in stamps.values() if st is not None)
+    newest_start = ladder[-1] if ladder else None
+
+    states: dict[str, str] = {}
+    opens: set[str] = set()
+    for s in sessions:
+        if not s.claimed:
+            states[s.name] = CLAIM_NO_CLAIM
+            continue
+        start = stamps[s.name]
+        if start is None:
+            # A session directory whose stamp will not parse has an
+            # UNRESOLVABLE window. That is a different fact from "it produced
+            # nothing", and silence about a window is not evidence about a
+            # session.
+            states[s.name] = CLAIM_COULD_NOT_CHECK
+            continue
+        if commits is None:
+            states[s.name] = CLAIM_COULD_NOT_CHECK
+            continue
+        # CLONE BOUNDARY. A window that begins before the oldest commit this
+        # clone can see is not checkable: the commits it may have produced are
+        # physically absent, so "zero in the window" would be a statement about
+        # the clone rather than about the session. Refuse, do not accuse.
+        if oldest_commit_epoch is not None and start < oldest_commit_epoch:
+            states[s.name] = CLAIM_COULD_NOT_CHECK
+            continue
+        # HALF-OPEN `[start, next_start)`: one session's window ends exactly
+        # where the next begins, so a commit can never count for two sessions.
+        is_open = start == newest_start
+        end = None if is_open else next((t for t in ladder if t > start), None)
+        inside = sum(
+            1
+            for _, epoch, _ in commits
+            if epoch >= start and (end is None or epoch < end)
+        )
+        if is_open:
+            opens.add(s.name)
+            states[s.name] = CLAIM_CORROBORATED if inside else CLAIM_OPEN_WINDOW
+        else:
+            states[s.name] = CLAIM_CORROBORATED if inside else CLAIM_NO_COMMITS
+
+    # Render newest-first, matching the claim rows it is appended to.
+    ordered = sorted(sessions, key=lambda s: session_sort_key(s.name), reverse=True)
+    return [
+        SessionClaim(name=s.name, state=states[s.name], window_open=s.name in opens)
+        for s in ordered
+    ]
+
+
+def claim_corroboration_lines(claims: list[SessionClaim]) -> list[str]:
+    """The flagged sessions, one line each, plus the count over the population
+    they were drawn from.
+
+    THE DENOMINATOR IS NAMED IN THE LINE'S OWN WORDS -- `closed, claiming
+    session(s)` -- because the count is over the sessions that claimed a
+    success AND whose window is closed AND whose window could be resolved, not
+    over every session read. Sessions whose window could not be resolved are
+    counted separately and explicitly, so an unknown window can never be read
+    as a corroborated one.
+
+    A ZERO IS PRINTED. `0 of N` says the check ran and found nothing, which is
+    a different fact from the check not running, and the difference is the
+    whole reason the trailing line exists.
+
+    Returns [] for an empty claim list so a run with no audit-log sessions
+    renders byte-identically to the pre-#912 output.
+    """
+    if not claims:
+        return []
+    flagged = [c for c in claims if c.state == CLAIM_NO_COMMITS]
+    closed = [
+        c
+        for c in claims
+        if not c.window_open and c.state in (CLAIM_CORROBORATED, CLAIM_NO_COMMITS)
+    ]
+    unchecked = [c for c in claims if c.state == CLAIM_COULD_NOT_CHECK]
+    lines = [
+        f"⚠ {c.name}: claimed success, 0 task commits in this session's window"
+        for c in flagged
+    ]
+    lines.append(
+        f"{len(flagged)} of {len(closed)} closed, claiming session(s): "
+        f"claimed success, no task commits"
+    )
+    if unchecked:
+        lines.append(
+            f"{len(unchecked)} further claiming session(s) could NOT be checked "
+            f"(window unresolved) — NOT counted above."
+        )
+    return lines
+
+
 # --- Counterfactual pairing coverage (DREAM milestone reader) ---
 
 VERDICT_LEDGER_REL_PATH = "dreams/counterfactual_verdicts.jsonl"
@@ -3352,6 +3660,15 @@ def main() -> int:
     # unusable — there is no placeholder to walk, which is the whole of #843.
     outcomes = load_outcomes(audit_dir) if audit_dir is not None else []
     tasks, reverts = collect_task_commits()
+    # Receipt #912: the SESSION-level sibling of the productivity check. Same
+    # window, same claim field, one join key finer — see the block above
+    # `ClaimSession`. Collected beside the day-level facts so the two are read
+    # from one pass of the same evidence rather than two clocks.
+    claim_sessions = load_claim_sessions(audit_dir) if audit_dir is not None else []
+    task_commit_times, oldest_commit_epoch = collect_task_commit_times()
+    session_claims = classify_session_claims(
+        claim_sessions, task_commit_times, oldest_commit_epoch
+    )
     provider_scan = (
         collect_provider_errors(audit_dir) if audit_dir is not None else ProviderScan()
     )
@@ -3372,7 +3689,7 @@ def main() -> int:
     )
 
     sections: list[str] = []
-    s = render_outcomes(outcomes)
+    s = render_outcomes(outcomes, session_claims)
     if s:
         sections.append(s)
     s = render_task_success(tasks)
@@ -6491,6 +6808,262 @@ src/commands_config.rs
             ]
         ),
         {195: 0},
+    )
+
+    print("\n=== session-level claim corroboration self-tests (Receipt #912) ===\n")
+
+    # --- Fixtures. Stamps are 2026-09-20T02:00:00Z .. so the epochs are small
+    # and hand-checkable, and they are built by the SAME parser the code uses.
+    S_DAY_A_1 = "day-195-20260920T020000Z"
+    S_DAY_A_2 = "day-195-20260920T100000Z"  # 8h later, SAME day as A_1
+    S_DAY_A_3 = "day-195-20260920T180000Z"
+    S_DAY_B_1 = "day-196-20260921T020000Z"
+    T_A_1 = compact_utc_epoch(session_dir_stamp(S_DAY_A_1))
+    T_A_2 = compact_utc_epoch(session_dir_stamp(S_DAY_A_2))
+    T_A_3 = compact_utc_epoch(session_dir_stamp(S_DAY_A_3))
+    T_B_1 = compact_utc_epoch(session_dir_stamp(S_DAY_B_1))
+
+    def commit_at(epoch, sha="0" * 8):
+        return (sha, epoch, "Day 195 (02:00): something (Task 1)")
+
+    # THE FIXTURE ITSELF IS ASSERTED, so a transcription slip cannot make the
+    # discriminating row pass by agreeing with itself.
+    assert_true(
+        "anti-vacuous: the fixture really does put two sessions on ONE day",
+        S_DAY_A_1.split("-")[1] == S_DAY_A_2.split("-")[1] == "195",
+    )
+    assert_true(
+        "the commits below really sit INSIDE A_1's window and OUTSIDE A_2's",
+        T_A_1 < T_A_2 < T_A_3,
+    )
+
+    # THE DISCRIMINATING ROW -- THE ENTIRE POINT OF THE RECEIPT. Two sessions
+    # on one day: A_1 lands a task commit, A_2 claims success and lands
+    # nothing. The DAY is corroborated, so `classify_productivity` sees a
+    # healthy day and says so; only the session-level join can see A_2.
+    disc_sessions = [
+        ClaimSession(S_DAY_A_1, True),
+        ClaimSession(S_DAY_A_2, True),
+        ClaimSession(S_DAY_A_3, True),
+    ]
+    disc_commits = [commit_at(T_A_1, "a" * 8)]
+    disc = classify_session_claims(disc_sessions, disc_commits, T_A_1 - 10)
+    disc_by_name = {c.name: c.state for c in disc}
+    assert_eq(
+        "discriminating: the sibling WITH a commit in its window is corroborated",
+        disc_by_name[S_DAY_A_1],
+        CLAIM_CORROBORATED,
+    )
+    assert_eq(
+        "discriminating: the SIBLING ON THE SAME DAY with zero commits is FLAGGED",
+        disc_by_name[S_DAY_A_2],
+        CLAIM_NO_COMMITS,
+    )
+    # A_3 is the newest session, so its window is OPEN and it is never accused.
+    assert_eq(
+        "the newest session's open window is NOT an accusation",
+        disc_by_name[S_DAY_A_3],
+        CLAIM_OPEN_WINDOW,
+    )
+    # AND THE DAY-LEVEL CHECK CANNOT SEE IT. This is what makes the row above
+    # worth a separate reader rather than a change to the existing one.
+    day_claims = claims_by_day(
+        [
+            {"day": 195, "tasks_succeeded": 2},
+            {"day": 195, "tasks_succeeded": 2},
+            {"day": 195, "tasks_succeeded": 2},
+        ]
+    )
+    assert_eq(
+        "the day-level check STILL reads that day as healthy -- it cannot see A_2",
+        classify_productivity(day_claims, {195}, 1).state,
+        PRODUCTIVITY_OK,
+    )
+
+    # --- The four states, none folded into another.
+    assert_eq(
+        "NO_CLAIM: a session that claimed nothing is never accused",
+        [
+            c.state
+            for c in classify_session_claims(
+                [ClaimSession(S_DAY_A_1, False)], disc_commits, T_A_1 - 10
+            )
+        ],
+        [CLAIM_NO_CLAIM],
+    )
+    assert_eq(
+        "COULD_NOT_CHECK: an unparseable session stamp is NOT 'zero commits'",
+        [
+            c.state
+            for c in classify_session_claims(
+                [ClaimSession("not-a-session-dir", True)], disc_commits, T_A_1 - 10
+            )
+        ],
+        [CLAIM_COULD_NOT_CHECK],
+    )
+    assert_eq(
+        "COULD_NOT_CHECK: git unavailable is not a full-blown zero-commit alarm",
+        [
+            c.state
+            for c in classify_session_claims(disc_sessions, None, None)
+        ],
+        [CLAIM_COULD_NOT_CHECK] * 3,
+    )
+    assert_eq(
+        "COULD_NOT_CHECK: a window before the clone's oldest commit is refused, "
+        "not accused",
+        [
+            c.state
+            for c in classify_session_claims(disc_sessions, disc_commits, T_B_1)
+        ],
+        [CLAIM_COULD_NOT_CHECK] * 3,
+    )
+
+    # HALF-OPEN WINDOWS: a commit exactly ON a boundary belongs to exactly one
+    # session -- the later one -- never to both and never to neither.
+    boundary = classify_session_claims(
+        [ClaimSession(S_DAY_A_1, True), ClaimSession(S_DAY_A_2, True)],
+        [commit_at(T_A_2, "b" * 8)],
+        T_A_1 - 10,
+    )
+    boundary_by_name = {c.name: c.state for c in boundary}
+    assert_eq(
+        "a commit stamped exactly at the next session's start is NOT the earlier "
+        "session's",
+        boundary_by_name[S_DAY_A_1],
+        CLAIM_NO_COMMITS,
+    )
+    assert_eq(
+        "that same commit DOES corroborate the session whose window opens on it",
+        boundary_by_name[S_DAY_A_2],
+        CLAIM_CORROBORATED,
+    )
+
+    # ANTI-VACUOUS: no sessions is not "every session was fine".
+    assert_eq(
+        "anti-vacuous: an empty session list yields an empty verdict list",
+        classify_session_claims([], disc_commits, T_A_1 - 10),
+        [],
+    )
+    assert_eq(
+        "anti-vacuous: an empty claim list renders no lines at all",
+        claim_corroboration_lines([]),
+        [],
+    )
+
+    # --- The summary line and its POPULATION.
+    lines = claim_corroboration_lines(disc)
+    assert_true(
+        "the flagged session is named by its OWN directory, not by its day",
+        any(S_DAY_A_2 in ln and "⚠" in ln for ln in lines),
+    )
+    assert_true(
+        "the summary names the population it counted over, and says CLOSED",
+        any(
+            "1 of 2 closed, claiming session(s): claimed success, no task commits"
+            in ln
+            for ln in lines
+        ),
+    )
+    assert_true(
+        "the open-window session is NOT in the denominator the summary names",
+        not any("1 of 3" in ln for ln in lines),
+    )
+    # A ZERO IS A VALUE: the check ran and found nothing. The trailing
+    # non-claiming session is what CLOSES A_2's window -- without it A_2 is the
+    # newest session and its window is open, which is a different fact.
+    zero_lines = claim_corroboration_lines(
+        classify_session_claims(
+            [
+                ClaimSession(S_DAY_A_1, True),
+                ClaimSession(S_DAY_A_2, True),
+                ClaimSession(S_DAY_A_3, False),
+            ],
+            [commit_at(T_A_1, "c" * 8), commit_at(T_A_2, "d" * 8)],
+            T_A_1 - 10,
+        )
+    )
+    assert_true(
+        "an all-corroborated window still prints its zero, with its population",
+        zero_lines == ["0 of 2 closed, claiming session(s): claimed success, "
+                       "no task commits"],
+    )
+    # Unresolvable windows are named SEPARATELY, so an unknown can never be
+    # read as a corroborated one. A closed, corroborated session plus ONE
+    # claiming session whose stamp will not parse: the denominator stays at 1
+    # and the unknown leaves the denominator entirely.
+    mixed = claim_corroboration_lines(
+        classify_session_claims(
+            [
+                ClaimSession(S_DAY_A_1, True),
+                ClaimSession(S_DAY_A_2, False),
+                ClaimSession("day-195-notatimestamp", True),
+            ],
+            [commit_at(T_A_1, "e" * 8)],
+            T_A_1 - 10,
+        )
+    )
+    assert_true(
+        "an unresolved window gets its own line and is NOT in the denominator",
+        mixed
+        == [
+            "0 of 1 closed, claiming session(s): claimed success, no task commits",
+            "1 further claiming session(s) could NOT be checked (window "
+            "unresolved) — NOT counted above.",
+        ],
+    )
+
+    # --- THE NEAR-MISS GUARD, AND THE ONE PLACE ITS TWO REQUIREMENTS MEET.
+    #
+    # The task asks for two things that pull apart: the summary line prints
+    # even when the count is zero, AND an all-corroborated window must render
+    # byte-identically to the pre-#912 output. The summary line is new
+    # content, so the second can only hold for the block the reader actually
+    # reads the claim off. Both halves are pinned here, the second with
+    # `assert_eq!` on the WHOLE render rather than a `contains`:
+    GREEN_OUTCOMES = [
+        {"day": 195, "ts": "2026-09-20T02:00:00Z", "tasks_attempted": 2,
+         "tasks_succeeded": 2, "build_ok": True, "test_ok": True,
+         "reverted": False},
+        {"day": 195, "ts": "2026-09-20T10:00:00Z", "tasks_attempted": 2,
+         "tasks_succeeded": 2, "build_ok": True, "test_ok": True,
+         "reverted": False},
+    ]
+    pre_change_rows = (
+        "## Recent session outcomes (last 2)\n"
+        "day-195 (2026-09-20 02:00:00): tasks 2/2 ✅ — build OK, tests OK\n"
+        "day-195 (2026-09-20 10:00:00): tasks 2/2 ✅ — build OK, tests OK"
+    )
+    assert_eq(
+        "near-miss: the claim rows render BYTE-IDENTICALLY without a verdict",
+        render_outcomes(GREEN_OUTCOMES),
+        pre_change_rows,
+    )
+    all_corr = classify_session_claims(
+        [
+            ClaimSession(S_DAY_A_1, True),
+            ClaimSession(S_DAY_A_2, True),
+            ClaimSession(S_DAY_A_3, False),
+        ],
+        [commit_at(T_A_1, "f" * 8), commit_at(T_A_2, "1" * 8)],
+        T_A_1 - 10,
+    )
+    assert_eq(
+        "near-miss: an all-corroborated window appends ONLY the zero summary, "
+        "producing no false alarm line",
+        render_outcomes(GREEN_OUTCOMES, all_corr),
+        pre_change_rows
+        + "\n0 of 2 closed, claiming session(s): claimed success, no task commits",
+    )
+    assert_true(
+        "near-miss: and that render carries no ⚠ accusation anywhere",
+        "⚠" not in render_outcomes(GREEN_OUTCOMES, all_corr),
+    )
+    # The true no-op: no sessions read at all is byte-identical, whole render.
+    assert_eq(
+        "near-miss: no audit-log sessions renders exactly as it did before",
+        render_outcomes(GREEN_OUTCOMES, []),
+        render_outcomes(GREEN_OUTCOMES),
     )
 
     print("\n=== doc freshness self-tests ===\n")
