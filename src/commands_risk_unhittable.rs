@@ -49,6 +49,48 @@ pub(crate) struct UnhittableCount {
     /// founding-batch path (unknown birthday — see [`first_scored_age`]), or a
     /// snapshot whose own `ts` is `"unknown"`.
     pub(crate) unmeasurable: u32,
+    /// The **raw first-scored-ledger join**'s own reading of the same surprise
+    /// list — the second instrument (Day 207, [`born_after_by_ledger`]), which
+    /// compares `first_scored[p].ts` against the event's `ts` with no
+    /// founding-batch guard and no special case for an unknown `ts`.
+    ///
+    /// The two instruments are not two spellings of one number and the fields
+    /// are kept apart on purpose: `unhittable` is the *guarded* live reading
+    /// that is recorded on the event, and these are the *raw* join's members.
+    /// They agree on every ordinary post-ledger row and part company exactly
+    /// where the guard is doing work — a founding-batch birthday (an unknown,
+    /// not a birthday) or an unorderable `ts` — which is the case a reader
+    /// must be able to see rather than have folded into one verdict.
+    pub(crate) ledger_born_after: u32,
+    /// Surprises whose ledger birthday is **exactly** the event's own `ts`: a
+    /// date tie. Neither born-after (no foresight is missing) nor a hit worth
+    /// crediting — the day-178 row is the one instance in this repo's ledger
+    /// (`src/gasp_cli.rs`, event ts `2026-08-25T22:40:17Z`), where the git
+    /// instrument reads born-after and the ledger join reads same-instant.
+    pub(crate) ties: u32,
+    /// The **git instrument** (Day 207, [`git_born_after_at`]): how many
+    /// surprises `git cat-file -e <hash>:<path>` says are absent at the
+    /// snapshot's own tree. `0` in a project with no git, or on a row whose
+    /// hash does not resolve — read [`UnhittableCount::git_unmeasured`] beside
+    /// it before reading the zero as a measurement.
+    pub(crate) git_born_after: u32,
+    /// Surprises the git instrument could **not** check: the snapshot's own
+    /// hash is not a commit `git cat-file -t` resolves, so the check never ran
+    /// for a single member of that row.
+    ///
+    /// This is the day-205 shape (`snapshot_git_hash = "dcc72f63"`,
+    /// `src/config_paths.rs`). Before this field existed, a hash that failed to
+    /// resolve made `cat-file -e` fail for *every* path — which is
+    /// indistinguishable at that call site from "the path was not there yet" —
+    /// so one unresolvable hash became one fake born-after file, rendered
+    /// exactly like a real one. A failed measurement is not a finding: it is
+    /// `unmeasured`, on the same rule the ledger join already applies to a path
+    /// it has never seen.
+    pub(crate) git_unmeasured: u32,
+    /// Surprises the raw join found **no** ledger record for at all. A subset
+    /// of `unmeasurable` by construction, and the leg that keeps an unknown
+    /// birthday from being read as "after".
+    pub(crate) ledger_unmeasured: u32,
 }
 
 /// Decide each surprise against the first-scored ledger.
@@ -65,6 +107,77 @@ pub(crate) struct UnhittableCount {
 /// is load-bearing: an unorderable snapshot must not let every surprise read as
 /// *hittable*, which is the direction silence would be read in.
 ///
+/// What the **raw** first-scored-ledger join found in one surprise list.
+///
+/// Paths, not counts, for the same reason the census prints paths: a count a
+/// reader cannot attribute is a number they have to take on faith, and the
+/// question this answers ("*which* file did not exist yet?") is not answerable
+/// from a total.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct LedgerBornAfter {
+    /// First-scored **strictly after** the event's own `ts`. The comparison is
+    /// `>`, deliberately: an equal `ts` is [`LedgerBornAfter::ties`], a
+    /// different answer to a different question, not a member of this set.
+    pub(crate) files: Vec<String>,
+    /// First-scored at **exactly** the event's `ts`. Its own bucket because it
+    /// is neither a hit nor a miss: nothing was born after the prediction, so
+    /// no foresight is missing — but the two records disagree about the order,
+    /// and that disagreement is the observed fact.
+    pub(crate) ties: Vec<String>,
+    /// No ledger record at all. **Unknown, never "after"** — this is the rule
+    /// that keeps a failed measurement from reading as a born-after file, one
+    /// instrument over: a ledger that has never seen a path cannot certify a
+    /// birthday for it.
+    pub(crate) unmeasured: Vec<String>,
+}
+
+/// The raw ledger join: compare each surprise's first-scored `ts` against the
+/// event's own `ts`, with **no** founding-batch guard and **no** special case
+/// for an unorderable `ts`.
+///
+/// Pure — no git call, no filesystem call, no clock — which is the whole point
+/// of the fallback DREAM.md names: it needs nothing but the ledger it already
+/// has. It is deliberately **not** a replacement for
+/// [`count_unhittable_surprises`], whose guard is load-bearing (a founding-batch
+/// birthday is an unknown, and reading it as a birthday is the survivor trap
+/// this repo has documented twice); where the two disagree, the disagreement is
+/// the reading, and `UnhittableCount` carries both.
+///
+/// `first_scored` is `(path, ts)` rows as they sit in
+/// `.yoyo/risk_first_scored.jsonl`. The ledger is append-only, so the **earliest**
+/// `ts` per path wins — the same rule `parse_first_scored` applies — and a path
+/// repeated inside `surprises` is reported once per occurrence, because the row
+/// itself repeated it.
+pub(crate) fn born_after_by_ledger(
+    surprises: &[String],
+    event_ts: &str,
+    first_scored: &[(String, String)],
+) -> LedgerBornAfter {
+    let mut birth: BTreeMap<&str, &str> = BTreeMap::new();
+    for (path, ts) in first_scored {
+        birth
+            .entry(path.as_str())
+            .and_modify(|existing| {
+                if ts.as_str() < *existing {
+                    *existing = ts.as_str();
+                }
+            })
+            .or_insert(ts.as_str());
+    }
+    let mut out = LedgerBornAfter::default();
+    for path in surprises {
+        match birth.get(path.as_str()) {
+            None => out.unmeasured.push(path.clone()),
+            Some(&ts) if ts > event_ts => out.files.push(path.clone()),
+            Some(&ts) if ts == event_ts => out.ties.push(path.clone()),
+            // Strictly before: it existed when the prediction was made. No
+            // bucket, because "hittable" is not a claim this join makes.
+            Some(_) => {}
+        }
+    }
+    out
+}
+
 /// Invariant, pinned by tests: `measured + unmeasurable == surprises.len()`.
 pub(crate) fn count_unhittable_surprises(
     surprises: &[String],
@@ -72,7 +185,20 @@ pub(crate) fn count_unhittable_surprises(
     first_scored: &std::collections::BTreeMap<String, String>,
     founding: Option<&str>,
 ) -> UnhittableCount {
-    let mut out = UnhittableCount::default();
+    // The raw join runs first and fills only the three instrument fields; the
+    // guarded loop below owns `unhittable`/`measured`/`unmeasurable` exactly as
+    // it always has, so no recorded count moves (Day 207).
+    let pairs: Vec<(String, String)> = first_scored
+        .iter()
+        .map(|(p, t)| (p.clone(), t.clone()))
+        .collect();
+    let raw = born_after_by_ledger(surprises, snapshot_ts, &pairs);
+    let mut out = UnhittableCount {
+        ledger_born_after: raw.files.len() as u32,
+        ties: raw.ties.len() as u32,
+        ledger_unmeasured: raw.unmeasured.len() as u32,
+        ..Default::default()
+    };
     let snapshot_orderable = snapshot_ts != "unknown";
     for path in surprises {
         let Some(birthday) = first_scored_age(path, first_scored, founding) else {
@@ -93,6 +219,75 @@ pub(crate) fn count_unhittable_surprises(
     out
 }
 
+/// The **git instrument's decision**, as a pure function of what its two probes
+/// returned. Its I/O half is [`git_born_after_at`], kept separate so the
+/// day-205 shape is a table row here rather than a subprocess.
+///
+/// `members` is `(path, exists-at-that-tree)` — `exists` is what
+/// `git cat-file -e <hash>:<path>` said, and it is only meaningful when
+/// `hash_resolves` is true. That flag is `git cat-file -t <hash>` and it is the
+/// whole point of this function: without it the two conditions produce the same
+/// `false` and are indistinguishable, so a snapshot hash nobody can resolve
+/// reads as *every file is born after it*.
+pub(crate) fn git_born_after_by_check(
+    hash_resolves: bool,
+    members: &[(String, bool)],
+) -> LedgerBornAfter {
+    let mut out = LedgerBornAfter::default();
+    if !hash_resolves {
+        // The check did not run. Every member is unmeasured — including the
+        // members that would have been born-after had it run, which we cannot
+        // know, and which is exactly why this must not be reported as zero
+        // born-after either.
+        for (path, _) in members {
+            out.unmeasured.push(path.clone());
+        }
+        return out;
+    }
+    for (path, exists) in members {
+        if !exists {
+            out.files.push(path.clone());
+        }
+    }
+    out
+}
+
+/// I/O half of the git instrument: ask git whether each surprise existed at the
+/// tree its own snapshot named.
+///
+/// One `git cat-file -t <hash>` first, then one `git cat-file -e <hash>:<path>`
+/// per member **only if the hash resolves**. A non-resolving hash short-circuits
+/// the per-member loop deliberately: nothing it could return would be a
+/// measurement.
+///
+/// Read-only git, no clock, no filesystem walk of our own. In a directory with
+/// no repository `run_git` errors, which lands on the same `unmeasured` branch
+/// as an unresolvable hash — the honest answer, and the one that keeps a
+/// non-git project from reading as "no file was born late".
+pub(crate) fn git_born_after_at(hash: &str, surprises: &[String]) -> LedgerBornAfter {
+    if hash.is_empty() || hash == "unknown" {
+        // A sentinel is not a hash, so there is nothing to ask git — but the
+        // members are still *unmeasured*, not absent from the answer: a
+        // sentinel must not read as "no file was born late".
+        let members: Vec<(String, bool)> = surprises.iter().map(|p| (p.clone(), false)).collect();
+        return git_born_after_by_check(false, &members);
+    }
+    let resolves = crate::git::run_git(&["cat-file", "-t", hash]).is_ok();
+    let mut members: Vec<(String, bool)> = Vec::new();
+    if resolves {
+        for path in surprises {
+            let spec = format!("{hash}:{path}");
+            let exists = crate::git::run_git(&["cat-file", "-e", &spec]).is_ok();
+            members.push((path.clone(), exists));
+        }
+    } else {
+        for path in surprises {
+            members.push((path.clone(), false));
+        }
+    }
+    git_born_after_by_check(resolves, &members)
+}
+
 /// I/O wrapper for [`count_unhittable_surprises`]: read the ledger at
 /// `ledger_path` and run the join. One composition for every call site — never
 /// two copies that agree today.
@@ -106,6 +301,28 @@ pub(crate) fn count_unhittable_surprises_at(
     count_unhittable_surprises(surprises, snapshot_ts, &map, founding)
 }
 
+/// The same join, with the git instrument run beside it — the composition the
+/// live call sites use, because they hold the snapshot's own `git_hash` and are
+/// the only place it is known.
+///
+/// The ledger reading is not replaced and its recorded count does not move: the
+/// git numbers are carried on the same struct so the note can print two
+/// instruments side by side. A caller that has no hash (the green path) keeps
+/// [`count_unhittable_surprises_at`] and the git fields stay zero — zero *and*
+/// zero `git_unmeasured`, which the note is careful not to read as agreement.
+pub(crate) fn count_unhittable_surprises_with_git(
+    surprises: &[String],
+    snapshot_ts: &str,
+    snapshot_git_hash: &str,
+    ledger_path: &std::path::Path,
+) -> UnhittableCount {
+    let mut count = count_unhittable_surprises_at(surprises, snapshot_ts, ledger_path);
+    let git = git_born_after_at(snapshot_git_hash, surprises);
+    count.git_born_after = git.files.len() as u32;
+    count.git_unmeasured = git.unmeasured.len() as u32;
+    count
+}
+
 /// The one clause a validation summary adds when some surprises could not have
 /// been hit — `None` when there is nothing to say.
 ///
@@ -115,7 +332,9 @@ pub(crate) fn count_unhittable_surprises_at(
 /// which equals the surprise-list length by construction) so there is no second
 /// number to keep in sync.
 pub(crate) fn unhittable_note(count: UnhittableCount, plain: bool) -> Option<String> {
-    if count.unhittable == 0 && count.unmeasurable == 0 {
+    // The git leg joins the existence test so the day-205 shape is *visible*
+    // (`git_unmeasured` names a check that did not run) rather than silent.
+    if count.unhittable == 0 && count.unmeasurable == 0 && count.git_unmeasured == 0 {
         return None;
     }
     let total = count.measured + count.unmeasurable;
@@ -126,6 +345,28 @@ pub(crate) fn unhittable_note(count: UnhittableCount, plain: bool) -> Option<Str
     );
     if count.unmeasurable > 0 {
         note.push_str(&format!("; {} undecidable", count.unmeasurable));
+    }
+    if count.ties > 0 {
+        // The day-178 leg: the two records disagree about the order and
+        // neither wins. Named rather than dropped, because a tie that is
+        // silently absent is a tie a reader will re-derive.
+        let tv = if count.ties == 1 { "is" } else { "are" };
+        note.push_str(&format!("; {} {tv} a date tie", count.ties));
+    }
+    // Two instruments, printed apart and only where they part company: the
+    // ledger join (what is recorded) and the git check (what the tree says).
+    // Silence here means they agree, never that one of them ran alone.
+    if count.git_unmeasured > 0 {
+        note.push_str(&format!(
+            "; the git check could not run for {} (snapshot hash unresolved)",
+            count.git_unmeasured
+        ));
+    }
+    if count.git_born_after != count.unhittable {
+        note.push_str(&format!(
+            "; the git check reads {} born-after",
+            count.git_born_after
+        ));
     }
     // Glyph-free under plain output, matching the sibling refusal/notice
     // messages; the glyph lives at the call site so the note stays a string.
@@ -747,6 +988,7 @@ mod unhittable_tests {
             unhittable: 2,
             measured: 5,
             unmeasurable: 1,
+            ..Default::default()
         };
         let rich = unhittable_note(count, false).expect("a note when something is unhittable");
         assert!(
@@ -777,6 +1019,7 @@ mod unhittable_tests {
                 unhittable: 1,
                 measured: 1,
                 unmeasurable: 0,
+                ..Default::default()
             },
             true,
         )
@@ -788,6 +1031,7 @@ mod unhittable_tests {
                 unhittable: 3,
                 measured: 3,
                 unmeasurable: 0,
+                ..Default::default()
             },
             true,
         )
@@ -804,10 +1048,322 @@ mod unhittable_tests {
             unhittable: 0,
             measured: 0,
             unmeasurable: 2,
+            ..Default::default()
         };
         let note = unhittable_note(count, true).expect("an undecidable row still prints");
         assert!(note.contains("0 of 2 surprises were unhittable"), "{note}");
         assert!(note.contains("2 undecidable"), "{note}");
+    }
+
+    /// The two instruments printed apart, and the tie named — the task's
+    /// "`ledger 3 / git 5 / 2 ties`" reading.
+    #[test]
+    fn the_note_prints_both_instruments_and_the_tie_count() {
+        let count = UnhittableCount {
+            unhittable: 3,
+            measured: 4,
+            unmeasurable: 0,
+            ledger_born_after: 3,
+            ties: 2,
+            git_born_after: 5,
+            git_unmeasured: 0,
+            ledger_unmeasured: 0,
+        };
+        let note = unhittable_note(count, true).expect("note");
+        assert!(note.contains("3 of 4 surprises were unhittable"), "{note}");
+        assert!(note.contains("2 are a date tie"), "{note}");
+        assert!(
+            note.contains("the git check reads 5 born-after"),
+            "the second instrument's number is printed, not implied: {note}"
+        );
+        // The two must not be presented as one number: the note names which is
+        // which.
+        assert!(note.contains("first scored after this snapshot"), "{note}");
+    }
+
+    /// A check that **did not run** is spoken, even when it is the only thing
+    /// to say — this is the day-205 case, and before the git leg joined the
+    /// guard it was silent (every count zero).
+    #[test]
+    fn the_note_speaks_when_only_the_git_check_failed_to_run() {
+        let count = UnhittableCount {
+            git_unmeasured: 1,
+            ..Default::default()
+        };
+        let note = unhittable_note(count, true).expect("an unrun check is not silence");
+        assert!(note.contains("the git check could not run for 1"), "{note}");
+        assert!(
+            !note.contains("the git check reads"),
+            "nothing ran, so there is no reading to compare: {note}"
+        );
+        // Plain mode stays glyph-free, like every sibling message.
+        assert!(note.is_ascii(), "{note}");
+    }
+
+    /// Agreement is silence: the git number is printed only where the two
+    /// instruments part company, so an ordinary session's stderr does not grow
+    /// a redundant clause.
+    #[test]
+    fn the_note_stays_quiet_when_both_instruments_agree() {
+        let count = UnhittableCount {
+            unhittable: 2,
+            measured: 2,
+            unmeasurable: 0,
+            ledger_born_after: 2,
+            ties: 0,
+            git_born_after: 2,
+            git_unmeasured: 0,
+            ledger_unmeasured: 0,
+        };
+        let note = unhittable_note(count, true).expect("note");
+        assert!(!note.contains("the git check reads"), "{note}");
+        assert!(!note.contains("date tie"), "{note}");
+        assert!(!note.contains("could not run"), "{note}");
+    }
+}
+
+/// Tests for the **raw ledger join** ([`born_after_by_ledger`]) — the second
+/// instrument — and for the git instrument's decision
+/// ([`git_born_after_by_check`]), whose whole job is to keep a check that did
+/// not run from reading as a finding.
+///
+/// The inputs here are deliberately *structurally distinct*, not one fixture at
+/// different lengths: the one row carries a before, an after, a tie and an
+/// absent member together, so a bug that returns a whole-list verdict (all
+/// born-after, or none) cannot pass by agreeing with a homogeneous fixture.
+#[cfg(test)]
+mod born_after_ledger_tests {
+    use super::*;
+
+    fn pairs(rows: &[(&str, &str)]) -> Vec<(String, String)> {
+        rows.iter()
+            .map(|(p, t)| ((*p).to_string(), (*t).to_string()))
+            .collect()
+    }
+
+    fn paths(rows: &[&str]) -> Vec<String> {
+        rows.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    /// One event, four surprises, four different answers. This is the test the
+    /// task's Step 1 asks for by name: after / tied / absent / before, in a
+    /// single list.
+    #[test]
+    fn one_row_partitions_after_tied_absent_and_before() {
+        let ts = "2026-09-03T17:23:00Z";
+        let ledger = pairs(&[
+            ("src/old.rs", "2026-08-25T10:00:00Z"),  // before — existed
+            ("src/born.rs", "2026-09-03T18:03:00Z"), // after — born late
+            ("src/tie.rs", "2026-09-03T17:23:00Z"),  // exactly the event's ts
+                                                     // src/absent.rs has no record at all
+        ]);
+        let surprises = paths(&["src/old.rs", "src/born.rs", "src/tie.rs", "src/absent.rs"]);
+        let got = born_after_by_ledger(&surprises, ts, &ledger);
+
+        assert_eq!(got.files, paths(&["src/born.rs"]), "{got:?}");
+        assert_eq!(got.ties, paths(&["src/tie.rs"]), "{got:?}");
+        assert_eq!(got.unmeasured, paths(&["src/absent.rs"]), "{got:?}");
+        // The before member is in no bucket: "hittable" is not a claim this
+        // join makes, so a member it can place early is simply placed.
+        let all = got.files.len() + got.ties.len() + got.unmeasured.len();
+        assert_eq!(all, 3, "the before member is in none of the three: {got:?}");
+    }
+
+    /// The tie is its own branch and not folded into either neighbour. Both
+    /// directions matter: folding it into `files` invents a born-after file,
+    /// folding it into "before" loses the day-178 row.
+    #[test]
+    fn the_tie_is_neither_born_after_nor_dropped() {
+        let ts = "2026-08-25T22:40:17Z";
+        // The real day-178 row, verbatim enough to be the named case: the
+        // ledger holds this path at exactly the event's own ts.
+        let ledger = pairs(&[("src/gasp_cli.rs", "2026-08-25T22:40:17Z")]);
+        let got = born_after_by_ledger(&paths(&["src/gasp_cli.rs"]), ts, &ledger);
+        assert!(got.files.is_empty(), "a tie is not born-after: {got:?}");
+        assert_eq!(got.ties, paths(&["src/gasp_cli.rs"]), "{got:?}");
+        assert!(got.unmeasured.is_empty(), "{got:?}");
+
+        // One second later is a different answer — the boundary is real, not
+        // an artifact of the fixture.
+        let later = pairs(&[("src/gasp_cli.rs", "2026-08-25T22:40:18Z")]);
+        let got_later = born_after_by_ledger(&paths(&["src/gasp_cli.rs"]), ts, &later);
+        assert_eq!(
+            got_later.files,
+            paths(&["src/gasp_cli.rs"]),
+            "{got_later:?}"
+        );
+        assert!(got_later.ties.is_empty(), "{got_later:?}");
+    }
+
+    /// A file the ledger has never seen has an **unknown** birthday, and
+    /// unknown is not "after". This is the rule that keeps one instrument's
+    /// failure from becoming the other instrument's finding.
+    #[test]
+    fn an_absent_record_is_unmeasured_never_born_after() {
+        let got = born_after_by_ledger(
+            &paths(&["src/never-seen.rs"]),
+            "2026-09-03T17:23:00Z",
+            &pairs(&[("src/other.rs", "2026-08-25T10:00:00Z")]),
+        );
+        assert!(got.files.is_empty(), "unknown is not born-after: {got:?}");
+        assert_eq!(got.unmeasured, paths(&["src/never-seen.rs"]), "{got:?}");
+    }
+
+    /// The whole regression surface for a project with no ledger: an empty
+    /// answer, not a false one. Every member unmeasured, no born-after.
+    #[test]
+    fn an_empty_ledger_makes_every_member_unmeasured() {
+        let surprises = paths(&["src/a.rs", "src/b.rs"]);
+        let got = born_after_by_ledger(&surprises, "2026-09-03T17:23:00Z", &[]);
+        assert!(got.files.is_empty(), "{got:?}");
+        assert!(got.ties.is_empty(), "{got:?}");
+        assert_eq!(got.unmeasured.len(), 2, "{got:?}");
+        assert_eq!(
+            got,
+            LedgerBornAfter {
+                files: vec![],
+                ties: vec![],
+                unmeasured: surprises,
+            }
+        );
+    }
+
+    /// An empty surprise list is empty on every leg, whatever the ledger says:
+    /// there is nothing to be born after.
+    #[test]
+    fn no_surprises_is_an_empty_answer() {
+        let got = born_after_by_ledger(
+            &[],
+            "2026-09-03T17:23:00Z",
+            &pairs(&[("src/a.rs", "2026-09-30T00:00:00Z")]),
+        );
+        assert_eq!(got, LedgerBornAfter::default());
+    }
+
+    /// The ledger is append-only and `parse_first_scored` keeps the earliest
+    /// `ts` per path; this join must agree, or a re-scored file reads as
+    /// newborn on its second sighting.
+    #[test]
+    fn the_earliest_record_per_path_wins() {
+        let ledger = pairs(&[
+            ("src/a.rs", "2026-09-30T00:00:00Z"), // later, listed first
+            ("src/a.rs", "2026-08-25T10:00:00Z"), // the real birthday
+        ]);
+        let got = born_after_by_ledger(&paths(&["src/a.rs"]), "2026-09-03T17:23:00Z", &ledger);
+        assert!(got.files.is_empty(), "earliest wins: {got:?}");
+        assert!(got.unmeasured.is_empty(), "{got:?}");
+    }
+
+    /// **The named day-205 shape, which is the one row in this repo's ledger
+    /// where the defect fires.** `snapshot_git_hash = "dcc72f63"` does not
+    /// resolve, and `src/config_paths.rs` is the row's only surprise. Before
+    /// this branch existed, `cat-file -e` failed for that path for the same
+    /// reason it would fail for every path — so it was reported born-after when
+    /// in fact **the measurement did not run at all**.
+    #[test]
+    fn an_unresolvable_hash_is_unmeasured_not_born_after() {
+        // Anti-vacuous: the fixture really does carry the shape under test.
+        // `git_born_after_by_check` is being handed `hash_resolves = false`,
+        // which is what `git cat-file -t dcc72f63` returns here — the named
+        // test below drives the real subprocess and asserts the same thing
+        // about the real hash, so this fixture cannot silently drift into
+        // describing a hash that resolves.
+        let members = vec![("src/config_paths.rs".to_string(), false)];
+        let got = git_born_after_by_check(false, &members);
+        assert!(
+            got.files.is_empty(),
+            "a failed check is not a finding: {got:?}"
+        );
+        assert!(got.ties.is_empty(), "{got:?}");
+        assert_eq!(got.unmeasured, paths(&["src/config_paths.rs"]), "{got:?}");
+    }
+
+    /// **The near-miss twin, and the whole regression surface of Step 2.** A
+    /// *resolvable* hash with a genuinely absent path still reports born-after;
+    /// the fix must narrow the unmeasured branch to an unresolvable hash and
+    /// nothing else. One word in the wrong place inverts the instrument.
+    #[test]
+    fn a_resolvable_hash_with_an_absent_path_is_still_born_after() {
+        let members = vec![
+            ("src/gone.rs".to_string(), false),   // absent at that tree
+            ("src/present.rs".to_string(), true), // present — not a finding
+        ];
+        let got = git_born_after_by_check(true, &members);
+        assert_eq!(got.files, paths(&["src/gone.rs"]), "{got:?}");
+        assert!(got.unmeasured.is_empty(), "{got:?}");
+    }
+
+    /// The two branches answer differently on the *same* members — which is
+    /// what makes the flag load-bearing rather than decorative.
+    #[test]
+    fn the_resolvability_flag_changes_the_answer_for_one_member_set() {
+        let members = vec![("src/a.rs".to_string(), false)];
+        let resolved = git_born_after_by_check(true, &members);
+        let unresolved = git_born_after_by_check(false, &members);
+        assert_eq!(resolved.files.len(), 1);
+        assert_eq!(unresolved.unmeasured.len(), 1);
+        assert_ne!(resolved, unresolved);
+    }
+
+    /// The real subprocess, on the real hash from the ledger — the anti-vacuous
+    /// half of the named test. If `dcc72f63` ever becomes resolvable (it will
+    /// not; it is truncated), this test says so instead of quietly agreeing
+    /// with a fixture.
+    #[test]
+    fn the_real_dcc72f63_does_not_resolve_in_this_clone() {
+        let resolves = crate::git::run_git(&["cat-file", "-t", "dcc72f63"]).is_ok();
+        assert!(
+            !resolves,
+            "dcc72f63 must NOT resolve — this is the day-205 fixture; if it now \
+             resolves, the fixture and the test above have stopped describing \
+             the same world and both need re-reading"
+        );
+        let got = git_born_after_at("dcc72f63", &paths(&["src/config_paths.rs"]));
+        assert!(got.files.is_empty(), "{got:?}");
+        assert_eq!(got.unmeasured, paths(&["src/config_paths.rs"]), "{got:?}");
+    }
+
+    /// A `git_hash` the ledgers actually contain as a sentinel is not a hash:
+    /// treat it as unmeasured rather than shelling out with it.
+    #[test]
+    fn a_sentinel_or_empty_hash_does_not_shell_out() {
+        for sentinel in ["", "unknown"] {
+            let got = git_born_after_at(sentinel, &paths(&["src/a.rs"]));
+            assert!(got.files.is_empty(), "{sentinel:?}: {got:?}");
+            assert_eq!(got.unmeasured, paths(&["src/a.rs"]), "{sentinel:?}");
+        }
+    }
+
+    /// The composition the live call sites use: the ledger's recorded count is
+    /// untouched by the git leg, and the git numbers are carried beside it.
+    #[test]
+    fn the_git_wrapper_leaves_the_recorded_count_alone_and_fills_the_git_leg() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let ledger = dir.path().join("risk_first_scored.jsonl");
+        std::fs::write(
+            &ledger,
+            concat!(
+                "{\"path\":\"src/seed.rs\",\"ts\":\"2026-08-22T15:40:00Z\"}\n",
+                "{\"path\":\"src/born.rs\",\"ts\":\"2026-09-03T18:03:00Z\"}\n",
+            ),
+        )
+        .expect("seed ledger");
+        let surprises = paths(&["src/born.rs", "src/absent.rs"]);
+
+        let plain = count_unhittable_surprises_at(&surprises, "2026-09-03T17:23:00Z", &ledger);
+        let with_git = count_unhittable_surprises_with_git(
+            &surprises,
+            "2026-09-03T17:23:00Z",
+            "dcc72f63",
+            &ledger,
+        );
+        // The recorded half is byte-identical: only the git fields are new.
+        assert_eq!(plain.unhittable, with_git.unhittable);
+        assert_eq!(plain.measured, with_git.measured);
+        assert_eq!(plain.unmeasurable, with_git.unmeasurable);
+        assert_eq!(plain.ledger_born_after, with_git.ledger_born_after);
+        assert_eq!(with_git.git_born_after, 0, "nothing measured: {with_git:?}");
+        assert_eq!(with_git.git_unmeasured, 2, "{with_git:?}");
     }
 }
 

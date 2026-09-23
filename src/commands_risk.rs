@@ -2728,9 +2728,10 @@ fn handle_risk_harvest() {
         // *after* the snapshot it is graded against is a guaranteed miss, and
         // that is exactly the population this counter exists to name. (The
         // ledger sits beside the snapshots it annotates; both are real paths.)
-        let unhittable = crate::commands_risk_unhittable::count_unhittable_surprises_at(
+        let unhittable = crate::commands_risk_unhittable::count_unhittable_surprises_with_git(
             &surprises,
             &snapshot.ts,
+            &snapshot.git_hash,
             std::path::Path::new(crate::commands_risk_snapshots::RISK_FIRST_SCORED_PATH),
         );
 
@@ -2911,9 +2912,10 @@ fn handle_risk_validate() {
         // sentinel, which the join treats as *undecidable*, never as "all
         // hittable".
         let snapshot_ts = snapshot["ts"].as_str().unwrap_or("unknown");
-        let unhittable = crate::commands_risk_unhittable::count_unhittable_surprises_at(
+        let unhittable = crate::commands_risk_unhittable::count_unhittable_surprises_with_git(
             &surprises,
             snapshot_ts,
+            git_hash.as_str(),
             std::path::Path::new(crate::commands_risk_snapshots::RISK_FIRST_SCORED_PATH),
         );
 

@@ -835,9 +835,10 @@ pub(crate) fn auto_validate_after_failure_to(
     // `surprises`. The join reads the first-scored ledger beside these
     // snapshots (no git: the clone is shallow and old snapshot hashes are
     // unresolvable, which is why the ledger proxy exists at all).
-    let unhittable = count_unhittable_surprises_at(
+    let unhittable = count_unhittable_surprises_with_git(
         &surprises,
         &last.ts,
+        &last.git_hash,
         &first_scored_ledger_path(snapshot_path),
     );
 
@@ -908,7 +909,9 @@ pub(crate) fn auto_validate_after_failure_to(
 // The unhittable-surprise join lives in its own module (Day 206) — too big for
 // this grandfathered file; re-exported so the snapshot call sites import one
 // path, the same seam the parse re-export below uses.
-pub(crate) use crate::commands_risk_unhittable::{count_unhittable_surprises_at, unhittable_note};
+pub(crate) use crate::commands_risk_unhittable::{
+    count_unhittable_surprises_with_git, unhittable_note,
+};
 
 pub(crate) use crate::commands_risk_parse::{
     ci_event_exists_for, ci_payload_note, epistemic_ledger_notes, load_validation_history_from,
