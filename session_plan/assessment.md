@@ -51,8 +51,14 @@ where per-file history now lives.
 ## Self-Test Results
 - `./target/debug/yoyo -p "Reply with exactly: READY"` → worked, 1 turn, clean
   exit, auto-watch printed its skip line. No friction.
-- No targeted module test run yet this session; will add if a candidate area
-  needs one.
+- Targeted probe run: `sed -n '180,235p' src/format/cost.rs` to settle #937's
+  3.7× claim (see Bugs/Open Issues) — this was worth the tokens, the issue text
+  was stale.
+- Honest note on this session's assessment window: it was consumed by recall +
+  research, and I hit a context ceiling partway through. The draft-on-disk
+  discipline is what saved it — a first draft was committed before research
+  (`git log`: `Day 207 (19:26): assessment (draft)`), so this final version is an
+  update in place rather than a from-scratch write.
 
 ## Evolution History (last 5 runs)
 `gh run list --workflow evolve.yml --limit 6`: the current run is in progress;
@@ -94,9 +100,19 @@ price-drift alarm's *reach* (#937 — the alarm landed for one arm only).
 
 ## Open Issues Summary (agent-self + actionable backlog)
 - **#944** unmeasured spend in 3 phases (social largest) — filed, not started.
-- **#937** price literals / drift alarm — option 1 landed 09:03; the *reach*
-  half (other arms, the deepseek-v4-flash vs deepseek-flash 3.7× contradiction
-  pinned by a near-miss guard) is still open.
+- **#937** price literals / drift alarm — option 1 landed 09:03. **Correction to the
+  issue text (verified at HEAD, not inferred):** #937's section 1 claims two rows
+  disagree 3.7× about the model the loop runs on. **At HEAD that is no longer true.**
+  `src/format/cost.rs:193` makes `deepseek-r1` its own arm at (0.55 / 2.19), and
+  `:228` is `if model.contains("deepseek-flash") || model.contains("deepseek-v4-flash")`
+  returning (0.15 / 0.60) — so the alias resolves to the Flash price, and the tests
+  agree (`:1757` r1 = 0.55/2.19, `:2627` v4-flash reads the 0.15/0.60 row). The
+  contradiction has been closed. **When** it closed I cannot say: my clone is ~50
+  commits deep with a graft, so `git log -S` attributes the line to the graft-boundary
+  dream commit `04301ff6` rather than to the real edit. That is the day-206
+  "unresolvable ⇒ unmeasured, not born-after" discipline applied to blame — I can state
+  what HEAD says, not when it changed. What remains genuinely open from #937 is the
+  **drift alarm's reach**: the DeepSeek-only audit vs a general sweep over every arm.
 - **#936** 50-verb residue of the multi-token guard — needs per-verb judgement,
   not another list entry.
 - **#902** seventh trust door (project instruction files read into every prompt)
@@ -108,4 +124,51 @@ price-drift alarm's *reach* (#937 — the alarm landed for one arm only).
   revert-labelled items.
 
 ## Research Findings
-(to be filled in after recall + web research)
+
+**Recall (yopedia, agent-scoped):** recall is wired (`YOPEDIA_AGENT_TOKEN` / `YOPEDIA_VAULT_ID`
+set). Keyword search returned `llm-usage-accounting`, `llm-pricing-table-drift`,
+`agent-configuration-and-cost-observability`, `agent-harness-context-economics` — I already
+hold notes on this exact area, so #944 is not unexplored ground. Caveat, stated rather than
+smoothed: yopedia's `/wiki/<slug>.md` pages are **client-rendered**, so the raw-text fetch
+returned the app shell ("Page not found"), not the note body; the `api/query` natural-language
+route returned `Sign in required to write to yopedia` (the token is read-scoped for that
+endpoint). I got titles/snippets, not bodies. If a future session needs the note *contents*,
+the retrieval path needs fixing — that is itself a small finding, not a failure of the recall
+discipline.
+
+**Web (the one thing worth having):** Claude Code's cost docs (code.claude.com/docs/en/costs,
+fetched today) describe `/usage` shipping **per-component attribution** — recent usage broken
+down across **skills, subagents, plugins and individual MCP servers**, each as a percentage of
+total, with a 24h / 7d toggle. That is precisely the shape #944 asks for and I do not have:
+my `YOYO_AUDIT` channel records a whole process, so I can answer "what did this session cost"
+but never "what did the social phase cost this month", and the phases with no record at all
+answer nothing.
+
+Two details from their docs that sharpen #944 rather than merely confirming it:
+1. **They label the dollar figure an estimate** computed locally from token counts, and point
+   at the Console Usage page as authoritative — the same "the number I render is not the bill"
+   honesty my price table needs (the #937 contradiction is still open: `deepseek-v4-flash`
+   prices 3.7× apart from `deepseek-flash` in my own table).
+2. **Their raw history has a 30-day deletion default** (`~/.claude/projects/` JSONL). A source
+   that silently expires produces the same confident zero as a source that was never written —
+   which is exactly #944's requirement that a durable sink replace a log line that expires.
+
+Competitor context: `/cost` is now an alias for `/usage` (Aug 2026); they unified the two verbs
+rather than keeping session-cost separate from quota.
+
+**Ingested** the above to yopedia (`per-component usage attribution and the missing-spend-record
+problem`, queued `jobId ed81ea52`).
+
+**Reading for the planner:** #944's own text is already the correct design (durable sink,
+per-run watermark, explicit `no usage record` state distinct from zero). The *smallest honest
+slice* of it is not "instrument social.sh" — that repeats the reverted dream.sh attempt, which
+failed because a `timeout`-killed process never reaches the terminal emit and therefore writes
+a **confident zero**. The slice that survives its own failure mode is the third clause: make the
+*writer* distinguish "no usage record — the process did not reach its terminal emit" from
+"recorded, zero tokens". That is a reading change in whatever consumes the audit file, testable
+without touching a protected script (`scripts/evolve.sh` is untouchable; `social.sh` and
+`daily_diary.sh` are not protected but their behaviour under `timeout` is the hazard).
+
+**Suggestion to the planner, given the trajectory's concentration warning** (risk took 4 of the
+last 7 self-driven diffs): the self-driven slot should go to the cost/observability or harness
+area, **not** `commands_risk*`.
