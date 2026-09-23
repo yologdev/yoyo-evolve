@@ -1,0 +1,639 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the failing tests. They're in src/commands_risk_unhittable.rs, related to a fixture commit hash `dcc72f63`. The tests assert that this commit does NOT resolve in this clone. It apparently now resolves — because... hmm. Wait, my task was about price audit. But the failure is that a commit hash now resolves. Since the repo history advanced (new commits), maybe `dcc72f63` now exists? Let me check.
+
+Actually, wait. These tests are listed in "Recently Changed Files" — commands_risk_unhittable.rs. Let me read the test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1240,1420p src/commands_r… ✓ (6ms)
+ ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting: git status shows the working tree has modifications: ARCHITECTURE.md, src/format/cost.rs, untracked src/format/cost/. But my task involved those. The failing tests relate to `dcc72f63` resolving. Let's check whether dcc72f63 resolves now in this clone.
+
+Actually wait — the test says `dcc72f63 must NOT resolve`. If it now resolves, it means... the clone now has that commit? Hmm, but that would be a git history thing, not something my change did. Unless... the price audit test file I added is causing something? No.
+
+Hold on — maybe the test was passing before because the repo was shallow? Actually the failures say git_born_after = 2, meaning the check reported 2 as born_after (not unmeasured). That means dcc72f63 resolved AND the paths were absent... hmm actually git_born_after: 2 and git_unmeasured: 0.
+
+Wait, but these tests are in the "recently changed files" list — commands_risk_unhittable.rs was modified recently, along with scripts and dreams. Maybe the failures are pre-existing from a prior session, not from my change? The task says "The tests broke after your implementation." Hmm.
+
+Let me check: does dcc72f63 resolve in this clone? Let me run git cat-file.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git cat-file -t dcc72f63; echo "…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "dcc72f63" --include=*.… ✓ (8ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So `dcc72f63` DOES resolve in this clone — it's a commit from Day 205. The test asserts it must NOT resolve. Hmm, so why was this test green before? Because... maybe in CI the clone is shallow (depth) so Day 205 isn't present. But locally now it's present. Hmm.
+
+Wait — actually maybe there's a fetch that deepened the repo. Let me check git log count and whether repo is shallow.
+
+Actually, this failure looks unrelated to my price-audit change. Let me check `git stash` / diff to see what my change actually is, and run the tests on a clean-ish state.
+
+Let's check: was this test failing before my change? The failures are in commands_risk_unhittable.rs which I didn't touch. Let me check git status more fully.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && echo "--- shallow:…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "--- unt… ✓ (17ms)
+ ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting! `src/commands_risk_unhittable.rs` has 10 added lines in the working tree — but that's not part of my task... Actually wait, the git status listed "Uncommitted changes: 5 files" in the prompt. The diff shows 4 tracked files modified plus untracked dir. Hmm, but the prompt said recently changed files include commands_risk_unhittable.rs. And there are 2 commits ahead of origin.
+
+Let me see the diff of commands_risk_unhittable.rs.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_risk_unhit…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/format/cost.rs && c… ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So there is an uncommitted modification to `src/commands_risk_unhittable.rs` that documents `git_unmeasured` saying the fixture hash is "an example of the *shape*, not of a permanently unresolvable hash." That looks like a partial fix attempt for exactly this failure. But the test `the_real_dcc72f63_does_not_resolve_in_this_clone` still asserts it must NOT resolve.
+
+Hmm wait — who made that change? It's uncommitted and not part of my task file (my task listed files: src/format/cost/price_audit_tests.rs, src/format/cost.rs, skills/release/SKILL.md, ARCHITECTURE.md). So commands_risk_unhittable.rs modification is from... a prior session's leftover? Or maybe from a concurrent agent? The git status said 5 files uncommitted (4 modified + 1 dir? no, dir counts as 1). Actually 4 tracked + 1 untracked = 5. Yes.
+
+So the commands_risk_unhittable.rs diff is uncommitted work that isn't mine. Hmm, but "the tests broke after your implementation". The failure is: dcc72f63 now RESOLVES in this clone.
+
+Key insight: the repo is SHALLOW (`.git/shallow` has 2 entries). The shallow boundary is at some commit. In CI, the clone presumably is shallow such that dcc72f63 (Day 205) is NOT present... but here it IS present as a commit object. Why? Because the shallow file lists 12181e54 and fb308bc9 as shallow boundaries. Hmm.
+
+Wait — dcc72f63 is Day 205 (09:33). HEAD is Day 207. So dcc72f63 is a recent commit, definitely in the shallow clone. So the test `the_real_dcc72f63_does_not_resolve_in_this_clone` would ALWAYS fail in this clone... unless the clone is even shallower.
+
+Hmm, let me think. Maybe there are TWO repos: the "evolve" checkout vs a fixture. Actually `the_real_dcc72f63_does_not_resolve_in_this_clone` — maybe the intent was that dcc72f63 is a *synthetic* hash chosen to not resolve (a truncated hash that's ambiguous?). But it does resolve because Day 205 commit starts with dcc72f63.
+
+Wait, how could that test ever have passed? Because when the test was written (Day 205-ish?), the commit dcc72f63 might not have existed yet... no, it's a Day 205 commit.
+
+Hmm, maybe: the test was written by the agent at Day 205 before that commit was made? No...
+
+Actually here's a plausible story: the repo was shallow at the time, e.g. cloned with depth N and dcc72f63 wasn't included, and it resolved past... no.
+
+Let me just check whether the test currently passes at HEAD without the working tree changes. Also check run_git — `run_git(&["cat-file", "-t", "dcc72f63"])` — during `cargo test`, run_git has a destructive-command guard. cat-file is not destructive. It returns Ok if the commit exists.
+
+Hmm, but wait: maybe `run_git` runs with a cwd of the project root, and in a shallow clone `git cat-file -t dcc72f63` works if the object is present.
+
+Let me check git log to see if dcc72f63 is an ancestor of HEAD.
+
+Actually, note the two shallow boundaries: 12181e540b... and fb308bc9.... Let me check what those are. The shallow graft may prevent traversal from HEAD to dcc72f63 but the object still exists in the pack. `git cat-file -t` on an object that exists in the pack returns the type even if it's not reachable. So it resolves.
+
+So how was this test ever green? Maybe it was green in CI where the checkout is a *full* clone... no, full clone means dcc72f63 resolves too.
+
+Unless! dcc72f63 in the ledger is a 8-char prefix that was ambiguous... no.
+
+Hmm, let me look at line 81 context for the doc comment about the day-205 shape.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.7s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,140p src/commands_risk…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 12181e54 &&… ✓ (4ms)
+ ✓ (42ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So dcc72f63 is NOT an ancestor of HEAD, but the object exists in the pack. So `git cat-file -t dcc72f63` returns "commit" → resolves=true → test fails.
+
+So how did it pass before? Let me check if it passed before the working tree change. Let me stash and run just those tests.
+
+Actually wait — hmm, `git merge-base --is-ancestor` returned "no" with exit code? It printed "no". So dcc72f63 is not reachable from HEAD. Yet cat-file works. Hmm, weird but possible if the pack contains it.
+
+But hold on: the test also exists at line ~1367 in the *modified* file. The diff added 10 lines of doc comment only. Let me look at whether tests existed before.
+
+Actually the more important question: is this test failing on the committed HEAD (without working tree changes)? Let me check by stashing my changes... but I shouldn't disturb untracked. Let me instead run the test with git stash of only that file? Simpler: `git stash push src/commands_risk_unhittable.rs` then run test.
+
+Actually, the run_git function — during cargo test there's a destructive-command guard. Let me look at how `run_git` executes — maybe it uses a temp cwd or the project root. If it runs in project root, `git cat-file -t dcc72f63` should behave as I saw.
+
+Wait, maybe run_git of the harness creates a temp dir? Let me check src/git.rs run_git.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn run_git" -A 60 s… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So run_git runs in the project root. dcc72f63 resolves there. So this test would fail on HEAD too, unless... let me verify by running on a clean checkout of that file. Let me stash the commands_risk_unhittable.rs change and run the two tests.
+
+Actually, careful: I shouldn't lose the uncommitted change. I'll use `git stash push -- src/commands_risk_unhittable.rs`, run, then pop.
+
+Hmm, but wait. Maybe the failure is not from the working-tree doc change at all, and the actual story: Day 207 (the session that's currently running / the previous failed attempt) added `git_born_after_at` and `git_unmeasured`, plus tests that assert dcc72f63 doesn't resolve. And the fixture commit dcc72f63 was chosen... let's see: is dcc72f63 in the *pushed* origin/main history? Branch is ahead by 2 commits. The shallow file has 2 boundary commits.
+
+Hmm, actually maybe the intent: `dcc72f63` is a hash recorded in the real `risk_first_scored.jsonl` ledger as a `snapshot_git_hash`. Let me check .yoyo/risk_snapshots.jsonl for it.
+
+Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "dcc72f63" .yoyo/ dream…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,260p src/commands_ris… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Found it. The transcript `/plan.log` in `.yoyo/session_staging/transcripts/` says:
+
+"Wait — the second failure says `dcc72f63 must NOT resolve — this is the day-205 fixture; if it now resolves...`. The Day 206 assessment says: 'Deepened the clone (53 → 6,129 commits)... Deepening broke 2 tests that asserted the hash stays unresolvable → ran it back out, documented the hazard.'"
+
+And at line 1035: "// depth (Day 207: `dcc72f63` resolves on a 52-commit checkout and does not on ..."
+
+So the situation: this prior session (the "plan.log" is from the current session's planning?) mentioned the issue. The working tree contains the doc-comment change (10 lines) which documents the hazard but the test still asserts it must not resolve, and it currently resolves → test fails.
+
+Hmm, so where does this stand? The failure is environment-dependent: on a 52-commit shallow checkout, `dcc72f63` resolves? Wait the comment says "resolves on a 52-commit checkout and does not on ..." — let me read the full plan.log around those lines to understand what the intended fix was.
+
+Let me look at the transcript.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 890,1060p .yoyo/session_s… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I understand the context fully. The previous session (a plan-only session) hit these same failures and discussed them. The current work tree has a doc-comment change to `git_unmeasured` field (10 lines) which seems to be a preparation, but the tests still fail.
+
+Wait — is that 10-line doc change mine (this session, from the earlier implement attempt) or from the planning session? The task says "the tests broke after your implementation". The session plan transcript refers to a commit with only session_plan files. Hmm, the branch is ahead of origin by 2 commits: 9cfa923c "Day 207 (09:03): session plan" and c59afeb8 "Day 207 (09:03): assessment". So this is Day 207.
+
+The uncommitted changes: ARCHITECTURE.md, skills/release/SKILL.md, src/commands_risk_unhittable.rs (doc only), src/format/cost.rs, and untracked src/format/cost/price_audit_tests.rs. The last three + ARCHITECTURE + SKILL.md are my task. The commands_risk_unhittable.rs doc-comment change is... hmm, might be from a previous attempt at this session's implementation phase where I noticed the failure and added documentation? Possibly. Or from the harness.
+
+Anyway: I need to make `cargo test` green. The two failing tests are environment-dependent (hash resolves in this clone's depth).
+
+Let me look at the actual code and tests to decide the minimal fix. Let me read the implementation of git_born_after_at and the test module.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 260,400p src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1150,1250p src/commands_r… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me see the full test module: the doc comments on `the_real_dcc72f63_does_not_resolve_in_this_clone` and surrounding (lines ~1300-1380) plus the "anti-vacuous" comment. Let me read lines 1290-1390 verbatim.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs:1285..1385 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the doc comment at 1318-1321 says "If `dcc72f63` ever becomes resolvable (it will not; it is truncated)". That's a wrong claim: it's a real commit (Day 205 update learnings, from the ledger snapshot git_hash). And it DOES resolve here.
+
+Root cause: the fixture depends on the ambient clone's depth. `dcc72f63` is a real abort... no, a real Day-205 commit reachable within the shallow window (52 commits) but not an ancestor of HEAD within the graft. Actually it resolves because the object is in the pack.
+
+Hmm wait — `git merge-base --is-ancestor dcc72f63 HEAD` returned no. So it's not an ancestor. But the object exists in the pack. In a shallow clone, the pack contains all objects fetched. If depth=52 from HEAD, objects from those 52 commits. dcc72f63 is Day 205 which should be in that window... but merge-base says not an ancestor. Maybe dcc72f63 is on a side branch (a task branch committed in the evolve loop? no, they commit to main). Hmm. Or the assessment says "Day 206 deepened the clone (53 → 6,129 commits)" — deepening fetched more objects, and then "ran it back out" — unshallow? Actually `git fetch --depth=53` again would not necessarily *remove* the objects already downloaded! Shallow re-deepen: `git fetch --depth=N` sets shallow depth N, but if the repo already has objects beyond that... Actually git will keep existing objects; the shallow file would still list grafts. Hmm.
+
+So the state: the clone was deepened on Day 206, got dcc72f63's object, then re-shallowed to depth 52, but the **pack retains** the deepened objects and `dcc72f63` is not reachable so `merge-base --is-ancestor` says no, yet `cat-file -t` succeeds because the loose/packed object is still present.
+
+That is exactly the "ambient machine state" defect: whether `dcc72f63` resolves depends on whether this clone was ever deepened — invisible to the test.
+
+So the correct fix: **stop making the fixture's premise depend on ambient clone state.** 
+
+Design the fix:
+1. The production behavior under test: an unresolvable hash → every member unmeasured, no born-after, and it must actually shell out (well-formed hash, unlike the sentinel case).
+2. Choose a hash that cannot resolve deterministically.
+
+What's the most defensible deterministic "unresolvable but well-formed hash"? Options:
+- All-zeros 40-hex `0000...0`. Git: `git cat-file -t 0000000000000000000000000000000000000000` → error "Not a valid object name". Deterministic, no clone could contain that object (a commit hash equal to zeros is impossible in practice: SHA-1 of a commit object = all zeros has probability 2^-160).
+
+Hmm, but git may have special handling: `git cat-file -t 0000000000000000000000000000000000000000` returns exit code 128 with "fatal: Not a valid object name 0000...". That's `Err` from run_git → resolves=false. 
+
+But wait: is the zero-oid guaranteed to be rejected by git? Yes, git's `get_oid` treats the null oid as valid-format but `cat-file` will report missing. Let me test.
+
+Alternatively, derive the absent hash at runtime from the repo: e.g. take `git rev-parse HEAD` and flip... no, could collide in theory and is weird.
+
+Hmm, actually there's an even better option, which keeps the *anti-vacuity* intent: use a well-formed but **genuinely absent** hash and have the test *prove* absence by construction rather than assume it. But "prove absence" requires the ambient repo anyway.
+
+Wait — maybe simplest and most honest: the test uses a hash that is a valid hex string of the right length that git rejects because it's the null oid. And the test asserts the *shape* it needs: that git was actually consulted (i.e., we don't short-circuit like the sentinel). How to assert "git was consulted"? We can't easily observe the subprocess. But we can assert that the same call with the sentinel `"unknown"` and with the null oid produce the same result — proving the code path differs is not observable.
+
+Hmm. Alternatively, assert the null-oid is *not* treated as a sentinel — i.e., that the branch that short-circuits on empty/unknown is not the one taken. That's internal. We could assert `git_born_after_at("0000...", ...)` equals `git_born_after_by_check(false, ...)` — vacuous.
+
+Better anti-vacuous assertion: verify independently that git *is* consulted, by observing a side effect that distinguishes. Hmm.
+
+Actually, maybe there's a much better approach that keeps the real-hash intent AND is deterministic: **run the resolver against a temporary, empty git repo**. But `run_git` runs in the project root and there's no dir parameter in `git_born_after_at`.
+
+Hmm, what about the reverse: instead of requiring an unresolvable hash, make the test *derive* the fixture from the environment in a way that always holds: pick a hash from the repo's own history is the wrong direction (we want unresolvable).
+
+OK let me reconsider the whole thing. Maybe the cleanest minimal fix that respects "never delete tests" and is deterministic:
+
+**Fix `the_real_dcc72f63_does_not_resolve_in_this_clone` by replacing the environment-dependent premise with a deterministic one, and renaming it to describe what it pins.** Specifically:
+
+```rust
+/// A well-formed hash the object database does not contain (the null oid) —
+/// **not** a sentinel, so the shell-out path is the one under test. Pinned to
+/// the null oid rather than to a real-but-absent commit because a real hash's
+/// resolvability depends on the clone's depth: the same fixture passed on a
+/// 52-commit checkout, failed on a deepened one, and passed again after
+/// re-shallowing, because the deepened objects stay in the pack (Day 207).
+#[test]
+fn an_unresolvable_hash_is_unmeasured_not_born_after() {
+    ...
+}
+```
+
+But there's already `an_unresolvable_hash_is_unmeasured_not_born_after` (the pure test at 1276-1289). So this would be the I/O twin. Name it `the_real_subprocess_on_an_absent_hash_reports_unmeasured`.
+
+Hmm, hold on. Let me reconsider whether the *right* fix is to change the fixture hash to the null oid, or to fix the underlying production code.
+
+Wait, actually — think about the production semantics again. `git_born_after_at` is called with a snapshot's `git_hash` from the ledger. If that hash resolves in the pack but the tree check `hash:path` fails... For the null oid, `cat-file -t` fails → unmeasured. Fine.
+
+But actually there's a subtle production bug here: on a *shallow* clone, a snapshot hash *within* the shallow window resolves, but the tree lookups `hash:path` work. Fine. On a shallow clone where the object is absent (normal case), unmeasured. Fine.
+
+So production code is correct. The defect is purely the test fixture's ambient dependency.
+
+Hmm, but there's an important nuance for the second failing test: `the_git_wrapper_leaves_the_recorded_count_alone_and_fills_the_git_leg` passes `"dcc72f63"` as the hash and expects `git_born_after == 0, git_unmeasured == 2`. That's an ambient-dependent expectation. Must change the hash to the deterministic absent one.
+
+Now, is there a shared constant to introduce? Yes: introduce a module-level `#[cfg(test)] const ABSENT_HASH: &str = "0000...0";` with a doc comment explaining why. But "never add a definition without its consumer" — it will have consumers in both tests. Good.
+
+Wait, but the first failing test's purpose was "the anti-vacuous half of the named test" — proving the fixture hash really doesn't resolve. With the null oid, the equivalent anti-vacuous assertion is: (a) the string is well-formed hex of 40 chars (so it is not silently short-circuiting as a sentinel), and (b) git genuinely reports it missing. Assertion (b) is exactly `assert!(run_git(&["cat-file","-t", ABSENT_HASH]).is_err())` — which is deterministic for the null oid (git always rejects it), and is *also* self-checking: if some bizarre repo contained an object with that id, the test fails loudly rather than passing vacuously. That preserves the original test's structure exactly (premise assert + behavior assert) while removing the ambient dependency.
+
+Hmm, is `git cat-file -t 0000000000000000000000000000000000000000` guaranteed error? Let me verify. Also need to double check `git cat-file -e "000...0:src/x"` — not reached since resolves=false.
+
+Also: the sentinel short-circuit checks `hash.is_empty() || hash == "unknown"`. The null oid isn't a sentinel → shell-out path taken. But how do we *prove* the shell-out path was taken rather than some other short-circuit? We can assert that the null-oid case and the sentinel case are *not* necessarily... hmm, they give the same result (unmeasured). We can't distinguish by output.
+
+But we CAN distinguish by a stronger observable: the code's behavior with a *resolvable* hash differs. Not helpful.
+
+Alternatively, we could prove the shell-out by timing? No, fragile.
+
+Honest approach: state in the doc comment that the null oid is well-formed so it does not take the sentinel short-circuit, and note that the sentinel test and this test are the two doors; the sentinel short-circuit is covered by `a_sentinel_or_empty_hash_does_not_shell_out`. To prove non-short-circuit, we can assert something observable: e.g. call `git_born_after_at` with the null oid and with an EMPTY hash and assert both equal unmeasured... still not distinguishing.
+
+Hmm, is there an observable difference? Yes! If the hash resolves, paths that don't exist are born_after. With the null oid (unresolvable) → unmeasured. If the code short-circuited the null oid as a sentinel... it'd also be unmeasured. Same output. So no observable difference — which is fine: the *behavior* is what matters, and the presence of the short-circuit for sentinels is separately tested. Actually wait, the concern would be: if someone added `|| hash == NULL_OID` to the sentinel check, this test still passes. That's a harmless change anyway. Not worth testing.
+
+Actually, we CAN make it observable with a spy: use a hash that resolves but where... no.
+
+Alternatively, keep a *real* anti-vacuous check that git is consulted: use `strace`? No.
+
+Let me settle: the two tests become:
+1. `an_absent_object_id_shells_out_and_is_unmeasured` — asserts the fixture premises first (40 hex chars, all zero → git must reject it; this assert fails loudly if it ever resolves), then asserts `git_born_after_at` → files empty, unmeasured == all.
+
+Hmm, but naming: originally `the_real_dcc72f63_does_not_resolve_in_this_clone`. Renaming a test... The rule "never delete existing tests" — I'm not deleting, I'm fixing a test whose premise is environment-dependent, and documenting why. Renaming is justified since the name asserts dcc72f63, which we no longer use. But maybe safer: keep the name? No — a name that says "the_real_dcc72f63_does_not_resolve_in_this_clone" would be a lie. I'll rename and document the rename in ARCHITECTURE.md's per-file entry (the record) and in the doc comment.
+
+Hmm wait. Let me reconsider once more. Alternative fix: keep `dcc72f63` and make the test assert the *actual* environment-independent property: `git_born_after_at` agrees with `run_git cat-file -t` on whatever the ambient resolves-state is. I.e., make the test self-describing rather than premise-dependent:
+
+```rust
+let resolves = run_git(&["cat-file","-t","dcc72f63"]).is_ok();
+let got = git_born_after_at("dcc72f63", &paths(&["src/config_paths.rs"]));
+if resolves {
+    // the tree probes decide; src/config_paths.rs may or may not exist there
+    assert_eq!(got.unmeasured.is_empty(), true);
+} else {
+    assert_eq!(got.unmeasured, paths(&["src/config_paths.rs"]));
+}
+```
+That's a conditionally-asserting test — my own d124 says that's worse than a missing test. No.
+
+So: deterministic absent oid. Let me verify git's behavior first.
+
+Also, I should double check: is the "day-205 fixture" hash used anywhere else (e.g. the module doc at line 81)? Yes, line 81 in a comment about the day-205 shape. That comment references the ledger row. Let me read it.
+
+Let me check what's at line 75-95.
+
+Also note: the uncommitted doc change to `git_unmeasured` says "... an example of the *shape*, not of a permanently unresolvable hash." Someone (a previous attempt) started fixing documentation. Let me read the full current doc comment of git_unmeasured and see if it needs adjusting to be consistent with my fix.
+
+Let me look.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs:70..120  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git cat-file -t 0000000000000000… ✓ (1ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The uncommitted doc change at lines 90-98 is already there — from a previous attempt (likely the plan session or the harness). It documents the Day 207 correction: the 8-hex prefix resolves when the commit is inside the clone's window.
+
+Wait — that doc comment says "measured today, `dcc72f63` is `dcc72f6329bdf46b9558365833914f83ded4fc9f` (day 205) in a 52-commit checkout and fails in a shallower one."
+
+So the fix approach already chosen by the previous attempt: document the hazard. But the tests still fail. So I need to complete the fix.
+
+Now, the doc comment says the field is honest about being checkout-dependent. Good, that's a real insight. But the two tests still assert ambient-dependent facts.
+
+My fix: make both tests use a deterministically unresolvable, well-formed hash. Options:
+- null oid `0000000000000000000000000000000000000000` → git rejects deterministically. Verified above: exit 128.
+
+But the null oid is *always* rejected by git regardless of repo — a strong, deterministic premise. And it's 40-hex, so it's not the sentinel short-circuit (which checks empty/"unknown").
+
+Hmm, but there's a subtlety: is the null oid rejected because git special-cases it, or because no object has that name? Either way it's deterministic and it exercises the "shelled out and got a non-zero exit" path — exactly what `dcc72f63` did in a shallow clone. 
+
+Now, an even more faithful fixture: use the full 40-hex `dcc72f6329bdf46b9558365833914f83ded4fc9f`? No — it resolves in this clone, so still ambient.
+
+What about a full-length hash that is *not* in the repo? Still ambient (if clone is deep enough it may exist).
+
+The null oid is the only truly deterministic well-formed-but-absent id git recognizes. So use it.
+
+Now let me design the edits:
+
+1. In the test module `born_after_ledger_tests`, add a fixture constant with a doc comment:
+
+```rust
+    /// A **well-formed but absent** object id for the subprocess tests.
+    ///
+    /// The null oid is rejected by `git cat-file -t` in every repository, so
+    /// the premise here ("this id does not resolve") cannot go stale with the
+    /// clone. The day-205 fixture this replaces was `dcc72f63`, an **8-hex
+    /// prefix** the ledger really carries: it resolves on a 52-commit checkout
+    /// and fails on a shallower one, so the two tests below were reading the
+    /// depth of the clone they happened to run in rather than the code — and
+    /// `git fetch --depth=N` after a deep fetch leaves the deep objects in the
+    /// pack, which is how it went red on a re-shallowed clone (Day 207). A
+    /// fixture may not be ambient machine state.
+    const ABSENT_OBJECT_ID: &str = "0000000000000000000000000000000000000000";
+```
+
+2. Rewrite `the_real_dcc72f63_does_not_resolve_in_this_clone` →
+
+```rust
+    /// The real subprocess on an id no checkout contains — the anti-vacuous
+    /// half. The premise is asserted first and separately: if this id ever
+    /// resolved, the two assertions below would be describing a different world
+    /// and both would need re-reading rather than silently agreeing.
+    #[test]
+    fn an_absent_object_id_resolves_to_unmeasured_through_the_real_subprocess() {
+        assert_eq!(ABSENT_OBJECT_ID.len(), 40, "well-formed, not a sentinel");
+        let resolves = crate::git::run_git(&["cat-file", "-t", ABSENT_OBJECT_ID]).is_ok();
+        assert!(
+            !resolves,
+            "{ABSENT_OBJECT_ID} must NOT resolve — this is the absent-id fixture; \
+             if it now resolves, the fixture and the test below have stopped \
+             describing the same world and both need re-reading"
+        );
+        let got = git_born_after_at(ABSENT_OBJECT_ID, &paths(&["src/config_paths.rs"]));
+        assert!(got.files.is_empty(), "{got:?}");
+        assert_eq!(got.unmeasured, paths(&["src/config_paths.rs"]), "{got:?}");
+    }
+```
+
+Hmm, the `assert_eq!(len, 40)` is a bit weak/odd. Better anti-vacuous: assert the id is *not* one of the sentinels the code short-circuits on — that's the property that makes it exercise the shell-out branch:
+
+```rust
+        // Not a sentinel: the empty/`unknown` short-circuit must not be the
+        // branch under test.
+        assert_ne!(ABSENT_OBJECT_ID, "");
+        assert_ne!(ABSENT_OBJECT_ID, "unknown");
+```
+That's trivially true and vacuous-ish. Meh.
+
+The meaningful anti-vacuous assertion: `git cat-file -t` genuinely returns an error → we're in the resolves=false branch via an actual subprocess. That's already the first assert. Plus the behavioral assert. I think asserting non-resolution via the real subprocess IS the anti-vacuous half. Good — drop the length assert. Actually, keep a small note that it's well-formed hex so it isn't the sentinel path... I'll mention it in the doc comment and assert nothing.
+
+Hmm, but I could make it observable that we shelled out: use a hash that resolves *differently*... no.
+
+Actually here's a neat observable: assert that the sentinel short-circuit and the absent-id path agree in *result* but that the absent id is NOT the sentinel — no.
+
+Let me instead add a genuinely valuable assertion: `git_born_after_by_check(false, members)` equality — the subprocess result must equal the pure function's unresolvable answer:
+
+```rust
+        let members = vec![("src/config_paths.rs".to_string(), false)];
+        assert_eq!(got, git_born_after_by_check(false, &members));
+```
+That's a real cross-check: the I/O half must agree with the pure half for the same input. Not vacuous (it would catch a wrapper that passed `true`). Good, that's worth including.
+
+3. `the_git_wrapper_leaves_the_recorded_count_alone_and_fills_the_git_leg`: replace `"dcc72f63"` with `ABSENT_OBJECT_ID`. Then git_born_after==0, git_unmeasured==2 holds deterministically.
+
+Wait — is `count_unhittable_surprises_with_git` using `run_git` in the project root? Yes, cwd = project root. `cat-file -t <null>` fails. Good.
+
+Also `src/born.rs` and `src/absent.rs` paths: with resolves=false, all members unmeasured → git_unmeasured=2, git_born_after=0. Good.
+
+4. Also the doc comment at line 1318-1321 ("it will not; it is truncated") is wrong and must go — it's replaced by the new name/comment.
+
+5. Also consider: is the doc comment in `git_unmeasured` (lines 90-98, uncommitted) consistent? It says the day-205 example is "an example of the shape, not of a permanently unresolvable hash" — consistent with my fix. Should I keep it? It's uncommitted work that is accurate and useful. Keep it. But it says "measured today, `dcc72f63` is `dcc72f6329bdf46b9558365833914f83ded4fc9f` (day 205) in a 52-commit checkout and fails in a shallower one." Let me verify that full hash exists.
+
+Let me check `git cat-file -t dcc72f6329bdf46b9558365833914f83ded4fc9f`.
+
+6. Also line 81-82 in the field doc references the day-205 shape as the motivating example — that's historical, fine.
+
+Now: should I also worry that `unhittable_note` / live call sites are affected? No, production behavior unchanged.
+
+Let me also double check there are no other tests referencing dcc72f63 or ambient git state. grep showed only lines 81 and 1367 (now 1323-1331, 1367). After my edit, line 81 keeps a historical mention. Fine.
+
+Also: does the module-size gate matter? commands_risk_unhittable.rs is 1687 lines — under 2000? Let me check whether it's grandfathered. The module_size.rs register — need to check. Adding a few lines to a grandfathered file could trip the gate. Let me check.
+
+Let me now verify the full hash and check module size register for commands_risk_unhittable.rs.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.5s (2 ✓)
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git cat-file -t dcc72f6329bdf46b… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`commands_risk_unhittable.rs` isn't grandfathered (1687 < 2000). Adding ~15 lines is fine (under 2000).
+
+Now, wait. Let me reconsider the *actual* correct fix once more, because there's a subtlety: is the environment-dependent behaviour a *test* problem or a *production* problem?
+
+Production: the ledger stores an 8-hex prefix. On a deep clone, `dcc72f63` resolves → the git leg runs → reports born_after. On a shallow clone it doesn't → unmeasured. That's inherent and documented now. Fine, not my concern.
+
+But hmm — actually, is there a *production* concern that a truncated 8-hex prefix could be ambiguous? Not my task.
+
+Now — the deeper question: what does the *harness*/reviewer expect? The task instructions to me: "Fix the tests errors. Do not start over — fix the specific errors shown above."
+
+So the expected fix is exactly this: make the two tests deterministic.
+
+Let me now also consider: should I instead make `git_born_after_at` resolve full hashes... no.
+
+One more consideration: the harness's `check_assertion_weakening.py` script — there's a script that checks for assertion weakening! Let me look at it to make sure my edit doesn't trip it. It's in scripts/. Let me read it.
+
+Actually, that's important. Let me check what it flags.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 scripts/check_assertion… ✓ (70ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+It's not wired into the build (no callers found). It's a measurement tool. Fine.
+
+Now let me also check `tests/` for a gate that scans for assertion weakening in diffs — e.g. `tests/assertion_*.rs` or the evolve harness. Let me just grep tests for "dcc72f63" and for related gates. Already did: none.
+
+Now let me write the fix.
+
+Let me look at the exact text around 1318-1334 and 1361-1376 to edit precisely.
+
+Plan of edits in src/commands_risk_unhittable.rs:
+1. Add `ABSENT_OBJECT_ID` const in the test module `born_after_ledger_tests` (with doc).
+2. Replace `the_real_dcc72f63_does_not_resolve_in_this_clone` body/name.
+3. Replace `"dcc72f63"` in `the_git_wrapper_leaves_the_recorded_count_alone_and_fills_the_git_leg` with `ABSENT_OBJECT_ID`.
+
+Where is the test module start? Let me find `mod born_after_ledger_tests` and its `use super::*;` + helper fns to place the const sensibly.
+
+Let me view lines 1100-1155.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs:1120..1170 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now let me make the edits.
+
+Edit 1: add the const after `paths` helper (line 1156).
+
+Edit 2: replace the `the_real_dcc72f63_does_not_resolve_in_this_clone` test.
+
+Edit 3: replace `"dcc72f63"` in the wrapper test.
+
+Let me also check line 1124: `git_born_after: 2` in a fixture at line 1120-1127 — that's a pure-function fixture, fine.
+
+Let me write the edits.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the full picture. Let me make the fix.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (7 → 30 lines)
+        fn paths(rows: &[&str]) -> Vec<String> {
+            rows.iter().map(|s| (*s).to_string()).collect()
+        }
+  + 
+  +     /// A **well-formed id no checkout contains**, for the two subprocess tests
+  +     /// below.
+  +     ///
+  +     /// **Day 207: the fixture these two tests used to share was ambient machine
+  +     /// state.** It was `dcc72f63` — the real 8-hex `git_hash` the day-204
+  +     /// ledger row carries — and both tests pinned "this hash does not resolve".
+  +     /// A **prefix** resolves the moment a commit starting with it is inside the
+  +     /// clone's window, so the premise was a fact about the depth of whichever
+  +     /// clone ran the test: measured today `dcc72f63` is
+  +     /// `dcc72f6329bdf46b9558365833914f83ded4fc9f` (day 205) and resolves in a
+  +     /// 52-commit checkout while failing in a shallower one. It went red on a
+  +     /// re-shallowed clone for the reason the deepening note only half recorded:
+  +     /// `git fetch --depth=N` after a deep fetch leaves the deep objects **in the
+  +     /// pack**, so the id keeps resolving although it is no longer reachable.
+  +     /// The two tests therefore read the clone, not the code.
+  +     ///
+  ... (9 more lines)
+ ✓ (19.5s)
+        fn paths(rows: &[&str]) -> Vec<String> {
+            rows.iter().map(|s| (*s).to_string()).collect()
+        }
+  + 
+  +     /// A **well-formed id no checkout contains**, for the two subprocess tests
+  +     /// below.
+  +     ///
+  +     /// **Day 207: the fixture these two tests used to share was ambient machine
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Expected — now the consumers. Let me do edits 2 and 3.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (17 → 28 lines)
+  -     /// The real subprocess, on the real hash from the ledger — the anti-vacuous
+  -     /// half of the named test. If `dcc72f63` ever becomes resolvable (it will
+  -     /// not; it is truncated), this test says so instead of quietly agreeing
+  -     /// with a fixture.
+  +     /// The real subprocess on an id no checkout contains — the anti-vacuous
+  +     /// half, and the I/O twin of the pure `git_born_after_by_check(false, ..)`
+  +     /// test above. Resolvability is asserted **first and separately**: if this
+  +     /// id ever resolved, the two assertions below would be describing a
+  +     /// different world and both would need re-reading rather than silently
+  +     /// agreeing with a fixture. (The twin this replaces, keyed on the day-205
+  +     /// prefix `dcc72f63`, could not make that check at all — see
+  +     /// `ABSENT_OBJECT_ID`.)
+        #[test]
+  -     fn the_real_dcc72f63_does_not_resolve_in_this_clone() {
+  -         let resolves = crate::git::run_git(&["cat-file", "-t", "dcc72f63"]).is_ok();
+  +     fn an_absent_object_id_reaches_unmeasured_through_the_real_subprocess() {
+  +         let resolves = crate::git::run_git(&["cat-file", "-t", ABSENT_OBJECT_ID]).is_ok();
+            assert!(
+                !resolves,
+  -             "dcc72f63 must NOT resolve — this is the day-205 fixture; if it now \
+  ... (18 more lines)
+ ✓ (2m 3s)
+  -     /// The real subprocess, on the real hash from the ledger — the anti-vacuous
+  -     /// half of the named test. If `dcc72f63` ever becomes resolvable (it will
+  -     /// not; it is truncated), this test says so instead of quietly agreeing
+  -     /// with a fixture.
+  +     /// The real subprocess on an id no checkout contains — the anti-vacuous
+  +     /// half, and the I/O twin of the pure `git_born_after_by_check(false, ..)`
+  +     /// test above. Resolvability is asserted **first and separately**: if this
+  +     /// id ever resolved, the two assertions below would be describing a
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (9 → 9 lines)
+            let with_git = count_unhittable_surprises_with_git(
+                &surprises,
+                "2026-09-03T17:23:00Z",
+  -             "dcc72f63",
+  +             ABSENT_OBJECT_ID,
+                &ledger,
+            );
+ ✓ (2m 19s)
+            let with_git = count_unhittable_surprises_with_git(
+                &surprises,
+                "2026-09-03T17:23:00Z",
+  -             "dcc72f63",
+  +             ABSENT_OBJECT_ID,
+                &ledger,
+            );
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now run the two tests specifically to verify.
+
+Also the doc comment for the wrapper test mentions "the git leg". Let me check if it needs updating; it's fine.
+
+Let me run the two tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo born_after… ✓ (190ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both previously-failing tests now pass. Let me confirm by name and also run the full suite + clippy + fmt.
+
+Let me first check the two test names appear and pass.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo -- --exact… ✓ (151ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both green. Now, positive control: verify the new anti-vacuous assertion would catch a wrong turn. Actually the more important check per the task: the fixture premise still holds regardless of depth. Let me sanity check the null oid doesn't resolve: already verified (exit 128).
+
+Also: confirm that the renamed test is still in the count (not deleted) — test count went from 5773 passed + 2 failed = 5775 to... let's just run the full suite.
+
+Now run the full required sequence: cargo fmt && cargo build && cargo test && cargo clippy --all-targets -- -D warnings.
+
+Note: the repo also has my task's other uncommitted changes (cost.rs, price_audit_tests.rs, ARCHITECTURE.md, SKILL.md) — those may also break tests. Let's run everything.
+
+Actually wait — the earlier failing run showed 5773 passed; 2 failed; 3 ignored. Now with my renaming, names changed but count same. Let me run full test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 26s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 13s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The grep pipeline got truncated weirdly (exit 141 = SIGPIPE). Let me re-run capturing to a file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test > /tmp/t.log 2>&1; ec…

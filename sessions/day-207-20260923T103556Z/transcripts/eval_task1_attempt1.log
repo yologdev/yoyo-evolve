@@ -1,0 +1,210 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the key files to verify. The task says the new file src/format/cost/price_audit_tests.rs should be ~13 offline tests. Let me check what's actually there vs the claimed diff.
+
+Notably, the diff includes changes to src/commands_risk_unhittable.rs which is NOT in the task's file list ("Files: src/format/cost/price_audit_tests.rs (new), src/format/cost.rs (≈4 lines), skills/release/SKILL.md (one checklist bullet + last_evolved), ARCHITECTURE.md (the record)"). That's an extra file — potentially scope creep. The ARCHITECTURE.md entry mentions it as "pre-existing breakage found and NOT caused by this diff" and states it's outside scope. But they did modify it (fixing the tests). Hmm, actually the ARCHITECTURE note says the breakage wasn't theirs; but the diff includes a fix to commands_risk_unhittable.rs. That's an extra change beyond the task. It could be justified as fixing a red test, but it also violates "Touch no existing test"? That constraint was about the cost file's tests ("Touch no existing price row and no existing test" — in context, in this file). The commands_risk_unhittable change modifies existing tests.
+
+Also important: the task said `cargo test` must skip the audit (ignored) and the claim about a "13 offline tests". Let me count the offline tests in the new file: 
+1. comparator_is_anti_vacuous_before_it_is_anything_else
+2. drift_names_the_perturbed_row_and_only_that_row
+3. a_row_inside_tolerance_does_not_drift_but_the_boundary_is_what_saved_it
+4. cache_read_only_is_a_separate_state_and_cannot_absorb_a_real_repricing
+5. a_row_yoyo_cannot_price_is_unpriced_and_not_compared
+6. the_two_deepseek_flash_spellings_resolve_to_one_price
+7. tolerance_is_relative_so_one_ratio_holds_at_two_price_scales
+8. catalogue_ids_normalise_to_the_ids_yoyo_ships
+9. the_mapping_covers_shipped_ids_and_refuses_unshipped_ones
+10. ours_from_catalogue_keeps_only_rows_this_repo_can_price
+11. an_unmapped_provider_is_a_coverage_gap_and_provider_is_part_of_the_key
+12. the_payload_parser_reads_the_tracked_cells_and_refuses_a_missing_provider
+13. the_did_not_run_message_says_not_checked_and_quotes_the_command
+
+13 offline tests + 1 ignored. Good.
+
+Wait — but the task description says the fixture comparator should be exactly the shape `fn compare_catalogue(ours, catalogue, rel_tol)`. It is. Fine.
+
+But hold on: there's a discrepancy. The task's given diff shows the new file with the general sweep. But the ARCHITECTURE.md entry says "Honest correction, recorded rather than erased: this task's own assessment premise was false... the escaped form returns 38 hits, and the Day-204 alarm (price_drift_audit_against_models_dev, fetch_models_dev_json, MODELS_DEV_DEEPSEEK_2026_09_20, the KNOWN_DIVERGENCES register) has been in this file since c09152ca."
+
+Wait, that's claiming that a price drift audit already existed in cost.rs since c09152ca (Day 204). Let me check: does src/format/cost.rs already contain `price_drift_audit_against_models_dev`? If yes, the new file duplicates. Hmm. Let me check the actual repo state.
+
+Also, the ARCHITECTURE.md diff shows the new Day 207 entry says the summary line was `compared 36, matched 16, drifted 9, ...` — but the task's constraint mentions... Actually the task file says nothing about drift being zero expected. The new alarm's live run found 9 drifts, which doesn't hard-fail because it's ignored.
+
+Hmm wait, actually there's a real concern: the task says the new file must be created with the network test named per the task: "audit_table_against_models_dev". The diff uses that. But the ARCHITECTURE.md and SKILL.md reference `cargo test audit_table_against_models_dev -- --ignored --nocapture`. And the pre-existing Day-204 test is `price_drift_audit_against_models_dev`. OK.
+
+Let me inspect the actual files to verify. Key things to check:
+1. Does src/format/cost.rs have the `#[cfg(test)] mod price_audit_tests;` and line count within grace?
+2. Does the new file compile (build passed).
+3. Does the new file's tests actually pass? Tests: PASS per harness.
+4. Does the new file reference `crate::providers::known_models_for_provider` — does that exist and is it pub? Build passed, so presumably.
+5. The extra file src/commands_risk_unhittable.rs modification — scope creep but the task says "if tests fail at HEAD... " hmm. Actually the task didn't mention commands_risk_unhittable at all. Is the pre-existing breakage real? Let me verify whether the tests in commands_risk_unhittable are currently passing. Build/Tests: PASS. So the diff modified tests to pass. But were they failing before the diff? The ARCHITECTURE entry says they were failing at true HEAD. That's a plausible fix, but modifying existing tests is a deviation. However the constraint "Touch no existing test" applies to the cost file. Still, modifying unrelated tests is borderline. The evaluator instruction says don't fail for minor imperfections. But also: is the commands_risk_unhittable change a weakening of tests? They replaced a fixture hash with a null oid constant. It changes `the_real_dcc72f63_does_not_resolve_in_this_clone` → `an_absent_object_id_reaches_unmeasured_through_the_real_subprocess`. That's renaming/altering a test. That's the "fabricating"? It's plausible maintenance. Hmm.
+
+Actually — important: could this be a case where the diff *caused* the failure and fixed it? No, cost file changes wouldn't affect git hashes.
+
+Let me actually examine the repo. Also verify no NEUTERED markers left, and that the positive control claim is plausible. And check the module_size gate passes (build/test PASS suggests yes).
+
+Let me run some focused checks. Also, I should verify the task constraint: "cargo test must skip the audit (ignored) — confirm the run count moves by the number of step-1 tests only" — 13 tests.
+
+Also verify that the new file's `#[ignore]`d test is indeed ignored. And check the claim in ARCHITECTURE that `src/format/cost.rs` 3439 → 3446.
+
+Also a concern: the task says "Add the entry for src/format/cost.rs in ARCHITECTURE.md" — done.
+
+Another concern: the task said the offline test file should include the step-1 requirements 1-6. Present.
+
+Potential problem: task said "Do not add a dependency" — serde_json already a dep. Fine.
+
+Let me look at the real files now.
+
+Also there's a suspicious ARCHITECTURE.md claim about the assessment premise being false ("grep returns 38 hits"). Let me verify whether price_drift_audit_against_models_dev exists in cost.rs. If it does, then the new file duplicates an existing instrument — is that a defect? The task itself said #937 option 1 is to port the alarm. If a Day-204 alarm already existed (in the same file, with a vendored const), then the new file partially duplicates. The ARCHITECTURE entry acknowledges this and explains the distinction. Under "forgotten_touchpoints" and "two statements of one rule" concerns, this could be flagged. But the build/tests pass and the task's own assessment premised 0 hits. Hmm, the diff honestly records the correction. I'd lean to not fail on that.
+
+Wait, but actually — hmm. Let me check whether the Day-204 alarm exists. If it does, the claim in the new file's doc "`grep -rn "models.dev|price_audit" src/` → 0 hits (verified in the assessment)" — the doc comment in the diff... Actually the new file doesn't state that; the task description does. The ARCHITECTURE entry says the assessment premise was false. Let me verify grep.
+
+Let me examine.
+
+Let me do a focused set of commands.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "price_drift_audit_agai… ✓ (12ms)
+ ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So there IS a pre-existing Day-204 alarm in cost.rs (`price_drift_audit_against_models_dev`) using a vendored const. The new file is a general sweep. That matches what ARCHITECTURE says (honest correction). Not a defect per se, though there's duplication of some concepts (two `PRICE DRIFT AUDIT DID NOT RUN` messages).
+
+Let me check the tests count: 14 `#[test]` = 13 offline + 1 ignored. Good.
+
+Now check whether the new module's tests actually run and pass, and whether the harness ran cargo test. "Tests: PASS". Let me run the focused test subset quickly to confirm the new tests pass (fast, <30s?). cargo test --bin yoyo price_audit or cost::price_audit_tests. Let me do it but keep it bounded.
+
+Also check for NEUTERED markers and that cargo fmt/clippy are clean (harness said build/test pass; task requires clippy and fmt too). Let me quickly run cargo fmt --check and maybe not clippy (slow). Actually clippy may take a while. Let's try fmt check (fast) and grep for NEUTERED.
+
+Also verify the extra file modification in commands_risk_unhittable: does that violate "never delete existing tests"? It renamed a test. Task constraint said never rename? CLAUDE.md says "Never delete existing tests". Renaming a test = deleting + adding. Hmm, that's a safety rule. The renamed test `the_real_dcc72f63_does_not_resolve_in_this_clone` was deleted. Was the change necessary? Let's check whether the test would fail at the task's HEAD~1 (before this commit). Actually, the branch is main at 7aaf95fc. Let me test whether the pre-change version fails. That's a somewhat involved check. Let me do a quick check: does `git cat-file -t dcc72f63` resolve in this clone?
+
+Let me run: git cat-file -t dcc72f63.
+
+If it resolves, the old test would fail, justifying the fix. Let's check.
+
+Also, the constraint "Never delete existing tests" is from CLAUDE.md safety rules. But that rule in context refers to evolve skill. Renaming a test that can't pass in this environment... The evaluator instruction: don't fail for minor imperfections. But this is an unrelated file modified. Hmm — but the task's "Files:" list didn't include it. Scope creep. However, if the repo's tests were red before and now green, that's an improvement, and it's recorded in ARCHITECTURE. I'd mention it as cleanup/scope feedback, not fail. Unless the change weakens a real guard.
+
+Let me check whether the change weakens the assertion: the old test asserted `dcc72f63` does not resolve and `git_born_after_at` returns unmeasured. The new test uses the null oid and adds an equality against the pure function. That's arguably stronger/more stable. Fine.
+
+But wait: there's a subtlety: `run_git` has a cfg(test) destructive-command guard; `cat-file -t 0000...` is not destructive. Fine.
+
+Hmm, but also: does `count_unhittable_surprises_with_git` test using ABSENT_OBJECT_ID still assert what it did? It replaced "dcc72f63" with ABSENT_OBJECT_ID — fine as a non-resolving hash.
+
+Let me now run the focused verification commands.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.1s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git cat-file -t dcc72f63 2>&1; e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -20 … ✓ (25ms)
+ ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`dcc72f63` resolves in this clone → confirms the old test was red here, so the commands_risk_unhittable fix is justified (a red test in an unrelated file). It's scope creep but justified maintenance; I'll note it.
+
+Now verify the new tests pass. Let me run the specific test module quickly.
+
+`cargo test --bin yoyo price_audit_tests` — might take time to compile but tests already built. Let's run with a timeout.
+
+Also verify the ignored test is listed as ignored (not run) in the default suite.
+
+Also check the module_size gate value in tests/module_size.rs register to confirm 3439 vs 3446 within grace. Actually the register says ("src/format/cost.rs", 3439) with drift grace 100 — so 3446 is over the register entry by 7 lines, within grace of 100. Wait, but the gate typically requires updating the register if the file grows? Grace allows within 100. Fine, gate passes (29 tests).
+
+Let me run the focused tests.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.8s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (170ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+13 offline tests pass, 1 ignored. Matches task step 1/step 2 requirement.
+
+Now, did the task require running the audit by hand? Yes ("Then run the audit once by hand"). Not something I must verify — but the ARCHITECTURE entry reports a live run. Not required for verdict.
+
+Now check requirements 1-6 present: yes as analyzed.
+
+Check the task's constraint "Touch no existing price row and no existing test" — cost.rs diff only added the mod declaration (7 lines). Good. Existing tests in cost.rs untouched.
+
+Check the anti-vacuous ordered assertion in test 1: `compared > 0` asserted before anything about drifted. Yes.
+
+Requirement 5: deepseek-flash and deepseek-v4-flash resolve to same tuple — present, offline.
+
+Requirement 6: relative tolerance documented — present.
+
+Step 3: SKILL.md one bullet + last_evolved bumped to 2026-09-23 — done (actually two hunks: checklist bullet + command block). Fine.
+
+Step 4: ARCHITECTURE.md entry — done.
+
+Doc sync: behavior change? This is evolve-kind test/tooling addition; no user-facing behavior change (only test files, docs, and an unrelated test fix). Doc_sync: N/A? The task explicitly required ARCHITECTURE.md and SKILL.md updates, which were done. There's no CLAUDE.md/README/docs behavior change needed. The doc changes were made as specified. I could mark doc_sync PASS (docs updated in same commit: ARCHITECTURE.md, skills/release/SKILL.md). I'll say PASS.
+
+Product surface: no config defaults/CLI flags/startup changes. The added instrument is a test; the release skill checklist is internal. N/A.
+
+forgotten_touchpoints: new definitions — the new file's functions are all used within the file; `mod price_audit_tests` declared and file exists; build passes so no dangling defs. The renamed test has its call sites updated. Also check: does `crate::providers::known_models_for_provider` exist and is pub — build passed so yes. Enum variants: none added.
+
+One thing: the ignored test's assertion on drifted being empty means if run today it would fail (9 drifts) — but that's by design (it's the alarm; ARCHITECTURE documents that the first live run found 9 drifts and they're filed as work). Hmm — is that a problem? Task says the alarm is supposed to fail loudly on drift. But the task's verification step says "run the audit once by hand... report honestly." The ARCHITECTURE claims the live run found 9 drifts including known divergences. A test that's expected to FAIL when run is... the alarm working. But there's a risk: the test hard-fails (`assert!(report.drifted.is_empty())`) on known, deliberately-deferred divergences (like deepseek-v4-pro, deliberately deferred per Day-204 and the release skill mentions an "admitted-divergence register" for the DeepSeek test). Hmm, the existing Day-204 test has a KNOWN_DIVERGENCES register to admit known divergences; the new general test has no such register, so it will fail on the 9 known drifts every release run, with no way to mark them as accepted — meaning the alarm is perpetually red and thus gets trained out of use (the very failure mode the design doc calls out). The SKILL.md bullet says on drifted>0 read the vendor page before publishing. So a human acts. That's arguably by design: they intend to reconcile. But it's an "alarm that is already red" — hmm. The task description doesn't require a known-divergence register for the general sweep. The task says print per-row and summary; fail on drifted? Actually the task says the test should print and "if curl fails... exit non-zero". It doesn't explicitly say to hard-assert drifted==0. It says "on any drifted > 0 go read the vendor's pricing page before publishing — the number is the alarm, the decision is a human's." The implementation asserts drifted is empty → the test FAILS on real drift. Is that contrary to "the decision is a human's"? Not really; a failing test surfaces loudly. But with 9 known drifts unfixed at commit time, running the release checklist yields a red test and the release skill says to read vendor pages before publishing. Borderline. Would I fail for this? The evaluator guidance: FAIL only if implementation doesn't match, feature doesn't work, obvious bugs, security. Here the feature works as designed and the ARCHITECTURE documents the 9 drifts honestly. It's maybe a design nit that the alarm is red at birth. Actually hmm — the task explicitly said the general sweep test should be run pre-release and its summary pasted. If it always fails at HEAD, the release checklist would be blocked. But that's the alarm's job to force reconciliation. I'll note as a reservation, not fail.
+
+Wait, but there's one more concern regarding honest reporting: the ARCHITECTURE entry and the summary line claim `compared 36, matched 16, drifted 9, cache_read_only 11, unpriced 134 of 170 catalogue rows`. 36+134=170 ✓. matched 16 + drifted 9 + cache_read_only 11 = 36 ✓. Consistent.
+
+But the task said requirement: "Print per-row id | ours | theirs | state, then one summary line: compared N, matched M, drifted D, unpriced U of C catalogue rows." The implementation's summary line includes extra fields (cache_read_only) and prefixes "price audit: SUMMARY". Fine.
+
+One more: does the network test really exit non-zero on curl failure? It panics → test fails → non-zero exit. Yes.
+
+Let me double check the diff of cost.rs only added 7 lines (task said ≈4). 7 lines including doc comment — within the module-size grace, and the register wasn't edited. The gate passed per the claim; let me quickly confirm module_size tests passed. The harness said Tests: PASS for the whole suite presumably. Let me quickly run the two gates to be certain (fast? module_size.rs is a static analysis test; compiling the test binary may take time but probably already built).
+
+Let me run `cargo test --test module_size --test orphan_modules` quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test mo… ✓ (285ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both gates green.
+
+Now let me quickly double check that spec'd requirement 3's whole-value `assert_eq!` exists (yes, seen in diff) and requirement 1 ordering (yes).
+
+One thing to verify concretely: "every deliberate sabotage... tree cannot be green" — no markers found. Good.
+
+Everything aligns. The only deviations:
+1. Extra file src/commands_risk_unhittable.rs (66 lines) modified — outside the declared file list. Justified: `dcc72f63` resolves in this clone so the pre-existing test was red; verified. It renames an existing test (CLAUDE.md says never delete existing tests) — a deviation, but it's a fixture fix, and it strengthens the assertion (adds I/O-vs-pure equality). I'll mention as cleanup/scope feedback, not fail.
+2. The general audit test hard-asserts drifted empty and would be red today with 9 known drifts — noted honestly in ARCHITECTURE. Not a fail.
+
+Let me write the verdict.
+
+Actually, one more consideration for intent_alignment: task said the offline test file should contain step-1 comparator with `AuditReport { compared, matched, drifted, unpriced }`. Implementation added `cache_read_only` field — an addition, justified and documented (it avoids folding a coverage gap into drift). Fine.
+
+Also task said `fn compare_catalogue(ours: &[(String, Rates)], catalogue: &[CatalogueRow], rel_tol: f64) -> AuditReport` — matches.
+
+Verdict: PASS.
+
+Write to session_plan/eval_task_1.md.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (8 lines) ✓ (1m 25s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS — written to session_plan/eval_task_1.md.
+
+What I verified (not just the diff):
+• `src/format/cost/price_audit_tests.rs exists as a declared child module (src/format/cost.rs:920), and cargo test --bin yoyo price_audit_tests reports **13 passed, 1 ignored** — the network alarm is #[ignore]`d as required, so CI never runs it.
+• All six step-1 requirements are present and in the specified order (anti-vacuous compared > 0 first, named drift, whole-value assert_eq! near-miss guard, unpriced as a state kept out of compared, the DeepSeek pair pinned offline, relative tolerance with its rationale).
+• Gates green: module_size 28 passed, orphan_modules 11 passed; cost.rs 3439 → 3446 with the register untouched; cargo fmt -- --check clean; no NEUTERED/sabotage markers left in src/.
+• Doc deliverables landed in the same commit: ARCHITECTURE.md entry and the skills/release/SKILL.md bullet + last_evolved: "2026-09-23".
+
+Two non-failing reservations I recorded:
+1. `src/commands_risk_unhittable.rs is outside the declared file list; it renames an existing test. I confirmed the justification — git cat-file -t dcc72f63 returns commit` in this clone, so the old assertion really was red here — but the scope creep is worth flagging.
+2. The general sweep asserts drifted.is_empty() while its own recorded first live run found 9 drifts, so it is red at birth and has no admitted-divergence register (unlike the sibling DeepSeek audit). Consistent with "the number is the alarm, the decision is a human's," but noted.
+
+No code was modified.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
