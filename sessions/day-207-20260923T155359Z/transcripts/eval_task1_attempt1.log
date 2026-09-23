@@ -1,0 +1,158 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the key parts. The diff looks complete. Let me verify a few things:
+
+1. `Piped` arm byte-identity — the original inline block produced 5 eprintln! lines. Let me check the original code bytes. The new builder uses a single format! with line continuations `\n\` and `\x20`. The `\x20` is used to escape the indentation? Actually in Rust, a `\` at the end of line in a string literal strips the newline AND leading whitespace of the next line. So `\x20` is a way to preserve a leading space. Wait, `\x20` is a space character. So the line `             \x20 Try one of:\n\` — with a trailing `\` on the next line... Let me parse.
+
+Actually the string is:
+```
+"{YELLOW}yoyo: slash commands aren't available in piped mode.{RESET}\n\
+ \x20 Try one of:\n\
+ \x20   yoyo doctor                    # run a subcommand directly\n\
+ ...
+```
+
+Line continuation: `\` followed by newline skips the newline and all leading whitespace on the next line. So after `\n\` we get `\x20 Try one of:\n` — leading whitespace stripped, then `\x20` is a space, then ` Try one of:` — wait, `\x20` then a literal space then "Try one of:". Hmm: `\x20 Try one of:` = space + space + "Try one of:"? That would be two spaces. Let me count: the source text after the stripped indent is `\x20 Try one of:\n\`. So `\x20` is one space, then ` ` (literal space) then `Try one of:`. That's two spaces!
+
+Hmm, that would break byte identity. Wait — but the escape `\x20` is precisely there so that... hmm. Actually the reason people write `\x20` is to avoid the line-continuation whitespace stripping. If the source were:
+```
+"\n\
+     Try one of:\n"
+```
+the continuation strips the leading spaces, giving `Try one of:`. To get a leading space you'd write:
+```
+"\n\
+\x20  Try one of:\n"
+```
+Hmm. But here they wrote `\x20 Try one of:` — so we need to know the exact source bytes. The diff shows:
+
+```
++            "{YELLOW}yoyo: slash commands aren't available in piped mode.{RESET}\n\
++             \x20 Try one of:\n\
+```
+
+So after `\` newline, the next line has 13 spaces of indentation, then `\x20 Try one of:\n\`. Continuation strips all leading whitespace (spaces and tabs) following the escaped newline. So stripped → `\x20 Try one of:\n\`. Then `\x20` = space, then ` Try one of:` — there's a space between `\x20` and `Try`? Let's look carefully: `\x20 Try` — yes there is one space character after `\x20`. So total = space (from \x20) + space (literal) + "Try one of:" = two leading spaces.
+
+But expected is `  Try one of:` — two spaces! The test expects `"  Try one of:\n"` which is two spaces. Yes! The expected in the test is:
+```
+"  Try one of:\n",
+"    yoyo doctor ...
+```
+Two spaces before "Try one of:". And the original code had `eprintln!("  Try one of:")` = two spaces. 
+
+So `\x20` + ` ` = 2 spaces. Correct.
+
+Next: `\x20   yoyo doctor` = space + 3 spaces? `\x20   yoyo` — after `\x20` there are 3 spaces then "yoyo". Wait expected is `    yoyo doctor` = 4 spaces. Yes: `\x20` (1) + 3 spaces = 4. Correct.
+
+Good, and tests pass so byte-identity holds (the harness says tests PASS). Actually let me not just trust; the test asserts it. Test passed per harness.
+
+2. Now, crucially: is the doc test/behavior right? `-p` refusal at dispatch site. But there's a concern: the `-p` path uses `prompt_text`. Need to verify that prompt_text is the resolved prompt and that this check is placed after `print_mode`/disable_color and before run_single_prompt. Diff shows that.
+
+But wait — one potential issue: in the piped door, `eprint!("{msg}")` — msg ends with `\n`? The Piped arm ends with `# interactive REPL\n`. Yes. So eprint is fine.
+
+3. The task said the `SinglePrompt` arm first line should be `yoyo: slash commands aren't available with --prompt.` The implementation wrote `yoyo: slash commands aren't available in -p (single-prompt) mode.` Slight deviation from literal instruction but the test asserts it must NOT contain `--prompt`. Hmm, the task said the first line "names the `--prompt` door (`yoyo: slash commands aren't available with --prompt.`)" but then also says "It must not suggest `--prompt`". Those two are in tension — the task's own example names `--prompt` in the first line while test 3 requires the message not contain `--prompt`. So the implementer chose the `-p` spelling, satisfying test 3. This is a reasonable resolution. The task's step-3 trap check is explicit: "the returned message must not contain `--prompt`". So implementing with `-p` satisfies that; using `--prompt` would fail. Fine.
+
+4. Step 4 weak guard: counts >= 3. Note definition + 2 call sites. But calling `slash_command_refusal(` — the definition line is `fn slash_command_refusal(input: &str, ...` which doesn't contain `slash_command_refusal(` (it's `slash_command_refusal(`? `fn slash_command_refusal(input:` — yes it contains `slash_command_refusal(`. Good. So 3 refs: def + piped call + single call. Test passed.
+
+But note: the doc comment mentions `slash_command_refusal`? The doc comment says "`slash_command_refusal`" without paren. So it doesn't count. Fine.
+
+5. Docs updated: docs/src/usage/single-prompt.md — yes. ARCHITECTURE.md — yes. CLAUDE.md not changed (correct, new history goes to ARCHITECTURE.md).
+
+6. Product surface: Kind product. This changes CLI behavior — refusing `-p "/risk"`. Is that opt-in? It's a behavior change to product surface but it's the point of the task. #448 rule is about evolve-loop conveniences shipped as product defaults. This is not an evolve convenience; it aligns `-p` with piped mode which is existing product behavior. Fine.
+
+7. Test 1 table includes `""` → None. `looks_like_slash_command("")` → `"".trim_start().chars().next()` = None, `matches!(None, Some('/'))` = false → None. Good.
+
+Now let me actually run the manual probes as the task requires — the instruction says if the task changed a user-facing feature, actually try it. Let me check the binary exists and run.
+
+Let me do that quickly.
+
+Also verify there's no `--prompt` in the single-prompt arm indirectly. The builder's Piped arm contains `yoyo --prompt "{input}"` — that's fine, different arm.
+
+One thing to check: does the `-p` dispatch check happen for all `-p` variants, including when prompt comes from a positional arg (`yoyo "/risk"`)? Task says only `-p`/`--prompt` path. The diff shows it's in a branch around line 1194. Let me check what that branch is. Let me look at main.rs around 1140-1210.
+
+Let me run the binary probes and check the code.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 555,625p src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1160,1225p src/main.rs ✓ (5ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, placement matches. Now run the manual probes. Check binary exists.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Run probes. Need to be careful time — use timeout. The refusal should be instant.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 ./target/debug/yoyo -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "/risk" | timeout 60 ./targ… ✓ (680ms)
+ ✓ (680ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both work: exit 2, stderr, no cost line, instant. Note the colour escapes are absent (color disabled because stderr not a terminal? Actually `disable_color` is called only in print_mode. Here it likely auto-detects non-tty). Fine — the test pins real escapes under cfg(test).
+
+Near-miss probe: `-p "explain the risk of this change"` would actually hit the API (no key maybe). Not needed; but I could check it doesn't refuse by checking it doesn't exit 2 instantly. That would require API. Skip — could check with a fake provider? Not worth. Instead verify the function returns None via a quick reasoning: predicate is unchanged and test covers it.
+
+Actually I can do a cheap near-miss probe with `--no-tools` and no key — it would attempt an API call and fail differently (exit 1 / error, not exit 2). Let's try quickly with a short timeout and unset key.
+
+Hmm, risk: it could hang. Use timeout 30. Env ANTHROPIC_API_KEY unset likely. Let's just do it to confirm it doesn't print the slash refusal.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.4s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 45 ./target/debug/yoyo -… ✓ (3.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting — exit=0 for the near-miss, and it went into prompt mode. Hmm, did it actually make an API call? It printed the header. Possibly it succeeded (there's a key in env?) or silently... Anyway, the key point: it did NOT print the slash refusal. Good near-miss.
+
+Wait, exit 0 with no output? /tmp/o3.txt not shown. Whatever. It proceeded, which is what matters.
+
+Now check the docs mention. Already in diff. Check ARCHITECTURE.md was updated — yes.
+
+One thing to double-check per "forgotten_touchpoints": the `PromptDoor` enum has two variants and match covers both — yes. `looks_like_slash_command` still has call sites (inside builder). Is `looks_like_slash_command` now only called inside `slash_command_refusal`? Yes — that's fine, it's a consumer.
+
+Any clippy warnings? Build/test/clippy pass per harness. But note main_tests.rs exists and uses `PromptDoor` — is `main_tests` module imported via `use super::*`? Since tests passed, yes.
+
+Doc file: docs/src/usage/single-prompt.md updated appropriately, including the rephrase escape and exit code 2 / no API call. Good. Also says piped mode same. Good.
+
+Now let me check whether there's a discrepancy: task said Piped arm byte-identical "including whatever colour wrapping that block uses". The original block used `{YELLOW}` from where? Let me verify the old code used the same YELLOW constant. Diff shows old: `eprintln!("{YELLOW}yoyo: slash commands aren't available in piped mode.{RESET}");` new: same string. Yes byte-identical.
+
+Also check missing: task asked doc paragraph in docs and ARCHITECTURE paragraph — done. CLAUDE.md not updated, correct per project convention.
+
+Everything checks out. Verdict PASS.
+
+Let me check the git diff had no stray files: changes are ARCHITECTURE.md, docs/src/usage/single-prompt.md, src/main.rs, src/main_tests.rs. Task said keep diff to three files but ARCHITECTURE.md was explicitly requested ("Then add the ARCHITECTURE.md paragraph"). Fine.
+
+Write verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+Both doors verified live: -p "/risk" and echo "/risk" | yoyo each print the refusal to stderr, exit 2, with no cost/token line (instant, no API turn). The near-miss -p "explain the risk of this change" proceeds into prompt mode without any refusal.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS — written to session_plan/eval_task_1.md.
+
+Evidence:
+• **Wiring**: `slash_command_refusal(&str, PromptDoor) -> Option<String>` added next to the unchanged `looks_like_slash_command`; called from `run_piped_mode` (replacing the 5 inline eprintln!s, keeping exit(2)) and from the -p dispatch site before run_single_prompt, so both image and text branches are covered and no agent is built.
+• **Live behavior**: `./target/debug/yoyo -p "/risk"` → refusal on stderr, exit 2, no cost line; `echo "/risk" | yoyo` → same contract, exit 2; near-miss `-p "explain the risk of this change"` passes through untouched.
+• **Tests**: table over both doors (agreement on which inputs are refused), byte-identity `assert_eq!` pin on the Piped arm (the door that already worked), the `--prompt`-absence trap with anti-vacuous companions, and a documented weak source-level guard.
+• **Docs**: docs/src/usage/single-prompt.md and ARCHITECTURE.md updated in the same diff; CLAUDE.md correctly untouched.
+
+One minor deviation from the brief, not a failure: the SinglePrompt first line reads "aren't available in -p (single-prompt) mode" rather than the brief's suggested --prompt spelling — this is the correct resolution, since the brief's own trap check forbids --prompt appearing in that message.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

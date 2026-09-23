@@ -1,0 +1,1909 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the relevant sections of the script.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l scripts/extract_trajectory…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,300p' scripts/extrac… ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the productivity idle section, session_dir_stamp, and run_self_tests.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2520,2600p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2660,2860p' scripts/extr… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's look at `session_dir_stamp`, `run_self_tests`, and the main function.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_dir_stamp\|def …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_self_tests\|--self-… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1900,1960p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3319,3420p' scripts/extr… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3420,3576p' scripts/extr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note `render_outcomes(outcomes)` is called with just outcomes. To render the per-session corroboration markers beside each claim, I need session directory names (for stamps), and commits with times.
+
+Let me check `main`'s call: `outcomes = load_outcomes(audit_dir)`. `load_outcomes` returns only data dicts, losing dir names. I need to collect sessions with names. Options: add a function `load_sessions(audit_dir)` that returns list of (name, data) or add session name into the outcome dict. The task says the last session has no closing bound → open window → never flagged.
+
+Let me now design:
+
+Step 1:
+- `collect_task_commits_with_times()` → runs `git log --format=%H%x09%ct%x09%s` (over WINDOW_DAYS? The task says "one `git log --format=%H%x09%ct%x09%s` pass, keeping the (sha, epoch_secs, subject) triples whose subject matches TASK_COMMIT_RE"). Should it be windowed? Probably use the same `--since={WINDOW_DAYS} days ago` window to be consistent... Hmm, but for the window matching we want commits in the session windows. Session dirs are last 10; commits window 14 days. Let's keep `--since={WINDOW_DAYS} days ago` for cost consistency but note the limit. Actually the shallow clone issue: clone 50 commits ~1 day. Let me keep `--since` window like collect_task_commits for consistency, and document it.
+
+Hmm, but actually careful: the near-miss guard requires that a fully-corroborated day renders byte-identically. So render_outcomes must not change for corroborated sessions.
+
+- `classify_session_claims(sessions, commits) -> [(session, state)]` where sessions = list of dicts with 'name' and 'stamp'? The task says build each session's window as `[session_start, next_session_start)` from session directories' own stamps. So sessions sorted ascending by stamp. Last session open.
+
+Signature: pure function over synthesised inputs. Let's define sessions as list of `SessionWindow` dataclass? Or list of tuples (name, stamp_str). Let's define a lightweight dataclass:
+
+```python
+@dataclass
+class SessionClaim:
+    name: str
+    stamp: str | None  # compact UTC stamp or None
+    claimed: int
+```
+
+classify_session_claims(sessions, commits) where commits is list of (sha, epoch_secs, subject). But comparing epochs with compact stamps requires conversion. Hmm — the pure function should take comparable values. Options: pass commits as (sha, compact_stamp, title) after normalisation? But git prints %ct as epoch seconds. We can pass session windows as (start_epoch, end_epoch) — but converting compact stamp to epoch requires datetime parsing.
+
+Simplest: make the pure core operate on already-normalised comparable values: sessions as `[(name, start_compact_or_None)]` and commits as `[(sha, compact_stamp)]`? That requires converting epoch → compact stamp, which we can do with datetime.utcfromtimestamp. That's a conversion, fine.
+
+But the task says the classifier returns `[(session, state)]` and imports `SESSION_DIR_RE`/`session_dir_stamp`. Let me do:
+
+```python
+CLAIM_CORROBORATED = "corroborated"
+CLAIM_NO_COMMITS = "claim-no-commits"
+CLAIM_NONE = "no-claim"
+CLAIM_COULD_NOT_CHECK = "could-not-check"
+
+@dataclass
+class SessionClaimRow:
+    name: str
+    state: str
+    claimed: int
+
+def classify_session_claims(sessions, commits) -> list[SessionClaimRow]
+```
+
+where `sessions`: ascending-by-stamp list of `(name, compact_stamp_or_None, claimed_int)`; `commits`: list of `(sha, compact_stamp, subject)`.
+
+Hmm, but "Collect commits once, with times... keeping the (sha, epoch_secs, subject) triples". Then the epochs need conversion to compact-for-comparison. I'll add a helper `epoch_to_compact(secs)` that returns compact stamp, and convert in the collector? Actually a `(sha, epoch_secs, subject)` triple is what the task asks to keep from git. Then the pure function compares against session windows... session stamps are compact strings. Comparing epoch ints with compact strings doesn't work.
+
+Two clean options:
+(a) Pure function takes windows as `(start_compact, end_compact_or_None)` and commits as `(sha, compact_ts, subject)`; the collector converts epoch→compact via a pure helper `epoch_to_compact`.
+(b) Pure function takes windows as epoch ints; session stamp→epoch via pure helper.
+
+I'll go with (a): `epoch_to_compact(secs)` using datetime.fromtimestamp(secs, timezone.utc).strftime. And keep the raw triple from git as task asks, conversion applied right before passing into the classifier. Document.
+
+Also open-window rule: last session (max stamp) has no closed bound → state is never CLAIM_NO_COMMITS. What state does it get? Task says "its window is open and it is never flagged". If it claimed and has commits in its open window → CORROBORATED? Or a separate state? Hmm. Options: if last session claims and has ≥1 commit in its open window → CORROBORATED (it's corroborated — it did commit). If claims and no commit yet → could be in progress, so not flagged. Which state? Could be COULD_NOT_CHECK? But that's for "window cannot be resolved". Hmm—an open window is a resolved window of unknown end. I think giving it CORROBORATED when commits exist, else NO_CLAIM-like "open/not flaggable"... But the task's enumerated states are exactly four, and "none folded into another". Adding a fifth state (OPEN) isn't forbidden — the task says "with these states, none folded into another" listing four. Adding a fifth would need the renderer to handle it.
+
+Hmm. Let's think about what's simplest and honest. If the last session has commits in its open window → CORROBORATED (correct — its claim is corroborated by observation). If it has none → it hasn't finished; the honest thing is not to flag it. I could return a fifth state `CLAIM_OPEN` = "claim-open" meaning "session still open, not judged". That's honest and distinct. But the near-miss guard is over render_outcomes which only marks CLAIM_NO_COMMITS, so extra states are fine.
+
+But adding a fifth state is beyond the spec, and renderer must handle it. The spec says "the last session has no closing bound, so its window is open and it is never flagged". Simplest reading: never flagged = not CLAIM_NO_COMMITS. If commits within the open window → CORROBORATED is a defensible mapping and keeps the state set at four. If no commits → we need something. Mapping it to NO_CLAIM would be wrong (it did claim). Mapping to COULD_NOT_CHECK semantically conflates "window unresolvable" with "window open". Hmm, but "COULD_NOT_CHECK — the session's window cannot be resolved" — an open-ended window is not resolvable as a *closed* window, so I could argue COULD_NOT_CHECK covers it. But the spec explicitly distinguishes: "silence about a window is not evidence about a session" — for an open session, we have no closed window → we cannot check → COULD_NOT_CHECK is actually the honest reading! But then a last session with commits would be... corroborated. Hmm, mixing.
+
+I think a fifth state is the cleanest and most honest: `CLAIM_OPEN_WINDOW = "session-open"` — "this session's window has no closing bound, so it is not judged". And it renders nothing (or nothing special). Let me check: does the spec forbid a 5th state? "with these states, none folded into another" — it lists the required states. It doesn't forbid an explicit open state. And it says the last session "is never flagged (a session still running has not finished committing — flagging it would be the confident-wrong-diagnosis defect)". An explicit `SESSION_OPEN` state is stronger than folding into COULD_NOT_CHECK, and it's non-vacuous-checkable.
+
+Hmm, but wait — risk: reviewers/evaluator checking spec adherence might complain about an extra state. But the alternative — folding open into COULD_NOT_CHECK — muddles two distinct facts, which is exactly the repo's documented defect class ("two facts, two sentences"). I'll add the fifth state and document it clearly, being explicit that silent-about-window and open-window are different facts.
+
+Actually hold on. Let me reconsider: is the last session always "still running"? The window is the last 10 session dirs. In the middle of a session, the current session's dir already exists (does it?). Let me check whether the session dir is created at session start. Let me look at evolve.sh for session dir creation.
+
+Actually the audit dir is the sessions directory of the audit-log worktree. Let me check how the current session appears. Let me grep.
+
+Let me also decide: should the classifier only consider sessions whose claim... Let me now check what `claims_by_day` does and outcomes structure.
+
+Let me look at lines around 2560-2660 for claims_by_day and the productivity section notes (Day-196 defect).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2600,2662p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def claims_by_day" -A 3… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me see the run_self_tests structure, particularly how tests are organized (ok/bad functions), and the section around 5700-5800 (usage coverage tests) to follow the style.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3576,3680p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5700,5800p' scripts/extr… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the session dirs and how outcome.json is structured, and how the audit dir relates. Let me check the real audit dir availability here. Also check evolve.sh for session dir creation (to know whether current session dir exists with outcome.json).
+
+Actually load_outcomes only reads dirs that have outcome.json. outcome.json is written at session end presumably. So the last session WITH an outcome.json is a *finished* session! Hmm. Then the "last session's window is open" rule — the task says the last session has no closing bound. But if the newest session dir with outcome.json is finished, its window closing bound is... unknown, because we don't know when the next session started. So we treat it as open. Fine.
+
+Let me check git log for the actual data. Let's run the script's self test first to see baseline, and check environment (YOYO_AUDIT_DIR unset probably in this sandbox).
+
+Let's check the audit dir path and what's in it.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "outcome.json" scripts/e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (5ms)
+ ✓ (73ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,480p' scripts/evolve…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 | cat; ech… ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — 3 sessions/day visible in the log (09:03, 14:39, and presumably a 23:59 session). Day 207 has two sessions today: 09:03 (task commits: 9cfa923c? those are session-plan etc.) Let me check what task commits look like for day 207 09:03 — "Day 207 (09:03): ... (Task 2)". Yes.
+
+And Day 207 14:39 has one task commit (Task 1). Note this current session is day 207 14:39 — so its dir exists in the audit-log with outcome.json only at session end. Hmm, but the ci checkout: audit-log branch at /tmp/... we don't have it locally. Let me check if audit-log branch exists locally.
+
+Now, the crucial design detail: which sessions are in the window? `load_outcomes` reads the 10 newest session dirs that have outcome.json. I need session dir names too. I'll add a function that returns (name, data) pairs.
+
+Let me check if the audit-log worktree is available locally for testing: `git branch -a`.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git branch -a | head -20; echo -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def render_outcomes" -B… ✓ (4ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The audit-log branch exists locally. Let's create a worktree and inspect real data — this will let me run the instrument end-to-end today.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm -rf /tmp/traj-audit && git wo… ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git worktree add /tmp/traj-audit… ✓ (627ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The local audit-log branch is old (last commit day 207 09:03?? "audit: day 207 (09:03)" but ls shows only up to day-99?). Hmm, `ls | tail` sorted lexicographically — day-99 sorts last lexicographically. Let me use sort -V.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/traj-audit/sessions && ls | sort -V | tail -12; echo ---; ls | wc -l ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/traj-audit/sessions && for d in $(ls | sort -V | tail -8); do echo "== $… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me check the git commit history: does the window [session_start, next_session_start) contain the day-N task commits?
+
+Session dirs: day-206-20260922T103623Z → window [20260922T103623, 20260922T154104). Commits day 206 (09:03) are stamped before 10:36? The session dir name timestamp is likely the session START (step 1 fetch time) or the end? Look: `ts` field 2026-09-23T01:36:04Z with session_time "23:59" — the day-206 23:59 session has dir stamp 20260923T013604Z (01:36 next day). So the stamp is roughly the start of the session.
+
+Session at dir 20260922T103623Z with session_time 09:00 — the task commit for that session is "Day 207 (09:03)..."? No wait — day-206-20260922T103623Z with session_time 09:00. Commit "Day 206 (09:03)"? Let's check the git log around then.
+
+Let me verify: which commits fall in which window. Let me get a full history with times and subjects.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --format='%ct%x09%s' | h… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting — Day 206 (09:00) has TWO task commits with the same title (Task 1) — one is a "", and one "Task 1, eval-fix 1". That is the eval-fix pattern. Both match TASK_COMMIT_RE.
+
+Session dirs vs window: For session day-206-20260922T103623Z (stamp 20260922T103623Z = epoch?). Let's convert: 2026-09-22T10:36:23Z → epoch. And 2026-09-22T15:41:04Z for next.
+
+Hmm wait, the session dir stamp for the 09:00 session is 20260922T103623Z, and the "Day 206 (09:00)" assessment commit epoch 1790068205 = ? Let me compute: 1790068205 → date. Let me compute epoch times.
+
+Actually the session dir stamp = when the audit-log push happens? Look: session day-207-20260923T103556Z with session_time 09:03, and commits "Day 207 (09:03)" at epoch 1790154799. Let me compute those epochs to dates.
+
+Let me just compute.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The session dir stamp is the session's END (the "session-end state resets" commit epoch is 1790073383 = 2026-09-22T103623Z = dir stamp 20260922T103623Z). So the dir stamp = session END time (when the audit push happened).
+
+So the window [session_start, next_session_start) derived from session dirs' own stamps: stamps are session ENDs. The commits for a session's tasks happen BEFORE that stamp. So the window built purely from consecutive dir stamps as [stamp_i, stamp_{i+1}) would place session i's commits... Session day-206-20260922T103623Z (end 10:36:23): its task commits: 1790067966..1790073383 — all BEFORE 10:36:23. So the window [prev_stamp, this_stamp) contains them. I.e. window for session i should be [prev_session_stamp, session_stamp)! The spec says: "Build each session's window as `[session_start, next_session_start)` from the session directories' own stamps; the last session has no closing bound, so its window is open".
+
+Hmm. If the stamp is the session END, then the spec's window convention [stamp_i, stamp_{i+1}) would attribute session i's commits to session i+1's window — off by one! Because session i's commits all lie before stamp_i.
+
+Wait, let me check more carefully. Session dir day-207-20260923T103556Z: stamp = 20260923T103556Z = epoch 1790159756 = the "Day 207: bump skill-evolve counter" / session wrap-up commit at 1790159755. And the task commit "Day 207 (09:03): ... (Task 1)" is 1790158053 (09:07) — before the stamp. So yes: stamp = end.
+
+So if I define the window as [stamp_i, stamp_{i+1}), the session's own task commits fall in window of session i-1. That's wrong.
+
+Hmm. But wait — maybe the dir stamp is created at session START? The commits show that "Day 206 (09:00): assessment" at 1790068205 = 09:10:05, and dir stamp for that session 10:36:23. The session ran 09:00–10:36. So the dir stamp is definitely the end/near-end.
+
+Hmm, but wait: is the session dir name created at the start of the session (before the push) and the timestamp is from...? Let's check evolve.sh to see how the session dir name is computed.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SESSION_NAME\|SESSION_I… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I was exploring. Let me get back on track — I have plenty of understanding now. But I must be careful: my context budget is largely consumed. Let me be efficient.
+
+Key facts I established:
+- `load_outcomes` returns up to WINDOW_SESSIONS(10) outcome dicts, sorted newest-first, but **strips the session directory name** — returns only data dicts. It has `day`, `ts`, `tasks_succeeded`, etc.
+- `render_outcomes(outcomes)` renders one line per session.
+- `collect_task_commits()` returns `(tasks, reverts)` where tasks are `(day, title)` — no sha, no epoch.
+- `session_dir_stamp(name)` parses `day-N-<stamp>` → compact stamp. `compact_utc_stamp` handles ISO too.
+- `SESSION_DIR_RE` = `^day-(\d+)-(.*)$`.
+- Session dir stamps ≈ session START (dir created at start of session; commits land inside the window). Observed: day-206-20260922T103623Z window holds commits up to 1790091669 (15:41:09Z) then next session starts 15:41:04Z.
+- `run_self_tests()` starts at 3576; entry point `--test`.
+- USAGE at 6617.
+
+Plan:
+1. `collect_task_commits_with_times()` — new function: `git log --format=%H%x09%ct%x09%s` over the window, returning `list[tuple[str,int,str]]` for TASK_COMMIT_RE matches. Actually the task says "Collect commits once, with times: one `git log --format=%H%x09%ct%x09%s` pass". Could I modify `collect_task_commits` to gather this too? That risks changing existing behavior/tests. The task says "Collect commits once" — arguably meaning one git pass for this new feature, not necessarily share with collect_task_commits. To be safe and surgical, I'll add a new function that does its own pass (a separate `git log` invocation). Hmm, "Collect commits once" is about not doing per-session git calls. A separate function doing one pass is fine.
+
+Actually, better: extend `collect_task_commits` to also return timed triples? That changes its signature and its callers/tests. Let me check how it's used: `tasks, reverts = collect_task_commits()` in main. And maybe tests. Let me minimize risk: add `collect_task_commit_times()` returning `(list[(sha, ct, subject)], ok: bool)`.
+
+Need a signal for "git unavailable" → COULD_NOT_CHECK. Return `(commits, ok)`.
+
+2. `SessionRecord` dataclass? Need for each session: name/stamp/start, claim count. I'll define:
+
+```python
+@dataclass
+class SessionClaim:
+    name: str
+    start_ts: int | None   # epoch secs of session start
+    claimed: bool          # tasks_succeeded > 0
+    is_last: bool
+```
+
+Hmm, simpler: a dataclass `SessionWindow(name, start_epoch, is_last)`.
+
+But per the task: data flows from session dirs + outcomes. I'll write:
+
+```python
+def build_session_windows(session_dirs, git_ok) -> list[SessionWindow]
+```
+where session_dirs is list of `(name, claimed)`.
+
+Actually keep it simple and testable: one dataclass `ClaimSession` with fields:
+- `name: str` (session dir name)
+- `stamp: int | None` (epoch seconds parsed from the dir name; None when unparseable)
+- `claimed: bool`
+
+And `classify_session_claims(sessions, commits)` where `commits: list[tuple[str,int,str]] | None` (None = git unavailable).
+
+Sorting: sessions should be sorted ascending by stamp to define windows. Unparseable stamps — what to do? A session with no parseable stamp cannot have its window resolved → COULD_NOT_CHECK. But careful: for window resolution, the NEXT session's start matters for the current session's closing bound. If the next session has an unparseable stamp, then the current session's window... Hmm. Actually if a session is not the last and the next's start is unknown, we cannot close the current window → COULD_NOT_CHECK for that session (silence about a window is not evidence). That's the honest choice.
+
+Wait, but sorting with unparseable stamps: put them where? They have no position. Approach:
+- Sessions with parseable stamps sorted ascending → the ordered list. 
+- Unparseable sessions: classified COULD_NOT_CHECK directly.
+- The **last** session in the ordered-by-stamp list = open window (never flagged). But careful: the "last" is the max stamp. If there's a session dir with an unparseable stamp, we can't know if it's later. The task says "the last session has no closing bound". I'll define last = the session with the greatest parseable stamp. Note the risk: an unparseable-stamp dir might be the newest. Not flagging the newest is the safe direction; and an unparseable one is COULD_NOT_CHECK anyway.
+
+Hmm but there's a subtlety: if a session is unparseable and we treat the max-stamp session as open, could we wrongly flag the max-stamp session? No — we never flag it, we mark it open. What we could get wrong: if the truly-newest session is unparseable, then the max-parseable-stamp session gets flagged as CLAIM_NO_COMMITS when its window would actually extend to the unparseable one. Edge case, acceptable, and honestly it's the "could not check" family. Actually I could be stricter: if any session has an unparseable stamp AND claims, treat as COULD_NOT_CHECK. It already is COULD_NOT_CHECK. Fine.
+
+Window: `[start_i, start_{i+1})` for i < n-1. Last (i = n-1): open.
+
+Classification per session:
+- if not claimed → NO_CLAIM (regardless; nothing to corroborate). Even for the last. Even if git unavailable. Wait — the task says COULD_NOT_CHECK = "loaded window cannot be resolved". If a session didn't claim, NO_CLAIM wins — there's nothing to corroborate, no accusation needed. Order: NO_CLAIM check first? Let's think: git unavailable + claimed → COULD_NOT_CHECK. git unavailable + no claim → NO_CLAIM. Yes, NO_CLAIM first.
+- if claimed:
+  - if stamp is None → COULD_NOT_CHECK
+  - if commits is None (git unavailable) → COULD_NOT_CHECK
+  - if is_last (open window) → hmm, what state? The last session is "never flagged". States are only the four. An open-window claiming session: it can't be CLAIM_NO_COMMITS and it can't be COULD_NOT_CHECK (the window IS resolvable — it's open by design). Options: if its window already holds ≥1 commit → CORROBORATED; if zero → not flagged. So: open window with ≥1 commit → CORROBORATED (genuinely corroborated — there is a commit in its window). Open window with 0 commits → we must not flag it. Which state? I'd add... the task says "these states, none folded into another" listing four. Hmm. Options: give it COULD_NOT_CHECK? That's "window cannot be resolved" — but the window isn't unresolvable, it's just unfinished. Folding it into COULD_NOT_CHECK conflates "still running" with "couldn't check".
+
+Hmm. The task says four states. But it also says "the last session ... is never flagged". To keep to four states without conflation, I could represent open-ness as a separate field: include the session in CORROBORATED when ≥1 commit, and when 0 commits... we need something. 
+
+I think the cleanest: a fifth state `OPEN` (still running, not flagged) would violate "these states, none folded into another"? It says "with these states, none folded into another" — a fifth non-folded state is consistent in spirit. But the receipt/task is fairly prescriptive. Hmm. Risk: the evaluator checks the state names listed. Adding a fifth state that is explicitly documented shouldn't be a failure — but strictly "with these states" enumerates the set.
+
+Alternative: represent open-ness in the counts/summary only, and classify open-window sessions as CORROBORATED only if they have commits, otherwise... Let me re-read: "the **last** session has no closing bound, so its window is **open** and it is never flagged (a session still running has not finished committing — flagging it would be the confident-wrong-diagnosis defect)."
+
+"never flagged" = never rendered as the warning. So I can classify it as COULD_NOT_CHECK? No, that reads as "cannot be resolved".
+
+I'll add a fifth constant `CLAIM_OPEN_WINDOW = "claim-open-window"` and document it as the open-window state — it is not folded into any of the four, and it is the direct implementation of "open and never flagged". Actually hold on. Think about the derived-state asymmetry: the state set must be exhaustive so the renderer's "everything not CLAIM_NO_COMMITS is silent" branch is honest.
+
+Hmm, but there's a risk the evaluator grep's for exactly four states. Let me consider making it a field instead: `ClaimClassification(state, open_window: bool)`. Then state for an open claiming session with 0 commits would be CORROBORATED... no, that's a lie (says "corroborated" when it isn't).
+
+I think a fifth state is the honest engineering choice, and it's what "never flagged" mechanically means. I'll name it `CLAIM_PENDING` and document explicitly: "the fifth value, folded into none of the four; it exists because the open window is a *different fact* from both CORROBORATED and COULD_NOT_CHECK — the session has not finished committing, so there is nothing yet to check". And the renderer treats it as silent.
+
+Hmm, wait. Let me reconsider once more. Also important: the day-level `PRODUCTIVITY_*` set has 5 values with the same pattern (a fifth added later). So a fifth here fits the codebase idiom.
+
+Let me double check the render requirement: "mark only the CLAIM_NO_COMMITS sessions, in one line each". And the summary: "N of M closed sessions: claimed success, no task commits". M = number of closed, claiming sessions. So M = count of sessions that are closed AND claimed (i.e. states CORROBORATED + CLAIM_NO_COMMITS + COULD_NOT_CHECK?).
+
+Hmm, careful: M is the population the count is over: "closed, claiming sessions". A COULD_NOT_CHECK session — is it closed? Its window could not be resolved, so closedness is unknown. Since the line says "N of M closed sessions: claimed success, no task commits" — including unresolvable ones in M would be wrong (they're not known-closed). So M = count of sessions in {CORROBORATED, CLAIM_NO_COMMITS}. Hmm, but then a session with a resolved closed window and 0 commits that couldn't be checked... no.
+
+Let me define precisely:
+- `closed_claiming` = sessions that claimed AND whose window is closed AND whose window is resolvable → states CORROBORATED | CLAIM_NO_COMMITS.
+- M = len(closed_claiming); N = count of CLAIM_NO_COMMITS.
+- If there are COULD_NOT_CHECK claiming sessions, the summary should probably note them separately so the denominator is legible. The task doesn't require it, but the honest-denominator rule suggests naming it. I'll append a short clause: ` (K earlier claiming session(s) whose window could not be resolved — NOT counted here)` when K > 0. That's a deliberate extra, keeping N==0 summary byte-identical when K==0. And the near-miss guard is "a day in which every claiming session is corroborated must render byte-identically to today's output" — hmm, that's about the whole rendered block. If K==0 and N==0, we print the summary line with zero — that's NOT byte-identical to today's output (today prints nothing). 
+
+Wait: "**Near-miss guard:** a day in which every claiming session is corroborated must render **byte-identically** to today's output. Pin it with `assert_eq!` on the rendered block, not a `contains`."
+
+But step 2 says: "plus a single trailing summary count ... If `N == 0`, print the summary line with the zero". Those two are in tension: if N==0 we print a summary line → not byte-identical to today. Hmm!
+
+Unless... the near-miss guard means: the **per-session outcome rows** must be byte-identical (no ⚠ lines added), and the summary line is appended. Re-read: "a day in which every claiming session is corroborated must render byte-identically to today's output."
+
+Hmm, "a day in which every claiming session is corroborated" — the near-miss is about no session being flagged. But the summary line with zero would still change output. Contradiction?
+
+Resolution: make the zero-summary byte-identity test on a specific sub-render. Design: separate the two renders:
+- `render_outcomes(outcomes)` → unchanged rows (byte-identical always; the ⚠ lines are appended? no...)
+
+Hmm. Let me think about a design that satisfies both literally:
+
+Option A: `render_outcomes(outcomes, claims=None)` — when `claims is None` (no classification available), output is byte-identical to today. Plus a separate function `render_session_claims(classes)` that emits the ⚠ lines and the summary. Then the near-miss guard test: `render_outcomes(outcomes)` with default → equals the pinned old output. And when classification is available and N==0, output = old rows + summary line (which is required by step 2).
+
+The "near-miss" then = the outcome rows are byte-identical. I can pin that with `assert_eq!` on the rows block. Hmm, but the task explicitly says "a day in which every claiming session is corroborated must render byte-identically to today's output" — with a summary line appended, the whole block differs.
+
+Unless the summary line is only printed when the outcome window has claiming sessions... which it does in that scenario.
+
+Hmm, maybe I could interpret: the near-miss full-block test is `render_outcomes(outcomes)` (rows only, unchanged signature/behavior) == pinned old string, and the new behavior lives in an additional argument/function. I'll implement:
+
+`render_outcomes(outcomes, session_claims=None)`:
+- rows exactly as today (byte-identical)
+- if `session_claims` is not None: append the ⚠ lines for CLAIM_NO_COMMITS and the summary line.
+
+For the near-miss test I pin: `render_outcomes(fixture)` (no claims) == the exact old two-line string, AND `render_outcomes(fixture, all_corroborated)` starts with / contains the same rows... but to honor "assert_eq! on the rendered block", I can pin the *rows* portion via assert_eq on the block with claims=None, and additionally assert that the full block with classification equals rows + "\n" + summary. That's a strong pin.
+
+Hmm, I want to satisfy the instruction as literally as possible. Alternative reading: maybe the intended near-miss is that the *corroboration side* adds nothing when everything is corroborated, i.e. the guard is that no ⚠ line and no *misleading* content appears. The zero summary is explicitly required by the same task, so the author must have meant the rows. I'll implement both assertions and document the reading explicitly in a comment, saying the rows are pinned byte-identically and the summary line is the one addition required by step 2, with the exact expected full block asserted too.
+
+Actually — better idea that satisfies literally both: make the summary line appear only when N > 0 OR ... no, step 2 explicitly requires the zero case to print. "If N == 0, print the summary line with the zero". So no.
+
+Hmm, hold on. What if the near-miss guard refers to `classify_productivity`/day-level output? "a day in which every claiming session is corroborated must render byte-identically to today's output" — today's output for such a day is `## Productivity\nAll N claiming day(s) produced >=1 task commit...`. Since I'm not changing that, it stays byte-identical. But that's not what they mean either... Actually maybe it is partly: the near-miss is that a fully-corroborated day doesn't set off the new flagging and the day-level Productivity line stays identical. I'll cover both: assert `classify_productivity(...)` render unchanged for such a day AND the rows byte-identical.
+
+OK. Let me now also decide: who builds the session list? `load_outcomes` must return the session dir names. It currently returns only data dicts, deliberately keeping sort metadata on a side tuple so it doesn't mutate parsed objects. I'll change it to return a list of a small dataclass or `(name, data)` tuples. But that changes callers: `render_outcomes(outcomes)`, `claims_by_day(outcomes)`, `render_reverts(reverts, outcomes)`, maybe `render_unchosen_sessions`. Let me check all uses of `load_outcomes` and `outcomes`.
+
+Careful — minimal change: add a parallel function `load_outcome_sessions(audit_dir) -> list[tuple[str, dict]]`? That would double-read files. Alternatively change `load_outcomes` to return `list[dict]` but attach the name — mutating into parsed object is what the docstring warns against.
+
+Cleanest: make `load_outcomes` return `list[OutcomeRecord]` where OutcomeRecord has `.name` and `.data`... but that breaks 3-4 call sites and existing self-tests. Let me check the self-tests referencing load_outcomes and render_outcomes.
+
+Let me grep quickly. I need to be efficient with tokens. Let me do a batch of greps.
+
+Actually, a less invasive option: keep `load_outcomes` as-is (returns dicts) and add:
+
+```python
+def load_session_claims(audit_dir) -> list[ClaimSession]:
+```
+which iterates session dirs (same iteration/filter logic: dir with outcome.json, sorted by session_sort_key desc, take WINDOW_SESSIONS) and yields `(name, tasks_succeeded>0)`. This duplicates the selection logic — which risks drift between the two selections (a real defect class: "two doors, one policy"). Hmm.
+
+Better: refactor `load_outcomes` into a shared collector:
+
+```python
+def iter_session_outcomes(audit_dir) -> list[tuple[str, dict]]:
+    """(session_dir_name, outcome_data), newest-first, capped."""
+```
+and `load_outcomes(audit_dir) -> list[dict]` = `[d for _, d in iter_session_outcomes(audit_dir)]` (byte-identical behavior, single statement of selection). Then `load_claim_sessions(audit_dir)` builds ClaimSession list from `iter_session_outcomes`. Clean, no drift, minimal call-site churn.
+
+Good. Now render integration in main():
+
+```python
+claim_classes = classify_session_claims(
+    load_claim_sessions(audit_dir) if audit_dir is not None else [],
+    collect_task_commit_times()[0] ...,
+)
+```
+Hmm — need git availability flag. `collect_task_commit_times() -> tuple[list[tuple[str,int,str]], bool]`.
+
+But careful: if audit_dir is None → sessions empty → returns [] and `render_session_claims` returns "" → no change. Good.
+
+Also: should the new render be part of `render_outcomes` (appended after rows) or a separate section? The task says "In `render_outcomes`, mark only the CLAIM_NO_COMMITS sessions, in one line each ... plus a single trailing summary count". So it goes inside render_outcomes, right after the rows. I'll add an optional parameter `session_claims: list[SessionClaimClass] | None = None`.
+
+Positional: `render_outcomes(outcomes, claim_classes)`. To keep byte-identity when None, default None.
+
+Now the ⚠ line: `⚠ claimed success, 0 task commits in this session's window`. Should it be attached to the specific session row? "mark only the CLAIM_NO_COMMITS sessions, in one line each". I'll emit after the rows, one line per flagged session, naming the session dir: e.g.
+
+`⚠ day-206 (2026-09-22 10:36): claimed success, 0 task commits in this session's window`
+
+Hmm, "e.g." gives exactly `⚠ claimed success, 0 task commits in this session's window` — but which session? Naming it is needed for legibility. I'll include the session dir name. The count should be over... Let me use `session.name`.
+
+Line format decision:
+```
+⚠ day-206-20260922T103623Z: claimed success, 0 task commits in this session's window
+```
+And summary:
+```
+0 of 12 closed claiming session(s): claimed success, no task commits
+```
+Hmm the task's example wording: `N of M closed sessions: claimed success, no task commits`. I'll use exactly that shape: `{N} of {M} closed sessions: claimed success, no task commits` plus the "over closed, claiming sessions" clarification in the wording. The task: "the honest-denominator rule applies: the count is over *closed, claiming* sessions, not over all sessions — say so in the line's own wording." So: `{N} of {M} closed, claiming session(s): claimed success, no task commits`. I'll do:
+
+`{N} of {M} closed, claiming session(s): claimed success, no task commits in their own window`
+
+Hmm, keep close to the spec's example. Let me use:
+`{N} of {M} closed, claiming session(s): claimed success, no task commits`
+
+And when K (could-not-check claiming) > 0 append: `; {K} more could not be checked (window unresolved) — NOT counted`.
+
+Now the COULD_NOT_CHECK for unresolvable: what makes a window unresolvable?
+1. git unavailable / git log failed → all closed claiming sessions COULD_NOT_CHECK.
+2. session stamp unparseable → that session COULD_NOT_CHECK.
+3. next session's stamp unparseable → can't close this session's window → COULD_NOT_CHECK.
+
+Also depth: shallow clone. Hmm — `--since`? The window pass: `git log --format=%H%x09%ct%x09%s` with no --since (all reachable commits, capped). In a 50-commit shallow clone, older sessions' windows may be **empty because the commits aren't in the clone** — that's the same "outside the clone" problem as PRODUCTIVITY_OUT_OF_RANGE. Should I detect it? The task says COULD_NOT_CHECK covers "shallow clone". Detection: if the oldest reachable commit is newer than the session's window start, we cannot know → COULD_NOT_CHECK. That's implementable: compare `min(commit_epoch)` over all reachable commits vs the window. But I only collect task commits... I'd need the oldest **any** commit's time. I can get that from the same pass: record the minimum epoch of any commit in the log (including non-task ones). Then: a closed window whose `[start, end)` lies entirely before `oldest_commit_epoch` → COULD_NOT_CHECK ("outside the clone") rather than CLAIM_NO_COMMITS. That's the honest fix and cheap: one extra field.
+
+Hmm, but is it in scope? The task lists shallow clone under COULD_NOT_CHECK, so yes, implement it. Careful with false positives: the window's end must be ≤ oldest_commit_epoch (i.e. window entirely older than anything in the clone). Use `end <= oldest_epoch` → could not check. If the window's end > oldest_epoch, at least part of the window is inside the clone. Hmm, partial overlap: commits could have been dropped from the older part. If `start < oldest_epoch <= end`, part of the window is missing. Strictly, that's also uncertain. But being aggressive makes it fire often (the clone is 50 commits ≈ 1 day, and the outcome window is 10 sessions ≈ 3 days, so most older sessions would be COULD_NOT_CHECK). Actually that's honest! Most of the window IS outside the clone. Hmm, but then the instrument's value collapses (everything COULD_NOT_CHECK).
+
+Wait — no. Careful. The audit-log session dirs span day-1..day-207 (621 dirs) but `load_outcomes` takes only the last 10 (newest-first). Those are the most recent ~3 days. The clone has 50 commits ≈ 1 day. So sessions older than ~1 day are genuinely outside the clone → their windows cannot be checked.
+
+Hmm, but the commits in the real repo DO have dates; `git log --since=14days` in main() uses a 14-day window and the clone only has 50 commits, so `collect_task_commits` only sees ~1 day. In practice, on the CI harness, my new reader would say "K could not be checked (outside the clone)". That's an honest reading but makes the instrument near-useless there. Yet it's the same limit `PRODUCTIVITY_OUT_OF_RANGE` already documents.
+
+Decision: implement the boundary check with the *partial* case also COULD_NOT_CHECK? Let me think about which is better for the receipt's goal: making "claimed success, no task commits" per-session checkable. If everything's COULD_NOT_CHECK, the receipt goal fails.
+
+In my dev run here, the clone has 53 commits and I have the audit-log worktree. Let me measure: how many of the last 10 sessions are inside the clone? Sessions: day-204-20260920T235426Z ... day-207-20260923T103556Z. Oldest commit in clone? Let me check: `git log --format=%ct | tail -1`.
+
+Actually, I realize the honest thing: the window dates and the clone. My line above shows HEAD~52 ≈ day-205 22:59? Let me just measure quickly.
+
+Given the ambiguity, I'll implement `oldest_commit_epoch` and mark a closed window as COULD_NOT_CHECK only when the window end is ≤ oldest_commit_epoch (entirely outside the clone) — the unambiguous case. Partial overlap is not detectable without knowing how many commits were dropped, and the day-level check has the same behavior; I'll document that limit explicitly rather than pretend. Hmm, but "silence about a window is not evidence about a session" — partial overlap is exactly uncertain. Ugh.
+
+Hmm, actually I can do better and simply: the window is unresolved if the window's start is before oldest_commit_epoch... no, that flags almost everything.
+
+Let me just measure the real numbers first, then decide. If most windows are fully inside the clone, the simple rule is fine and cheap.
+
+Let me now write code. Plan the implementation concretely, then measure.
+
+Implementation pieces:
+
+```python
+CLAIM_CORROBORATED = "corroborated"
+CLAIM_NO_COMMITS = "claim-no-commits"
+CLAIM_NO_CLAIM = "no-claim"
+CLAIM_COULD_NOT_CHECK = "claim-could-not-check"
+CLAIM_OPEN_WINDOW = "claim-open-window"   # fifth, folded into none
+
+@dataclass
+class ClaimSession:
+    name: str
+    claimed: bool
+
+@dataclass
+class SessionClaim:
+    name: str
+    state: str
+
+def classify_session_claims(sessions, task_commits, git_ok=True, oldest_commit_epoch=None) -> list[SessionClaim]
+```
+
+Hmm, the task's signature: `classify_session_claims(sessions, commits) -> [(session, state)]`. I'll keep a similar shape with two required args plus optional `git_ok`/`oldest_commit_epoch` keyword defaults. Simpler: pass `commits: list[tuple[str,int,str]] | None` where None means git unavailable — then no `git_ok` param. And `oldest_commit_epoch: int | None = None` as an optional kwarg.
+
+Return list of `SessionClaim` (dataclass with name+state). The task says `[(session, state)]`; a dataclass is fine, but to honor "pure function over synthesised inputs" tests compare `.state`.
+
+Implementation:
+
+```python
+def classify_session_claims(sessions, commits, oldest_commit_epoch=None):
+    if not sessions:
+        return []
+    # order by stamp ascending; entries without a parseable stamp are COULD_NOT_CHECK
+    known = []
+    out = []
+    for s in sessions:
+        if session_dir_stamp(s.name) is None:
+            out.append(SessionClaim(s.name, CLAIM_COULD_NOT_CHECK if s.claimed else CLAIM_NO_CLAIM))
+        else:
+            known.append(s)
+    known.sort(key=lambda s: session_dir_stamp(s.name))
+    for i, s in enumerate(known):
+        if not s.claimed:
+            out.append(SessionClaim(s.name, CLAIM_NO_CLAIM)); continue
+        if commits is None:
+            out.append(... COULD_NOT_CHECK); continue
+        start = epoch(session_dir_stamp(s.name))   # need epoch from compact stamp
+        if i == len(known) - 1:
+            window_open = True
+            end = None
+        else:
+            nxt = session_dir_stamp(known[i+1].name)
+            end = epoch(nxt)
+        n_in = number of commits c with start <= ct < end (end None → ct >= start)
+        if window_open:
+            state = CORROBORATED if n_in >= 1 else OPEN_WINDOW
+        elif end <= oldest_commit_epoch (when known):  COULD_NOT_CHECK
+        elif n_in >= 1: CORROBORATED
+        else: CLAIM_NO_COMMITS
+    # order for rendering: newest-first like the rows
+    return sorted(out, ...)
+```
+
+Ordering of the output: the rows are newest-first; the ⚠ lines should be too. I'll sort the flagged output to match the newest-first order. Simplest: after classifying, sort `out` by `session_sort_key(name)` reverse. That works for both known and unknown names.
+
+Need epoch from compact stamp: `compact_utc_stamp` returns `YYYYMMDDTHHMMSSZ`. Convert with `datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc).timestamp()`. Add a small pure helper `compact_utc_epoch(stamp) -> int | None`.
+
+Now the git pass:
+
+```python
+def collect_task_commit_times() -> tuple[list[tuple[str, int, str]], int | None]:
+    """(task commits as (sha, epoch, subject), oldest reachable commit epoch).
+    Returns ([], None) when git is unavailable."""
+    rc, stdout, _ = run_cmd(["git", "log", "--format=%H%x09%ct%x09%s"], timeout=20)
+    if rc != 0: return [], None
+    tasks = []; oldest = None
+    for line in stdout.splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) != 3: continue
+        sha, ct_s, subject = parts
+        try: ct = int(ct_s)
+        except ValueError: continue
+        oldest = ct if oldest is None else min(oldest, ct)
+        if TASK_COMMIT_RE.match(subject): tasks.append((sha, ct, subject))
+    if oldest is None: return [], None   # empty log → cannot check
+    return tasks, oldest
+```
+Wait: `oldest is None` when the log is empty → return None meaning "cannot check". But also rc!=0. Fine. Hmm, but is "no commits at all" → git unavailable? Both mean COULD_NOT_CHECK. OK.
+
+But hold on — `oldest_commit_epoch` computed over the whole log gives the oldest commit in the clone. Good.
+
+Now: rendering.
+
+```python
+def render_session_claims(classes) -> list[str]   # returns extra lines, or []
+```
+and render_outcomes appends.
+
+Also need M and N counting, plus K.
+
+Let me write:
+
+```python
+def render_outcomes(outcomes, session_claims=None) -> str:
+    ... rows ...
+    if session_claims:
+        lines.extend(claim_corroboration_lines(session_claims))
+    return "\n".join(lines)
+```
+where `claim_corroboration_lines` returns the ⚠ lines + summary (possibly empty list when there is nothing to say, e.g. no claiming sessions at all in the window → then print nothing? The task says print the summary with zero if N==0. If M==0 ("no closed claiming sessions"), a "0 of 0" line is noise... but honest. Hmm: "If N == 0, print the summary line with the zero". I'll print it whenever M > 0, and when M == 0 print nothing? That breaks "N==0 → print". Hmm.
+
+Simplest and most defensible: print the summary whenever the classification ran and produced at least one session (session_claims non-empty). M=0 with sessions present means every session had no claim → the line reads `0 of 0 closed, claiming session(s): claimed success, no task commits`. That's odd but honest and arguably noise. Alternatively `No closed, claiming session(s) in this window — nothing to corroborate.` Hmm, that requires a branch. I'll do: if M == 0 → `0 of 0 closed, claiming session(s): claimed success, no task commits — no session in this window claimed a success`. Too long.
+
+Decision: when M == 0, print nothing but... no. Let me just always print the summary when `session_claims` is non-empty. With M=0 it reads "0 of 0 closed, claiming session(s): claimed success, no task commits". And the clarification clause "over closed, claiming sessions, not over all sessions" is in the wording already. Good enough, honest, no branch complexity. Hmm, but is a 0-of-0 line useful? It tells the reader the check ran and the population was empty — which is exactly the honest-denominator property (no vacuity). Keep it. Actually — I'll add the K clause so an all-COULD_NOT_CHECK window reads honestly.
+
+Now self-tests. Need to add to `run_self_tests()`. Let me find where the outcome/productivity tests are to place mine nearby. Let me grep for "render_outcomes(" and "classify_productivity(" in run_self_tests.
+
+Also `assert_true` helper exists. Need a helper for lists — I'll just use `assert_eq` on f-strings of state sequences.
+
+Then ARCHITECTURE.md note. The task says add the ARCHITECTURE.md note for the script. ARCHITECTURE.md is huge; I need to find the `scripts/extract_trajectory.py` entry and append a paragraph. Let me grep for its heading.
+
+Let me get going. First, measurement + locating test sections.
+
+Budget caution: I've used a lot of context. Be surgical, use targeted greps.
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough understanding. Let me check the remaining call sites and test locations, plus the real data.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "load_outcomes\|claims_b…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_productivity sel… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now let me look at the productivity self-test block end (6453-6500) to see where to insert, and check the run_self_tests end.
+
+Also I need to measure the real data: oldest commit epoch vs session windows.
+
+Let me batch: measure, and view lines 6440-6500.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --format=%ct | tail -1 |…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6430,6470p' scripts/extr… ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Oldest commit is 2026-09-22T00:10:44Z (epoch 1790035844). Sessions in the last 10 dirs end at day-207-20260923T103556Z.
+
+So windows:
+- day-204-20260920T235426Z (start 20260920T235426Z) → next day-205-20260921T104515Z. Window entirely before oldest clone commit (2026-09-22T00:10:44Z) → COULD_NOT_CHECK by my boundary rule.
+- day-205-20260921T104515Z → next 20260921T202430Z → entirely outside clone → COULD_NOT_CHECK
+- day-205-20260921T202430Z → 20260922T001039Z → outside clone (< 1790035844) → COULD_NOT_CHECK
+- day-205-20260922T001039Z (00:10:39) → next day-206-20260922T103623Z. start=1790035839, oldest commit=1790035844 → end (1790073383) > oldest → partially/fully inside. Window holds commits from 00:10:44 onward. Task commits in that window: the day-205 22:59 task commits are before... wait no. Let me look: commits at 1790035844 "Day 205: bump skill-evolve counter (5)" — that's not a task commit. Hmm, presumably the day-205-20260922T001039Z session (session_time 22:59) committed earlier at ~1790022xxx, which is outside the clone. So its window [1790035839, 1790073383) with oldest commit 1790035844 contains only "bump counter" commits → CLAIM_NO_COMMITS flagged spuriously! Its real task commits exist but were dropped by the shallow clone.
+
+That's precisely the shallow-clone hazard. With my partial-overlap rule (start < oldest → COULD_NOT_CHECK), this session would be COULD_NOT_CHECK. With only the "entirely outside" rule, it gets falsely flagged. So the false-positive risk is REAL and demonstrated by my own data.
+
+So: the honest rule must be **the window start must be at or after the oldest commit in the clone** for the window to be checkable. I.e. if `start < oldest_commit_epoch` → COULD_NOT_CHECK ("the clone does not reach back to this session's start"). That's defensible: the window is only fully checkable if the clone covers it from its start.
+
+With that rule on my repo: checkable windows are those starting after 1790035844. Which sessions? day-205-20260922T001039Z (1790035839 < → not checkable), day-206-20260922T103623Z (1790073383 ≥ → checkable), day-206-20260922T154104Z (checkable), day-206-20260923T013604Z (checkable), day-207-20260923T103556Z (open).
+
+So in the last 10, M = 3 closed claiming sessions checkable, all corroborated → N=0, K = 4.
+
+Wait, day-206-20260922T103623Z window = [1790073383, 1790091664) → commits: 1790073383 "session wrap-up" (not task), 1790072720 task commit → yes ≥1. CORROBORATED.
+day-206-20260922T154104Z = [1790091664, 1790127364): 1790090609 task ✓.
+day-206-20260923T013604Z = [1790127364, 1790159756): 1790126588 task ✓.
+So N=0, M=3, K=4 → and the open last session day-207-20260923T103556Z... wait, it's in the sessions list (from the audit-log worktree). Its window from 1790159756 open: contains 1790174756/1790174873/1790176339 (the task commit) → CORROBORATED.
+
+And the day-207-20260923T103556Z session is the *newest* overall? Yes (last of the 10).
+
+Hmm, but careful about the open-window rule interacting with the harness: at the time the harness runs (Step 1c, at session start of the *current* session), the newest session dir is the *current* session (already created? Let me check: SESSION_DIR is created at line 3842 which is at session END (Step 7c2). So at Step 1c, the newest session dir is the previous session's, whose commits are all in. Hmm! So in the harness, the "last" session is actually fully closed in practice (its commits landed at its end, before the next session started). The open-window rule is still the right safety rule (a session still running hasn't finished committing), just usually unreachable — same as the render_productivity "floor, not a live branch". I should state that honestly, like the codebase does elsewhere.
+
+Hmm, is that right? Let me check: is SESSION_DIR created only at line 3842? Let me grep SESSION_DIR assignments.
+
+Also: does the audit-log dir for a session get pushed at session end too? Yes (Step 7c2 pushes session evidence). So the newest audit dir = previous session, complete.
+
+So the open window is the *floor*, and the order is: previous-session dirs sorted by stamp; the newest one's window is open (correct by construction: no later session exists yet — but its commits are all in). Good — so in practice the newest session is checkable-in-fact but classified open. Should the open one be CORROBORATED when it has commits (yes, per my design) and PENDING when not? In the harness, the newest is the previous session which did commit → CORROBORATED. So the fifth state rarely appears. That's fine and I'll document it.
+
+Hmm, wait. There's a subtlety: should the open session count in M? "N of M closed sessions" → M excludes open. Good.
+
+Now let me also double check the `start < oldest` rule doesn't produce false COULD_NOT_CHECK in a full clone: in a full clone oldest_commit_epoch = repo's first commit (day 1), so every window start > it → checkable. 
+
+Now, one more design question: which sessions enter the classification? `load_outcomes`/`iter_session_outcomes` gives the last WINDOW_SESSIONS(10) dirs having outcome.json, newest-first, across day boundaries (not just today). The task says "a day-level state ... so a sibling session's commits hide it" and "two sessions on one day, one corroborated and one not — which is the row the day-level check cannot see". Good, the window is the same 10 sessions.
+
+Also — the audit-log fetch is `--depth 50`, so the worktree has all 621 session dirs? The audit-log branch has full history of session dirs it seems (621 dirs, and the fetch is depth 50 of the audit-log branch — so the worktree has the last 50 commits of audit-log, each adding ~3 sessions → ~150 dirs? but we see 621 dirs, so the audit-log clone already existed with more depth locally). In CI a fresh fetch with depth 50 would give fewer session dirs. Whatever — `iter_session_outcomes` takes the newest 10.
+
+Alright. Now let me write the code.
+
+Also required: "Collect commits once, with times: one git log --format=%H%x09%ct%x09%s pass". I'll implement `collect_task_commit_times()` — one pass — returning triples + oldest epoch.
+
+Let me now write all the code in one go.
+
+Placement: I'll put the new infra right after `render_outcomes`... but `compact_utc_stamp`/`session_dir_stamp` are defined at line ~1900, AFTER render_outcomes (line 176). Python resolves at call time, so order doesn't matter for functions. But for readability and to keep the productivity section (2550+) together, I'll add the new session-level block right after the productivity block (~line 2850) since it's conceptually the session-level sibling. Hmm — but `render_outcomes` needs to call it (it's fine, runtime resolution).
+
+Actually better: put the new code just before the productivity section (which starts at 2537 with the comment about load_outcomes being the CLAIM) so the two readers are adjacent and the "day-level vs session-level" contrast is legible. I'll insert after the PRODUCTIVITY constants? The productivity block starts with a comment header. Let me insert the new block right after `render_productivity`'s end (before "--- Counterfactual pairing coverage") — i.e. right after line ~2840. That keeps session-level (mine) adjacent to day-level (productivity), with mine after.
+
+Hmm, but `render_outcomes` at line 176 will reference constants/types defined at 2800 — fine at runtime.
+
+Actually cleaner: put the *pure core + constants* near the productivity block, and have `render_outcomes` call `claim_corroboration_lines(...)` defined there. Yes.
+
+Let me write it. I need the exact text around line 2836-2840 to anchor the insert.
+
+Let me view lines 2826-2845.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.7s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2826,2846p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^SESSION_DIR\|SESSION_D… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: SESSION_DIR only at 3842 (session end, Step 7c2), so the newest audit dir is always a finished session. The open-window is a floor. I'll document that.
+
+Now write the new block. Insert after the `render_productivity` return (line 2839) and before the `# --- Counterfactual pairing coverage` comment.
+
+New code:
+
+```python
+# --- Session-level corroboration (Receipt #912) ---
+#
+# THE DAY IS THE WRONG JOIN KEY, AND THIS IS THE OTHER ONE. `classify_productivity`
+# below ... (above) answers a DAY-level question ...
+```
+
+Let me write it carefully with the doc comments in the house style (long, opinionated, stated limits).
+
+```python
+# --- Session-level corroboration: one claim, one window (Receipt #912) ---
+#
+# `classify_productivity` above asks a DAY-level question and keeps it: on any
+# day where one session landed a task commit the day is in
+# `days_with_task_commits`, so a SIBLING session on that same day that claimed
+# success and produced nothing is invisible to it. With a 3-sessions/day
+# cadence that is the common case, and it is the exact case the Day-196 design
+# comment was written about. So this reader joins on the SESSION instead: each
+# claim is checked against the session's OWN window, derived from the audit-log
+# directory stamps, and the two readers are deliberately kept side by side --
+# neither is a replacement for the other and the day-level check is untouched.
+
+CLAIM_CORROBORATED = "corroborated"
+CLAIM_NO_COMMITS = "claim-no-commits"
+CLAIM_NO_CLAIM = "no-claim"
+CLAIM_COULD_NOT_CHECK = "claim-could-not-check"
+# THE FIFTH VALUE, FOLDED INTO NONE OF THE FOUR. An OPEN window is a different
+# fact from both CORROBORATED (no commits yet, and that is not a miss) and
+# COULD_NOT_CHECK (the window IS resolvable -- it simply has no closing bound
+# yet). Folding it into either would make the flag fire on a session that has
+# not finished committing, which is the confident-wrong-diagnosis defect.
+#
+# REACHABILITY, STATED RATHER THAN IMPLIED: this is the RENDERER'S FLOOR, in
+# the same sense `observed_label_clause`'s empty branch is -- `SESSION_DIR` is
+# created at session END (`scripts/evolve.sh` Step 7c2), so the newest audit
+# directory read here is always a session that has already finished
+# committing, and a live run reaches CORROBORATED instead. Kept because a
+# session directory can exist before its commits do (a pushed-but-not-finished
+# session, a hand-built fixture), and flagging it would be a false alarm on the
+# one signal whose value is that it fires rarely.
+CLAIM_OPEN_WINDOW = "claim-open-window"
+```
+
+Then dataclasses + helpers.
+
+```python
+@dataclass
+class ClaimSession:
+    """One audit-log session directory and what it CLAIMED."""
+    name: str
+    claimed: bool
+
+
+@dataclass
+class SessionClaim:
+    """One session's corroboration state. `name` is carried so a flagged
+    session can be NAMED at the render site -- an accusation a reader cannot
+    attach to a session is unactionable."""
+    name: str
+    state: str
+
+
+def iter_session_outcomes(audit_dir: Path) -> list[tuple[str, dict]]:
+    """(session dir name, outcome data), newest-first, capped at WINDOW_SESSIONS.
+
+    ONE statement of WHICH sessions are in the window, shared by
+    `load_outcomes` (which drops the name) and `load_claim_sessions` (which
+    needs it). Two copies of this selection would be the 'two doors, one
+    policy' shape: they agree today and drift on their own schedule.
+    """
+    ...
+```
+I'll refactor load_outcomes body into this and have load_outcomes map it.
+
+Then:
+
+```python
+def load_claim_sessions(audit_dir: Path) -> list[ClaimSession]:
+    ours = []
+    for name, data in iter_session_outcomes(audit_dir):
+        got = data.get("tasks_succeeded", 0)
+        if isinstance(got, bool) or not isinstance(got, int) or got < 0:
+            got = 0
+        ours.append(ClaimSession(name=name, claimed=got > 0))
+    return ours
+```
+Note: `claimed` computed with the SAME defensiveness as claims_by_day. Hmm, a non-integer tasks_succeeded → treated as 0 → NO_CLAIM. Is that honest or should it be COULD_NOT_CHECK? claims_by_day coerces to 0. For a *claim* (accusation direction), coercing a malformed value to "claimed nothing" is the silent direction. Hmm. But to keep one statement of "what did this session claim", I reuse the same rule as claims_by_day. I'd rather be explicit: malformed → claimed=False (no accusation) and document: "a malformed `tasks_succeeded` is not a claim — refusing to accuse on an unreadable field, matching `claims_by_day`'s coercion so the two readers cannot disagree about the same field." Good.
+
+```python
+def compact_utc_epoch(stamp) -> int | None:
+    """Pure: the epoch second of a compact Zulu stamp ... None for anything
+    else, so a malformed stamp stays UNKNOWN rather than being coerced."""
+    s = compact_utc_stamp(stamp)   # also accepts ISO? no: compact_utc_stamp normalises both shapes
+    if s is None: return None
+    try:
+        dt = datetime.strptime(s, "%Y%m%dT%H%M%SZ")
+    except ValueError:
+        return None
+    return int(dt.replace(tzinfo=timezone.utc).timestamp())
+```
+Is `datetime` imported with timezone? Yes (used in main: datetime.now(timezone.utc)).
+
+```python
+def collect_task_commit_times() -> tuple[list[tuple[str, int, str]], int | None]:
+    """ONE git pass: [(sha, epoch_secs, subject)] for TASK commits, plus the
+    epoch of the OLDEST commit reachable in this clone.
+
+    Returns ([], None) when git is unavailable, the log is empty, or a line is
+    malformed... """
+```
+Careful: if the log is empty (fresh repo), oldest=None → COULD_NOT_CHECK. Fine.
+Malformed line: skip it, but don't let a malformed line poison oldest. Skipping is fine.
+
+```python
+def classify_session_claims(sessions, commits, oldest_commit_epoch=None) -> list[SessionClaim]:
+```
+Pure. Signature per task: `(sessions, commits)`. commits = list of (sha, epoch, subject) or None.
+
+Body:
+
+```python
+    if not sessions:
+        return []
+    states: dict[str, str] = {}
+    dated: list[tuple[int, ClaimSession]] = []
+    for s in sessions:
+        epoch = compact_utc_epoch(session_dir_stamp(s.name))
+        if not s.claimed:
+            states[s.name] = CLAIM_NO_CLAIM
+        elif epoch is None:
+            # a session directory whose stamp will not parse: its window is
+            # unresolvable, which is NOT the same fact as "it produced nothing".
+            states[s.name] = CLAIM_COULD_NOT_CHECK
+        else:
+            dated.append((epoch, s, ...))
+```
+Hmm, I need both epoch and ClaimSession. Let me restructure:
+
+```python
+    ordered = []
+    for s in sessions:
+        ep = compact_utc_epoch(session_dir_stamp(s.name))
+        if ep is not None:
+            ordered.append((ep, s))
+    ordered.sort(key=lambda t: t[0])
+    states = {}
+    for s in sessions:
+        if not s.claimed:
+            states[s.name] = CLAIM_NO_CLAIM
+    for i, (start, s) in enumerate(ordered):
+        if not s.claimed:
+            states[s.name] = CLAIM_NO_CLAIM
+            continue
+        if commits is None:
+            states[s.name] = CLAIM_COULD_NOT_CHECK
+            continue
+        is_last = i == len(ordered) - 1
+        end = None if is_last else ordered[i+1][0]
+        # CLONE BOUNDARY: a window that starts before the oldest commit this
+        # clone can see is NOT checkable ...
+        if oldest_commit_epoch is not None and start < oldest_commit_epoch:
+            states[s.name] = CLAIM_COULD_NOT_CHECK
+            continue
+        n = sum(1 for _, ct, _ in commits if ct >= start and (end is None or ct < end))
+        if is_last:
+            states[s.name] = CLAIM_CORROBORATED if n else CLAIM_OPEN_WINDOW
+        else:
+            states[s.name] = CLAIM_CORROBORATED if n else CLAIM_NO_COMMITS
+    # sessions whose stamp did not parse
+    for s in sessions:
+        if s.name not in states:
+            states[s.name] = CLAIM_COULD_NOT_CHECK if s.claimed else CLAIM_NO_CLAIM
+    return [SessionClaim(name=s.name, state=states[s.name]) for s in sorted(sessions, key=lambda s: session_sort_key(s.name), reverse=True)]
+```
+Wait: careful with duplicate names? Not possible.
+
+Hmm, one issue: `oldest_commit_epoch is None` — when commits is not None but oldest is None → I return ([], None) from the collector, so commits would be []. Actually I'll make the collector return commits=[] and oldest=None when empty, and in classify, `commits is None` → COULD_NOT_CHECK. But `commits == []` with oldest None... Let me normalize: the collector returns `None` for the whole thing when git fails or log is empty. So signature: `collect_task_commit_times() -> tuple[list|None, int|None]`. Then classify handles `commits is None` → COULD_NOT_CHECK. And if commits is a list (maybe empty) with oldest_commit_epoch set, proceed. If commits==[] and oldest set (no task commits in the clone at all, but other commits exist) → then n=0 for every closed checkable window → CLAIM_NO_COMMITS. Is that right? If the clone covers the window (start >= oldest) and holds no task commits in it, that's a genuine finding. Yes.
+
+Actually simpler: pass oldest_commit_epoch explicitly as a kwarg and let `commits=None` mean unknown. OK as designed.
+
+Now the render:
+
+```python
+def claim_corroboration_lines(claims: list[SessionClaim]) -> list[str]:
+    """The per-session flags + the trailing count over the population they were
+    drawn from. [] when there is nothing to render.
+    ...
+    """
+    if not claims:
+        return []
+    closed_claiming = [c for c in claims if c.state in (CLAIM_CORROBORATED, CLAIM_NO_COMMITS)]
+    flagged = [c for c in claims if c.state == CLAIM_NO_COMMITS]
+    unchecked = [c for c in claims if c.state == CLAIM_COULD_NOT_CHECK]
+    lines = [f"⚠ {c.name}: claimed success, 0 task commits in this session's window" for c in flagged]
+    if not closed_claiming and not unchecked:
+        return lines   # hmm
+```
+
+Hmm, what if there are no claiming sessions at all (all NO_CLAIM)? Then closed_claiming=[] and unchecked=[] → summary would be "0 of 0 closed, claiming session(s)...". I decided to print it. But if the window has NO sessions classified at all ([]) we return []. Since `claims` is non-empty whenever the audit dir read anything... Let me just always emit the summary when `claims` is non-empty:
+
+```python
+    lines.append(
+        f"{len(flagged)} of {len(closed_claiming)} closed, claiming session(s): "
+        f"claimed success, no task commits"
+    )
+    if unchecked:
+        lines.append(
+            f"{len(unchecked)} further claiming session(s) could NOT be checked "
+            f"(window unresolved) — NOT counted above."
+        )
+    return lines
+```
+Hmm, the summary wording per the spec example is "N of M closed sessions: claimed success, no task commits". I add ", claiming" for the honest denominator. Good.
+
+Byte-identity check for near-miss: when everything is correlated, we get rows + summary line. So the *rows* aren't byte identical to "today's output" as a whole block... I'll pin:
+- `render_outcomes(fixture)` (no claims arg) == today's exact block (byte-identical transfer) ✓ — this is the strongest possible statement of "the rows didn't move".
+- `render_outcomes(fixture, all_corroborated)` == today's block + "\n" + summary (no ⚠ line) — the near-miss: no session is flagged, and the only difference is the required count line. I'll assert with assert_eq on the full block, and comment that the zero-count summary is required by step 2 so full byte-identity would contradict the spec; the flagging half is what the near-miss protects.
+
+That's honest and documented. 
+
+Now, is the ⚠ line "mark only the CLAIM_NO_COMMITS sessions, in one line each" satisfied? Yes.
+
+Should the flag line include the day/ts for legibility? The name `day-206-20260922T103623Z` carries both. Good.
+
+Also the task says the ⚠ lines come "in render_outcomes" — yes.
+
+One more: emoji/glyph. `render_outcomes` already uses ✅/⚠️/❌/•. Using ⚠ is consistent. Is there a plain-output gate for this script? `is_plain_output()` is in cli.rs (Rust), not this script. Fine.
+
+Now: main() wiring.
+
+```python
+    outcomes = load_outcomes(audit_dir) if audit_dir is not None else []
+    claim_sessions = load_claim_sessions(audit_dir) if audit_dir is not None else []
+    task_commit_times, oldest_commit_epoch = collect_task_commit_times()
+    session_claims = classify_session_claims(claim_sessions, task_commit_times, oldest_commit_epoch)
+```
+Hmm, ordering: `tasks, reverts = collect_task_commits()` comes right after outcomes. I'll insert my calls next to it.
+
+But careful: `classify_session_claims([], ...)` returns [] → render_outcomes gets [] → falsy → no extra lines. Good: when audit_dir is None, nothing changes.
+
+Then `s = render_outcomes(outcomes)` → `render_outcomes(outcomes, session_claims)`.
+
+Hmm: one subtlety — if `audit_dir is None` but `session_claims` = [] and outcomes = [] → render_outcomes returns "" early. Fine.
+
+Another: `data_sections` accounting uses `s` for outcomes; unchanged.
+
+Cost: one extra `git log` pass (~50 commits). Fine.
+
+Now self-tests. Add a new block in run_self_tests. Where? Right after the productivity block ends. Let me find the end of the productivity test block (~6500). Let me view 6470-6560 to find a good anchor and the surrounding style.
+
+Let me now write the code. I'll do the main insert first (after render_productivity), then the render_outcomes change, then load_outcomes refactor, then main wiring, then tests.
+
+Given context pressure, let me be efficient: do the edits with python heredocs? No — use edit_file with exact anchors. Let me view the exact anchor text for load_outcomes (lines 144-173) which I have from earlier read:
+
+```
+def load_outcomes(audit_dir: Path) -> list[dict]:
+    """Read last N outcome.json files, sorted newest-first by session dir name
+    (`day-N-<timestamp>`), falling back to mtime only for dirs that don't match
+    the pattern (those rank below all parsed ones).
+    Returns dicts unchanged from outcome.json — sort metadata is kept on a
+    side tuple, never mutated into the parsed object (defends against keys
+    like `_mtime` colliding with future schema additions)."""
+    if not audit_dir.exists() or not audit_dir.is_dir():
+        return []
+    entries: list[tuple[tuple[int, int, str], float, dict]] = []
+    for child in audit_dir.iterdir():
+        if not child.is_dir():
+            continue
+        outcome = child / "outcome.json"
+        if not outcome.is_file():
+            continue
+        try:
+            data = json.loads(outcome.read_text(errors="replace"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            warn(f"skipped malformed {outcome}: {e}")
+            continue
+        try:
+            mtime = outcome.stat().st_mtime
+        except OSError as e:
+            warn(f"could not stat {outcome}: {e}")
+            mtime = 0.0
+        entries.append((session_sort_key(child.name), mtime, data))
+    entries.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    # Return only the data dicts, but keep the original keys intact.
+    return [t[2] for t in entries[:WINDOW_SESSIONS]]
+```
+
+Refactor:
+```python
+def iter_session_outcomes(audit_dir: Path) -> list[tuple[str, dict]]:
+    """(session dir name, outcome data), newest-first, capped at WINDOW_SESSIONS.
+
+    ONE statement of WHICH sessions are in the window ... The name is carried
+    because `load_claim_sessions` needs it (Receipt #912) and a second copy of
+    this selection would be two doors agreeing today and drifting later.
+    """
+    ... (same body, returns [(child.name, data)])
+def load_outcomes(audit_dir) -> list[dict]:
+    """... Returns dicts unchanged from outcome.json ..."""
+    return [data for _, data in iter_session_outcomes(audit_dir)]
+```
+
+Careful: `entries.append((session_sort_key(child.name), mtime, data))` → need name too. I'll build `entries: list[tuple[tuple, float, str, dict]]` with `(key, mtime, child.name, data)`.
+
+Let me write the edits.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.1s (2 ✓)
+
+Now I'll implement. First, the shared session-selection refactor:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (10 → 16 lines)
+  - def load_outcomes(audit_dir: Path) -> list[dict]:
+  -     """Read last N outcome.json files, sorted newest-first by session dir name
+  -     (`day-N-<timestamp>`), falling back to mtime only for dirs that don't match
+  -     the pattern (those rank below all parsed ones).
+  -     Returns dicts unchanged from outcome.json — sort metadata is kept on a
+  -     side tuple, never mutated into the parsed object (defends against keys
+  -     like `_mtime` colliding with future schema additions)."""
+  + def iter_session_outcomes(audit_dir: Path) -> list[tuple[str, dict]]:
+  +     """Read last N outcome.json files as (session dir name, data), newest-first,
+  +     sorted by session dir name (`day-N-<timestamp>`), falling back to mtime only
+  +     for dirs that don't match the pattern (those rank below all parsed ones).
+  + 
+  +     ONE statement of WHICH sessions are in the window, shared by
+  +     `load_outcomes` (which drops the name) and `load_claim_sessions` (which
+  +     needs it — Receipt #912). Two copies of this selection would be the "two
+  +     doors, one policy" shape: they agree today and drift on their own schedule.
+  + 
+  +     Sort metadata is kept on a side tuple, never mutated into the parsed
+  +     object (defends against keys like `_mtime` colliding with future schema
+  +     additions)."""
+  ... (4 more lines)
+ ✓ (1m 6s)
+  - def load_outcomes(audit_dir: Path) -> list[dict]:
+  -     """Read last N outcome.json files, sorted newest-first by session dir name
+  -     (`day-N-<timestamp>`), falling back to mtime only for dirs that don't match
+  -     the pattern (those rank below all parsed ones).
+  -     Returns dicts unchanged from outcome.json — sort metadata is kept on a
+  -     side tuple, never mutated into the parsed object (defends against keys
+  -     like `_mtime` colliding with future schema additions)."""
+  + def iter_session_outcomes(audit_dir: Path) -> list[tuple[str, dict]]:
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 11 lines)
+  -         entries.append((session_sort_key(child.name), mtime, data))
+  +         entries.append((session_sort_key(child.name), mtime, child.name, data))
+        entries.sort(key=lambda t: (t[0], t[1]), reverse=True)
+  -     # Return only the data dicts, but keep the original keys intact.
+  -     return [t[2] for t in entries[:WINDOW_SESSIONS]]
+  +     # Return the name beside the data, with the keys intact.
+  +     return [(t[2], t[3]) for t in entries[:WINDOW_SESSIONS]]
+  + 
+  + 
+  + def load_outcomes(audit_dir: Path) -> list[dict]:
+  +     """The outcome dicts of the window, unchanged from outcome.json.
+  +     Delegates the selection to `iter_session_outcomes` so there is exactly one
+  +     statement of which sessions are in the window."""
+  +     return [data for _, data in iter_session_outcomes(audit_dir)]
+ ✓ (1m 6s)
+  -         entries.append((session_sort_key(child.name), mtime, data))
+  +         entries.append((session_sort_key(child.name), mtime, child.name, data))
+        entries.sort(key=lambda t: (t[0], t[1]), reverse=True)
+  -     # Return only the data dicts, but keep the original keys intact.
+  -     return [t[2] for t in entries[:WINDOW_SESSIONS]]
+  +     # Return the name beside the data, with the keys intact.
+  +     return [(t[2], t[3]) for t in entries[:WINDOW_SESSIONS]]
+  + 
+  ... (6 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the render_outcomes change. The current body ends with `return "\n".join(lines)`. Let me edit signature + append.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 13 lines)
+  - def render_outcomes(outcomes: list[dict]) -> str:
+  + def render_outcomes(outcomes: list[dict], session_claims=None) -> str:
+  +     """One line per session's CLAIM, plus — when `session_claims` is supplied —
+  +     the SESSION-level corroboration beside it (Receipt #912).
+  + 
+  +     The rows themselves are UNCHANGED and are byte-identical to the
+  +     pre-#912 output when the argument is omitted, which is the whole
+  +     near-miss surface. A reader of the old block sees `tasks 2/2 ✅` and
+  +     cannot tell a corroborated session from an uncorroborated one; the
+  +     appended lines are what makes that answerable, and they are appended
+  +     rather than interleaved so the claim rows keep their pinned rendering.
+  +     """
+        if not outcomes:
+            return ""
+ ✓ (1m 6s)
+  - def render_outcomes(outcomes: list[dict]) -> str:
+  + def render_outcomes(outcomes: list[dict], session_claims=None) -> str:
+  +     """One line per session's CLAIM, plus — when `session_claims` is supplied —
+  +     the SESSION-level corroboration beside it (Receipt #912).
+  + 
+  +     The rows themselves are UNCHANGED and are byte-identical to the
+  +     pre-#912 output when the argument is omitted, which is the whole
+  +     near-miss surface. A reader of the old block sees `tasks 2/2 ✅` and
+  ... (6 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (2 → 3 lines)
+            lines.append(f"day-{day} ({ts}): tasks {succeeded}/{attempted} {icon} — {note}")
+  +     lines.extend(claim_corroboration_lines(session_claims or []))
+        return "\n".join(lines)
+ ✓ (1m 6s)
+            lines.append(f"day-{day} ({ts}): tasks {succeeded}/{attempted} {icon} — {note}")
+  +     lines.extend(claim_corroboration_lines(session_claims or []))
+        return "\n".join(lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the core: the session-level block, inserted right after render_productivity.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (5 → 261 lines)
+            "## Productivity\n"
+            f"All {prod.claiming_days} claiming day(s) produced >=1 task commit. "
+            f"Says work LANDED, never that it was GOOD."
+  +     )
+  + 
+  + 
+  + # --- Session-level corroboration: one claim, one window (Receipt #912) ---
+  + #
+  + # THE DAY IS THE WRONG JOIN KEY, AND THIS IS THE SIBLING THAT FIXES IT.
+  + # `classify_productivity` above answers a DAY-level question and is left
+  + # EXACTLY as it is — it answers a different question and it is already tested.
+  + # But both of its joins key on the day number, and the cadence is now 3
+  + # sessions/day: on any day where ONE session lands a task commit the day is in
+  + # `days_with_task_commits`, so a SIBLING session on that same day which claimed
+  + # success and produced nothing is invisible. That is the exact case the
+  + # Day-196 design comment was written about, and it is the common case at this
+  + # cadence rather than an edge.
+  + #
+  + # So this reader joins on the SESSION: each claim is checked against the
+  + # session's OWN window, derived from the audit-log directory stamps. The two
+  ... (240 more lines)
+ ✓ (1m 6s)
+            "## Productivity\n"
+            f"All {prod.claiming_days} claiming day(s) produced >=1 task commit. "
+            f"Says work LANDED, never that it was GOOD."
+  +     )
+  + 
+  + 
+  + # --- Session-level corroboration: one claim, one window (Receipt #912) ---
+  + #
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wire it into main():
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (2 → 11 lines)
+        outcomes = load_outcomes(audit_dir) if audit_dir is not None else []
+        tasks, reverts = collect_task_commits()
+  +     # Receipt #912: the SESSION-level sibling of the productivity check. Same
+  +     # window, same claim field, one join key finer — see the block above
+  +     # `ClaimSession`. Collected beside the day-level facts so the two are read
+  +     # from one pass of the same evidence rather than two clocks.
+  +     claim_sessions = load_claim_sessions(audit_dir) if audit_dir is not None else []
+  +     task_commit_times, oldest_commit_epoch = collect_task_commit_times()
+  +     session_claims = classify_session_claims(
+  +         claim_sessions, task_commit_times, oldest_commit_epoch
+  +     )
+ ✓ (1m 6s)
+        outcomes = load_outcomes(audit_dir) if audit_dir is not None else []
+        tasks, reverts = collect_task_commits()
+  +     # Receipt #912: the SESSION-level sibling of the productivity check. Same
+  +     # window, same claim field, one join key finer — see the block above
+  +     # `ClaimSession`. Collected beside the day-level facts so the two are read
+  +     # from one pass of the same evidence rather than two clocks.
+  +     claim_sessions = load_claim_sessions(audit_dir) if audit_dir is not None else []
+  +     task_commit_times, oldest_commit_epoch = collect_task_commit_times()
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 1 lines)
+  -     s = render_outcomes(outcomes)
+  +     s = render_outcomes(outcomes, session_claims)
+ ✓ (1m 6s)
+  -     s = render_outcomes(outcomes)
+  +     s = render_outcomes(outcomes, session_claims)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me run it end-to-end on the real repo before writing tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_AUDIT_DIR=/tmp/traj-audit/s… ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+It works. Reading today: `0 of 4 closed, claiming session(s)` — 4 closed claiming sessions checkable, 6 could not be checked (clone boundary). This is the honest reading, and it names the denominator.
+
+Hmm — is the "6 could not be checked" clause too dominant? It's honest. My earlier manual calc: closed claiming = day-206 (3 of them) + day-205-20260922T001039Z? No — day-205-20260922T001039Z start=1790035839 < oldest=1790035844 → COULD_NOT_CHECK. So closed = day-206 ×3 + ... let me see which 4. Also day-204, day-205 ×2 = 5, plus day-205-20260922T001039Z = 6 COULD_NOT_CHECK. Closed 4 = 3×day-206 + ? Hmm, the window has 10 sessions: day-204 ×3, day-205 ×3, day-206 ×3, day-207 ×1. Claiming: all 10. Checkable closed: day-206×3 = 3. Hmm, that gives 3 not 4. So one more: oldest_commit_epoch = 1790035844 (2026-09-22T00:10:44Z). Which session starts ≥ that? day-205-20260922T001039Z start 1790035839 → no. Hmm... unless `git log` in this working tree (not shallow-50) has more commits — this local clone has 53 commits but maybe more history available? `git rev-list --count HEAD` = 53, so oldest is 1790035844.
+
+Wait, let me recount: maybe day-205-20260922T001039Z's start... `20260922T001039Z` = 1790035839. oldest=1790035844. 1790035839 < 1790035844 → COULD_NOT_CHECK. So checkable closed = 3 (day-206 dirs) and open last = day-207 (CORROBORATED). Total = 10 = 3 closed claiming + 6 unchecked + 1 open. So closed should be 3, not 4!
+
+Unless... `load_outcomes`/`iter_session_outcomes` returns 10, and one of them is day-204-20260920T102623Z etc. Let me debug directly.
+
+Actually maybe the local clone's `git log` includes commits from other refs? `git log` without a ref = HEAD. Hmm, 53 commits. Let me just debug print.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines) ✓ (95ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+4 corroborated (including the open last = day-207), 3 closed corroborated + 1 open. But my render says "0 of 4 closed". So `closed` counted 4 — meaning it counted... let me check: `closed = [c for c in claims if c.state in (CLAIM_CORROBORATED, CLAIM_NO_COMMITS)]` → 4 CORROBORATED (including the open one!). Bug: the open-window session that happens to be corroborated is indistinguishable from a closed corroborated one, because I collapsed the open-ness into the state only when it has no commits.
+
+So M inflates by 1 (the open session). Need to carry open-ness separately: `SessionClaim(name, state, window_open: bool = False)`. Then `closed` = corroborated/no-commits AND not window_open.
+
+Cleaner: give the open+corroborated case its own state? The task's list says CORROBORATED = "the session claimed tasks_succeeded > 0 and its own window holds ≥1 task commit" — which is true for the open session too. So CORROBORATED is right, but the *population* count must exclude open windows. So add a `window_open: bool` field to SessionClaim. That's honest and minimal.
+
+Hmm, or should the open-window session be CLAIM_OPEN_WINDOW even when corroborated? Then CORROBORATED strictly means "closed window with ≥1 commit". But the task explicitly defines CORROBORATED including the open case ("its own window holds ≥1 task commit") and says the open one is "never flagged" — so it should be *silent*, i.e. not CLAIM_OPEN_WINDOW-rendered (both are silent anyway). Either way it's silent. I prefer keeping CORROBORATED for the truthful "we saw its commit" and adding `window_open` to keep the denominator honest.
+
+Let me implement: add field `window_open: bool = False`, set it for the last session in the dated order, and use it in `claim_corroboration_lines` to exclude from `closed`.
+
+Also the summary line should probably note the open session? "M closed, claiming session(s)" already implies the open one isn't counted. Good enough; but the reader might wonder. I'll add the open count to the unchecked... no — unchecked means "could not check". I could add to the sentence: `; the open (still-running) session is not counted`. Only when there is one. Hmm, complexity vs. honesty. Since the open window is a floor (unreachable in a live run because SESSION_DIR is created at session end), a clause about it would be noise. But when it IS present with zero commits (CLAIM_OPEN_WINDOW state), I should say so — otherwise a claiming session silently disappears from the accounting entirely, which is the "absence" defect. So: if any state == CLAIM_OPEN_WINDOW, add a clause `; 1 open (still-running) session(s) not counted`.
+
+Good. Implement now.
+────────────────────────────────────────────────────────────────────────────────
+
+One bug: the open-window session that has a commit is counted as "closed". Fixing with an explicit field:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (2 → 9 lines)
+        name: str
+        state: str
+  +     # CARRIED APART FROM `state` ON PURPOSE. An open-window session that
+  +     # already holds a commit is CORROBORATED -- that is a true observation --
+  +     # but it is NOT a closed session, so it must not inflate the denominator
+  +     # the summary line names. Collapsing the two would make `M` in
+  +     # "N of M closed, claiming session(s)" count a session that has not
+  +     # finished, which is the same defect one level up.
+  +     window_open: bool = False
+ ✓ (1m 6s)
+        name: str
+        state: str
+  +     # CARRIED APART FROM `state` ON PURPOSE. An open-window session that
+  +     # already holds a commit is CORROBORATED -- that is a true observation --
+  +     # but it is NOT a closed session, so it must not inflate the denominator
+  +     # the summary line names. Collapsing the two would make `M` in
+  +     # "N of M closed, claiming session(s)" count a session that has not
+  +     # finished, which is the same defect one level up.
+  +     window_open: bool = False
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to continue. I was mid-edit: I added `window_open: bool = False` to SessionClaim. Now I need to:
+1. Set `window_open=True` in the states dict / classification.
+2. Use it in `claim_corroboration_lines` for the denominator.
+
+Currently `classify_session_claims` stores state in a dict `states`. I need a parallel dict for open windows. Let me update.
+
+Let me look at the current code around classify_session_claims and claim_corroboration_lines.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "window_open\|states\[s.… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3048,3092p' scripts/extr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `is_last` determination is fragile: `dated` is sorted by start time ascending, so "last" = latest start = the newest session. That's correct — the newest session by stamp has the open window. But note `dated` excludes non-claiming sessions. That's fine: a non-claiming session is never accused anyway. However, the window boundaries use only claiming sessions — hmm, the closing bound should be the next session's start, regardless of whether the next session claimed. Using only claiming sessions could widen a window across an intervening non-claiming session. That's a minor inaccuracy but could cause a false negative (not a false positive) — it would only *add* commits into a window, making CLAIM_NO_COMMITS less likely. Actually it could also make the "last" determination wrong: if the newest session overall is non-claiming, `dated`'s last is the newest *claiming* session, whose window should be closed by the newest session's start but instead is treated as open → it escapes the flag. That's a false negative, in the safe (non-accusatory) direction, but it's still wrong and I should fix it: build windows from ALL sessions, and determine open-window from the newest session overall.
+
+Let me restructure: use all sessions with resolvable stamps for the boundary ladder; the newest overall is the open one. Non-claiming sessions just don't get reported.
+
+Let me rewrite the whole function body cleanly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (42 → 61 lines)
+        if not sessions:
+            return []
+  + 
+  +     # THE LADDER IS BUILT FROM ALL SESSIONS, not only the claiming ones. A
+  +     # window's closing bound is the NEXT session's start, and a session that
+  +     # claimed nothing still closes the one before it. Building the ladder from
+  +     # claiming sessions alone would let a session's window swallow an
+  +     # intervening non-claiming session's commits AND would treat the newest
+  +     # claiming session as open when a newer non-claiming session already
+  +     # closed it -- both false negatives, but wrong is wrong.
+  +     stamps = {
+  +         s.name: compact_utc_epoch(session_dir_stamp(s.name)) for s in sessions
+  +     }
+  +     ladder = sorted(st for st in stamps.values() if st is not None)
+  +     newest_start = ladder[-1] if ladder else None
+    
+        states: dict[str, str] = {}
+  -     dated: list[tuple[int, ClaimSession]] = []
+  +     opens: set[str] = set()
+        for s in sessions:
+  ... (52 more lines)
+ ✓ (1m 6s)
+        if not sessions:
+            return []
+  + 
+  +     # THE LADDER IS BUILT FROM ALL SESSIONS, not only the claiming ones. A
+  +     # window's closing bound is the NEXT session's start, and a session that
+  +     # claimed nothing still closes the one before it. Building the ladder from
+  +     # claiming sessions alone would let a session's window swallow an
+  +     # intervening non-claiming session's commits AND would treat the newest
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now fix the summary-line denominator to use window_open:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (6 → 10 lines)
+            return []
+        flagged = [c for c in claims if c.state == CLAIM_NO_COMMITS]
+        closed = [
+  -         c for c in claims if c.state in (CLAIM_CORROBORATED, CLAIM_NO_COMMITS)
+  +         c
+  +         for c in claims
+  +         if not c.window_open
+  +         and c.state in (CLAIM_CORROBORATED, CLAIM_NO_COMMITS)
+  +         and c.state != CLAIM_NO_CLAIM
+        ]
+ ✓ (1m 6s)
+            return []
+        flagged = [c for c in claims if c.state == CLAIM_NO_COMMITS]
+        closed = [
+  -         c for c in claims if c.state in (CLAIM_CORROBORATED, CLAIM_NO_COMMITS)
+  +         c
+  +         for c in claims
+  +         if not c.window_open
+  +         and c.state in (CLAIM_CORROBORATED, CLAIM_NO_COMMITS)
+  +         and c.state != CLAIM_NO_CLAIM
+        ]
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, `CLAIM_NO_CLAIM` sessions have `window_open=False` and state NO_CLAIM, so the `state in (CORROBORATED, NO_COMMITS)` already excludes NO_CLAIM. That third condition is redundant and confusing. Let me simplify.
+
+Actually the condition chain: `not c.window_open and c.state in (CLAIM_CORROBORATED, CLAIM_NO_COMMITS) and c.state != CLAIM_NO_CLAIM` — the last clause is dead. Remove it for clarity.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (7 → 5 lines)
+        closed = [
+            c
+            for c in claims
+  -         if not c.window_open
+  -         and c.state in (CLAIM_CORROBORATED, CLAIM_NO_COMMITS)
+  -         and c.state != CLAIM_NO_CLAIM
+  +         if not c.window_open and c.state in (CLAIM_CORROBORATED, CLAIM_NO_COMMITS)
+        ]
+ ✓ (1m 6s)
+        closed = [
+            c
+            for c in claims
+  -         if not c.window_open
+  -         and c.state in (CLAIM_CORROBORATED, CLAIM_NO_COMMITS)
+  -         and c.state != CLAIM_NO_CLAIM
+  +         if not c.window_open and c.state in (CLAIM_CORROBORATED, CLAIM_NO_COMMITS)
+        ]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (10 lines) ✓ (96ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the counts are honest: 0 of 3 closed, 6 could not be checked (clone boundary).
+
+Now let's verify the discriminating case works — the whole point of the task: two sessions on one day, one corroborated and one not. Day 206 has three sessions; the 14:20 one and 23:59 one and 09:00 one. All corroborated. Good — that's the null reading.
+
+Let me now verify the near-miss: with no claims (empty), render_outcomes byte-identical. And I need to check the full output renders.
+
+Let me run the whole thing.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_AUDIT_DIR=/tmp/traj-audit/s… ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Works. Now let me write the self-tests. First let me see where the productivity self-tests section ends, and find the end of run_self_tests to add a new section. Let me look at the structure around line 6212 (now shifted).
+
+Let me find the productivity self-tests block boundaries.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the self-tests. Let me find the right insertion point:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "=== claims_by_day / cla… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6790,6830p' scripts/extr… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I'll insert a new self-test section right before `print("\n=== doc freshness self-tests ===\n")` at line 6812.
+
+Tests to include:
+1. **The discriminating row** — two sessions on one day, one corroborated and one not. This is the row the day-level check cannot see.
+2. COULD_NOT_CHECK row (unparseable stamp).
+3. Anti-vacuous: fixture really does contain the zero-commit session.
+4. Open window: last session never flagged (CLAIM_OPEN_WINDOW, not CLAIM_NO_COMMITS).
+5. NO_CLAIM never accused.
+6. anti-vacuous / empty list → empty.
+7. commits None → COULD_NOT_CHECK, not an alarm.
+8. Clone boundary → COULD_NOT_CHECK.
+9. Near-miss byte-identical: render_outcomes with no claims in the session list... Actually the near-miss guard required by the task: "a day in which every claiming session is corroborated must render byte-identically to today's output. Pin it with assert_eq! on the rendered block, not a contains."
+
+Hmm — "byte-identically to today's output". With my design, when all sessions are corroborated the appended lines are still `0 of N closed, claiming session(s): ...` which is NOT byte-identical to the pre-change output. Let me re-read the task:
+
+"- **Near-miss guard:** a day in which every claiming session is corroborated must render **byte-identically** to today's output. Pin it with `assert_eq!` on the rendered block, not a `contains`."
+
+Hmm. And Step 2 says: "plus a single trailing summary count (`N of M closed sessions: claimed success, no task commits`) so a reader sees the population the count is over. If `N == 0`, print the summary line with the zero".
+
+So the summary line IS printed even when N == 0. That contradicts "byte-identically to today's output" for the all-corroborated case... unless "today's output" means the *claim rows* portion. Hmm.
+
+Re-reading: the near-miss guard is about "a day in which every claiming session is corroborated". If the summary line prints always, the output differs. So the intent must be: the *claim rows* are byte-identical, and only the appended lines differ. OR the intent is that the summary line prints only when the window is non-empty AND...
+
+Actually I think the sensible reading, consistent with both sentences: the **claim rows** (`day-N (ts): tasks...` lines) render byte-identically; the corroboration block is appended content that always includes the summary. The pinning `assert_eq!` should be on the rendered *rows* block. That's what my docstring says.
+
+But the task explicitly says "render byte-identically to today's output" pinned with assert_eq! on the rendered block. Hmm, there's tension. Let me reconcile: maybe the intended design is that the summary line prints only when there IS something to check, i.e. when there's at least one corroborated-or-unflaggged claiming session? No — "If N == 0, print the summary line with the zero".
+
+I think the cleanest honest resolution: implement so that the claim ROWS are provably unchanged (assert_eq! on the rows-only rendering, which is exactly "today's output" for the rows), and document that the corroboration block is additive and always prints the count when the window is non-empty. The near-miss guard's purpose — "a day where everything is corroborated must not produce a false alarm line" — is served: zero `⚠` lines.
+
+Additionally I can make the pin stronger: assert that the all-corroborated render contains NO `⚠` line, and that the rows portion `assert_eq!`s the pre-change render. That satisfies the spirit and the letter as closely as the two requirements allow. I'll state this plainly in the write-up.
+
+Actually — I can do better and satisfy the letter too. Consider: `render_outcomes(outcomes)` with session_claims=None returns exactly today's output. And the near-miss property "a day in which every claiming session is corroborated" — I can pin `assert_eq!(render_outcomes(GREEN_OUTCOMES, all_corroborated_claims), render_outcomes(GREEN_OUTCOMES) + "\n" + summary)` — no, that's not byte-identical either.
+
+I'll go with: (a) `assert_eq!` that the claim rows block is byte-identical (the real regression surface — a reader's `tasks 2/2 ✅` rows), (b) `assert_eq!` that when there are no claims at all, the WHOLE render is byte-identical (a true no-op path), and (c) an explicit assertion that an all-corroborated day produces zero flag lines with the count present. Document the one place I deviated and why.
+
+Let me now write the tests.
+
+Also need: the discriminator positive control (mutate classifier to return CORROBORATED unconditionally → discriminating row reddens by name).
+
+Let me write the test block. I need helpers assert_eq, assert_true are defined in run_self_tests scope. assert_eq compares; for lists I need to compare stringified. I'll use assert_eq with str() conversions or add local helpers.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the self-tests:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 241 lines)
+  +     print("\n=== session-level claim corroboration self-tests (Receipt #912) ===\n")
+  + 
+  +     # --- Fixtures. Stamps are 2026-09-20T02:00:00Z .. so the epochs are small
+  +     # and hand-checkable, and they are built by the SAME parser the code uses.
+  +     S_DAY_A_1 = "day-195-20260920T020000Z"
+  +     S_DAY_A_2 = "day-195-20260920T100000Z"  # 8h later, SAME day as A_1
+  +     S_DAY_A_3 = "day-195-20260920T180000Z"
+  +     S_DAY_B_1 = "day-196-20260921T020000Z"
+  +     T_A_1 = compact_utc_epoch(session_dir_stamp(S_DAY_A_1))
+  +     T_A_2 = compact_utc_epoch(session_dir_stamp(S_DAY_A_2))
+  +     T_A_3 = compact_utc_epoch(session_dir_stamp(S_DAY_A_3))
+  +     T_B_1 = compact_utc_epoch(session_dir_stamp(S_DAY_B_1))
+  + 
+  +     def commit_at(epoch, sha="0" * 8):
+  +         return (sha, epoch, "Day 195 (02:00): something (Task 1)")
+  + 
+  +     # THE FIXTURE ITSELF IS ASSERTED, so a transcription slip cannot make the
+  +     # discriminating row pass by agreeing with itself.
+  +     assert_true(
+  +         "anti-vacuous: the fixture really does put two sessions on ONE day",
+  ... (221 more lines)
+ ✓ (1m 6s)
+  +     print("\n=== session-level claim corroboration self-tests (Receipt #912) ===\n")
+  + 
+  +     # --- Fixtures. Stamps are 2026-09-20T02:00:00Z .. so the epochs are small
+  +     # and hand-checkable, and they are built by the SAME parser the code uses.
+  +     S_DAY_A_1 = "day-195-20260920T020000Z"
+  +     S_DAY_A_2 = "day-195-20260920T100000Z"  # 8h later, SAME day as A_1
+  +     S_DAY_A_3 = "day-195-20260920T180000Z"
+  +     S_DAY_B_1 = "day-196-20260921T020000Z"
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (147ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Three failures, all with the same root cause: in my fixtures, the newest session among the ones I passed is treated as open, and its commits don't count toward "closed". 
+
+Case: `[A_1, A_2]` with commits at T_A_1 and T_A_2, boundary T_A_1-10. A_2 is newest → open, and it has a commit → CORROBORATED + window_open=True. A_1 → closed, has commit → CORROBORATED. So closed = [A_1] = 1, not 2. Hence "0 of 1".
+
+Same for the mixed case: [A_1, B_1] — B_1 is newer (day-196), so A_1 is closed, B_1 is open → could-not-check (clone boundary T_A_1-10 is fine, but B_1's start > that...). Wait mixed got "0 of 1 closed" + 1 could-not-check. Hmm: A_1 closed with a commit → corroborated. B_1 open → inside? commits at T_A_1, and B_1's window is [T_B_1, ∞) → no commits inside → OPEN_WINDOW, not COULD_NOT_CHECK. But the output says 1 could-not-check and 0 of 1.
+
+Hmm, actually expected list I wrote was [0 of 1 closed..., 1 further could NOT be checked]. And got failed — let me see what it actually got. Not shown. Let me think: for mixed I passed oldest_commit_epoch = T_A_1 - 10, so no clone-boundary refusal. A_1 closed → corroborated. B_1 → newest → open → OPEN_WINDOW. So lines = ["0 of 1 closed..."] only, no could-not-check line. length 1 ≠ 2. Right.
+
+So my expectations were wrong because the newest session in each pair is open. That's the correct behavior; my test expectations were miscalculated. Let me fix the fixtures to make the sessions I care about closed by adding a newer non-claiming "closing" session, or by adjusting expectations.
+
+Cleanest: for the "all-corroborated window" test, use a third session A_3 which is newest and non-claiming (so it's the open one but claims nothing → NO_CLAIM, not in closed denominator). Then A_1 and A_2 are both closed and corroborated → "0 of 2 closed".
+
+Let me restructure:
+- `all_corr` should include ClaimSession(S_DAY_A_3, False) as the trailing no-claim session.
+
+For the mixed test: [A_1 (has commit), B_1 (claims, newest → open)] — I wanted one closed + one unresolved. Instead let me make a genuinely unresolved session: use a bad-name session `ClaimSession("not-a-session-dir", True)`. But its stamp is None → COULD_NOT_CHECK. And ordering: ladder from all sessions with resolvable stamps. So:
+- sessions: [A_1 (claimed), "not-a-session-dir" (claimed)], commits at T_A_1, oldest = T_A_1-10.
+- newest_start = T_A_1 (only resolvable). A_1 is newest → open → corroborated (has commit) but window_open.
+- bad → could-not-check.
+- closed = [] → "0 of 0 closed"? That's odd but honest. Better: add a third session to close A_1.
+
+Let me redesign the mixed test: sessions = [A_1 claimed w/ commit, A_2 claimed, bad-name claimed]; commits at T_A_1 only; oldest = T_A_1 - 10.
+- ladder = [T_A_1, T_A_2]; newest = T_A_2.
+- A_1: closed, window [T_A_1, T_A_2) contains commit at T_A_1 → CORROBORATED.
+- A_2: open, no commits → OPEN_WINDOW.
+- bad: COULD_NOT_CHECK.
+- closed = [A_1] → "0 of 1 closed"; unchecked = 1.
+Expected lines: ["0 of 1 closed...", "1 further claiming session(s) could NOT be checked..."]. That's what I wrote! The failure must be because of ordering or exact text. Let me print actual output to check.
+
+And for the zero_lines test: sessions [A_1, A_2] both with commits → A_2 open. Add A_3 non-claiming.
+
+Let me just print the actual lines for the failing cases.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (10 lines) ✓ (73ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: my two expectations were miscalculated because the newest session in each fixture is open. The behavior is right. Let me fix the fixtures to add a trailing non-claiming session so the sessions under test are closed.
+
+Fix both tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (8 → 14 lines)
+  -     # A ZERO IS A VALUE: the check ran and found nothing.
+  +     # A ZERO IS A VALUE: the check ran and found nothing. The trailing
+  +     # non-claiming session is what CLOSES A_2's window -- without it A_2 is the
+  +     # newest session and its window is open, which is a different fact.
+        zero_lines = claim_corroboration_lines(
+            classify_session_claims(
+  -             [ClaimSession(S_DAY_A_1, True), ClaimSession(S_DAY_A_2, True)],
+  +             [
+  +                 ClaimSession(S_DAY_A_1, True),
+  +                 ClaimSession(S_DAY_A_2, True),
+  +                 ClaimSession(S_DAY_A_3, False),
+  +             ],
+                [commit_at(T_A_1, "c" * 8), commit_at(T_A_2, "d" * 8)],
+                T_A_1 - 10,
+            )
+ ✓ (1m 6s)
+  -     # A ZERO IS A VALUE: the check ran and found nothing.
+  +     # A ZERO IS A VALUE: the check ran and found nothing. The trailing
+  +     # non-claiming session is what CLOSES A_2's window -- without it A_2 is the
+  +     # newest session and its window is open, which is a different fact.
+        zero_lines = claim_corroboration_lines(
+            classify_session_claims(
+  -             [ClaimSession(S_DAY_A_1, True), ClaimSession(S_DAY_A_2, True)],
+  +             [
+  ... (7 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "an unresolved window ge… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The mixed test: A_1 claimed, at T_A_1. B_1 claimed, at T_B_1 = 2026-09-21T02:00:00Z, which is AFTER the oldest commit T_A_1? oldest_commit_epoch = T_A_1 - 10. So both are fine. Commits: one at T_A_1, which is in A_1's window [T_A_1, T_B_1) → corroborated. B_1 is newest → open window, no commits → CLAIM_OPEN_WINDOW. So closed = [A_1 corroborated] = 1, flagged 0. Expected "0 of 1 closed" plus no unchecked line. But my test expects an "unresolved window" line.
+
+I need a genuinely unresolvable session that is closed. Use a session with a bad stamp that sorts... it'll be treated COULD_NOT_CHECK regardless. But the tricky bit: a bad-stamp session is excluded from the ladder, so A_1 might still be fine. Let me construct: sessions = [A_1 (good, claimed), "day-195-<bad>" (claimed)], commits at T_A_1. Ladder = [T_A_1]; A_1 is newest → open window, corroborated → opens={A_1} → closed empty (0 of 0). With open present, the ladder is never empty but closed is 0.
+
+To get "0 of 1 closed" + 1 unchecked: need one closed claiming session with zero commits, plus one unresolved claiming session. Construct: A_1 good claimed (window closed by A_2), A_2 good claimed with no commit... no, then A_2 flagged → "1 of 2".
+
+Simplest: 1 closed corroborated + 1 unresolved:
+sessions = [A_1 (good, claimed), A_2 (good, NOT claimed), BAD (claimed, bad stamp)] with commits at T_A_1.
+Ladder = [T_A_1, T_A_2]; newest = T_A_2 → A_1 closed [T_A_1,T_A_2) has commit → corroborated. A_2 is not claimed → NO_CLAIM. BAD → COULD_NOT_CHECK.
+closed = [A_1] = 1, flagged = 0, unchecked = 1 → lines: "0 of 1 closed, ..." + "1 further ... NOT counted above." Exactly what I want.
+
+Let me rewrite the mixed fixture accordingly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (9 → 15 lines)
+        # Unresolvable windows are named SEPARATELY, so an unknown can never be
+  -     # read as a corroborated one.
+  +     # read as a corroborated one. A closed, corroborated session plus ONE
+  +     # claiming session whose stamp will not parse: the denominator stays at 1
+  +     # and the unknown leaves the denominator entirely.
+        mixed = claim_corroboration_lines(
+            classify_session_claims(
+  -             [ClaimSession(S_DAY_A_1, True), ClaimSession(S_DAY_B_1, True)],
+  +             [
+  +                 ClaimSession(S_DAY_A_1, True),
+  +                 ClaimSession(S_DAY_A_2, False),
+  +                 ClaimSession("day-195-notatimestamp", True),
+  +             ],
+                [commit_at(T_A_1, "e" * 8)],
+                T_A_1 - 10,
+            )
+ ✓ (1m 6s)
+        # Unresolvable windows are named SEPARATELY, so an unknown can never be
+  -     # read as a corroborated one.
+  +     # read as a corroborated one. A closed, corroborated session plus ONE
+  +     # claiming session whose stamp will not parse: the denominator stays at 1
+  +     # and the unknown leaves the denominator entirely.
+        mixed = claim_corroboration_lines(
+            classify_session_claims(
+  -             [ClaimSession(S_DAY_A_1, True), ClaimSession(S_DAY_B_1, True)],
+  ... (8 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (5 → 9 lines)
+        all_corr = classify_session_claims(
+  -         [ClaimSession(S_DAY_A_1, True), ClaimSession(S_DAY_A_2, True)],
+  +         [
+  +             ClaimSession(S_DAY_A_1, True),
+  +             ClaimSession(S_DAY_A_2, True),
+  +             ClaimSession(S_DAY_A_3, False),
+  +         ],
+            [commit_at(T_A_1, "f" * 8), commit_at(T_A_2, "1" * 8)],
+            T_A_1 - 10,
+        )
+ ✓ (1m 6s)
+        all_corr = classify_session_claims(
+  -         [ClaimSession(S_DAY_A_1, True), ClaimSession(S_DAY_A_2, True)],
+  +         [
+  +             ClaimSession(S_DAY_A_1, True),
+  +             ClaimSession(S_DAY_A_2, True),
+  +             ClaimSession(S_DAY_A_3, False),
+  +         ],
+            [commit_at(T_A_1, "f" * 8), commit_at(T_A_2, "1" * 8)],
+            T_A_1 - 10,
+        )
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (76ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All self-tests pass. Now S_DAY_B_1 is unused — that would be fine in Python but flake/lint may complain? There's no Python linter in CI for these scripts except... let me check. Actually unused variable in Python isn't flagged usually. But there is `scripts/check_*.py`. Let me check if there's a lint for the scripts dir. Also I should remove the unused S_DAY_B_1 and T_B_1 if unused — wait T_B_1 is used in the clone-boundary test ("COULD_NOT_CHECK: a window before the clone's oldest commit is refused"). Yes T_B_1 used. S_DAY_B_1 is now unused. Let me check.
+
+Also `sha` unused in commit_at? No, used.
+
+Let me grep S_DAY_B_1.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "S_DAY_B_1" scripts/extr… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+S_DAY_B_1 is used by T_B_1, which is used. Fine.
+
+Now run the positive control: neuter classify_session_claims to always return CORROBORATED, run, confirm the discriminating row reddens by name, restore. Run as one atomic command, serially.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive control — atomic mutate → run → restore:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (17 lines) ✓ (170ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (17 lines) ✓ (101ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The output shows "..." truncation lines in the FAil list? Actually the "..." appears to be the harness's output. Let me get all 5 FAIL names properly with a bigger window.
+
+Actually the grep showed 5 FAILURE(S) and 2 FAIL lines + "... (3 more similar lines)". Hmm, the "..." lines come from the tool output truncation in this environment, not the test. Never mind — the discriminating row reddens by name: "discriminating: the SIBLING ON THE SAME DAY with zero commits is FLAGGED". Good.
+
+Restored and green. Now run the full task verification: cargo build && cargo test, fmt, clippy. Also check if there's a test that runs extract_trajectory self-tests (e.g. tests/harness_logic.sh or a rust test), and check the ARCHITECTURE.md note requirement. Also check the module_size / line-count gates for scripts? There's a `scripts/test_lint_evolve_heredocs.py`. Let me check whether any test asserts on extract_trajectory.py size (there might be a size gate for scripts too).
+
+Let me now run cargo checks.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "extract_trajectory" te…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "extract_trajectory\|--… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "harness_logic\|extract_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "check_assertion_weaken… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '20,50p' .github/workflow… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+CI does not run extract_trajectory.py --test. Hmm — is there any place the self-tests run? Let me check evolve.sh or another workflow. `grep -rn "extract_trajectory.py --test" `.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "extract_trajectory.py … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No CI job runs extract_trajectory.py --test currently. That's a pre-existing gap (not my task). The task says "The script's own self-test entry point, green." — I ran it manually. I could wire it into CI, but .github/workflows/ is a protected file I must not modify. So leave it; note it in ARCHITECTURE.md? The task says add ARCHITECTURE.md note. I'll note the self-test entry point but must not claim CI runs it.
+
+Now run cargo fmt/clippy/build/test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | tail…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (143ms)
+ ✓ (1.1s)
+  2 tools completed in 1.1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (55.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green. Now the ARCHITECTURE.md note for the script. Let me find the extract_trajectory.py entry in ARCHITECTURE.md.
+────────────────────────────────────────────────────────────────────────────────
+
+All checks green. Now the ARCHITECTURE.md note:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_trajectory" ARC… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ARCHITECTURE.md is huge; the extract_trajectory.py entry seems to be around specific bullets. Let me find the section about the script — search for a heading or "### `scripts/extract_trajectory.py`".
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\|^- \`scripts/" ARCH… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line 1120 is the entry for `scripts/extract_trajectory.py`. It's a huge bullet. I need to append a Day-207 note for this change. Let me look at the end of that bullet (line 1120 seems to be one giant line). Let me check the line length and how entries are appended.
+
+Let me find the end of line 1120 and see how it terminates.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==1120 {print length($0)}… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll append the Day-207 note to that entry:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/d… (12 lines) ✓ (30ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now verify: ARCHITECTURE.md has a gate over backticked Rust symbols (doc_symbols.rs) — but that's for CLAUDE.md. Also there may be a gate on ARCHITECTURE.md size? Let me check whether there are line-count caps on ARCHITECTURE.md. Let me run the full check suite.
+
+Also `scripts/check_commitments.py`? Let's just run cargo test + clippy + fmt + the python self-test.
+
+Wait — the note mentions specific things; that's fine. But is ARCHITECTURE.md size-gated? The project has a module_size gate for Rust and maybe a doc-size gate. Let me run the tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, exit code 1 came from the grep at the end (no matches → exit 1). The unittest output — the last line shows something about lint_evolve_heredocs test output ("line 1: ${A:+it's bad}") which is part of a test's output. Let me re-run to check unittest result properly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -m unittest discover -s …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "NEUTERED" scripts/extra… ✓ (6ms)
+ ✓ (105ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All good: 0 NEUTERED markers, only the two intended files modified.
+
+Let me clean up the worktree I added (/tmp/traj-audit) so nothing weird persists, then do a final end-to-end run to capture the reading for the commit/write-up, and commit.
+
+Actually the task says "Run the instrument end to end on this repo and paste today's reading into the write-up." The write-up = ARCHITECTURE note + journal? The task's deliverable includes "Then add the ARCHITECTURE.md note". Let me also include the reading in the ARCHITECTURE note — I did include it. Good.
+
+Let me do a final full run to confirm the reading and then commit.
+
+Also: should I clean up the git worktree? `git worktree add /tmp/traj-audit audit-log` creates an entry in .git/worktrees. That's not tracked, but let's remove it to be tidy.
+
+Actually careful — the run needs it. I'll remove after the final run.
+
+Let me also double check the final rendered output is sensible and check that the summary doesn't crowd things out — it renders 2 lines. Fine.
+
+One more consideration: the near-miss requirement "A day in which every claiming session is corroborated must render byte-identically to today's output" — I've reasoned that the claim-row block is identical. Let me document that decision in my response.
+
+Let me do the final run and commit.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.2s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_AUDIT_DIR=/tmp/traj-audit/s… ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git worktree remove /tmp/traj-au… ✓ (1.3s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The task is committed. Let me verify the commit is clean and give a final verdict. Let me just double check the working tree is clean.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done. Task 2 is implemented, verified, and committed as 5adc49a5.
+
+## What I built
+
+Step 1 — a pure per-session bucketing core in scripts/extract_trajectory.py:
+
+• `collect_task_commit_times() — one git log --format=%H%x09%ct%x09%s pass keeping (sha, epoch, subject) triples matching TASK_COMMIT_RE`, plus the epoch of the oldest commit reachable in the clone.
+• `load_claim_sessions() — the window's sessions with their claims, newest-first. load_outcomes now delegates to a shared iter_session_outcomes`, so there is one statement of which sessions are in the window.
+• `classify_session_claims(sessions, commits, oldest_commit_epoch) — pure, five states, none folded: CORROBORATED, CLAIM_NO_COMMITS, NO_CLAIM, COULD_NOT_CHECK, CLAIM_OPEN_WINDOW`.
+• `PRODUCTIVITY_IDLE / classify_productivity` are untouched.
+
+Step 2 — rendered beside each claim: render_outcomes(outcomes, session_claims) keeps its claim rows byte-identical and appends one ⚠ <session dir>: claimed success, 0 task commits in this session's window line per flagged session, plus the count line naming its own population (N of M closed, claiming session(s)), with unresolvable windows on a separate line.
+
+## Two things I found that the plan did not anticipate
+
+1. **The open-window rule and the "print a zero" rule pull apart.** New content cannot be added and change nothing. The only coherent reading is that the *claim row block* is byte-identical — I pinned that three ways with `assert_eq!` on the whole render, including asserting the all-corroborated render carries no `⚠` anywhere. I stated this explicitly in ARCHITECTURE.md rather than smoothing it.
+2. **The shallow clone is a false-alarm generator.** A recent session's task commits sit *outside* the 50-commit checkout while the only in-window commits are `bump counter` bookkeeping — so the clone boundary is a refusal (COULD_NOT_CHECK), not an accusation. That is why the live reading is 6 ... could NOT be checked instead of a page of false positives.
+
+## Verification
+
+• `cargo fmt -- --check, cargo clippy --all-targets -- -D warnings, cargo build, cargo test` — all green (5779 passed, 0 failed).
+• `python3 scripts/extract_trajectory.py --test — **ALL PASSED**; bash tests/harness_logic.sh OK; python3 -m unittest discover -s scripts` — 38 tests OK.
+• **Live run on this repo: `0 of 3 closed, claiming session(s): claimed success, no task commits` + `6 further claiming session(s) could NOT be checked (window unresolved)`. The null is the result** — zero flagged sessions, with the counts and the population named.
+• **Positive control, run serially as one atomic mutate→run→restore:** neutering the classifier returned `CORROBORATED` unconditionally reddening 5 tests, the discriminating one by name (`discriminating: the SIBLING ON THE SAME DAY with zero commits is FLAGGED`); restore returned ALL PASSED. 0 markers left in the tree.
+• The discriminating row is asserted in both directions: the sibling is flagged and classify_productivity still reads that same day as PRODUCTIVITY_OK — proof the day-level check cannot see it.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
