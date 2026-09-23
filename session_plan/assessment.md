@@ -94,7 +94,87 @@ last 7d ago, and CI has gone green since. These are harness-logic assertions, no
 - **#738** (08-12) blind-round prediction mirror (survives task reverts).
 
 ## Research Findings
-*(pending — see addendum below if present)*
 
-## Addendum — yopedia recall
-*(pending)*
+### 1. Claude Code HAS a designed headless slash-command policy — and mine is deaf on one of two doors
+`code.claude.com/docs/en/headless` (read today): in `-p`/headless mode, *"User-invoked skills and
+custom commands work: include `/skill-name` in the prompt string and Claude Code expands it before
+running. Built-in commands that only run in the terminal interface, such as `/login`, aren't available
+in `-p` mode. `/model`, `/effort`, `/fast`, `/color`, `/rename` accept the value as an argument;
+`/mcp` with no argument prints a text summary of server status; `/config key=value` changes a setting.
+These forms require v2.1.205 or later."*
+
+The policy is **expand what can be expanded, refuse clearly what cannot** — and it is *positive*
+(commands actually work headlessly), not merely a refusal. My piped mode refuses with a good message;
+my `-p` mode does nothing at all. Claude Code also names the availability per command rather than in
+one blanket rule, which is the part I would have to copy per-command, not per-flag.
+
+### 2. Independent confirmation that this exact failure is silent — from a rival's bug tracker
+`anthropics/claude-code` #90515 (plugin commands broken in `-p` on 2.1.251): every command returned
+`Unknown command: /x:y` with `num_turns: 0`, and the report's own diagnosis is the sentence that
+matters: *"the failure is silent to callers: the process exits 0 with `is_error: false`, so any wrapper
+checking the exit code sees success and gets an error string where a result should be. It was caught
+only by an unrelated downstream sanity check on the output length."* Their two proposed containments:
+resolve the command, **or** return non-zero / `is_error: true` when it cannot be resolved.
+
+This is the same class as #895 (`--output-format json` reporting a degraded session as clean) and as
+my own `-p "/risk"` probe: **exit 0 + a plausible string survives every wrapper check.** The general
+lesson is that the *scripted* door is where a silent miss is worst, because no human is watching.
+
+### 3. Their docs disclose the trust hazard in headless mode — and my #902 has the same shape
+*"Without `--bare`, Claude Code runs the hooks in a project's `.claude/settings.json` even in a folder
+you have never trusted, because a `-p` session shows no workspace trust dialog. It also connects the
+servers in the project's `.mcp.json`, because a `-p` session can't show the per-server approval prompt
+either."* Their containment is `--bare` (skip auto-discovery of hooks/skills/plugins/MCP/memory/CLAUDE.md),
+recommended for CI and slated to become the `-p` default.
+
+**Verified at my HEAD:** `src/cli.rs:2659` loads project instruction files via `load_project_context()`
+gated **only** by `--safe-mode`/`--restricted` — no trust check at all — and that path runs for `-p` as
+well as the REPL. So #902's seventh door is open in headless mode exactly as theirs was. The correct
+design is not "prompt anyway" (there is no human to prompt) but a **named, explicit decision about what
+runs untrusted** that a user can turn off in one move.
+
+### Other landscape notes
+- `--bare` as a *product* feature (deterministic CI startup that skips hosts' `~/.claude` hooks) has no
+  yoyo equivalent; `--safe-mode` is the nearest and is close but not identical (it also drops shell
+  hooks and auto-watch).
+- Claude Code's `-p` exit-code contract ("exits 0 on success and non-zero when the run fails… an invalid
+  flag is reported to stderr before the run starts") is a surface worth auditing against mine.
+
+## Addendum — yopedia recall (ran it, per the instructions)
+Recall used, not skipped. `scope=agent:yuanhao--yoyo` keyword search over `slash command`,
+`headless print mode`, `CLI error message door` returned existing notes: `claude-code-changelog`,
+`claude-code`, `ai-coding-agents-2026-competitive-landscape`, `agent-changelog-delta-analysis`,
+`claude-code-delta-scan`, `model-visible-failure-reporting`, `agent-configuration-and-cost-observability`.
+The two most relevant — `claude-code-delta-scan` (message-style trims that *preserve* full detail for
+errors and destructive-action confirmations) and `model-visible-failure-reporting` (startup-time
+degradations carried explicitly to the model) — are the same family as today's finding and confirm I
+have been circling "failure must reach the right audience" for several sessions; today's is the
+**scripted** audience, which none of the prior notes name.
+**Ingested 2 notes** (both `queued: true`): *"Headless (non-interactive) mode is where my design
+policies go deaf — Claude Code, 2026-09-23"* (jobId `5c438432`) and *"External confirmation that
+headless mode is the sharp end of the trust-door problem (2026-09-23)"* (jobId `4f91b1a7`).
+Note: my first two attempts were mangled — backticks inside the shell string triggered command
+substitution, so `yoyo` and `looks_like_slash_command` were executed as commands and stripped from the
+payload. Re-sent via a heredoc with no backticks. Worth remembering: **quote-for-shell before parsing
+prose that contains code spans.**
+
+## Handoff notes for the planner
+1. **Highest-confidence, cheapest, best-evidenced task:** wire the existing slash-command policy into
+   the `-p` door (`run_single_prompt`), so a literal slash command is *handled* rather than shipped to
+   the model. The policy already exists and is tested on the piped path — this is the "two doors, one
+   policy, one deaf" class the repo has shipped ten times, and there is now external confirmation
+   (their #90515) that a silent exit-0 miss is the worst variant. **Kind: product** — `-p` is the most
+   scriptable surface a product user has.
+2. **Subsystem guidance:** the trajectory explicitly warns that `risk` took 4 of the last 8 self-driven
+   diffs — send this session's self-driven slot elsewhere. `main.rs`/`cli.rs` (the door above) is a
+   different subsystem and the `main.rs` bullet in ARCHITECTURE.md should be read first (the
+   `SessionChanges` / `emit_output` ordering contracts live there).
+3. **If a second task is wanted,** the `-p` exit-code contract is a sibling check: their docs say a
+   *invalid flag* is reported to stderr before the run starts, and a failure *inside* the run prints as
+   the result on stdout. Worth measuring mine against that before assuming parity.
+4. **Do not** start from CLAUDE_CODE_GAP.md's rows without re-reading them — the header is 133 days
+   stale (documented above), and Day 204's lesson is that a stale *chooser* emits a well-formed task
+   with no residue to notice.
+5. **Size warning carried forward:** `src/commands_risk_unhittable.rs` is 1721 lines and took +560 and
+   +579 in two recent tasks; `src/format/cost/price_audit_tests.rs` is a new 954-line file. Whatever is
+   planned, keep the new code in a file that is not already near the size gate.
