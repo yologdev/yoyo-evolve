@@ -1553,6 +1553,308 @@ def census_shape_split_by_population(rows: list[CensusRow], shape_of) -> dict:
     }
 
 
+# --------------------------------------------------------------------------------------
+# #870 (Day 206) — THE FIX-LOOP ARM'S STRUCTURAL WALL.
+#
+# DREAM.md's milestone pre-registers the fix-loop arm as a SEPARATE question and bars a
+# rate at >=20 task commits. Measured 2026-08-31 over a full clone (depth 4402): PLAIN had
+# 830 task commits / 28 behavioural, FIX-LOOP had 199 / **2**. The plain arm clears the bar;
+# the arm the hypothesis is actually about has two, and the reason is not under-sampling.
+#
+# It is STRUCTURAL. The counterfactual is BACKWARD -- post-task `src/` laid over PRE-task
+# `tests/` -- so the only test edit it can ever see is one that lives in the twelve
+# top-level `tests/*.rs`. Rust buries unit tests inside `src/` files behind `#[cfg(test)]`,
+# which is a region the method cannot address at all, and that region is where most of this
+# repo's test edits actually live. A rate over 2 hides the wall behind a number that looks
+# like a small sample.
+#
+# THREE VERDICTS, NONE FOLDED INTO ANOTHER. `MEASURABLE` (>=20 behavioural fix-loop
+# commits: the bar is cleared and the census's own rate is the reading);
+# `STRUCTURALLY_UNMEASURABLE` (depth is readable and the wall leaves fewer than 20 -- the
+# wall is the finding, not a thin sample); and `COULD NOT CHECK` (the clone is shallow or
+# its depth is unreadable, so ANY figure here would be a fact about the clone depth rather
+# than about the loop -- and "could not check" must never read as "checked; clean").
+#
+# The three-way split prints on EVERY census run, under every verdict, because the wall
+# going invisible is the defect this block exists to fix: a 0% over a tiny denominator and
+# a 0% over an adequate one are the same characters on the page.
+DREAM_MIN_TASK_COMMITS = 20
+
+FIX_LOOP_WALL_MEASURABLE = "MEASURABLE"
+FIX_LOOP_WALL_UNMEASURABLE = "STRUCTURALLY UNMEASURABLE"
+FIX_LOOP_WALL_COULD_NOT_CHECK = "COULD NOT CHECK"
+
+# The `-U0` text heuristic behind the third bucket. It MUST NEVER be printed as a count of
+# loosened assertions: it cannot tell a test edit from an `assert!` in production code,
+# cannot tell a tightened assertion from a loosened one, and cannot tell either from a
+# rename. It is an UPPER BOUND on where to look, and the renderer says so in the line
+# beside the number rather than in a docstring nobody reads.
+FIX_LOOP_WALL_ASSERTION_MARKERS = ("#[test]", "cfg(test)", "assert")
+
+
+def diff_mentions_assertion_shape(diff_text: str) -> bool:
+    """Is any ADDED or REMOVED line of a `-U0` diff assertion-shaped? Text only, no git.
+
+    An UPPER BOUND, never a count (see `FIX_LOOP_WALL_ASSERTION_MARKERS`). Reads `+`/`-`
+    lines only and skips the `+++`/`---` file headers, so the paths a diff names cannot be
+    mistaken for content -- the same self-contamination discipline `subject_population`'s
+    suffix test and `measure_abstentions.py` already follow.
+
+    An empty diff is False, not True: "nothing to look at" must not read as "found one".
+    """
+    for line in diff_text.splitlines():
+        if not line or line[0] not in "+-":
+            continue
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if any(m in line[1:] for m in FIX_LOOP_WALL_ASSERTION_MARKERS):
+            return True
+    return False
+
+
+def commit_fix_loop_wall_facts(root: str, sha: str):
+    """The I/O half: what does THIS commit's diff touch? `None` when it could not be read.
+
+    One `git diff --name-status` for the whole commit (so `src/` and `tests/` are answered
+    from ONE lookup), plus one `git diff --unified=0 -- src/` when and only when the commit
+    touched `src/`. Scoped to the fix-loop arm by the caller, exactly as the src-census
+    resolver is, because the arm is the ~199 commits DREAM.md asks about and not the ~1014.
+
+    REUSE, NOT A THIRD PASS OVER THE LOG, and the helpers it reuses are the file's own
+    authorities rather than fresh predicates: `top_level_test_files` decides the `tests/`
+    side (so there is no second `tests/*.rs` rule that could drift from the census's), and
+    `parse_name_status` parses the status rows (so a rename yields both paths here too).
+    `src_splice_candidates` is deliberately NOT reused for the `src/` side: it keeps only
+    `M` rows because the splicer needs a parent version to lay back, whereas the question
+    here is merely "did this commit touch src/", which an added or renamed file answers yes.
+
+    A `<sha>^` that does not resolve -- a root commit, or a shallow-clone boundary -- is
+    `None`, never False: "I could not check" must not read as "checked; it touches nothing".
+    """
+    rc, out = run_cmd(
+        ["git", "-C", root, "diff", "--name-status", f"{sha}^", sha], timeout=60
+    )
+    if rc != 0:
+        return None
+    rows = parse_name_status(out)
+    all_paths = [p for _status, p in rows]
+    facts = {
+        "tests": bool(top_level_test_files(all_paths)),
+        "src": bool([p for p in all_paths if p.startswith("src/") and p.endswith(".rs")]),
+        "assertion_shaped": False,
+    }
+    if facts["src"]:
+        rc2, text = run_cmd(
+            ["git", "-C", root, "diff", "--unified=0", f"{sha}^", sha, "--", "src/"],
+            timeout=60,
+        )
+        if rc2 != 0:
+            return None
+        facts["assertion_shaped"] = diff_mentions_assertion_shape(text)
+    return facts
+
+
+def fix_loop_wall_split(rows, wall_of) -> dict:
+    """Fold the fix-loop arm into the wall's three buckets. Pure: `wall_of` is injected.
+
+    `wall_of(sha) -> dict | None` keeps this table-testable with no git, the discipline
+    `census_shape_split` and `src_census_fix_loop` already use.
+
+    THE THREE COUNTS ARE NOT A PARTITION AND ARE NEVER SUMMED WITH EACH OTHER: a commit
+    whose `src/` diff carries `#[test]` lands in BOTH `src` and `assertion_shaped`, and
+    most fix-loop commits touch `src/` without touching any `tests/*.rs`. Summing them
+    would produce a number larger than the arm and read as a population.
+
+    A row whose facts could not be read is counted in `unreadable` and in NONE of the
+    three -- reported, never dropped, because a shrinking denominator inside my own meter
+    is the defect this whole family of checks is about.
+    """
+    arm = [r for r in rows if r.population == POP_FIX_LOOP]
+    counts = {
+        "commits": len(arm),
+        "tests": 0,
+        "src": 0,
+        "assertion_shaped": 0,
+        "unreadable": 0,
+    }
+    for row in arm:
+        facts = wall_of(row.sha)
+        if not isinstance(facts, dict):
+            counts["unreadable"] += 1
+            continue
+        if facts.get("tests"):
+            counts["tests"] += 1
+        if facts.get("src"):
+            counts["src"] += 1
+        if facts.get("assertion_shaped"):
+            counts["assertion_shaped"] += 1
+    return counts
+
+
+def fix_loop_wall_verdict(counts: dict, behavioural: int, shallow) -> str:
+    """Which of the three verdicts? Split out so the renderer's table test can drive it.
+
+    PRECEDENCE, and each step has a reason rather than an order:
+
+      1. ZERO fix-loop commits in range -> `COULD NOT CHECK`. A scan that found nothing
+         must refuse loudly; "0 unmeasurable" would be this defect wearing the opposite
+         sign, and it is quieter.
+      2. `shallow is not False` -> `COULD NOT CHECK`. True means the window is bounded
+         below; None means the probe itself failed. NEITHER is "deep enough", and folding
+         None into False is exactly how "could not check" comes to read as "checked;
+         clean".
+      3. `behavioural >= DREAM_MIN_TASK_COMMITS` -> `MEASURABLE`.
+      4. otherwise -> `STRUCTURALLY_UNMEASURABLE`. Readable depth, wall too narrow.
+
+    The two causes are deliberately NOT merged: a shallow 53-commit clone and a deep clone
+    with 2 behavioural fix-loop commits both yield "no rate", but the first is a fact about
+    the clone and the second is a permanent property of the instrument.
+    """
+    commits = counts.get("commits", 0)
+    if commits == 0:
+        return FIX_LOOP_WALL_COULD_NOT_CHECK
+    if shallow is not False and commits < DREAM_MIN_TASK_COMMITS:
+        # The window is bounded below AND the arm is too small to populate itself, so the
+        # shortfall has TWO possible causes -- the clone depth and the wall -- and this
+        # instrument cannot tell them apart. It says so rather than picking the one that
+        # makes its subject look like a property of the loop.
+        #
+        # WHY THE `commits < bar` CLAUSE IS NOT OPTIONAL, and this is the half a
+        # conservative-looking veto got wrong on the first pass: a shallow window is a
+        # PERMANENT property of this repo's clone (the workflow never unshallows), while
+        # `--deepen` can bring thousands of commits in. Gating on `shallow` alone made
+        # STRUCTURALLY UNMEASURABLE unreachable for every reading the runner can take --
+        # an unreachable branch inside my own meter, which is skill-evolve's evt-0011
+        # verbatim. A shallow window only explains a shortfall it could actually have
+        # caused, so it vetoes exactly when the arm has not cleared the bar on its own.
+        return FIX_LOOP_WALL_COULD_NOT_CHECK
+    if behavioural >= DREAM_MIN_TASK_COMMITS:
+        return FIX_LOOP_WALL_MEASURABLE
+    return FIX_LOOP_WALL_UNMEASURABLE
+
+
+def render_fix_loop_wall(counts: dict, behavioural: int, window: str, shallow) -> str:
+    """The block the census gains. Pure; the caller supplies everything it prints.
+
+    THE SPLIT PRINTS UNDER EVERY VERDICT. That is the point of the block and not a
+    decoration on it: the defect is that a 0% over two commits and a 0% over an adequate
+    denominator are the same characters on the page, so the wall is stated before the
+    verdict rather than only in the branch that found it binding.
+
+    The WHY is printed third, and stays: an UPPER BOUND with no statement of what it is an
+    upper bound on is a number waiting to be misread as a census of loosened assertions.
+    """
+    counts = counts or {}
+    commits = counts.get("commits", 0)
+    unreadable = counts.get("unreadable", 0)
+    lines = [
+        "  FIX-LOOP ARM \u2014 THE STRUCTURAL WALL (#870)",
+        f"    range ...................... {window}",
+        f"    fix-loop task commits ...... {commits}",
+        f"      touch tests/*.rs ......... {counts.get('tests', 0)}"
+        "   <- the ONLY region the backward counterfactual can read",
+        f"      touch src/*.rs ........... {counts.get('src', 0)}"
+        "   <- outside it by construction",
+        f"      assertion-shaped in src/ . {counts.get('assertion_shaped', 0)}"
+        "   <- a -U0 TEXT HEURISTIC: an upper bound on where to look,",
+        "                                    NEVER a count of loosened assertions",
+    ]
+    # Silent at zero, which is the normal case: a permanent "0 unreadable" trains the
+    # reader to skip the line that matters when it is not zero.
+    if unreadable:
+        lines.append(
+            f"      UNREADABLE ............... {unreadable}"
+            "   (counted, summed into NONE of the three above)"
+        )
+    lines.append(
+        "    NOT A PARTITION: one commit can be in several of these (a src/ diff carrying"
+    )
+    lines.append(
+        "    #[test] is both 'touch src/' and 'assertion-shaped'). The counts are never"
+    )
+    lines.append("    summed with each other or read as a population.")
+    lines.append(
+        "    WHY: the counterfactual is BACKWARD -- post-task src/ over PRE-task tests/ --"
+    )
+    lines.append(
+        "    so it sees only a test edit in the top-level tests/*.rs. Unit tests inside"
+    )
+    lines.append(
+        "    src/ behind #[cfg(test)] are a region the method cannot address at all."
+    )
+    # Printed under EVERY verdict, not only in the refusal branch: the counts above are a
+    # range, and a range that stops being mentioned when the verdict happens to be
+    # favourable is how a bounded count comes to read as a total.
+    #
+    # THE TWO SHALLOW STATES GET TWO SENTENCES, and they are not the same claim. True is
+    # "the window IS bounded below" -- a fact I measured. None is "I could not tell" --
+    # the probe itself failed. Writing "bounded" for None would assert a property the
+    # failed probe never established, which is the over-claim this whole file refuses.
+    if shallow is True:
+        lines.append(
+            "    WINDOW IS BOUNDED BELOW (shallow=yes): every count above is the range"
+        )
+        lines.append("    actually measured, never a full-history total.")
+    elif shallow is None:
+        lines.append(
+            "    WINDOW COMPLETENESS COULD NOT BE CHECKED: the shallow probe itself FAILED,"
+        )
+        lines.append(
+            "    so whether these counts are a range or a total is UNKNOWN -- which is not"
+        )
+        lines.append("    'the window is complete'.")
+    lines.append("")
+
+    verdict = fix_loop_wall_verdict(counts, behavioural, shallow)
+    if verdict == FIX_LOOP_WALL_COULD_NOT_CHECK and commits == 0:
+        lines.append(
+            "    COULD NOT CHECK: no fix-loop task commit in range. This is a REFUSAL, not"
+            " '0 structurally unmeasurable'."
+        )
+        return "\n".join(lines)
+    if verdict == FIX_LOOP_WALL_COULD_NOT_CHECK:
+        which = (
+            "is SHALLOW"
+            if shallow is True
+            else "depth could not be read (the shallow probe FAILED, which is not 'deep')"
+        )
+        lines.append(
+            f"    {FIX_LOOP_WALL_COULD_NOT_CHECK}: the clone {which}, so ANY rate over this arm"
+        )
+        lines.append(
+            "    would be a fact about the CLONE DEPTH as much as about the loop. That is a"
+        )
+        lines.append(
+            "    different finding from the wall and it is not folded into one: re-run with"
+        )
+        lines.append("    --deepen N (or on a full clone) before reading a rate here.")
+        return "\n".join(lines)
+    if verdict == FIX_LOOP_WALL_MEASURABLE:
+        rate = 100.0 * behavioural / commits if commits else 0.0
+        lines.append(
+            f"    VERDICT: {verdict} \u2014 {behavioural} behavioural fix-loop commit(s),"
+            f" DREAM.md's >={DREAM_MIN_TASK_COMMITS} bar cleared."
+        )
+        lines.append(
+            f"    behavioural rate ........... {rate:.0f}%   (the census's own reading)"
+        )
+        return "\n".join(lines)
+    lines.append(
+        f"    VERDICT: {FIX_LOOP_WALL_UNMEASURABLE} \u2014 {behavioural} behavioural fix-loop"
+        f" commit(s), below DREAM.md's >={DREAM_MIN_TASK_COMMITS} bar."
+    )
+    lines.append(
+        "    NOT under-sampled: the wall above is why. Reporting a rate over this arm would"
+    )
+    lines.append(
+        "    publish a small number where the honest statement is that the method cannot"
+    )
+    lines.append("    see the region most fix-loop test edits live in.")
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------------------
+
 
 # --------------------------------------------------------------------------------------
 # Window depth. The census denominator is bounded by how much history is reachable, and
@@ -2638,7 +2940,7 @@ def render_population_block(label: str, summary: dict, note: str = "",
 
 
 def render_census(rows, summary, window, limit, note=None, by_pop=None,
-                  shape_split=None) -> str:
+                  shape_split=None, fix_loop_wall=None) -> str:
     out = []
     scope = f"last {limit} task commits" if limit else "all reachable task commits"
     out.append(f"counterfactual-green census over {scope}")
@@ -2702,6 +3004,14 @@ def render_census(rows, summary, window, limit, note=None, by_pop=None,
     out.append("")
     out.append("  legend: * behavioural   r register-only   (blank) NO_TEST_CHANGE")
     out.append("          F fix-loop commit   ? unrecognised suffix")
+    # #870 (Day 206): the fix-loop arm's STRUCTURAL WALL, printed on every census run
+    # under every verdict. OPTIONAL and pre-rendered by the caller (`render_fix_loop_wall`),
+    # for the same reason `shape_split` is: the split costs git calls and a pure renderer
+    # must not shell out. Omitted -> the block is byte-identical to the pre-#870 report,
+    # which is every caller that does not ask for it.
+    if fix_loop_wall:
+        out.append("")
+        out.append(fix_loop_wall)
     return "\n".join(out)
 
 
@@ -3476,8 +3786,25 @@ def main(argv):
         shape_split = census_shape_split_by_population(
             rows, lambda sha: commit_test_diff_shape(root, sha)
         )
+        # #870 (Day 206): the fix-loop arm's STRUCTURAL WALL. One `git diff --name-status`
+        # per fix-loop commit (plus one `-U0` diff per src/-touching one), so it is scoped
+        # to the arm DREAM.md asks about rather than to all ~1014 task commits -- the same
+        # bound `--src-census` takes, for the same reason. `shallow` is passed through
+        # THREE-VALUED: True and None are both COULD NOT CHECK, never folded into False.
+        wall_counts = fix_loop_wall_split(
+            rows, lambda sha: commit_fix_loop_wall_facts(root, sha)
+        )
+        # The behavioural count comes from `census_by_population`, the census's OWN fold,
+        # rather than from a second sum over the arm: two counts of one thing agree the
+        # day they are written (the `splice_test_module`/`readable_at_depth` precedent).
+        wall_block = render_fix_loop_wall(
+            wall_counts,
+            census_by_population(rows)[POP_FIX_LOOP]["behavioural"],
+            window,
+            shallow,
+        )
         print(render_census(rows, summary, window, args.limit, note,
-                            shape_split=shape_split))
+                            shape_split=shape_split, fix_loop_wall=wall_block))
         # #870, Day 188: the src+tests readability measurement. DEFAULT OFF, and the
         # branch is the whole regression guard -- without the flag not one byte of the
         # census above or below changes, which is what every prior session's figures
@@ -5838,6 +6165,214 @@ def run_self_tests():
           _on.get("src_spliced") == 3 and _on.get("src_splice_refused") == 2
           and _on.get("splice_depth") == "src+tests",
           _on)
+
+    # -- #870 (Day 206): THE FIX-LOOP ARM'S STRUCTURAL WALL -----------------------------
+    # THE THREE VERDICTS, AND THE FIXTURES ARE REAL OUTPUT SHAPES rather than ideals: the
+    # counts below are the ones a full-clone `--census` actually printed on Day 206
+    # (6129 commits, shallow=no: 328 fix-loop task commits, 38 touch tests/, 138 touch
+    # src/, 103 assertion-shaped, 9 behavioural). This file's family has been bitten by
+    # fixtures the corpus never emits (d201), so the numbers are read from the tool rather
+    # than typed from imagination -- a hand-typed ideal is exactly the one-line spelling
+    # rustfmt never emits, one axis over.
+    _wall_real = {"commits": 328, "tests": 38, "src": 138, "assertion_shaped": 103,
+                  "unreadable": 0}
+    _wall_shallow = {"commits": 1, "tests": 1, "src": 0, "assertion_shaped": 0,
+                     "unreadable": 0}
+    _wall_none = {"commits": 0, "tests": 0, "src": 0, "assertion_shaped": 0,
+                  "unreadable": 0}
+    _RANGE = "6129 commits reachable from HEAD (6129 total, shallow=no)"
+
+    # ANTI-VACUOUS FIRST, per the file's own discipline: a renderer that prints NOTHING
+    # must not pass these by agreeing with itself. Every branch below asserts a substring
+    # only that branch emits, and this row asserts that the shared header is real.
+    _hdr = render_fix_loop_wall(_wall_real, 9, _RANGE, False)
+    for _needle in ("FIX-LOOP ARM", _RANGE, "fix-loop task commits ...... 328",
+                    "touch tests/*.rs ......... 38", "touch src/*.rs ........... 138",
+                    "assertion-shaped in src/ . 103", "WHY:", "#[cfg(test)]"):
+        check(f"wall: header prints {_needle!r}", _needle in _hdr, _hdr[:200])
+    check("wall: header is NOT empty (anti-vacuous)", len(_hdr) > 400, len(_hdr))
+
+    # <20 behavioural, readable depth -> STRUCTURALLY UNMEASURABLE, and the wall is named.
+    check("wall: <20 behavioural at full depth is STRUCTURALLY UNMEASURABLE",
+          FIX_LOOP_WALL_UNMEASURABLE in _hdr, _hdr[-300:])
+    check("wall: unmeasurable cites the wall rather than 'thin sample'",
+          "NOT under-sampled" in _hdr, _hdr[-300:])
+    check("wall: unmeasurable does NOT print a behavioural rate",
+          "behavioural rate" not in _hdr, _hdr[-300:])
+    check("wall: full-depth fixture does NOT claim a bounded window",
+          "BOUNDED BELOW" not in _hdr, _hdr[-300:])
+
+    # >=20 behavioural -> MEASURABLE, and the census's own rate is what it prints.
+    _ok = render_fix_loop_wall(
+        {"commits": 100, "tests": 40, "src": 30, "assertion_shaped": 20, "unreadable": 0},
+        25, "400 commits reachable from HEAD (400 total, shallow=no)", False,
+    )
+    check("wall: >=20 behavioural is MEASURABLE",
+          FIX_LOOP_WALL_MEASURABLE in _ok, _ok[-200:])
+    check("wall: measurable prints the census's own behavioural rate (25/100)",
+          "behavioural rate ........... 25%" in _ok, _ok[-200:])
+    check("wall: measurable does NOT claim the wall binds it",
+          "NOT under-sampled" not in _ok, _ok[-200:])
+
+    # SHALLOW + an arm too small to populate itself -> COULD NOT CHECK, and it is a
+    # DIFFERENT sentence from STRUCTURALLY UNMEASURABLE. The two must never merge: one is
+    # a fact about the clone, the other a permanent property of the instrument.
+    _shallow = render_fix_loop_wall(_wall_shallow, 0, _RANGE, True)
+    check("wall: shallow + tiny arm is COULD NOT CHECK",
+          FIX_LOOP_WALL_COULD_NOT_CHECK in _shallow, _shallow[-300:])
+    check("wall: could-not-check names the CLONE DEPTH as the reason",
+          "CLONE DEPTH" in _shallow, _shallow[-300:])
+    check("wall: could-not-check is distinct from structurally unmeasurable",
+          FIX_LOOP_WALL_UNMEASURABLE not in _shallow, _shallow[-300:])
+    check("wall: could-not-check still prints the wall split",
+          "touch src/*.rs ........... 0" in _shallow, _shallow[:400])
+    check("wall: shallow reading flags the bounded window under the refusal",
+          "BOUNDED BELOW (shallow=yes)" in _shallow, _shallow[-400:])
+
+    # `shallow is None` -- the probe itself failed -- is ALSO could-not-check, never
+    # folded into False. This is the "could not check must not read as checked; clean"
+    # rule applied to the one input that decides which verdict the block reaches.
+    _probe_failed = render_fix_loop_wall(_wall_shallow, 0, _RANGE, None)
+    check("wall: an unreadable shallow probe on a tiny arm is COULD NOT CHECK",
+          FIX_LOOP_WALL_COULD_NOT_CHECK in _probe_failed, _probe_failed[-300:])
+    check("wall: that refusal does NOT read as structurally unmeasurable",
+          FIX_LOOP_WALL_UNMEASURABLE not in _probe_failed, _probe_failed[-300:])
+    check("wall: the failed probe is named as failed rather than as 'no'",
+          "probe itself FAILED" in _probe_failed, _probe_failed[-400:])
+    # ...AND IT IS NOT THE BOUNDED-WINDOW CLAIM. `shallow is None` means I could not tell;
+    # writing "IS BOUNDED BELOW" there would assert a property the failed probe never
+    # established. Two states, two sentences.
+    check("wall: the failed probe does NOT claim the window is bounded",
+          "IS BOUNDED BELOW" not in _probe_failed, _probe_failed[-400:])
+    # A POPULATED ARM IS STILL READABLE WHEN THE PROBE FAILS: 328 commits past the bar is
+    # evidence the arm populated itself, which no window probe can take back.
+    _probe_failed_populated = render_fix_loop_wall(_wall_real, 9, _RANGE, None)
+    check("wall: a populated arm survives an unreadable shallow probe",
+          FIX_LOOP_WALL_UNMEASURABLE in _probe_failed_populated,
+          _probe_failed_populated[-300:])
+    check("wall: but it still discloses the unreadable window",
+          "COULD NOT BE CHECKED" in _probe_failed_populated,
+          _probe_failed_populated[-400:])
+
+    # ZERO fix-loop commits -> a REFUSAL, not "0 unmeasurable". A scan that found nothing
+    # must never report a clean wall; that is this defect wearing the opposite sign.
+    _empty = render_fix_loop_wall(_wall_none, 0, _RANGE, True)
+    check("wall: zero fix-loop commits is a REFUSAL",
+          "no fix-loop task commit in range" in _empty, _empty[-300:])
+    check("wall: the refusal says it is not '0 unmeasurable'",
+          "'0 structurally unmeasurable'" in _empty, _empty[-300:])
+    check("wall: the zero-row block still prints its split line",
+          "fix-loop task commits ...... 0" in _empty, _empty[:400])
+
+    # Unreadable rows are REPORTED and summed into nothing -- a shrinking denominator
+    # inside my own meter is the defect this instrument exists to refuse.
+    _unread = render_fix_loop_wall(
+        {"commits": 5, "tests": 1, "src": 1, "assertion_shaped": 0, "unreadable": 3},
+        0, _RANGE, True,
+    )
+    check("wall: unreadable rows are printed, not silently dropped",
+          "UNREADABLE ............... 3" in _unread, _unread[:500])
+    _readable_block = render_fix_loop_wall(
+        {"commits": 5, "tests": 1, "src": 1, "assertion_shaped": 0, "unreadable": 0},
+        0, _RANGE, True,
+    )
+    check("wall: the unreadable line is SILENT at zero",
+          "UNREADABLE" not in _readable_block, _readable_block[:500])
+
+    # -- the `-U0` heuristic: an upper bound, and never a count ------------------------
+    check("wall-heuristic: a real added #[test] line is assertion-shaped",
+          diff_mentions_assertion_shape("+++ b/src/a.rs\n@@ -1 +1 @@\n+#[test]\n"),
+          "fixture")
+    check("wall-heuristic: a removed assert! line is assertion-shaped",
+          diff_mentions_assertion_shape("@@ -1 +1 @@\n-    assert!(x);\n"), "fixture")
+    check("wall-heuristic: cfg(test) counts", 
+          diff_mentions_assertion_shape("+#[cfg(test)]\n"), "fixture")
+    # The three NEGATIVE controls, and they are the point: a heuristic that fired on the
+    # path headers or on ordinary production code would report an upper bound over
+    # everything, which is indistinguishable from reporting nothing.
+    check("wall-heuristic: the +++/--- path headers are NOT content",
+          not diff_mentions_assertion_shape(
+              "+++ b/src/assert_tests.rs\n--- a/src/assert_tests.rs\n"), "fixture")
+    check("wall-heuristic: a production line is not assertion-shaped",
+          not diff_mentions_assertion_shape("@@ -1 +1 @@\n-    let x = 1;\n"), "fixture")
+    check("wall-heuristic: an EMPTY diff is False, not True",
+          not diff_mentions_assertion_shape(""), "fixture")
+    check("wall-heuristic: a CONTEXT line carrying #[test] is not a change",
+          not diff_mentions_assertion_shape(" #[test]\n"), "fixture")
+
+    # -- the fold: pure, injected, and three buckets that are NOT a partition ----------
+    class _WallRow:
+        def __init__(self, sha, population):
+            self.sha = sha
+            self.population = population
+
+    _facts = {
+        "a": {"tests": True, "src": True, "assertion_shaped": True},
+        "b": {"tests": False, "src": True, "assertion_shaped": False},
+        "c": None,
+        "d": {"tests": True, "src": False, "assertion_shaped": False},
+    }
+    _rows_wall = [
+        _WallRow("a", POP_FIX_LOOP), _WallRow("b", POP_FIX_LOOP),
+        _WallRow("c", POP_FIX_LOOP), _WallRow("d", POP_FIX_LOOP),
+        _WallRow("z", POP_PLAIN),
+    ]
+    _wc = fix_loop_wall_split(_rows_wall, lambda sha: _facts.get(sha))
+    check("wall-split: scoped to the fix-loop arm only",
+          _wc["commits"] == 4, _wc)
+    check("wall-split: tests/src/assertion-shaped counted independently",
+          (_wc["tests"], _wc["src"], _wc["assertion_shaped"]) == (2, 2, 1), _wc)
+    check("wall-split: an unreadable row is counted and lands in no bucket",
+          _wc["unreadable"] == 1, _wc)
+    check("wall-split: the three buckets are NOT a partition over the arm",
+          _wc["tests"] + _wc["src"] + _wc["assertion_shaped"] > _wc["commits"], _wc)
+    check("wall-split: a non-dict (unreadable) answer is never a real bucket",
+          fix_loop_wall_split(
+              [_WallRow("x", POP_FIX_LOOP)], lambda sha: True)["unreadable"] == 1,
+          fix_loop_wall_split([_WallRow("x", POP_FIX_LOOP)], lambda sha: True))
+
+    # -- the verdict ladder, driven directly (the renderer is a function of it) --------
+    check("wall-verdict: zero commits refuses whatever the depth says",
+          fix_loop_wall_verdict(_wall_none, 0, False) == FIX_LOOP_WALL_COULD_NOT_CHECK,
+          fix_loop_wall_verdict(_wall_none, 0, False))
+    check("wall-verdict: shallow + a tiny arm cannot separate depth from wall",
+          fix_loop_wall_verdict(_wall_shallow, 0, True) == FIX_LOOP_WALL_COULD_NOT_CHECK,
+          fix_loop_wall_verdict(_wall_shallow, 0, True))
+    # THE HALF A SHALLOW-ONLY VETO GOT WRONG: the clone is shallow at EVERY depth this
+    # repo's workflow fetches from, so gating on `shallow` alone makes the verdict this
+    # block exists to print unreachable for every reading the runner can take.
+    check("wall-verdict: a shallow window does NOT veto a well-populated arm",
+          fix_loop_wall_verdict(_wall_real, 9, True) == FIX_LOOP_WALL_UNMEASURABLE,
+          fix_loop_wall_verdict(_wall_real, 9, True))
+    check("wall-verdict: the bar is cleared at exactly 20, not 21",
+          fix_loop_wall_verdict(_wall_real, DREAM_MIN_TASK_COMMITS, False)
+          == FIX_LOOP_WALL_MEASURABLE,
+          fix_loop_wall_verdict(_wall_real, DREAM_MIN_TASK_COMMITS, False))
+    check("wall-verdict: one below the bar is unmeasurable",
+          fix_loop_wall_verdict(_wall_real, DREAM_MIN_TASK_COMMITS - 1, False)
+          == FIX_LOOP_WALL_UNMEASURABLE,
+          fix_loop_wall_verdict(_wall_real, DREAM_MIN_TASK_COMMITS - 1, False))
+    check("wall-verdict: shallow is THREE-VALUED -- None is not False",
+          fix_loop_wall_verdict(_wall_shallow, 0, None) == FIX_LOOP_WALL_COULD_NOT_CHECK,
+          fix_loop_wall_verdict(_wall_shallow, 0, None))
+
+    # -- THE REGRESSION SURFACE: omitting the block is byte-identical -------------------
+    _rows_small = [CensusRow("abc12345", "Day 1 (00:00): a task (Task 1)", [],
+                             population=POP_PLAIN)]
+    _sum_small = census_summary(_rows_small)
+    _without = render_census(_rows_small, _sum_small, "1 commit", None)
+    _with_none = render_census(_rows_small, _sum_small, "1 commit", None,
+                               fix_loop_wall=None)
+    check("wall-render: omitting the block is byte-identical (assert_eq, not contains)",
+          _without == _with_none, _without[-120:])
+    check("wall-render: no wall text leaks into the default report",
+          "STRUCTURAL WALL" not in _without, _without[-120:])
+    _with = render_census(_rows_small, _sum_small, "1 commit", None,
+                          fix_loop_wall=_hdr)
+    check("wall-render: supplying it appends the block rather than replacing anything",
+          _with.startswith(_without) and "STRUCTURAL WALL" in _with, _with[-120:])
+    check("wall-render: the legend still ends the pre-#870 report",
+          _without.rstrip().endswith("? unrecognised suffix"), _without[-120:])
 
     if failures:
         print(f"SELF-TESTS FAILED ({len(failures)}):", file=sys.stderr)
