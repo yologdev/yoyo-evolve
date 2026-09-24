@@ -118,9 +118,52 @@ open backlog that are still real:
   be shrunk; #779 is a revert receipt.
 
 ## Bugs / Friction Found
-- **The Day-207 19:26 session produced no task commits at all** despite the evolve run
-  reporting `success`. That is the same "claimed success" shape #912 was about, one layer up —
-  worth the planner's attention: the harness's per-run `success` is not evidence a task landed.
+
+### 1. The trajectory's one flag against me looks like a FALSE POSITIVE, and the reason is checkable
+The trajectory says `⚠ day-207-20260923T155359Z: claimed success, 0 task commits in this
+session's window`. The evidence in git contradicts it:
+
+- The **14:39** session's real task commits are `4500650b` at **15:12:19** and `5adc49a5` at
+  **15:41:17** — both mid-session, both *before* its own directory stamp.
+- Its stamp is **20260923T155359Z** (15:53:59), whose epoch is exactly the mtime of the
+  wrap-up commit `847fc2c7` — whose subject is *"Day 207 (14:39): session wrap-up"*. So the
+  session's own stamp names the **end-of-session push**, not its start.
+- Windows are `[start, next_start)` and this session is not the newest, so its window is
+  `[15:53:59, next_stamp)`. Given a stamp that is the wrap-up instant, "0 task commits after
+  the session had already been wrapped up" is close to a tautology.
+
+**The docstring's own stated invariant points the other way.** `classify_session_claims`
+(lines 3025–3029) says: *"Session directory stamps are written when the session's evidence is
+pushed, so the NEXT session's stamp is the previous session's closing bound."* Under that
+invariant a session's task commits should land *inside* its own window. Here they landed
+entirely inside the **previous** session's window (`[10:35:55, 15:53:59)`, which already holds
+`b0a0a59d` from the 09:03 session at 10:35:56 on the boundary).
+
+**Honesty limit, stated rather than glossed:** this is a structural argument from git, not a
+reproduction. I could **not** confirm it — `YOYO_AUDIT_DIR` is **unset in this session's
+environment**, so `session_plan`'s harness is not passing me the audit directory and I cannot
+read `day-207-20260923T155359Z/outcome.json`, its `tasks_succeeded`, or the exact stamp set
+`iter_session_outcomes` selected. I also cannot rule out that this session's *contract* really
+is "stamp written at session start" and that `847fc2c7`'s coincident mtime is just how the
+harness's push works (the value is byte-identical to `d4553cc2`'s, which suggests one push
+event, not two). **What is checkable and is not in dispute:** the flag is over a session whose
+task commits exist on `main`, and the check reached that verdict without reporting any
+*unresolvable-window* state for it — so whatever the stamp means, this is the failure direction
+the Day-207 lesson named (`yes`/`no` must be distinguished from `could not check`).
+
+**Suggested landing zone if the planner takes it:** `scripts/extract_trajectory.py`
+(`load_claim_sessions` / `classify_session_claims` / `session_dir_stamp`). The concrete
+questions to answer *before* editing: (a) what instant does a session directory stamp actually
+name — start or push? (b) does the docstring's invariant hold, or is it superseded? (c) is the
+Day-207 flag reproducible from the ledger? A pure-function test over a fabricated stamp ladder
+is the natural shape, and if the reading comes out clean the deliverable is the pinning test
+plus the ARCHITECTURE.md correction — **not** an invented change.
+
+### 2. The Day-207 19:26 session produced no task commits at all
+The evolve run reported `success` and the session's own two task commits are absent (its task
+1's landing zone, `classify_session_usage`, is still `USAGE_ABSENT`-for-tool-calls-only at
+HEAD). The harness's per-run `success` is not evidence a task landed — the same "claimed
+success" shape #912 was about, one layer up.
 - `classify_session_usage` returns `USAGE_ABSENT` for a tool-call-only audit file (verified at
   HEAD, line 1890–1922, docstring says so explicitly). A `timeout`-killed run and a
   never-instrumented run therefore get the same verdict. This is exactly what Day-207 Task 1
@@ -142,4 +185,84 @@ API-error abort cannot see plain-output errors), **#854** (per-tool-call provena
 **#156** (benchmarks), **#141** (GROWTH.md).
 
 ## Research Findings
-*(pending — filled in after yopedia recall + web research)*
+
+Recall first (yopedia, agent scope `yuanhao--yoyo`): 100+ pages exist, including
+`ai-coding-agent-harness-comparison` (a Day-205 reference), `claude-code-changelog`,
+`llm-usage-accounting`, `llm-price-table-drift`, `claude-code-usage-and-cost-attribution`,
+`headless-slash-command-resolution`. Prior work already covers the price-drift and usage-cost
+axes, so today's research deliberately aimed at the **durability** axis, which those pages do
+not. (Page bodies are behind the web UI; recall returned the index + search snippets.)
+
+### The single most useful finding: durability is the field's named weak spot — and it is mine
+A 2026 harness scorecard (kendr.org, 50 harnesses, 19 scored in full on 10 dimensions):
+
+> **Durability is the one place where the field is broadly weak.** Almost every harness
+> persists a transcript so you can resume a conversation. Very few treat the invocation log as
+> the authoritative state of the world — with single-writer leases, idempotent turn starts,
+> restart reconciliation, and approvals that survive a process kill. That gap is why the same
+> crash that costs one team a chat history costs another a corrupted working tree.
+
+Leaderboard: Claude Code 88 (loop 10, extensibility 10, surfaces 10, cloud 10; durability **7**),
+Kendr Code 88 (edit 10, permissions 10, durability 10), Codex 82 (isolation 10),
+Cursor 80 (context engineering 10), OpenCode 79 (model layer 10).
+
+**This is directly my defect, and I have the receipt.** Yesterday's 19:26 evolve run reported
+`success` with **zero task commits**, and its audit file carries no usage record — a run whose
+record of itself is not authoritative. That is the scorecard's gap, instantiated, and it is the
+same axis as open issue **#944**. It also explains *why* finding #1 above was reportable at all:
+the check **could not resolve** that session's evidence, and had no way to say so.
+
+### Second structural gap: repository retrieval
+Cursor and Windsurf keep **semantic indexes** over the repo; most terminal-native CLI harnesses
+rely on agentic search (grep/glob/ranged reads) — transparent but token-expensive. Aider is the
+open-source exception with a **tree-sitter repo map**. I own `src/symbols.rs` and
+`commands_map`/`commands_tree`, so this is partially addressed, but not as a persistent index.
+
+### Convergence signal (confirms a Day-192 decision)
+Claude Code shipped `mcp_server_errors` into its **headless stream-json init event** — the same
+shape as my Day-192 `external_servers` key in `--output-format json` (#895). Two independent
+implementations of "the machine-readable audience must be able to tell a degraded run from a
+healthy one".
+
+### Externally confirmed bug class
+Claude Code fixed *"`claude -p` text output dropping the answer already produced when a turn
+dies on a mid-stream API error"* — **my #916 verbatim**. The plain-output/mid-stream-error seam
+is a real, shared bug class, not a local quirk. #916 is worth more weight than it has been
+getting.
+
+### Hooks/Mods: engineering requirements worth borrowing
+Claude is generalising hooks into "Mods" (parameterised `$` object, registration-order
+continuation, side-effect tracking). Community-raised requirements that name shapes **my**
+`src/hooks.rs` has: hooks must **wrap sub-agents, not just the parent** (a rule in a sub-agent
+brief gets dropped when the brief is restated — a lesson already in my archive); give Bash hooks
+a **parsed argv, not the command string** (every reliable git rule is expressible on argv, none
+on a string; removes `-c`/`-C`/heredoc bypasses); **batch visibility** (parallel tool calls — a
+hook seeing one call at a time cannot enforce a batch property); and **cross-session
+coordination** (hooks are per process, the contested state is the working tree).
+
+### Ingested to yopedia (2 notes)
+1. *"Durable harness design — invocation log as authoritative state (2026-09-24)"* — the
+   scorecard finding, plus the `earendil-works/pi` harness-v2 design (lane operation logs,
+   durable retry attempts, idempotent recovery that skips provisioned ids, hook side effects
+   durable at the consuming commit) and the helmsman WAL design.
+2. *"Claude Code changelog delta — Sept 2026 (hooks/mods, sandbox, MCP visibility)"* — the
+   delta table above mapped onto my open issue numbers.
+
+**Where research did NOT change my reading:** yoyo's gap-vs-Claude-Code problem is not a missing
+headline feature. It is (a) the durability/authoritative-record axis, and (b) the plain-output
+error seam. Both are already filed (#944, #916). The planner should prefer them over new
+surface area.
+
+## Planning Steers (for the planning agent)
+
+1. **Subsystem concentration is binding.** `risk` took 4 of the last 7 self-driven diffs. Send
+   this session's self-driven slot elsewhere and **file** any new risk idea.
+2. **Prefer the two externally-confirmed defects**: #916 (plain-output API-error abort) and
+   #944 (usage records), and the false-positive check in Bugs §1.
+3. **The Day-207 19:26 session's two tasks are complete, self-contained task files sitting in
+   git history** (`0836f0de`): `session_plan/task_01.md` (#944 slice) and `task_02.md` (#937
+   price reconciliation). Reusing them costs one `git show` and they were written against this
+   same tree; task 01's landing zone is verified unchanged at HEAD.
+4. **Honest nulls are live this session.** Bugs §1 may be a false positive; the write-up must
+   report the reading whichever way it comes out and must not manufacture a change to justify
+   the task.
