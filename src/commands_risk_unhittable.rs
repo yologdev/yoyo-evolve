@@ -401,6 +401,12 @@ pub(crate) fn unhittable_note(count: UnhittableCount, plain: bool) -> Option<Str
 pub(crate) struct SurpriseRow {
     pub(crate) ts: String,
     pub(crate) surprises: Vec<String>,
+    /// The snapshot whose own `git_hash` this event graded, when the event
+    /// carries one. Empty means the row cannot be read by the git instrument at
+    /// all — which is the whole regression surface: a ledger written before
+    /// `snapshot_git_hash` was recorded (Day 165, #723, forward-only and
+    /// deliberately un-back-filled) must read exactly as it did before.
+    pub(crate) git_hash: String,
 }
 
 /// Parse the validation ledger's text into rows carrying `ts` + `surprises`.
@@ -425,6 +431,9 @@ pub(crate) fn parse_surprise_rows(content: &str) -> Vec<SurpriseRow> {
             continue;
         }
         let ts = val["ts"].as_str().unwrap_or("").to_string();
+        // `snapshot_git_hash` is the validation ledger's own key name (the
+        // snapshot ledger's is `git_hash`); absent is `""`, never `"unknown"`.
+        let git_hash = val["snapshot_git_hash"].as_str().unwrap_or("").to_string();
         let surprises = val["surprises"]
             .as_array()
             .map(|a| {
@@ -433,7 +442,11 @@ pub(crate) fn parse_surprise_rows(content: &str) -> Vec<SurpriseRow> {
                     .collect()
             })
             .unwrap_or_default();
-        rows.push(SurpriseRow { ts, surprises });
+        rows.push(SurpriseRow {
+            ts,
+            surprises,
+            git_hash,
+        });
     }
     rows
 }
@@ -452,7 +465,7 @@ pub(crate) fn parse_surprise_rows(content: &str) -> Vec<SurpriseRow> {
 /// `parse_first_scored` — that side is the ledger writer's business
 /// (`utc_timestamp`), and re-validating it here would be a second copy of the
 /// live path's assumption rather than a repair of it.
-fn is_placeable_ledger_ts(ts: &str) -> bool {
+pub(crate) fn is_placeable_ledger_ts(ts: &str) -> bool {
     let bytes = ts.as_bytes();
     if bytes.len() != 20 {
         return false;
@@ -476,7 +489,7 @@ fn is_placeable_ledger_ts(ts: &str) -> bool {
 /// task's line is *"1 of 115 post-ledger grading events carried a file first
 /// scored after the event"*, and a percentage would hide the denominator that
 /// makes the count readable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct RetrospectiveCount {
     /// Grading events **after** the first-scored ledger's own founding instant —
     /// the only rows this join can grade (see [`retrospective_unhittable`]).
@@ -490,6 +503,105 @@ pub(crate) struct RetrospectiveCount {
     /// [`is_placeable_ledger_ts`]) — out of the population because there is no
     /// moment to compare a birthday against.
     pub(crate) undated: u32,
+    /// The **second instrument's** own retrospective reading, `None` when no
+    /// row in the population carries a snapshot hash — which is every ledger
+    /// written before Day 165 and the whole regression surface of this pass
+    /// (a project whose events have no hash reads byte-identically to before).
+    pub(crate) git: Option<GitCensus>,
+}
+
+/// The git instrument's **already-resolved** answers, as data rather than as
+/// I/O: `resolves[hash]` is whether that tree exists in this clone at all, and
+/// `present["hash:path"]` is whether the path existed inside it. Passing the
+/// readings in is what lets the table tests below exercise both instruments
+/// without shelling out — and it is the same split [`git_born_after_by_check`]
+/// already uses one row at a time.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct GitProbes {
+    pub(crate) resolves: BTreeMap<String, bool>,
+    pub(crate) present: BTreeMap<String, bool>,
+}
+
+/// The git instrument's retrospective count — the same four quantities the
+/// ledger join reports, plus the one the ledger join structurally cannot state:
+/// how many rows the check could not run for at all.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct GitCensus {
+    /// Post-founding rows that carry a snapshot hash — the rows this instrument
+    /// can even be asked about. Deliberately *not* the ledger join's
+    /// `population`: a row with a snapshot hash but an unplaceable `ts` is out
+    /// of both, and a row with no hash is in the join's and not in this one.
+    pub(crate) population: u32,
+    pub(crate) with_unhittable: u32,
+    pub(crate) with_unmeasurable: u32,
+    /// Rows whose snapshot hash does **not** resolve in this clone. Counted and
+    /// printed, never silently hittable — the day-205 shape, and the reason the
+    /// dream itself wrote a fallback clause. Today: 1 row (`0ec456e0`, day 206).
+    pub(crate) unresolvable: u32,
+    /// Surprises not probed because their row's hash did not resolve. This is
+    /// the "skipped" count the task asks to be printed rather than folded away.
+    pub(crate) skipped_surprises: u32,
+}
+
+/// Join every historical row's surprises against **git existence at the row's
+/// own snapshot hash** — the dream's first-choice instrument, and the one the
+/// ledger join is a proxy for. Pure: the probes arrive as data.
+///
+/// A row with no `git_hash` is out of this population entirely (it is not an
+/// error and not an unmeasurable — there is nothing to ask). A row whose hash
+/// does not resolve is **`unresolvable`** and every one of its surprises is
+/// counted as unprobed rather than as hittable: a check that did not run must
+/// not read as a check that found nothing.
+pub(crate) fn retrospective_git_census(
+    rows: &[SurpriseRow],
+    founding: Option<&str>,
+    probes: &GitProbes,
+) -> GitCensus {
+    let mut out = GitCensus::default();
+    for row in rows {
+        let Some(row_ts) = Some(row.ts.as_str()).filter(|t| is_placeable_ledger_ts(t)) else {
+            continue;
+        };
+        if let Some(founding) = founding {
+            if row_ts <= founding {
+                continue;
+            }
+        }
+        if row.git_hash.is_empty() {
+            continue;
+        }
+        out.population += 1;
+        let resolves = probes.resolves.get(&row.git_hash).copied().unwrap_or(false);
+        if !resolves {
+            out.unresolvable += 1;
+            out.with_unmeasurable += 1;
+            out.skipped_surprises += row.surprises.len() as u32;
+            continue;
+        }
+        let mut unhittable = false;
+        let mut unmeasurable = false;
+        for path in &row.surprises {
+            match probes.present.get(&probe_key(&row.git_hash, path)) {
+                Some(false) => unhittable = true,
+                Some(true) => {}
+                // Not probed: unmeasured, never born-after.
+                None => unmeasurable = true,
+            }
+        }
+        if unhittable {
+            out.with_unhittable += 1;
+        }
+        if unmeasurable {
+            out.with_unmeasurable += 1;
+        }
+    }
+    out
+}
+
+/// The one key shape [`GitProbes::present`] is read by, so the I/O half and the
+/// pure half cannot disagree about how a probe is named.
+pub(crate) fn probe_key(hash: &str, path: &str) -> String {
+    format!("{hash}:{path}")
 }
 
 /// Join every historical row's surprises against the first-scored ledger — the
@@ -600,7 +712,59 @@ pub(crate) fn retrospective_unhittable_at(
     let rows = parse_surprise_rows(&content);
     let (map, _dropped) = read_first_scored(first_scored_path);
     let founding = founding_ts(&map);
-    RetrospectiveReading::Counted(retrospective_unhittable(&rows, &map, founding))
+    let probes = probe_git_for(&rows, founding);
+    let mut count = retrospective_unhittable(&rows, &map, founding);
+    let git = retrospective_git_census(&rows, founding, &probes);
+    // `None` when no row in the population carries a hash: a ledger written
+    // before Day 165 has nothing to ask git, and must read exactly as it did.
+    count.git = (git.population > 0).then_some(git);
+    RetrospectiveReading::Counted(count)
+}
+
+/// I/O half of the second instrument: **one `git cat-file` per distinct
+/// snapshot hash in the population**, and one per (hash, path) pair — the same
+/// two probes [`git_born_after_at`] makes, hoisted so a shared hash is not
+/// resolved once per row.
+///
+/// Bounded by construction rather than by a timeout: only hashes carried by
+/// rows already inside the post-founding, placeable population are probed, and
+/// a hash that does not resolve short-circuits its own row's members — they are
+/// counted as unprobed, never as hittable. Measured on this repo's ledger
+/// (2026-09-25): 120 post-ledger rows, 119 distinct hashes, 5 of which do not
+/// resolve in this 52-commit shallow clone; 0.42s for the whole pass. Deepening
+/// or re-fetching is never done here — an unresolvable hash is a reading, not
+/// an obstacle.
+fn probe_git_for(rows: &[SurpriseRow], founding: Option<&str>) -> GitProbes {
+    let mut probes = GitProbes::default();
+    for row in rows {
+        let Some(row_ts) = Some(row.ts.as_str()).filter(|t| is_placeable_ledger_ts(t)) else {
+            continue;
+        };
+        if let Some(founding) = founding {
+            if row_ts <= founding {
+                continue;
+            }
+        }
+        if row.git_hash.is_empty() {
+            continue;
+        }
+        let hash = row.git_hash.clone();
+        let resolves = *probes
+            .resolves
+            .entry(hash.clone())
+            .or_insert_with(|| crate::git::run_git(&["cat-file", "-t", &hash]).is_ok());
+        if !resolves {
+            continue;
+        }
+        for path in &row.surprises {
+            let spec = format!("{hash}:{path}");
+            probes
+                .present
+                .entry(probe_key(&hash, path))
+                .or_insert_with(|| crate::git::run_git(&["cat-file", "-e", &spec]).is_ok());
+        }
+    }
+    probes
 }
 
 /// The report line: a count with its denominator, never a percentage.
@@ -644,6 +808,30 @@ pub(crate) fn retrospective_note(reading: &RetrospectiveReading, plain: bool) ->
             }
             if c.undated > 0 {
                 note.push_str(&format!("; {} undated row(s)", c.undated));
+            }
+            // The second instrument, printed only where it exists at all: a
+            // ledger whose events carry no snapshot hash (every event written
+            // before Day 165) reads exactly as it did before this pass.
+            if let Some(git) = &c.git {
+                note.push_str(&format!(
+                    "; the git check reads {} of {} rows with a snapshot hash",
+                    git.with_unhittable, git.population
+                ));
+                if git.unresolvable > 0 {
+                    // Named, counted, and never silently hittable — a check
+                    // that did not run is not a check that found nothing.
+                    note.push_str(&format!(
+                        " ({} row(s) skip: their snapshot hash does not resolve in this clone, \
+                         {} surprise(s) unprobed)",
+                        git.unresolvable, git.skipped_surprises
+                    ));
+                }
+                if git.with_unmeasurable > git.unresolvable {
+                    note.push_str(&format!(
+                        "; {} could not be decided by the git check",
+                        git.with_unmeasurable
+                    ));
+                }
             }
             note
         }
@@ -1408,314 +1596,5 @@ mod born_after_ledger_tests {
         assert_eq!(plain.ledger_born_after, with_git.ledger_born_after);
         assert_eq!(with_git.git_born_after, 0, "nothing measured: {with_git:?}");
         assert_eq!(with_git.git_unmeasured, 2, "{with_git:?}");
-    }
-}
-
-/// Tests for the retrospective pass — the dream's second observable: how many
-/// **post-ledger grading events** carried an unhittable member, over the whole
-/// history rather than the one row in front of me.
-#[cfg(test)]
-mod retrospective_tests {
-    use super::*;
-    use std::collections::BTreeMap;
-
-    fn scored(rows: &[(&str, &str)]) -> BTreeMap<String, String> {
-        rows.iter()
-            .map(|(p, t)| ((*p).to_string(), (*t).to_string()))
-            .collect()
-    }
-
-    fn row(ts: &str, surprises: &[&str]) -> SurpriseRow {
-        SurpriseRow {
-            ts: ts.to_string(),
-            surprises: surprises.iter().map(|s| (*s).to_string()).collect(),
-        }
-    }
-
-    fn paths(rows: &[&str]) -> Vec<String> {
-        rows.iter().map(|s| (*s).to_string()).collect()
-    }
-
-    /// The ledger most rows below join against: one founding-batch path, one
-    /// long-scored path, one born two days before the graded event below.
-    fn ledger() -> BTreeMap<String, String> {
-        scored(&[
-            ("src/seed.rs", "2026-08-22T15:40:00Z"),
-            ("src/old.rs", "2026-08-25T10:00:00Z"),
-            ("src/born.rs", "2026-09-03T18:03:00Z"),
-        ])
-    }
-
-    #[test]
-    fn a_post_ledger_row_with_a_later_birthday_fires_and_its_twin_does_not() {
-        let map = ledger();
-        let founding = founding_ts(&map);
-        let fired_ts = "2026-09-03T17:23:00Z";
-        // Anti-vacuous, and it has to be here rather than assumed: the fixture
-        // only means anything if the path really is in the ledger AND really is
-        // first scored *after* the event that missed it. A transcription slip in
-        // either direction would otherwise let this test pass by agreeing with
-        // itself.
-        let born = map
-            .get("src/born.rs")
-            .expect("fixture really contains the born path");
-        assert!(
-            born.as_str() > fired_ts,
-            "anti-vacuous: the fixture's birthday must postdate the event, got {born}"
-        );
-
-        let rows = [
-            row(fired_ts, &["src/born.rs", "src/old.rs"]),
-            // The near-miss: same ledger, a member first scored BEFORE the
-            // event that missed it — a real miss, and it must not fire.
-            row("2026-08-26T00:00:00Z", &["src/old.rs"]),
-        ];
-        let got = retrospective_unhittable(&rows, &map, founding);
-        assert_eq!(
-            got.population, 2,
-            "both rows are after the founding instant"
-        );
-        assert_eq!(
-            got.with_unhittable, 1,
-            "only the row whose member was born after it"
-        );
-        assert_eq!(got.with_unmeasurable, 0);
-        assert_eq!(got.undated, 0);
-
-        let note = retrospective_note(&RetrospectiveReading::Counted(got), true).expect("note");
-        assert!(
-            note.contains("unhittable: 1 of 2 post-ledger grading events carried a file first scored after the event"),
-            "{note}"
-        );
-    }
-
-    #[test]
-    fn a_row_at_or_before_the_founding_instant_is_out_of_the_population() {
-        // The survivor trap, in one row: a first-scored date from before the
-        // ledger's own founding is backfill, so a row graded then cannot be
-        // graded this way. The note must then be state (b), not a zero.
-        let map = ledger();
-        let founding = founding_ts(&map);
-        let rows = [
-            row("2026-08-22T15:40:00Z", &["src/born.rs"]), // exactly the founding instant
-            row("2026-08-01T00:00:00Z", &["src/born.rs"]), // before it
-        ];
-        let got = retrospective_unhittable(&rows, &map, founding);
-        assert_eq!(got.population, 0, "neither row is gradeable by this join");
-        assert_eq!(got.with_unhittable, 0);
-        assert_eq!(
-            got.undated, 0,
-            "both rows are dated; they are just too early"
-        );
-
-        let note = retrospective_note(&RetrospectiveReading::Counted(got), true).expect("note");
-        assert!(note.contains("no post-ledger grading events yet"), "{note}");
-        assert!(
-            note.contains("this is not the same as zero unhittable"),
-            "{note}"
-        );
-    }
-
-    #[test]
-    fn a_surprise_with_no_ledger_record_is_counted_out_loud() {
-        let map = ledger();
-        let founding = founding_ts(&map);
-        assert!(
-            !map.contains_key("src/never-scored.rs"),
-            "anti-vacuous: the path really has no birthday in the ledger"
-        );
-        let rows = [row("2026-09-03T17:23:00Z", &["src/never-scored.rs"])];
-        let got = retrospective_unhittable(&rows, &map, founding);
-        assert_eq!(got.population, 1);
-        assert_eq!(got.with_unhittable, 0, "unmeasurable is never unhittable");
-        assert_eq!(got.with_unmeasurable, 1);
-
-        let note = retrospective_note(&RetrospectiveReading::Counted(got), true).expect("note");
-        assert!(note.contains("unhittable: 0 of 1"), "{note}");
-        assert!(note.contains("at least one undecidable surprise"), "{note}");
-    }
-
-    #[test]
-    fn a_ts_outside_the_ledger_shape_has_no_placeable_moment() {
-        // The join's string compare is chronological *only* for the one
-        // fixed-width shape, so a row that is not in it must be unorderable
-        // rather than silently participating in a compare it cannot support.
-        assert!(is_placeable_ledger_ts("2026-09-03T17:23:00Z"));
-        for bad in [
-            "",
-            "unknown",
-            "; not a date",
-            "2026-9-03T17:23:00Z",  // 19 bytes: the shape the compare breaks on
-            "2026-09-03T17:23:00",  // no `Z`
-            "2026-09-03 17:23:00Z", // space where the `T` belongs
-            "2026-09-03T17:23:00Z\n", // trailing byte
-            "2026-09-03T17:23:00\u{2713}", // non-ASCII
-        ] {
-            assert!(!is_placeable_ledger_ts(bad), "must not place {bad:?}");
-        }
-    }
-
-    #[test]
-    fn a_founding_batch_surprise_is_unmeasurable_not_unhittable() {
-        // Inherited from `first_scored_age` rather than re-derived: a path
-        // stamped at the founding instant has an *unknown* birthday, and
-        // relabelling the whole backlog as unhittable would be the survivor trap
-        // read in the flattering direction.
-        let map = ledger();
-        let founding = founding_ts(&map);
-        let rows = [row("2026-09-03T17:23:00Z", &["src/seed.rs"])];
-        let got = retrospective_unhittable(&rows, &map, founding);
-        assert_eq!(got.with_unhittable, 0);
-        assert_eq!(got.with_unmeasurable, 1);
-    }
-
-    #[test]
-    fn an_undated_row_leaves_the_population_and_says_so() {
-        // No placeable moment ⇒ nothing to compare a birthday against. It must
-        // not be absorbed into the population as a hit, and it must not be
-        // silently dropped either.
-        let map = ledger();
-        let founding = founding_ts(&map);
-        let rows = [
-            row("", &["src/born.rs"]),
-            row("; not a date", &["src/born.rs"]),
-            row("2026-09-03T17:23:00Z", &["src/born.rs"]),
-        ];
-        let got = retrospective_unhittable(&rows, &map, founding);
-        assert_eq!(got.population, 1, "only the dated row can be graded");
-        assert_eq!(got.undated, 2);
-        let note = retrospective_note(&RetrospectiveReading::Counted(got), true).expect("note");
-        assert!(note.contains("2 undated row(s)"), "{note}");
-    }
-
-    #[test]
-    fn no_ledger_prints_nothing_at_all() {
-        // The whole regression surface for a project that has never recorded a
-        // risk grade: `None`, in both output modes, so `yoyo risk` stays
-        // byte-identical.
-        assert_eq!(
-            retrospective_note(&RetrospectiveReading::NoLedger, true),
-            None
-        );
-        assert_eq!(
-            retrospective_note(&RetrospectiveReading::NoLedger, false),
-            None
-        );
-    }
-
-    #[test]
-    fn an_unreadable_ledger_is_unknown_not_zero() {
-        let reading = RetrospectiveReading::Unreadable(
-            "could not read .yoyo/risk_validations.jsonl: Is a directory (os error 21)".to_string(),
-        );
-        let note = retrospective_note(&reading, true).expect("an unreadable ledger still speaks");
-        assert!(
-            note.contains("unknown, not zero"),
-            "an unreadable ledger must never render as a zero: {note}"
-        );
-        assert!(note.contains("Is a directory"), "{note}");
-        assert!(!note.contains("0 of"), "{note}");
-    }
-
-    #[test]
-    fn the_retrospective_note_is_glyph_free_and_mark_rich_in_the_two_modes() {
-        let reading = RetrospectiveReading::Counted(RetrospectiveCount {
-            population: 116,
-            with_unhittable: 3,
-            with_unmeasurable: 86,
-            undated: 0,
-        });
-        let rich = retrospective_note(&reading, false).expect("note");
-        assert!(rich.starts_with("📊"), "{rich}");
-        let plain = retrospective_note(&reading, true).expect("note");
-        assert!(
-            plain.is_ascii(),
-            "plain mode must be glyph-free (no em dash either), got: {plain}"
-        );
-        assert!(!plain.as_bytes().contains(&0x1b), "no ANSI in the note");
-        // Not decorative: the two strings really differ, so the plain branch is
-        // exercised rather than agreeing with itself.
-        assert_ne!(plain, rich);
-        assert!(
-            plain.contains("3 of 116 post-ledger grading events"),
-            "a count with its denominator, never a percentage: {plain}"
-        );
-        assert!(
-            plain.contains("86 carried at least one undecidable surprise"),
-            "{plain}"
-        );
-    }
-
-    #[test]
-    fn parse_surprise_rows_reads_ts_and_surprises_and_skips_non_events() {
-        let content = concat!(
-            "\n",
-            "{\"ts\":\"2026-09-03T17:23:00Z\",\"day\":165,\"hits\":[],",
-            "\"surprises\":[\"src/a.rs\",\"src/b.rs\"],\"accuracy_pct\":0.0}\n",
-            "{\"not\":\"an event\"}\n", // gradable = false → not a row
-            "{ not json at all\n",      // malformed → not a row
-            "{\"ts\":\"2026-09-04T00:00:00Z\",\"surprises\":[]}\n",
-        );
-        let rows = parse_surprise_rows(content);
-        assert_eq!(rows.len(), 2, "only gradable lines are rows");
-        assert_eq!(rows[0].ts, "2026-09-03T17:23:00Z");
-        assert_eq!(rows[0].surprises, paths(&["src/a.rs", "src/b.rs"]));
-        assert_eq!(rows[1].ts, "2026-09-04T00:00:00Z");
-        assert!(rows[1].surprises.is_empty());
-    }
-
-    #[test]
-    fn the_io_wrapper_reads_both_ledgers_and_keeps_the_three_states_apart() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let val = dir.path().join("risk_validations.jsonl");
-        let led = dir.path().join("risk_first_scored.jsonl");
-
-        // (1) Nothing on disk: no ledger.
-        assert_eq!(
-            retrospective_unhittable_at(&val, &led),
-            RetrospectiveReading::NoLedger
-        );
-
-        std::fs::write(
-            &led,
-            concat!(
-                "{\"path\":\"src/seed.rs\",\"ts\":\"2026-08-22T15:40:00Z\"}\n",
-                "{\"path\":\"src/born.rs\",\"ts\":\"2026-09-03T18:03:00Z\"}\n",
-            ),
-        )
-        .expect("seed ledger");
-        std::fs::write(
-            &val,
-            concat!(
-                "{\"ts\":\"2026-09-03T17:23:00Z\",\"hits\":[],",
-                "\"surprises\":[\"src/born.rs\"],\"accuracy_pct\":0.0}\n",
-                "{\"ts\":\"2026-08-22T15:40:00Z\",\"hits\":[],",
-                "\"surprises\":[\"src/born.rs\"],\"accuracy_pct\":0.0}\n",
-            ),
-        )
-        .expect("seed validations");
-
-        // (2) Present: the same numbers the pure pass gives, end to end.
-        assert_eq!(
-            retrospective_unhittable_at(&val, &led),
-            RetrospectiveReading::Counted(RetrospectiveCount {
-                population: 1,
-                with_unhittable: 1,
-                with_unmeasurable: 0,
-                undated: 0,
-            })
-        );
-
-        // (3) A path that exists but cannot be read is `Unreadable`, never a
-        // missing ledger and never a zero. A directory is the portable way to
-        // build that on every platform this runs on.
-        let unreadable = dir.path().join("a-directory");
-        std::fs::create_dir(&unreadable).expect("create dir");
-        match retrospective_unhittable_at(&unreadable, &led) {
-            RetrospectiveReading::Unreadable(msg) => {
-                assert!(msg.contains("a-directory"), "{msg}")
-            }
-            other => panic!("expected Unreadable, got {other:?}"),
-        }
     }
 }

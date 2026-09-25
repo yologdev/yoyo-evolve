@@ -75,6 +75,8 @@ mod commands_risk_report;
 mod commands_risk_snapshots;
 mod commands_risk_ungraded;
 mod commands_risk_unhittable;
+#[cfg(test)]
+mod commands_risk_unhittable_tests;
 mod commands_risk_weights;
 mod commands_run;
 mod commands_search;
