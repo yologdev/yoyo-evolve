@@ -623,6 +623,12 @@ run_agent_with_fallback() {
     return "$exit_code"
 }
 
+# Only a standalone provider error event is an API failure. Agent prose,
+# tool output, and source code can quote the same JSON fragment verbatim.
+agent_log_has_api_error() {
+    grep -qE '^[[:space:]]*\{"type":"error"([,}])' "$1" 2>/dev/null
+}
+
 # ── Ensure fresh token (retries start with a stale token from job start) ──
 refresh_gh_token
 
@@ -1381,7 +1387,7 @@ STAGE_NAME=assess run_agent_with_fallback "$ASSESS_TIMEOUT" "$ASSESS_PROMPT" "$A
 rm -f "$ASSESS_PROMPT"
 
 # Exit early on API errors (after fallback attempt if configured)
-if grep -q '"type":"error"' "$AGENT_LOG" 2>/dev/null; then
+if agent_log_has_api_error "$AGENT_LOG"; then
     echo "  API error in assessment agent. Exiting for retry."
     rm -f "$AGENT_LOG"
     exit 1
@@ -1751,7 +1757,7 @@ STAGE_NAME=plan run_agent_with_fallback "$PLAN_TIMEOUT" "$PLAN_PROMPT" "$AGENT_L
 # which reuses it (fresh process — it needs the full context again).
 
 # Exit early on API errors (after fallback attempt if configured)
-if grep -q '"type":"error"' "$AGENT_LOG" 2>/dev/null; then
+if agent_log_has_api_error "$AGENT_LOG"; then
     echo "  API error detected. Exiting for retry."
     rm -f "$AGENT_LOG"
     exit 1
@@ -1802,7 +1808,7 @@ REPLAN
     # Same API-error contract as the first attempt (review finding: the
     # original `|| true` deleted the log unread — a dead provider marched
     # into the impl phase instead of handing off to the workflow retry).
-    if grep -q '"type":"error"' "$RETRY_PLAN_LOG" 2>/dev/null; then
+    if agent_log_has_api_error "$RETRY_PLAN_LOG"; then
         echo "  API error detected in corrective plan retry. Exiting for workflow-level retry."
         rm -f "$RETRY_PLAN_PROMPT" "$RETRY_PLAN_LOG" "$PLAN_PROMPT"
         exit 1
@@ -2139,7 +2145,7 @@ TEOF
         fi
 
         # Abort on API errors (after fallback attempt if configured) — revert partial work and stop
-        if grep -q '"type":"error"' "$TASK_LOG" 2>/dev/null; then
+        if agent_log_has_api_error "$TASK_LOG"; then
             echo "    API error in Task $TASK_NUM. Reverting and aborting implementation loop."
             rm -f "$TASK_LOG"
             if ! git reset --hard "$PRE_TASK_SHA"; then
@@ -2450,7 +2456,7 @@ BFIXEOF
             run_agent_with_fallback "$BFIX_TIMEOUT" "$BFIX_PROMPT" "$BFIX_LOG" "--context-strategy checkpoint" || BFIX_EXIT=$?
         if [ "$BFIX_EXIT" -eq 124 ]; then
             echo "    WARNING: Build-fix agent timed out after ${BFIX_TIMEOUT}s."
-        elif grep -q '"type":"error"' "$BFIX_LOG" 2>/dev/null; then
+        elif agent_log_has_api_error "$BFIX_LOG"; then
             echo "    WARNING: Build-fix agent hit API error — aborting fix loop."
             rm -f "$BFIX_PROMPT" "$BFIX_LOG"
             TASK_OK=false
@@ -2821,7 +2827,7 @@ FIXEOF
                 if [ "$FIX_EXIT" -eq 124 ]; then
                     echo "    WARNING: Fix agent timed out after ${FIX_TIMEOUT}s."
                     FIX_NOOP_CAUSE="timed out after ${FIX_TIMEOUT}s"
-                elif grep -q '"type":"error"' "$FIX_LOG" 2>/dev/null; then
+                elif agent_log_has_api_error "$FIX_LOG"; then
                     echo "    WARNING: Fix agent hit API error."
                     FIX_NOOP_CAUSE="API error"
                 elif [ "$FIX_EXIT" -ne 0 ]; then
@@ -2974,7 +2980,7 @@ $(cat "session_plan/eval_task_${TASK_NUM}.md" 2>/dev/null || echo 'no eval file 
             BUDGET_UNVERIFIED="eval_infra"
             EVAL_INFRA_WHY="the evaluator timed out after ${EVAL_TIMEOUT}s"
             break
-        elif grep -q '"type":"error"' "$EVAL_LOG" 2>/dev/null; then
+        elif agent_log_has_api_error "$EVAL_LOG"; then
             echo "    Evaluator: API error — skipping eval (build+test passed)"
             BUDGET_UNVERIFIED="eval_infra"
             EVAL_INFRA_WHY="the evaluator hit an API error"
@@ -3648,7 +3654,7 @@ RESPONDEOF
     rm -f "$RESPOND_PROMPT"
 
     # Check for API errors in the agent output
-    if grep -q '"type":"error"' "$RESPOND_LOG" 2>/dev/null; then
+    if agent_log_has_api_error "$RESPOND_LOG"; then
         echo "  API error detected in issue response agent."
         RESPOND_EXIT=1
     fi

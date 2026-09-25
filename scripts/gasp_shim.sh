@@ -135,8 +135,16 @@ gasp_session_start() {
     # would be silently lost at session end (clone succeeds on public repos
     # regardless of write access)
     if ! out=$(git -C "$GASP_STATE_DIR" push --dry-run --quiet "$GASP_PUSH_URL" HEAD:main 2>&1); then
-        _gasp_off "no push access to ${GASP_STATE_REPO} (state would be lost at session end): $(printf '%s' "$out" | tail -n 2 | tr '\n' '; ')"
-        return 0
+        # A concurrent GASP writer can advance main between clone and this
+        # probe. That is not an authentication failure: session-end rebases
+        # before its real push. Do not discard the whole session for it.
+        case "$out" in
+            *"non-fast-forward"*|*"fetch first"*|*"tip of your current branch is behind"*)
+                echo "  [gasp] state advanced during push probe; will rebase at session end" ;;
+            *)
+                _gasp_off "no push access to ${GASP_STATE_REPO} (state would be lost at session end): $(printf '%s' "$out" | tail -n 2 | tr '\n' '; ')"
+                return 0 ;;
+        esac
     fi
 
     GASP_RUN_ID="run_${kind}${day}_$(date -u +%Y%m%dT%H%M%SZ)"
