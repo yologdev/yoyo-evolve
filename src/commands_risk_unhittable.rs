@@ -24,7 +24,7 @@
 
 use crate::commands_risk_parse::{line_is_gradable, read_ledger_content, LedgerContent};
 use crate::commands_risk_snapshots::{first_scored_age, founding_ts, read_first_scored};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Split a surprise list into files that were *hittable* and files that were
 /// not, using the first-scored ledger as the proxy for "did this exist at the
@@ -497,6 +497,12 @@ pub(crate) struct RetrospectiveCount {
     /// How many of those carried ≥1 member whose first-scored `ts` is later than
     /// that row's own event `ts`.
     pub(crate) with_unhittable: u32,
+    /// The `ts` of every row `with_unhittable` counted. The count alone is a
+    /// projection: two instruments can print the SAME total over member sets
+    /// that differ, and a total is the one part of a result that cannot carry
+    /// that disagreement (day 209). This is the identity behind the number, so
+    /// the two readings can be intersected rather than merely compared.
+    pub(crate) unhittable_rows: BTreeSet<String>,
     /// How many carried ≥1 member the join could **not** decide.
     pub(crate) with_unmeasurable: u32,
     /// Gradable rows with no placeable `ts` (absent, empty, or not
@@ -533,6 +539,12 @@ pub(crate) struct GitCensus {
     /// of both, and a row with no hash is in the join's and not in this one.
     pub(crate) population: u32,
     pub(crate) with_unhittable: u32,
+    /// The `ts` of every row `with_unhittable` counted — the same identity the
+    /// ledger join now carries, so the two readings can be intersected. A row
+    /// whose hash does **not** resolve is deliberately absent here: it is
+    /// already counted in `unresolvable`, and folding a check that could not
+    /// run into a value would be the day-205 shape this file refuses.
+    pub(crate) unhittable_rows: BTreeSet<String>,
     pub(crate) with_unmeasurable: u32,
     /// Rows whose snapshot hash does **not** resolve in this clone. Counted and
     /// printed, never silently hittable — the day-205 shape, and the reason the
@@ -590,6 +602,7 @@ pub(crate) fn retrospective_git_census(
         }
         if unhittable {
             out.with_unhittable += 1;
+            out.unhittable_rows.insert(row.ts.clone());
         }
         if unmeasurable {
             out.with_unmeasurable += 1;
@@ -666,6 +679,7 @@ pub(crate) fn retrospective_unhittable(
         }
         if unhittable {
             out.with_unhittable += 1;
+            out.unhittable_rows.insert(row.ts.clone());
         }
         if unmeasurable {
             out.with_unmeasurable += 1;
@@ -831,6 +845,26 @@ pub(crate) fn retrospective_note(reading: &RetrospectiveReading, plain: bool) ->
                         "; {} could not be decided by the git check",
                         git.with_unmeasurable
                     ));
+                }
+                // Day 209: the two totals above can MATCH over member sets that
+                // differ, and a total is a projection — the one part of a result
+                // that cannot carry a disagreement about members. So print the
+                // intersection, never a claim of agreement derived from the sum.
+                // Absent when neither instrument named a row, which is every
+                // project whose ledger carries no hash at all.
+                if !c.unhittable_rows.is_empty() || !git.unhittable_rows.is_empty() {
+                    let common = c.unhittable_rows.intersection(&git.unhittable_rows).count();
+                    let ledger_only = c.unhittable_rows.difference(&git.unhittable_rows).count();
+                    let git_only = git.unhittable_rows.difference(&c.unhittable_rows).count();
+                    if ledger_only == 0 && git_only == 0 {
+                        // Identity, not a matching sum: the member sets are equal.
+                        note.push_str(&format!("; both instruments name the same {common} row(s)"));
+                    } else {
+                        note.push_str(&format!(
+                            "; the two instruments name {common} row(s) in common, \
+                             {ledger_only} only the ledger and {git_only} only git"
+                        ));
+                    }
                 }
             }
             note

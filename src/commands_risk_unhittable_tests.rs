@@ -15,12 +15,18 @@
 mod retrospective_tests {
     use crate::commands_risk_snapshots::founding_ts;
     use crate::commands_risk_unhittable::*;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn scored(rows: &[(&str, &str)]) -> BTreeMap<String, String> {
         rows.iter()
             .map(|(p, t)| ((*p).to_string(), (*t).to_string()))
             .collect()
+    }
+
+    /// The member identity behind a `with_unhittable` count, spelled the way the
+    /// instruments spell it (the row's own `ts`).
+    fn ts_set(rows: &[&str]) -> BTreeSet<String> {
+        rows.iter().map(|s| (*s).to_string()).collect()
     }
 
     fn row(ts: &str, surprises: &[&str]) -> SurpriseRow {
@@ -231,6 +237,14 @@ mod retrospective_tests {
         let reading = RetrospectiveReading::Counted(RetrospectiveCount {
             population: 116,
             with_unhittable: 3,
+            // Present for consistency with the count, never read: with
+            // `git: None` the intersection clause has no second instrument and
+            // stays unreachable.
+            unhittable_rows: ts_set(&[
+                "2026-09-03T17:23:00Z",
+                "2026-09-04T17:23:00Z",
+                "2026-09-05T17:23:00Z",
+            ]),
             with_unmeasurable: 86,
             undated: 0,
             // The ledger-only shape: no git reading at all, which is what this
@@ -313,6 +327,8 @@ mod retrospective_tests {
             RetrospectiveReading::Counted(RetrospectiveCount {
                 population: 1,
                 with_unhittable: 1,
+                // The row the join actually named, spelled the way it spells it.
+                unhittable_rows: ts_set(&["2026-09-03T17:23:00Z"]),
                 with_unmeasurable: 0,
                 undated: 0,
                 // Neither fixture event carries a snapshot hash — the shape of
@@ -547,6 +563,11 @@ mod retrospective_tests {
         let count = RetrospectiveCount {
             population: 3,
             with_unhittable: 1,
+            // The join names a row — and the clause is still absent, because
+            // there is no second instrument to intersect with. Full-string
+            // equality against the pre-change sentence, never a `contains`:
+            // this is the regression surface for every ledger with no hash.
+            unhittable_rows: ts_set(&["2026-09-03T17:23:00Z"]),
             with_unmeasurable: 0,
             undated: 0,
             git: None,
@@ -562,11 +583,13 @@ mod retrospective_tests {
         let with_skip = RetrospectiveCount {
             population: 3,
             with_unhittable: 1,
+            unhittable_rows: ts_set(&["2026-09-03T17:23:00Z"]),
             with_unmeasurable: 1,
             undated: 0,
             git: Some(GitCensus {
                 population: 3,
                 with_unhittable: 1,
+                unhittable_rows: ts_set(&["2026-09-04T17:23:00Z"]),
                 with_unmeasurable: 1,
                 unresolvable: 1,
                 skipped_surprises: 2,
@@ -581,5 +604,106 @@ mod retrospective_tests {
         assert!(note.contains("2 surprise(s) unprobed"), "{note}");
         assert!(note.is_ascii(), "{note}");
         assert!(!note.as_bytes().contains(&0x1b), "no ANSI in the note");
+    }
+
+    /// **The day-209 shape, at the emission point.** Two instruments reading the
+    /// SAME total over member sets that differ. The day-178 row is the
+    /// ledger-only member (a timestamp tie: the join cannot call it born-after,
+    /// the tree says the file was not there), one row is named by both, and one
+    /// is git-only. A matching total is not evidence of agreement, so the clause
+    /// states the intersection rather than deriving one from the sum.
+    #[test]
+    fn the_intersection_clause_names_the_members_the_totals_cannot() {
+        let count = RetrospectiveCount {
+            population: 4,
+            with_unhittable: 2,
+            unhittable_rows: ts_set(&["2026-08-25T22:40:17Z", "2026-09-19T07:34:00Z"]),
+            with_unmeasurable: 0,
+            undated: 0,
+            git: Some(GitCensus {
+                population: 4,
+                with_unhittable: 2,
+                // Same total, different members: day 203 shared, plus one the
+                // ledger join reads as a tie.
+                unhittable_rows: ts_set(&["2026-09-19T07:34:00Z", "2026-09-03T10:00:00Z"]),
+                with_unmeasurable: 0,
+                unresolvable: 0,
+                skipped_surprises: 0,
+            }),
+        };
+        let note =
+            retrospective_note(&RetrospectiveReading::Counted(count.clone()), true).expect("note");
+        // The totals really do match — that is the trap this clause closes, and
+        // asserting it here keeps the fixture from passing vacuously.
+        assert!(
+            note.contains("2 of 4 post-ledger grading events")
+                && note.contains("the git check reads 2 of 4 rows"),
+            "the fixture must be the matching-totals case: {note}"
+        );
+        assert!(
+            note.contains(
+                "; the two instruments name 1 row(s) in common, 1 only the ledger and 1 only git"
+            ),
+            "the members are the finding, and the total cannot carry them: {note}"
+        );
+        assert!(
+            !note.contains("both instruments name the same"),
+            "a matching total must never be rendered as agreement: {note}"
+        );
+        assert!(note.is_ascii(), "plain mode stays glyph-free: {note}");
+        assert!(!note.as_bytes().contains(&0x1b), "no ANSI in the note");
+
+        // The near-miss: equal member sets are the one case that may read as
+        // agreement, so the differing branch is not the only one exercised.
+        let mut agreed = count;
+        let shared = ts_set(&[
+            "2026-08-25T22:40:17Z",
+            "2026-09-19T07:34:00Z",
+            "2026-09-03T10:00:00Z",
+        ]);
+        agreed.with_unhittable = 3;
+        agreed.unhittable_rows = shared.clone();
+        if let Some(git) = agreed.git.as_mut() {
+            git.with_unhittable = 3;
+            git.unhittable_rows = shared;
+        }
+        let note = retrospective_note(&RetrospectiveReading::Counted(agreed), true).expect("note");
+        assert!(
+            note.contains("; both instruments name the same 3 row(s)"),
+            "equal member sets are the one case that may read as agreement: {note}"
+        );
+        assert!(
+            !note.contains("only git"),
+            "no leftover branch text when the sets are equal: {note}"
+        );
+    }
+
+    /// **Neither instrument names a row.** The clause is absent — byte-for-byte
+    /// the pre-change sentence — which is the shape of a ledger where nothing
+    /// was unhittable at all, and the case a reader could mistake for silence
+    /// about a disagreement.
+    #[test]
+    fn the_clause_is_absent_when_neither_instrument_names_a_row() {
+        let count = RetrospectiveCount {
+            population: 3,
+            with_unhittable: 0,
+            unhittable_rows: ts_set(&[]),
+            with_unmeasurable: 0,
+            undated: 0,
+            git: Some(GitCensus {
+                population: 3,
+                with_unhittable: 0,
+                unhittable_rows: ts_set(&[]),
+                with_unmeasurable: 0,
+                unresolvable: 0,
+                skipped_surprises: 0,
+            }),
+        };
+        let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
+        assert_eq!(
+            note,
+            "unhittable: 0 of 3 post-ledger grading events carried a file first scored \
+             after the event; the git check reads 0 of 3 rows with a snapshot hash"
+        );
     }
 }
