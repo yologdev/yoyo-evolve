@@ -186,6 +186,50 @@ def load_outcomes(audit_dir: Path) -> list[dict]:
     return [data for _, data in iter_session_outcomes(audit_dir)]
 
 
+# The word used for `succeeded < attempted` when the tree was green and no revert was
+# recorded. `outcome.json` carries the COUNT of tasks that did not succeed and does
+# NOT carry their cause — see scripts/evolve.sh's SESSION_REVERTED (session-level,
+# build-fix arm only). "reverted" is one cause among at least three (evaluation FAIL,
+# budget kill before evaluation, empty task file), and the count alone cannot pick one.
+NO_VERDICT_NOTE = "did not reach a verdict (tree green, no revert recorded)"
+
+
+def session_row_note(o: dict) -> tuple[str, str]:
+    """(icon, note) for one outcome row. Pure — no session directory, no git repo.
+
+    The ladder is the one `render_outcomes` used to inline, moved here unchanged
+    except for ONE branch: `succeeded < attempted` no longer says "task(s)
+    reverted". `outcome.json`'s `reverted` field is SESSION-level (set in exactly
+    one place in scripts/evolve.sh, the build-fix-exhausted arm), so a per-task
+    revert claim has no field behind it — and the session the old wording was
+    written about (day 209) finished its edit correctly and lost its budget before
+    the commit. The count is real; the cause is not in the artifact.
+    """
+    attempted = o.get("tasks_attempted", 0)
+    succeeded = o.get("tasks_succeeded", 0)
+    build_ok = o.get("build_ok", False)
+    test_ok = o.get("test_ok", False)
+    reverted = o.get("reverted", False)
+
+    if reverted:
+        return "❌", "REVERTED entire session"
+    if attempted == 0:
+        return "•", "no tasks attempted"
+    if succeeded == attempted and build_ok and test_ok:
+        return "✅", "build OK, tests OK"
+    issues = []
+    if succeeded < attempted:
+        if build_ok and test_ok:
+            issues.append(f"{attempted - succeeded} task(s) {NO_VERDICT_NOTE}")
+        else:
+            issues.append(f"{attempted - succeeded} task(s) reverted")
+    if not build_ok:
+        issues.append("build broken")
+    if not test_ok:
+        issues.append("tests broken")
+    return "⚠️", ", ".join(issues) or "partial"
+
+
 def render_outcomes(outcomes: list[dict], session_claims=None) -> str:
     """One line per session's CLAIM, plus — when `session_claims` is supplied —
     the SESSION-level corroboration beside it (Receipt #912).
@@ -205,29 +249,7 @@ def render_outcomes(outcomes: list[dict], session_claims=None) -> str:
         ts = (o.get("ts") or "").replace("T", " ").rstrip("Z")
         attempted = o.get("tasks_attempted", 0)
         succeeded = o.get("tasks_succeeded", 0)
-        build_ok = o.get("build_ok", False)
-        test_ok = o.get("test_ok", False)
-        reverted = o.get("reverted", False)
-
-        if reverted:
-            icon = "❌"
-            note = "REVERTED entire session"
-        elif attempted == 0:
-            icon = "•"
-            note = "no tasks attempted"
-        elif succeeded == attempted and build_ok and test_ok:
-            icon = "✅"
-            note = "build OK, tests OK"
-        else:
-            icon = "⚠️"
-            issues = []
-            if succeeded < attempted:
-                issues.append(f"{attempted - succeeded} task(s) reverted")
-            if not build_ok:
-                issues.append("build broken")
-            if not test_ok:
-                issues.append("tests broken")
-            note = ", ".join(issues) or "partial"
+        icon, note = session_row_note(o)
 
         lines.append(f"day-{day} ({ts}): tasks {succeeded}/{attempted} {icon} — {note}")
     lines.extend(claim_corroboration_lines(session_claims or []))
@@ -7212,6 +7234,69 @@ src/commands_config.rs
         "near-miss: no audit-log sessions renders exactly as it did before",
         render_outcomes(GREEN_OUTCOMES, []),
         render_outcomes(GREEN_OUTCOMES),
+    )
+
+    print("\n=== session row note / the word behind `reverted` ===\n")
+
+    # The three real rows from the briefing, as `outcome.json` actually carries
+    # them: build_ok/test_ok true, reverted false, one task that did not succeed.
+    # Pinned on the WHOLE line, so the `day-N (ts): tasks A/B <glyph> — <note>`
+    # shape is checked as well as the note text.
+    KILLED_BEFORE_VERDICT = {
+        "day": 209, "ts": "2026-09-25T01:18:08Z", "tasks_attempted": 1,
+        "tasks_succeeded": 0, "build_ok": True, "test_ok": True,
+        "reverted": False,
+    }
+    assert_eq(
+        "a green tree with no revert recorded does NOT claim the task was reverted",
+        render_outcomes([KILLED_BEFORE_VERDICT]),
+        "## Recent session outcomes (last 1)\n"
+        "day-209 (2026-09-25 01:18:08): tasks 0/1 ⚠️ — 1 task(s) "
+        + NO_VERDICT_NOTE,
+    )
+
+    # THE DISCRIMINATING CONTROL. The same fixture with a broken build must keep
+    # the old word AND say why — this is what proves the reword is conditioned on
+    # the green-tree evidence rather than a blanket rename applied to every row.
+    build_broken = dict(KILLED_BEFORE_VERDICT, build_ok=False)
+    assert_eq(
+        "near-miss: the same row with a broken build still reads `reverted, build broken`",
+        render_outcomes([build_broken]),
+        "## Recent session outcomes (last 1)\n"
+        "day-209 (2026-09-25 01:18:08): tasks 0/1 ⚠️ — 1 task(s) reverted, build broken",
+    )
+    assert_true(
+        "near-miss: and that row does NOT carry the new phrase (anti-vacuous direction)",
+        NO_VERDICT_NOTE not in render_outcomes([build_broken]),
+    )
+    # Tests-broken is the sibling of the same control, one field over.
+    tests_broken = dict(KILLED_BEFORE_VERDICT, test_ok=False)
+    assert_eq(
+        "near-miss: tests broken keeps the old word too",
+        render_outcomes([tests_broken]),
+        "## Recent session outcomes (last 1)\n"
+        "day-209 (2026-09-25 01:18:08): tasks 0/1 ⚠️ — 1 task(s) reverted, tests broken",
+    )
+
+    # The word survives where it IS artefactually supported: `reverted` is a real
+    # session-level field, so ❌ keeps saying REVERTED.
+    assert_eq(
+        "a recorded session revert still says REVERTED",
+        render_outcomes([dict(KILLED_BEFORE_VERDICT, reverted=True)]),
+        "## Recent session outcomes (last 1)\n"
+        "day-209 (2026-09-25 01:18:08): tasks 0/1 ❌ — REVERTED entire session",
+    )
+
+    # The all-green row is untouched, and carries no residue of the new phrase.
+    assert_true(
+        "the all-green row is unchanged and carries no ⚠ or new phrase",
+        render_outcomes(GREEN_OUTCOMES)
+        == pre_change_rows
+        and NO_VERDICT_NOTE not in render_outcomes(GREEN_OUTCOMES),
+    )
+    assert_true(
+        "anti-vacuous: the phrase is actually present on the row that must carry it",
+        NO_VERDICT_NOTE in render_outcomes([KILLED_BEFORE_VERDICT]),
     )
 
     print("\n=== doc freshness self-tests ===\n")
