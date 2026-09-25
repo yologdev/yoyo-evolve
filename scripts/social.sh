@@ -349,6 +349,78 @@ trap 'gasp_session_end "${GASP_OUTCOME:-aborted: early exit}"' EXIT
 GASP_OUTCOME=""
 gasp_session_start "$DAY" "social_day" "social session (replies, discussions, people-learnings)"
 
+# ── #944: this run's own spend, captured instead of deleted ──
+#
+# `yoyo` already prints this run's token usage at the end of a prompt
+# (`print_usage` -> `format_usage_line`, src/format/mod.rs); the line below
+# tees it into $AGENT_LOG, which social.sh then deleted unread. Nothing was
+# missing but one read, so the accounting lives here rather than in a new
+# feature.
+#
+# `YOYO_AUDIT=1` (the same shape scripts/evolve.sh uses) turns on the per-run
+# record `.yoyo/audit.jsonl` carries since #848. That file is **gitignored**
+# (.gitignore:31), so it never appears in `git ls-files --others
+# --exclude-standard` and the Step 8 safety revert cannot see it — verified
+# against a throwaway repo rather than assumed, because a safety check that
+# starts reverting real files is the failure this must rule out.
+export YOYO_AUDIT=1
+AUDIT_FILE=".yoyo/audit.jsonl"
+# Per-run watermark. The audit file is append-only and survives between runs
+# on a persistent checkout, so a bare line count answers "what has this repo
+# ever spent"; the delta below answers "what did THIS run spend" (#944's
+# complaint 2, in its own words: "a per-run watermark or truncate so the
+# totals mean one run").
+AUDIT_BEFORE=0
+if [ -f "$AUDIT_FILE" ]; then
+    AUDIT_BEFORE=$(wc -l < "$AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+    case "$AUDIT_BEFORE" in '' | *[!0-9]*) AUDIT_BEFORE=0 ;; esac
+fi
+
+# Report this run's own spend, before $AGENT_LOG is deleted. Fail-soft by
+# contract, not by nicety: social.sh has re-enabled `set -o errexit` by the
+# time any of this runs, so every command whose no-match case is normal is
+# guarded, and a missing audit file, an absent usage line or an unreadable
+# temp path warns and continues. The social phase must never fail because its
+# own accounting did.
+report_social_spend() {
+    local usage_line="" normalized="" audit_after=0 delta=0 size=0
+    # 1. The usage line, matched by the shape the binary actually emits. The
+    #    compact form is `↳ <elapsed> · <in>→<out> tokens[...]` (the leading
+    #    glyph plus a duration: "812ms", "4.2s", "1m 12s", "1h 4m", "1d 3h").
+    #    Colours are auto-disabled when stdout is not a terminal, so this is
+    #    the bare text under `tee`.
+    usage_line=$(grep -aE '↳ [0-9]+([.][0-9]+)?(ms|s|m |h |d )' "$AGENT_LOG" 2>/dev/null | tail -n 1 || true)
+    normalized="${usage_line#"${usage_line%%[![:space:]]*}"}"
+    if [ -n "$normalized" ]; then
+        echo "  Spend (this run): $normalized"
+    else
+        # An absent usage line is NOT a zero. A run killed by the timeout
+        # (exit 124) never reaches `print_usage`, and neither does one that
+        # died before its terminal emit — the same condition
+        # scripts/extract_trajectory.py files as USAGE_NO_TERMINAL_EMIT. Reuse
+        # that wording rather than inventing a second one, and never render
+        # the absence as 0: a killed run and an honestly-empty run must not
+        # read the same.
+        echo "  Spend (this run): no usage record — the process did not reach its terminal emit (no_terminal_emit)"
+    fi
+    # 2. The audit delta for THIS run, plus the file's cumulative size as a
+    #    second, separately-labelled fact. Two numbers, two different
+    #    questions, never merged.
+    if [ -f "$AUDIT_FILE" ]; then
+        audit_after=$(wc -l < "$AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+        case "$audit_after" in '' | *[!0-9]*) audit_after=0 ;; esac
+        delta=$((audit_after - AUDIT_BEFORE))
+        if [ "$delta" -lt 0 ]; then
+            delta=0
+        fi
+        size=$(wc -c < "$AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+        case "$size" in '' | *[!0-9]*) size=0 ;; esac
+        echo "  Spend audit: ${delta} record(s) this run (line ${AUDIT_BEFORE} → ${audit_after}); ${size} bytes cumulative in ${AUDIT_FILE}"
+    else
+        echo "  Spend audit: WARNING — no ${AUDIT_FILE}; audit records were not written this run (cumulative size unknown)"
+    fi
+}
+
 echo "→ Running social session..."
 AGENT_LOG=$(mktemp)
 set +o errexit
@@ -370,9 +442,11 @@ fi
 # Exit early on API errors
 if grep -q '"type":"error"' "$AGENT_LOG" 2>/dev/null; then
     echo "  API error detected. Exiting."
+    report_social_spend
     rm -f "$AGENT_LOG"
     exit 1
 fi
+report_social_spend
 rm -f "$AGENT_LOG"
 echo ""
 
