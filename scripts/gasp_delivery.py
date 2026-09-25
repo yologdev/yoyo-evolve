@@ -51,6 +51,8 @@ def events(raw):
         if not line.strip():
             continue
         event = json.loads(line)
+        if not isinstance(event, dict):
+            raise DeliveryError("invalid GASP event envelope")
         identity = event.get("id")
         if not isinstance(identity, str) or not identity or identity in rows:
             raise DeliveryError("missing or duplicate GASP event ID")
@@ -112,6 +114,7 @@ def deliver(repo, run_id, validator, attempts=5, delay=1.0, recovery=False):
             additions = events(after[len(before):])
             for kind in ("run.started", "run.finished"):
                 matches = [e for e in additions.values() if e.get("kind") == kind
+                           and isinstance(e.get("payload"), dict)
                            and e.get("payload", {}).get("run_id") == run_id]
                 if len(matches) != 1:
                     raise DeliveryError(f"boundary must contain exactly one {kind} for this run")

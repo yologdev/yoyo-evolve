@@ -141,6 +141,15 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn("validation failed", result["reason"])
         self.assertEqual(len(self.remote_rows()), 0)
 
+    def test_malformed_envelope_is_backed_up_without_publishing(self):
+        self.append(self.source, [[]])
+        delivery.git(self.source, "add", ".")
+        delivery.git(self.source, "commit", "--amend", "--no-edit")
+        result = self.deliver()
+        self.assertEqual(result["status"], "saved_for_recovery", result)
+        self.assertIn("invalid GASP event envelope", result["reason"])
+        self.assertEqual(len(self.remote_rows()), 0)
+
     def test_denied_main_can_recover_without_reexecuting_run(self):
         hook = self.remote / "hooks/pre-receive"
         hook.write_text('#!/bin/sh\nwhile read old new ref; do\n if [ "$ref" = refs/heads/main ]; then\n echo "permission denied on main" >&2; exit 1; fi\ndone\n')
