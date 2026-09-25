@@ -1850,14 +1850,36 @@ def render_provider_health(
 # check could see it. What was missing was a CONSUMER that notices a channel
 # going quiet. This is that consumer.
 #
-# FOUR states, and no two of them may fold into each other:
-#   RECORDED       the producer wrote a usage line here
-#   ABSENT         the session ran on a binary that COULD log usage, and did not
-#   UNREADABLE     *could not check* — the file would not open or would not parse
-#   NOT_MEASURABLE the session predates the producer, so it *could not have*
+# FIVE states, and no two of them may fold into each other:
+#   RECORDED          the producer wrote a usage line here
+#   ABSENT            the file holds no records at all (or is not there)
+#   NO_TERMINAL_EMIT  records ARE there, and no usage line — the process was
+#                     killed (timeout/SIGTERM; yoyo installs no handler) before
+#                     it reached `emit_output`, so the record was never written
+#   UNREADABLE        *could not check* — the file would not open or would not parse
+#   NOT_MEASURABLE    the session predates the producer, so it *could not have*
 # "the session ran and logged no usage" is an error, while "I could not read
 # the file" is *could not check* — collapsing them rebuilds the frozen-number
 # defect one layer down, which is the exact failure this detector exists for.
+#
+# NO_TERMINAL_EMIT is #944, and it is the SAME defect one notch finer. ABSENT
+# used to absorb both "the file is empty" and "the file has records and no
+# usage line", and those are opposite facts about a session: the first is a run
+# that produced nothing, the second is a run that worked and then DIED. The
+# producer writes exactly one usage line per process, from `emit_output` — the
+# terminal emit — so a readable file with tool-call records and no usage line
+# has a single cause, and reading it as "used nothing" prints a confident zero
+# for the most expensive runs there are. The flattering direction is always the
+# silent one, which is why this state has to exist out loud rather than as a
+# second reading of `absent`.
+#
+# ABSENT keeps the "no records at all" case rather than that being folded into
+# UNREADABLE, and the split is *did we manage to look*: an empty file was
+# opened and read and holds nothing (checked, empty), while a file whose every
+# non-blank line fails to parse was NOT read (could not check). Day 209
+# reverses the pre-#944 grouping of those two — recorded as a superseded claim
+# in ARCHITECTURE.md rather than erased, because the old grouping was itself an
+# absence-absorbed-by-a-neighbour, one state coarser than the one #944 fixes.
 #
 # NOT_MEASURABLE is the Day-181 correction. Shipped with three states, this
 # detector's first live render said "8 session(s) ran and logged NO usage line"
@@ -1869,6 +1891,7 @@ def render_provider_health(
 # discount the line permanently, right before a real freeze looks identical.
 USAGE_RECORDED = "recorded"
 USAGE_ABSENT = "absent"
+USAGE_NO_TERMINAL_EMIT = "no_terminal_emit"
 USAGE_UNREADABLE = "unreadable"
 USAGE_NOT_MEASURABLE = "not_measurable"
 
@@ -1891,18 +1914,23 @@ def classify_session_usage(lines) -> str:
     """Pure: does this session's audit.jsonl carry at least one usage record?
 
     `lines` is an iterable of raw JSONL strings. Returns one of
-    USAGE_RECORDED / USAGE_ABSENT / USAGE_UNREADABLE.
+    USAGE_RECORDED / USAGE_ABSENT / USAGE_NO_TERMINAL_EMIT / USAGE_UNREADABLE.
 
     The predicate is `type == "usage"`, never "has a type" and never "is not
     a tool call": #848's compatibility rule is that a line with NO `type` key
     still means a tool call, because `write_audit_entry` deliberately emits
-    none. So a file of pure tool-call lines is ABSENT — the producer is silent
-    — and is emphatically not UNREADABLE.
+    none. So a file of pure tool-call lines is NO_TERMINAL_EMIT — the producer
+    is silent *after* the session had already done work — and is emphatically
+    not UNREADABLE.
 
     Blank lines are not corruption (a trailing newline is normal JSONL), so
-    they are skipped without counting toward anything. A file with no
-    non-blank lines at all, and a file where every non-blank line fails to
-    parse, are both UNREADABLE: in neither case did we manage to look.
+    they are skipped without counting toward anything. The remaining split is
+    `did we manage to look` (#944, Day 209): a file with no non-blank lines at
+    all is ABSENT — we opened it, and it holds no records — while a file whose
+    non-blank lines ALL fail to parse is UNREADABLE, because in that case we
+    never read a single record. A readable file carrying at least one record
+    and no usage line is NO_TERMINAL_EMIT: the process was killed before
+    `emit_output` ran, which is the one thing that writes the usage line.
     """
     seen = 0
     parsed = 0
@@ -1917,9 +1945,11 @@ def classify_session_usage(lines) -> str:
         parsed += 1
         if isinstance(obj, dict) and obj.get("type") == "usage":
             return USAGE_RECORDED
-    if seen == 0 or parsed == 0:
+    if seen == 0:
+        return USAGE_ABSENT
+    if parsed == 0:
         return USAGE_UNREADABLE
-    return USAGE_ABSENT
+    return USAGE_NO_TERMINAL_EMIT
 
 
 COMPACT_STAMP_RE = re.compile(r"^\d{8}T\d{6}Z$")
@@ -1957,25 +1987,37 @@ def session_dir_stamp(name):
 
 
 def apply_usage_boundary(verdict, session_ts, boundary_ts=USAGE_PRODUCER_LANDED_TS):
-    """Pure: demote an ABSENT verdict to NOT_MEASURABLE when the session
-    predates the producer. Everything else passes through unchanged.
+    """Pure: demote a producer-silence verdict to NOT_MEASURABLE when the
+    session predates the producer. Everything else passes through unchanged.
 
     Deliberately separate from `classify_session_usage`, which is a pure
-    function of file CONTENTS and knows nothing about time. Three rules, and
+    function of file CONTENTS and knows nothing about time. Four rules, and
     each of them is the whole correctness of this:
 
-    1. Only ABSENT is ever demoted. RECORDED passes through even if it somehow
+    1. Only the two producer-silence states are ever demoted — ABSENT and
+       NO_TERMINAL_EMIT. Both are claims about a MISSING usage record, and
+       neither is falsifiable about a session whose binary had no producer to
+       reach: a pre-#848 session holds tool-call records and no usage line for
+       the ordinary reason, so leaving NO_TERMINAL_EMIT undemoted would alarm
+       about every one of them (measured 2026-09-24 on the live corpus: 489 of
+       624 session dirs are records-with-no-usage and every one predates
+       8a633cff) — which is exactly the Day-181 false alarm the boundary was
+       built for, one state over. RECORDED passes through even if it somehow
        predates the boundary — an observation beats a claim — and UNREADABLE
        passes through too, because *could not check* is not the same fact as
        *could not have*.
     2. An unparseable or missing session timestamp is NOT demoted; it stays
-       ABSENT. Promoting an unknown into the comfortable bucket is the
+       whatever it was. Promoting an unknown into the comfortable bucket is the
        absence-absorbed-by-a-convenient-neighbour defect, and it fails toward
        silence, which is the direction I cannot see.
     3. The boundary is STRICT-BEFORE. A session stamped exactly at the
        boundary is measurable.
+    4. This is a stated decision, not a side effect: #944's state is about a
+       file that EXISTS, so "it is post-boundary by construction" was the
+       tempting reading. It is wrong for the pre-producer corpus, and rule 1's
+       measurement is why.
     """
-    if verdict != USAGE_ABSENT:
+    if verdict not in (USAGE_ABSENT, USAGE_NO_TERMINAL_EMIT):
         return verdict
     stamp = compact_utc_stamp(session_ts)
     boundary = compact_utc_stamp(boundary_ts)
@@ -1986,10 +2028,11 @@ def apply_usage_boundary(verdict, session_ts, boundary_ts=USAGE_PRODUCER_LANDED_
 
 @dataclass
 class UsageCoverage:
-    """Five numbers that are never summed into each other."""
+    """Six numbers that are never summed into each other."""
 
     recorded: int = 0
     absent: int = 0
+    no_terminal_emit: int = 0
     unreadable: int = 0
     not_measurable: int = 0
     examined: int = 0
@@ -2003,6 +2046,15 @@ def usage_coverage(verdicts) -> UsageCoverage:
     is the defect this whole family of checks exists to prevent. In
     particular `not_measurable` is NEVER summed into `absent`: a session that
     predates the producer did not fail to log, it could not have logged.
+
+    Every state is named explicitly and the bare `else` is GONE (#944): a
+    fifth verdict added only to the classifier falls into an `else` and is
+    reported as UNREADABLE — "the process never reached its terminal emit"
+    rendering as "I could not read the file". A fallthrough bucket is exactly
+    the absence-absorbed-by-a-neighbour defect this file's header is written
+    against, so an unrecognised verdict now raises rather than being silently
+    filed under corruption. That is the one direction where a loud failure
+    beats a quiet number.
     """
     cov = UsageCoverage()
     for v in verdicts:
@@ -2011,10 +2063,14 @@ def usage_coverage(verdicts) -> UsageCoverage:
             cov.recorded += 1
         elif v == USAGE_ABSENT:
             cov.absent += 1
+        elif v == USAGE_NO_TERMINAL_EMIT:
+            cov.no_terminal_emit += 1
         elif v == USAGE_NOT_MEASURABLE:
             cov.not_measurable += 1
-        else:
+        elif v == USAGE_UNREADABLE:
             cov.unreadable += 1
+        else:
+            raise ValueError(f"unrecognised usage verdict: {v!r}")
     return cov
 
 
@@ -2093,6 +2149,15 @@ def render_usage_coverage(cov: UsageCoverage, state: str = AUDIT_DIR_OK) -> str:
     data, so a non-zero `not_measurable` is not a refusal; a wholly
     unmeasurable one is.
 
+    `no_terminal_emit` (#944) is reported as its own clause too, and it is a
+    NAMED part of the healthy test rather than only of the alarm path: a
+    window of killed runs has `absent == 0` and `unreadable == 0`, so without
+    it the render would say *"k of N sessions carry >=1 usage record (#848
+    channel is live)"* about a window in which every expensive run died. A
+    clause that only fires once another counter is already non-zero is a
+    clause that goes silent exactly where it is needed — the defect one level
+    up from the one this state exists for.
+
     Held to at most 3 lines: this renders before the epistemic block, which
     absorbs all truncation pressure and has been cut away once already.
     """
@@ -2122,7 +2187,7 @@ def render_usage_coverage(cov: UsageCoverage, state: str = AUDIT_DIR_OK) -> str:
         f"{cov.not_measurable} session(s) predate the #848 producer "
         f"({USAGE_PRODUCER_SHA}) and cannot be measured"
     )
-    if cov.absent == 0 and cov.unreadable == 0:
+    if cov.absent == 0 and cov.unreadable == 0 and cov.no_terminal_emit == 0:
         if cov.not_measurable == 0:
             return (
                 f"## Usage records\n"
@@ -2146,8 +2211,14 @@ def render_usage_coverage(cov: UsageCoverage, state: str = AUDIT_DIR_OK) -> str:
     detail = []
     if cov.absent:
         detail.append(
-            f"{cov.absent} session(s) ran and logged NO usage line — the #848 "
-            f"producer wrote nothing there"
+            f"{cov.absent} session(s) hold no audit records at all — nothing "
+            f"ran, or nothing was written"
+        )
+    if cov.no_terminal_emit:
+        detail.append(
+            f"{cov.no_terminal_emit} session(s) have records and NO usage line "
+            f"— the process was killed before its terminal emit, so this is NOT "
+            f"'used nothing'"
         )
     if cov.unreadable:
         detail.append(
@@ -5876,8 +5947,9 @@ src/commands_config.rs
     # --- Usage-record coverage (#848 follow-up) ---------------------------
     # The predicate is `type == "usage"`, never "has a type": a line with NO
     # type key is a tool call by #848's own compatibility rule, so a file of
-    # pure tool-call lines is ABSENT (the producer is silent) and must not be
-    # mistaken for UNREADABLE.
+    # pure tool-call lines is NO_TERMINAL_EMIT (the session did work, then died
+    # before `emit_output`) and must not be mistaken for UNREADABLE *or* for
+    # ABSENT.
     tool_call = '{"tool":"read_file","duration_ms":12,"success":true}'
     usage_line = '{"type":"usage","model":"claude-opus-5","input_tokens":10,"cost_usd":0.4}'
 
@@ -5886,24 +5958,54 @@ src/commands_config.rs
         classify_session_usage([tool_call, usage_line, tool_call]),
         USAGE_RECORDED,
     )
-    assert_eq(
-        "tool-call lines with no `type` key classify ABSENT, not UNREADABLE",
-        classify_session_usage([tool_call, tool_call]),
-        USAGE_ABSENT,
+
+    # --- #944: ABSENT and NO_TERMINAL_EMIT, discriminated in ONE table ---
+    # The two rows below are the whole point of #944 and they must stay in one
+    # table: a single updated row would be satisfied by a change that collapsed
+    # the old verdict entirely (everything -> NO_TERMINAL_EMIT), and the
+    # near-miss that catches that is the row beside it. Each tuple is
+    # (label, lines, records-supplied, usage-lines-supplied, want).
+    # `records` is the count of non-blank lines, `usage` the count that are
+    # `type == "usage"` — the two numbers that make the rows different.
+    for label, lines, records, usage, want in (
+        (
+            "records with NO usage line -> the process died before its terminal emit",
+            [tool_call, tool_call],
+            2,
+            0,
+            USAGE_NO_TERMINAL_EMIT,
+        ),
+        (
+            "no records at all -> ABSENT, and still ABSENT (#944 did not swallow it)",
+            [],
+            0,
+            0,
+            USAGE_ABSENT,
+        ),
+        (
+            "blank lines only -> ABSENT: we opened it and it holds no records",
+            ["", "  ", "\n"],
+            0,
+            0,
+            USAGE_ABSENT,
+        ),
+    ):
+        got = classify_session_usage(lines)
+        assert_eq(f"{label} [{records} record(s), {usage} usage line(s)]", got, want)
+    # Anti-vacuous: the two rows above really do differ in the input, so the
+    # table cannot pass by supplying the same fixture twice.
+    assert_true(
+        "the two #944 rows supply different record counts (anti-vacuous)",
+        classify_session_usage([tool_call, tool_call]) != classify_session_usage([]),
     )
     assert_eq(
-        "a line with a non-usage type is still ABSENT",
+        "a line with a non-usage type is still NO_TERMINAL_EMIT (it is a record)",
         classify_session_usage(['{"type":"error","msg":"x"}']),
-        USAGE_ABSENT,
+        USAGE_NO_TERMINAL_EMIT,
     )
     assert_eq(
         "every non-blank line unparseable classifies UNREADABLE",
         classify_session_usage(["not json at all", "{oops"]),
-        USAGE_UNREADABLE,
-    )
-    assert_eq(
-        "an empty file is UNREADABLE (we never managed to look), not ABSENT",
-        classify_session_usage([]),
         USAGE_UNREADABLE,
     )
     # Blank lines are not corruption and a trailing newline is normal JSONL.
@@ -5913,14 +6015,20 @@ src/commands_config.rs
         USAGE_RECORDED,
     )
     assert_eq(
-        "blank lines and a trailing newline do not change an ABSENT verdict",
+        "blank lines and a trailing newline do not change a NO_TERMINAL_EMIT verdict",
         classify_session_usage(["", tool_call, "\n"]),
-        USAGE_ABSENT,
+        USAGE_NO_TERMINAL_EMIT,
     )
-    assert_eq(
-        "a file of nothing but blank lines is UNREADABLE, not ABSENT",
-        classify_session_usage(["", "  ", "\n"]),
-        USAGE_UNREADABLE,
+    # The bare `else` is gone: an unrecognised verdict is loud, never filed
+    # under `unreadable`.
+    try:
+        usage_coverage(["bogus-verdict"])
+        raised = False
+    except ValueError:
+        raised = True
+    assert_true(
+        "an unrecognised verdict raises instead of landing in the unreadable bucket",
+        raised,
     )
 
     # The fold keeps four distinct numbers; nothing is summed into anything.
@@ -5963,8 +6071,8 @@ src/commands_config.rs
         UsageCoverage(recorded=7, absent=3, examined=10), AUDIT_DIR_OK
     )
     assert_true(
-        "an absent count is named out loud as sessions that logged nothing",
-        "3 session(s) ran and logged NO usage line" in absent_render,
+        "an absent count is named out loud as sessions holding no records",
+        "3 session(s) hold no audit records at all" in absent_render,
     )
     assert_true(
         "coverage is reported as k of N, never as a token total or a dollar figure",
@@ -5977,8 +6085,48 @@ src/commands_config.rs
     )
     assert_true(
         "absent and unreadable are reported separately, never summed",
-        "3 session(s) ran and logged NO usage line" in mixed
+        "3 session(s) hold no audit records at all" in mixed
         and "1 session(s) could not be read" in mixed,
+    )
+
+    # --- #944 in the RENDER, not only in the classifier -------------------
+    # The point of the new state is that it reaches a reader. These three
+    # assertions are the emission-point half of the change: the clause exists,
+    # it names the killed-process cause, and — the one that matters — it
+    # cannot be absorbed by the healthy branch.
+    killed = render_usage_coverage(
+        UsageCoverage(recorded=7, no_terminal_emit=3, examined=10), AUDIT_DIR_OK
+    )
+    assert_true(
+        "a killed run is named out loud, never as 'used nothing'",
+        "3 session(s) have records and NO usage line" in killed
+        and "killed before its terminal emit" in killed,
+    )
+    assert_true(
+        "the killed-run clause says outright it is NOT 'used nothing'",
+        "this is NOT 'used nothing'" in killed,
+    )
+    # The regression this state exists for: absent == 0 and unreadable == 0, so
+    # without the new clause the healthy line fires over a window of dead runs.
+    assert_true(
+        "a window of only killed runs does NOT render the healthy '#848 live' line",
+        "#848 channel is live" not in killed and "7 of 10" in killed,
+    )
+    # Near-miss guard, the other direction: a genuinely healthy window stays
+    # byte-identical to what it rendered before #944.
+    assert_eq(
+        "with no_terminal_emit == 0 the healthy line is byte-identical",
+        render_usage_coverage(
+            UsageCoverage(recorded=4, not_measurable=6, examined=10), AUDIT_DIR_OK
+        ),
+        "## Usage records\n"
+        "4 of 4 measurable sessions carry >=1 usage record (#848 channel is live).\n"
+        "6 session(s) predate the #848 producer (8a633cff) and cannot be measured.",
+    )
+    assert_true(
+        "a wholly healthy window still claims the channel is live",
+        "#848 channel is live"
+        in render_usage_coverage(UsageCoverage(recorded=10, examined=10), AUDIT_DIR_OK),
     )
     # The audit-dir refusals reuse #843's three states verbatim.
     assert_true(
@@ -6108,7 +6256,7 @@ src/commands_config.rs
     assert_true(
         "a real absent count still alarms while pre-producer sessions do not",
         "2 of 4 measurable sessions" in live
-        and "2 session(s) ran and logged NO usage line" in live
+        and "2 session(s) hold no audit records at all" in live
         and "6 session(s) predate the #848 producer" in live,
     )
     assert_true(
@@ -6140,8 +6288,8 @@ src/commands_config.rs
             UsageCoverage(recorded=7, absent=3, examined=10), AUDIT_DIR_OK
         ),
         "## Usage records\n7 of 10 sessions carry >=1 usage record.\n"
-        "3 session(s) ran and logged NO usage line — the #848 producer wrote "
-        "nothing there.",
+        "3 session(s) hold no audit records at all — nothing ran, or nothing "
+        "was written.",
     )
 
     # --- Module-size reader (Day 183) -------------------------------------
