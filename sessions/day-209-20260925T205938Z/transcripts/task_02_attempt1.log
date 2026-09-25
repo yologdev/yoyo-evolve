@@ -1,0 +1,1200 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the relevant parts of src/format/cost.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/cost.rs && sed …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,240p' src/format/cos… ✓ (2ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The table isn't literally a BTreeMap; it's a chain of if-arms. The task says "one human-readable line per table row that disagrees with the source". Since the table is a function of arms not rows, the "rows" are the arms. Hmm. The task's phrasing assumed a table; the planner may have been wrong about the shape. I need to make it work: I need an enumerable list of (id, our pair) rows to compare. I could add a const list of probe model ids, e.g. `AUDITED_MODEL_IDS: &[&str]` — a list of representative model ids passed to `builtin_model_pricing`. That gives rows to audit.
+
+Wait — but the task says "naming the id, our pair, their pair" and "a row absent from `observed` is not reported — return those ids in a second list and print the count". So the helper signature `price_drift_against(observed: &BTreeMap<String,(f64,f64)>) -> Vec<String>`.
+
+Let me check ARCHITECTURE.md entry for src/format/cost.rs per the rule "Read ARCHITECTURE.md's entry for any file you are about to change."
+
+Let me look at the rest of the file, existing tests, and the module_size register (cost.rs is 3446 lines — probably grandfathered).
+
+Let me look at ARCHITECTURE for cost.rs.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.2s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cost.rs" ARCHITECTURE.m…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GRANDFATHERED\|src/form… ✓ (2ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The file is grandfathered at 3439 lines; the current file is 3446 lines? `wc -l` said 3446. Hmm, register says 3439. The module_size test says "grandfathered module may shrink while still over cap" — growing is a violation. Let me check the rule: grandfathered modules can shrink but not grow. Current 3446 > 3439 — that would already be a violation? Let me check the test logic.
+
+Actually let me check tests/module_size.rs around the grandfather rule.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,140p' tests/module_si…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/format/c… ✓ (6ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The register entry for cost.rs is 3439 but file is 3446? Let me check. `wc -l` says 3446. Hmm — register says 3439. That means current file grew by 7 above the ceiling, within the 100-line drift grace. So it's allowed but I should update the register entry to a new ceiling? Let's read the rule more carefully. Actually the convention: when a grandfathered module grows, update the register entry to the new count. Let me read lines 85-130 of tests/module_size.rs.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '85,130p' tests/module_si… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the register for cost.rs says 3439 and the file is 3446 — that's within the +100 drift grace. But I'll be adding lines; I should update the register entry with the new count "pasted from what the gate printed". Let me check the gate output after my change.
+
+Also — the file is 3446 lines now. Wait, earlier wc said 3446, but maybe the register entry says 3439 because the file shrank... whatever. After my change I'll run the gate to get the number.
+
+Now let's read the whole builtin_model_pricing table and the existing tests structure. The "table" is if-arms over substrings. To audit rows I need representative model ids. Let me read the whole pricing function.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,80p' src/format/cost.… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need to design the deliverable in the actual shape of this code. The table is a chain of if-arms; there's no enumerable id list. To audit "table rows" I need a list of representative ids. Approach:
+
+Add a const `AUDITED_MODEL_IDS: &[&str]` — hmm, that's a restatement of the table (a fourth place naming ids). Alternatively, define the drift report over a caller-supplied list of ids: `price_drift_against(observed: &BTreeMap<String,(f64,f64)>)` where the audited ids come from a const list `PRICE_AUDIT_IDS`.
+
+Better shape: the helper takes `observed` and returns `PriceDrift { disagreements: Vec<String>, unaudited_ids: Vec<String> }`. It iterates over a const list of probe ids (representative model ids the table claims to price), looks up `builtin_model_pricing(id)` for each, and compares. For ids absent from `observed`, push to `unaudited`.
+
+But wait: for `deepseek-v4-flash`, there are two arms? Actually there's one arm: `if model.contains("deepseek-flash") || model.contains("deepseek-v4-flash")`. Wait — the issue says line 187 (deepseek-v4-flash|deepseek-r1 → 0.55/2.19) and line 200 (deepseek-flash → 0.15/0.60). Let me re-read: line 187 is the `deepseek-r1` arm. Let me check current line numbers.
+
+Actually from the sed output at 160-240: the `deepseek-r1` arm returns (0.55,...,2.19) and the widened deepseek-flash arm returns (0.15,...,0.003,0.60). Hmm, so `deepseek-v4-flash` contains "deepseek-flash"? No! "deepseek-v4-flash" does not contain "deepseek-flash" (there's "v4-" in between). Hence the second `||` clause. So one id `deepseek-v4-flash` → 0.15/0.60 row, and `deepseek-r1` → 0.55/2.19. So they aren't the same row. The issue said line 187 was `deepseek-v4-flash | deepseek-r1 -> (0.55, 0.0, 0.0, 2.19)` — that may be stale line numbers from an older revision, or the comment. Let me grep for the exact context with line numbers.
+
+Let me check lines 175-205 precisely.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "" src/format/cost.rs | …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "builtin_model_pricing\|… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's already a `price_drift_audit_against_models_dev` at line 3146 and a parser at 3388 etc. So some of this already exists! Let's look at lines 2950-3446 — the existing audit infrastructure.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2960,3260p' src/format/c… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's already a substantial alarm: `price_drift_audit_against_models_dev` (ignored) plus `audit_vendor_rows` helper plus vendored fixture plus tests. This was built Day 204 (#937? or another). So the task as specified may already be satisfied. Let me read the whole existing implementation carefully: the `audit_vendor_rows` function and the rest of the tests, then determine the gap.
+
+The task's deliverable says:
+1. A pure comparison helper `price_drift_against(observed: &BTreeMap<String,(f64,f64)>) -> Vec<String>` — exists in some shape as `audit_vendor_rows(&vendor)` returning (mismatches, compared, skipped).
+2. An `#[ignore]`d network test fetching models.dev — exists (`price_drift_audit_against_models_dev`).
+3. Offline tests over a fixture: (a) matching row → no line; (b) disagreeing → line naming id and both pairs; (c) row absent from source → not reported as agreement, anti-vacuous; (d) `(estimated)` arms covered by same path.
+4. Doc comment above `builtin_model_pricing`.
+
+Let me read the full existing test module section from ~2900 to end to check (a)-(d) coverage.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2900,2975p' src/format/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn audit_vendor_rows" -… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So this is already implemented substantially — the Day-204 alarm task. The task instruction says: "If current code already satisfies the task, add the smallest real verification (a regression test) instead of claiming done; if it truly can't be done, say so plainly and stop."
+
+So I need to determine the gap precisely. Deliverable items:
+
+1. Pure comparison helper — exists (`audit_vendor_rows`). But it's not the exact signature; task says "or the equivalent shape". OK.
+2. Ignored network test — exists.
+3. Offline tests: (a) matching row → no line ✓ (`audit_vendor_rows_names_a_mismatch_with_both_readings`), (b) disagrees → line naming id and both pairs ✓, (c) a row the source does not carry → not reported as agreement, anti-vacuous... hmm. (c) as written: "a row the source does not carry -> not reported as agreement (the anti-vacuous half: the helper must not be satisfiable by an empty source)". In the existing helper, the direction is inverted: the vendor rows are iterated, and vendor rows the table doesn't price are skipped. The task's phrasing from the issue assumed the helper takes `observed` and iterates the *table's* rows, returning a second list for table rows absent from `observed`.
+
+Hmm. Which direction matters? The existing helper covers the direction "id the table doesn't price → skipped, not counted". The suggested direction: "table row absent from observed → return those ids in a second list and print the count". The existing code has `UNAUDITED_DEEPSEEK_ARMS` const for the arms models.dev doesn't list, and prints a coverage limit — but that's a hand-listed const, not derived by the helper. The existing test asserts the coverage-limit line. Let's look for the test.
+
+Wait: is there a test for the "empty source" anti-vacuous direction? `assert!(compared.len() >= 3)` in the ignored test is anti-vacuous for the network path. And the vendored-offline test asserts `compared.len() >= 3`. But is there a test that an EMPTY vendor list yields zero mismatches and zero compared — i.e. that the helper's output can be vacuously green? That's the anti-vacuous check: the offline test must fail if the vendored const became empty. Actually the vendored const is fixed; if it were emptied, `compared.len() >= 3` fails. Good.
+
+But the key item (d): "the `(estimated)`-commented arms are covered by the same path, not excluded by a hand-listed skip set." Here's a real gap: the current implementation is DeepSeek-only. The table has many `(estimated)` arms (gemini-3.0-pro, gemini-3.0-flash, grok-4, grok-4-mini, llama-4...). models.dev does carry google, xai, groq etc. But the task's stated deliverable #2 says "fetches the models.dev price data and runs the helper over the whole table". Currently it's restricted to one provider (`deepseek`), parsed with `parse_models_dev_deepseek`.
+
+Hmm, but the task file was written by the planner who may not have known the Day-204 work exists... Actually wait — the task says "The defect, restated from the issue body (verified against the tree by the planner)". And issue #937. Let me check whether the Day-204 alarm is exactly #937's option 1 implementation. The comment says "(#937)" in the test docstring. So this task is a duplicate of already-landed work!
+
+Hold on. Let's check git log: is this in the tree at HEAD (committed)? The file is 3446 lines and register says 3439 (drift +7 within grace). Let me check git log for cost.rs and whether the price audit is committed.
+
+Key question: what's genuinely missing relative to the task? Options:
+- Item (c) direction: table rows absent from the source → a second list + count, i.e. the "unaudited" direction derived by the helper rather than a hand-listed const `UNAUDITED_DEEPSEEK_ARMS`. The existing `UNAUDITED_DEEPSEEK_ARMS` is hand-listed — precisely the "hand-listed skip set" item (d) complains about? No, (d) is about `(estimated)` arms.
+
+Hmm, let me re-read item (d): "the `(estimated)`-commented arms are covered by the same path, not excluded by a hand-listed skip set." Currently the audit covers only `deepseek` provider rows — the estimated arms (gemini-3, grok-4, llama-4) are covered by *nothing*, because the fetch is deepseek-only. That's the real gap: the alarm's reach is one provider while the table's estimated arms are exactly the rows with the weakest provenance.
+
+But expanding to all providers is a substantial change; models.dev api.json covers many providers and would need mapping provider→id sets, plus the whole "print every mismatch" would flag dozens of rows (gemini-2.5 etc. probably match; but grok, llama... ). Risky.
+
+Alternative reading: maybe the *task file itself* is what's stale and the actual deliverable of #937 option 1 is already landed — and the honest move per the evolve instructions is: "If current code already satisfies the task, add the smallest real verification (a regression test) instead of claiming done."
+
+Let me verify what's actually missing and pick the smallest real gap.
+
+Let me look at the remaining tests (3260-3446) to inventory coverage exactly.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.3s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "    fn \|    #\[test\]"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3260,3446p' src/format/c… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The Day-204 work landed a DeepSeek-only alarm. The task #937 option 1 as written by the planner asks for a whole-table helper over models.dev, with a `(estimated)`-arm coverage requirement.
+
+Let me check git log to confirm the landing and check whether the task is essentially complete. Also check the doc comment above `builtin_model_pricing` (item 4) — does it exist?
+
+Let me grep for the doc comment.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '20,60p' src/format/cost.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 -- src/form… ✓ (2ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm — `git log -- src/format/cost.rs` shows only one commit "Day 207 session wrap-up"? That's odd. Maybe the repo is a shallow clone with graft, or cost.rs was committed in a squashed wrap-up. Let me check git log more broadly.
+
+Also note: the doc-comment item (4) — "a comment above `builtin_model_pricing` saying the table is audited by an ignored test... naming the command" — does NOT exist. The doc comment above `builtin_model_pricing` is `fn builtin_model_pricing` with no doc comment (the /// above `model_pricing_with`). Wait, there's no doc above builtin_model_pricing at all. So item 4 is a genuine gap: discoverability.
+
+Let me check whether the test docstring mentions `skills/release/SKILL.md, "Gate"` — i.e., the alarm is referenced from the release skill. Let me grep.
+
+So the state: Day 204 landed the DeepSeek-only alarm (item 1–3 largely, in a DeepSeek shape), item 4 (the doc line at the table) is missing. Hmm, but is it? Let me search the whole file for "ignored" mentions in non-test code.
+
+Let me now decide the real deliverable. The task's core requirement that is clearly absent:
+
+(a) Item (c) direction: a table row absent from the source is returned in a second list with a count, so silence is "not audited" not "correct". Current helper does cover one direction (vendor rows the table doesn't price → skipped from `compared`), and `UNAUDITED_DEEPSEEK_ARMS` is a hand-list.
+
+(b) Item (d): the `(estimated)` arms covered by the same path. Currently totally uncovered.
+
+(c) Item 4: doc comment at the table.
+
+The smallest real, verifiable improvement that satisfies the spirit and much of the letter: extend the audit from one provider to the whole table via a **coverage census** — specifically, the missing half is: which table arms are audited by nothing. The table's rows can't be enumerated (if-arms), so a hand-listed probe set is required... which is exactly the "hand-listed" thing the task distrusts.
+
+Hmm. Let me think about what is both small and genuinely valuable and verifiable:
+
+**Idea: add the "unaudited arms" derivation to the helper direction.** i.e. the vendor map is iterated (already), and the table's arms are... not enumerable. So the check that matters, and that currently exists partially, is: `UNAUDITED_DEEPSEEK_ARMS` is a hand-list of ids asserted absent from the vendored reading. The gap: it's DeepSeek-only and hand-written, and nothing ensures the list is *complete* — i.e. that every deepseek-* id the table prices is either compared or in the unaudited list. You could test: for each id in a probe list of deepseek ids the table prices, it must appear in `compared ∪ skipped ∪ UNAUDITED`. But that probe list is also hand-written.
+
+**Better: whole-provider expansion.** models.dev api.json has per-provider models with cost {input, output, cache_read...}. Rather than hand-listing which table arms map to which provider, we can audit *every row the table prices* if we can enumerate table rows. We can't.
+
+Alternative approach that avoids hand-listing: **reverse the iteration direction and use the noise of ids as the probe**. For every id in models.dev (all providers, thousands), ask `model_pricing(id)` — if the table prices it, compare. That is the "whole table" audit, driven entirely by the vendor's id list: no hand-written probe set. Then the "unaudited" direction: table arms that no vendor id reaches — still not enumerable without a probe list, but that's the honest coverage limit which the helper can *report as a count of table arms cannot know*... Hmm.
+
+But comparing every vendor id against the table would produce tons of mismatches (e.g. anthropic rows in the table use `3.0/15.0` while models.dev lists same; openai rows; gemini rows; grok; glm; llama; mistral...). Many will diverge, and the alarm would cry wolf. The DeepSeek-only scoping is deliberate (issue #937's option 1? Let's check the issue).
+
+Let me read the actual issue #937 via gh to see what option 1 is, and whether the Day-204 work was option 2, or something. Let me check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.0s (2 ✓)
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 937 --json title,b…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "price_drift_audit\|pri… ✓ (51ms)
+ ✓ (313ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting! ARCHITECTURE.md line 454 mentions: "the new sweep reads the live catalogue for all nine mapped providers and needs no vendored rows." — so a *general sweep* supposedly landed?! Let me read ARCHITECTURE.md lines 440-475 carefully. That mentions Day 208? work: "the new sweep reads the live catalogue for all nine mapped providers". But I grepped src/format/cost.rs and found only the DeepSeek parser (`parse_models_dev_deepseek`). Hmm — maybe the general sweep is in a different file? Let me grep for "nine mapped providers" / provider mapping.
+
+Wait, the ARCHITECTURE text might describe work that was reverted (Day 199's lesson!). Let's check: it says "**(#937 task 1 above was the literal fix)**"... hmm, "the new sweep reads the live catalogue for all nine mapped providers and needs no vendored rows. The two are kept, not merged". Let me look at the ARCHITECTURE section for headers around line 440-480.
+
+Let me read it.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,480p' ARCHITECTURE.m… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So Day 207 landed a general sweep `src/format/cost/price_audit_tests.rs`. But wait — is that file present in the tree now? The task says Files: src/format/cost.rs. Let me check.
+
+Hmm — this task ordering is confusing. Let me check whether `src/format/cost/price_audit_tests.rs` exists in the tree.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la src/format/cost* 2>&1 && … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The Day-207 work IS in the tree: `src/format/cost/price_audit_tests.rs` (41KB!) plus the mod declaration at line 920.
+
+So this task (#937 option 1) is essentially already landed — twice (Day 204 DeepSeek-only, Day 207 general sweep). The task instruction says: "If current code already satisfies the task, add the smallest real verification (a regression test) instead of claiming done; if it truly can't be done, say so plainly and stop."
+
+But wait — the task's File line says only `src/format/cost.rs`. And item (d) of the deliverable: "the `(estimated)`-commented arms are covered by the same path, not excluded by a hand-listed skip set."
+
+Let me check the child module for what covers the estimated arms and whether there's a hand-listed skip set. Let me grep the child module for structure.
+
+Let me examine the child module to find the genuine remaining gap. Let's inventory its tests and constants.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^const \|^pub\|^fn \|^s… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The Day-207 general sweep exists with `PROVIDER_KEYS` (nine mapped providers) and `ID_ALIASES`. Let's look at `PROVIDER_KEYS` and `ID_ALIASES` and `yoyo_id_for` — the "hand-listed skip set" is still a mapped list of nine providers. The task's item (d) is about the `(estimated)` arms.
+
+Let me look at PROVIDER_KEYS and the coverage-gap test. And check: does any test cover the estimated arms?
+
+Actually, let's step back. My job: implement THIS task, commit. The task as written largely landed already (Day 204 + Day 207). The honest move per the evolve rules is to find the smallest real remaining gap and ship it with a test, then write it up honestly.
+
+Let me find the gap precisely. Candidates:
+
+1. Item 4 from the deliverable: "One line of documentation where the table lives: a comment above `builtin_model_pricing` saying the table is audited by an ignored test that must be run before a release, and naming the command." — Verified MISSING: `builtin_model_pricing` has no doc comment. The alarm is documented in `skills/release/SKILL.md` and ARCHITECTURE.md, but not at the table. This is exactly the "alarm nobody can find" defect (#745/#767/#769). This is a genuine, small, verifiable gap.
+
+2. Item (d): the `(estimated)` arms covered by the same path. Let me check whether the general sweep audits the estimated arms: PROVIDER_KEYS nine providers presumably includes google (gemini-3 estimated), xai (grok-4 estimated), groq (llama-4 estimated). Let me read PROVIDER_KEYS.
+
+Let me read lines 220-300 of the child module.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,300p' src/format/cos…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/format/cost/p… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+OK. Now: what is the genuine, smallest gap that this task (#937 option 1) still asks for and that isn't there?
+
+Two candidates:
+
+**A. The doc comment at the table (deliverable item 4).** Missing: nothing above `fn builtin_model_pricing`. The task explicitly requires it: "a comment above `builtin_model_pricing` saying the table is audited by an ignored test that must be run before a release, and naming the command." This is a one-comment change — but a comment alone with no test is "analysis only"? No, it's a real artifact. But the task rules want a test.
+
+**B. The `(estimated)` arms (deliverable item 3d).** Let me check whether any test asserts the estimated arms are covered by the audit path rather than a hand-listed skip set. Grep for "estimated" in the child module and in cost.rs.
+
+Let me check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "estimated" src/format/c… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the estimated arms are: gpt-5.5-mini, gpt-5.5, gpt-5-mini, gpt-5, gemini-3.0-pro, gemini-3.0-flash, grok-4-mini, grok-4, llama-4 (9 `(estimated)` markers across 13 lines).
+
+Now, are these covered by the general sweep? The sweep iterates the catalogue and asks `yoyo_id_for(provider, catalogue_id)` → `known_models_for_provider(provider)` which comes from `crate::providers`. So coverage depends on `providers::known_models_for_provider` containing these ids. Do `gpt-5`, `gemini-3.0-pro`, `grok-4`, `llama-4` appear in providers.rs's known lists? Let me check.
+
+Also the LIVE reading from ARCHITECTURE says "SUMMARY compared 36, matched..." Let me get the full live reading text from ARCHITECTURE (truncated earlier). Let me read more of that section to see the numbers, since it's the key evidence, and then decide.
+
+Actually, my decision matters most. Let me consider what the smallest genuine verification is that the task asks for and isn't present.
+
+Key insight candidate: **the estimated arms**. The task says their coverage must come from "the same path, not excluded by a hand-listed skip set". Right now, whether an estimated arm is audited depends on whether the id appears in `known_models_for_provider`. If `gemini-3.0-pro` or `grok-4` are NOT in providers.rs's known list, then those estimated arms are audited by nothing — and there's no test that says so. That's exactly the live defect #937 names: "7 arms in the table are commented (estimated)".
+
+So the real, smallest gap: a test that pins **which estimated arms the sweep reaches**, i.e. an anti-vacuous coverage guard over the `(estimated)`-annotated arms: each estimated arm's canonical id must be *resolvable* by the audit path (either compared or explicitly named as unaudited) — no estimated row silently outside the audit.
+
+Hmm, but the source of truth for "which ids are estimated" is prose comments, which is a hand list too. Could derive: scan the source? No, tests can't read source... actually they can — `include_str!` of the file itself, similar to `check_assertion_weakening.py` guards. There's precedent in this repo for source-level guards using `include_str!`. Let me check if any test uses include_str! on src files.
+
+Actually, hold on. Let me check what `known_models_for_provider` returns for these providers, to see if estimated arms are already covered.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn known_models_for_pro… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me assess the state. I've been reading. I need to figure out what's actually left to do. The task #937 option 1 has apparently already been done on Day 207 (a general sweep exists in `src/format/cost/price_audit_tests.rs`). But this task file specifies a different shape: `price_drift_against(observed: &BTreeMap<String, (f64,f64)>) -> Vec<String>` with a second list of unaudited ids.
+
+Wait — the task file I was given says "Task 2". And the ARCHITECTURE entry says Day 207 landed "#937 option 1; the structural half". So this task may be already largely satisfied. Let me check git log to see current HEAD and whether cost/price_audit_tests.rs is committed.
+
+Let me check git status first — earlier `git status --short | head` returned nothing, so tree is clean and everything is committed.
+
+So the Day-207 work is landed. Now this task file asks for essentially the same thing, but with a specific deliverable list. The evolve skill rule says: "If current code already satisfies the task, add the smallest real verification (a regression test) instead of claiming done; if it truly can't be done, say so plainly and stop."
+
+Hmm, but wait. Maybe the task is a re-run of the same issue. Let me look carefully at what's missing relative to the task file's 4 deliverables:
+
+1. A pure comparison helper `price_drift_against(observed: &BTreeMap<String, (f64,f64)>) -> Vec<String>` returning one line per disagreeing row, plus a second list of ids not carried by the source (the "not audited" list). Existing `compare_catalogue` returns an `AuditReport` with `compared`, `drifted`, `unpriced`, `cache_read_only`, etc. That covers it — maybe not by that exact name, and the task says "or the equivalent shape". And point (1) says "a row absent from `observed` is not reported — return those ids in a second list and print the count, or say so in the same line". The existing `unpriced` covers catalogue ids yoyo can't price. But the direction required here is: a *table row* absent from the source → listed as unaudited. Does the existing code do that? `compare_catalogue(ours, catalogue, rel_tol)` iterates over catalogue rows and reports `unpriced` for catalogue ids the repo can't price. Does it report *table rows* missing from the catalogue? That's the "not audited" direction — the deliverable explicitly requires it: "a row absent from `observed` is **not reported** (silence is 'not audited'... ) — return those ids in a second list and print the count".
+
+Hmm. That's the `UNAUDITED_DEEPSEEK_ARMS` shape from the Day-204 alarm. For the general sweep, ARCHITECTURE says it prints unpriced etc.
+
+2. An `#[ignore]`d network test fetching models.dev — exists: `audit_table_against_models_dev`.
+
+3. Offline tests over a fixture: (a) match → no line; (b) disagree → line naming id and both pairs; (c) row absent from source → not reported as agreement (anti-vacuous); (d) `(estimated)` arms covered by the same path, not excluded by a hand-listed skip set.
+
+Item (d) is the interesting one: are `(estimated)` arms excluded anywhere? Let me check. The existing code doesn't seem to have an `(estimated)` skip set... Actually there might be. Let me grep the audit tests file for "estimated" — earlier grep returned nothing for "estimated" in price_audit_tests.rs. So no hand-listed skip set for estimated arms. But is there a test asserting that? Item (d) asks that they're "covered by the same path, not excluded by a hand-listed skip set" — so a test/guard that an estimated arm still reaches the comparator.
+
+4. One line of documentation above `builtin_model_pricing` saying the table is audited by an ignored test that must be run before a release, naming the command.
+
+So possible genuine gaps:
+- Doc comment above `builtin_model_pricing` naming the ignored test + command (deliverable 4).
+- A "table rows the source does not carry" second list (deliverable 1's explicit half), for the general sweep.
+- A test covering (c) in that direction and (d).
+
+Let me verify these concretely by reading the audit test file more fully. Given budget concerns — I've used a lot of tokens. Let me be efficient and targeted.
+
+Let me check: does the file have a doc comment above `builtin_model_pricing`? From what I read at line 58: `fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {` preceded by `}` of model_pricing_with — no doc comment. So deliverable 4 is missing.
+
+Then check `AuditReport` fields and whether there's an "our rows not in catalogue" list.
+
+Let me do focused reads.
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check the current state of the audit module versus what this task file requires.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,200p' src/format/cos…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "UNAUDITED\|not_in_catal… ✓ (3ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the existing implementation's `compare_catalogue` iterates over the *catalogue* (the source), and reports:
+- matched
+- cache_read_only
+- drifted
+- unpriced (catalogue ids yoyo cannot price)
+
+What it does NOT do: report the *table rows* that are absent from the source (the "not audited / silence is not correctness" direction that deliverable 1 explicitly requires). Since `ours_from_catalogue` only keeps rows that came from the catalogue (per its name — "keeps only rows this repo can price"), the `ours` list is derived *from* the catalogue, so by construction every entry in `ours` is in the catalogue. Hmm, so `ours_from_catalogue` derives our prices by looking up catalogue rows. That means the "table row absent from the source" direction is structurally impossible in that design — the source is the index.
+
+Let me check `ours_from_catalogue`: line 408.
+
+That means the general sweep's design starts from the catalogue and asks "what does the table say for each catalogue row", which covers the table rows that the catalogue names, but says nothing about table arms the catalogue doesn't name. The Day-204 DeepSeek alarm has `UNAUDITED_DEEPSEEK_ARMS` for that. So the required "second list" of *unaudited table rows* is genuinely missing from the general sweep — although arguably the general sweep can't enumerate "all table rows" because the table is a function, not a list. Only the provider `known_models_for_provider` list is enumerable.
+
+Actually! `yoyo_id_for(provider, catalogue_id)` maps catalogue → yoyo id using `known_models_for_provider(provider)`. So the enumerable population of yoyo table rows IS `known_models_for_provider(provider)` for the nine mapped providers. So a "second list" is computable: for each provider key and each known model id, if no catalogue row maps to it, it's unaudited-by-the-source.
+
+That's exactly deliverable 1's second half, and it's a real gap. And deliverable 3(c) requires an offline test: "a row the source does not carry → not reported as agreement (the anti-vacuous half: the helper must not be satisfiable by an empty source)".
+
+Hmm, careful: there is already a test `comparator_is_anti_vacuous_before_it_is_anything_else` which asserts `compared > 0` before anything about drifted. And `a_row_yoyo_cannot_price_is_unpriced_and_not_compared`. So the anti-vacuous direction is partly there.
+
+But "a row the source does not carry" — i.e. a yoyo table row the source omits — is the direction where the table has a row and the source says nothing. With the current design (iterate over catalogue), such a row simply doesn't appear anywhere. And the ARCHITECTURE says the first live run showed "compared 36".
+
+Given budget, let me decide the smallest real, valuable change satisfying what's genuinely missing:
+
+1. Add `unaudited: Vec<String>` to `AuditReport` — table rows (from `known_models_for_provider` for the nine mapped providers) that no catalogue row maps to. Print the count. This is exactly deliverable 1's "return those ids in a second list and print the count", and it makes the "silence is not audited" property mechanical.
+2. Offline test for it (deliverable 3c) plus anti-vacuous.
+3. A test that the `(estimated)` arms are reached by the same path, not skipped by a hand-listed set (deliverable 3d).
+4. Doc comment above `builtin_model_pricing` naming the ignored test and the command (deliverable 4).
+
+That's a coherent, bounded, real diff. Let me check `ours_from_catalogue` and the live test to see how to wire in `unaudited`.
+
+Let me read lines 400-560.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.6s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '400,560p' src/format/cos… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I understand the design. The `ours` side is *derived from the catalogue*, so a table row the source omits is structurally invisible: it never enters `ours` at all.
+
+Deliverable 1's second half: "a row absent from `observed` is **not reported** (silence is 'not audited', and must not read as 'correct') — return those ids in a second list and print the count".
+
+So I need to add an "unaudited table rows" computation: enumerate the yoyo table's rows (from `known_models_for_provider` for the mapped providers) and report those no catalogue row maps to. That's a real gap-closing change and it's testable offline.
+
+Let me plan the exact edit:
+
+In `src/format/cost/price_audit_tests.rs`:
+
+1. Add to `AuditReport` a field:
+```rust
+    /// **The direction that was missing: table rows the SOURCE never mentions.**
+    /// ...
+    unaudited: Vec<String>,
+```
+But `AuditReport` is produced by `compare_catalogue(ours, catalogue, rel_tol)`. To compute `unaudited`, `compare_catalogue` needs the full population of yoyo ids to consider. Options:
+ (a) Derive it inside `compare_catalogue` from ... no, `ours` is the catalogue-derived list.
+ (b) Change `compare_catalogue` signature to also take `ours_all: &[(String, Rates)]`? That complicates.
+ (c) Add a separate pure function `unaudited_rows(ours_ids: &[&str], catalogue: &[CatalogueRow]) -> Vec<String>` — given the yoyo ids the table ships and the catalogue, return those ids the catalogue does not name. Then the live test calls it with `known_models_for_provider(p)` for each provider key, and a new field can be filled at the call site... but then `AuditReport` wouldn't carry it (that's fine; but the task says "return those ids in a second list and print the count").
+
+Cleaner and more in the spirit of the file: keep `compare_catalogue` as the comparator over two lists, and add a *pure* `unaudited_table_rows(shipped: &[(&str,&str)], catalogue: &[CatalogueRow]) -> Vec<String>`. Hmm.
+
+Actually simplest robust approach: make `compare_catalogue` take the shipped ids too. Let me think about what's least disruptive but honest.
+
+I'll go with: a new pure function
+
+```rust
+/// Table rows the SOURCE never mentions — the direction the comparator above
+/// structurally cannot see, because `ours` is built *from* the catalogue ...
+fn unaudited_shipped_rows(
+    shipped: &[&str],
+    catalogue: &[CatalogueRow],
+) -> Vec<String>
+```
+where `shipped` is yoyo model ids, and the function returns the shipped ids for which no catalogue row maps (via `yoyo_id_for`) to them.
+
+But to be pin-able in the same report, I'd rather put it into `AuditReport` as computed by a composer that takes both. Let me restructure minimally: add a field `unaudited: Vec<String>` to `AuditReport`, and compute it inside `compare_catalogue` from a new argument `shipped: &[(&str, &str)]` (provider, id) pairs. That changes the existing 13 offline tests' call sites (they all call `compare_catalogue(&ours, &catalogue, REL_TOL)`). That's a lot of churn and risks breaking existing tests — the instructions say don't weaken tests, but updating call sites is fine-ish. Still, ~15 call sites.
+
+Alternative minimal: keep `compare_catalogue` untouched, add a separate pure `unaudited_shipped_rows` and add a *new* offline test file section? No — one function with its consumer is enough, and the live test prints the count. And a dedicated offline test (deliverable 3c) covers it. That is a smaller, surgical diff, zero churn to existing tests.
+
+But then the field in the report isn't needed. The task says "return one human-readable line per table row that disagrees ... — return those ids in a second list and print the count, or say so in the same line." A separate function returning `Vec<String>` of unaudited ids, printed by the live test with its count, satisfies it and doesn't require the report to change.
+
+Hmm, but there's a subtlety: the population of "shipped ids" per provider is `crate::providers::known_models_for_provider(provider)`. That's the repo's own enumeration of model ids a provider ships — good, single authority, and it exists already (`known_models_for_provider` is pub). And `PROVIDER_KEYS` lists the nine providers. So:
+
+```rust
+const AUDITED_PROVIDERS: &[&str] = PROVIDER_KEYS; // same list
+fn unaudited_shipped_rows(catalogue: &[CatalogueRow]) -> Vec<(String, &'static str)>
+```
+Returns `(provider/id-ish label, yoyo_id)` for each id in `known_models_for_provider(provider)` that no catalogue row maps to.
+
+Wait — careful with the mapping direction: `yoyo_id_for(provider, catalogue_id)` finds the yoyo id. Inverse: for a shipped yoyo id, is there a catalogue row? Compute: for each provider in PROVIDER_KEYS, for each id in known_models_for_provider(provider), check whether any catalogue row with `row.provider == provider` satisfies `yoyo_id_for(&row.provider, &row.id) == Some(id)`. If none → unaudited.
+
+But one nuance: `yoyo_id_for` searches across all providers' known lists? No — it uses `known_models_for_provider(provider)` for the catalogue row's provider. Fine. But some yoyo ids appear in multiple providers' lists? e.g. "llama-3.3-70b" in cerebras, and groq has "llama-3.3-70b-versatile". Fine.
+
+Also `deepseek-v4-flash` is in deepseek's list; models.dev maps "deepseek-v4-flash" → yes it exists (normalize: `deepseek-v4-flash` stays). OK.
+
+Also careful: a shipped id may legitimately be unaudited (e.g. `deepseek-r1`, `deepseek-v3` are NOT in `known_models_for_provider("deepseek")` — the list is `["deepseek-flash","deepseek-v4-pro","deepseek-v4-flash"]`). Hmm, so `deepseek-r1` wouldn't even be enumerated. That's the `UNAUDITED_DEEPSEEK_ARMS` gap which the Day-204 alarm covers. So my enumeration is bounded by the provider tables — and that bound must be *stated*, not implied (the repo's rule). Good: state it in the doc comment.
+
+2. Live test: call it and print count + sample; assert nothing (it's a report, not a gate) — but anti-vacuous: hmm. If I assert `!unaudited.is_empty()`, that's a claim about the world today; and if models.dev later covers everything, then it'd fail. Better: assert that the computation actually examined a non-empty population — i.e. return also the count of shipped ids examined. That's the anti-vacuous invariant: `examined > 0`. So return a struct or tuple: `(Vec<String> unaudited, usize examined)`.
+
+Let me design:
+
+```rust
+/// Which of the table's own shipped ids the source never mentions, and how many
+/// ids that question examined.
+struct Unaudited {
+    ids: Vec<String>,     // "provider/id" labels
+    examined: usize,
+}
+fn unaudited_shipped_rows(catalogue: &[CatalogueRow]) -> Unaudited
+```
+
+3. Offline tests:
+ (a) a shipped row the source omits → in `ids`, and `examined > 0` (anti-vacuous).
+ (b) a shipped row the source carries → NOT in `ids`.
+ (c) an empty catalogue → every examined id is unaudited, so the helper is not satisfiable by an empty source.
+ (d) the `(estimated)` arms: a test that an arm whose comment says `(estimated)` is not excluded from the audit by any hand-listed skip set. How to test this honestly offline? The task says: "the `(estimated)`-commented arms are covered by the same path, not excluded by a hand-listed skip set."
+
+What's a real, non-vacuous test? Option: a source-level guard asserting the audit module contains no `(estimated)` skip list — i.e. grep the module source for "estimated" and assert it appears nowhere (so no hand-listed exclusion by that marker). That's a genuine mechanical guard: `include_str!("price_audit_tests.rs")`. Hmm, a source-level guard is weak but the repo uses such guards with disclosed weakness.
+
+Better: a behavioural test. Take the `(estimated)` models the table prices — e.g. `gpt-5`, `gpt-5-mini`, `gemini-3.0-pro`, `grok-4`, `llama-4-maverick-17b` — and prove that when the source *carries a row for them*, drift on them IS reported (i.e., they are not silently excluded). The mechanism: build catalogue rows with keys matching those ids, with a perturbed price, run `compare_catalogue`, and assert they land in `drifted`. That proves the estimated arms go through the same comparator with no skip set.
+
+But careful: for these ids, `yoyo_id_for(provider, id)` must resolve. E.g. `gpt-5` is in openai's list → resolves. `gemini-3.0-pro` → normalize_catalogue_id... ID_ALIASES maps "gemini-3-pro" → "gemini-3.0-pro". If catalogue id is "gemini-3.0-pro", normalized = "gemini-3.0-pro" (no date suffix, no dash-date pattern... wait: rsplit_once('-') gives tail "pro", not 8 digits, not 2 digits → returns id unchanged). Then ID_ALIASES lookup fails, then known list contains "gemini-3.0-pro" → resolves. Good.
+
+And crucially the *price perturbation must actually differ* from what the table says for these arms — but the task says "assert on the function's output, never on the table being wrong". Hmm, for a drift test with a fake catalogue row, I need to be sure the constructed price differs from the table's. I can do that by *reading* the table's price via `price_of` and perturbing it (e.g. multiply input by 3.0), then asserting the row lands in `drifted`. That's robust to the literals ever changing. 
+
+So the test:
+```rust
+#[test]
+fn estimated_arms_are_audited_by_the_same_path_with_no_skip_set() {
+    for (provider, yoyo_id) in [
+        ("openai", "gpt-5"),
+        ("openai", "gpt-5-mini"),
+        ("google", "gemini-3.0-pro"),
+        ("google", "gemini-3.0-flash"),
+        ("xai", "grok-4"),
+        ("xai", "grok-4-mini"),
+        ("groq", "llama-4-maverick-17b"),
+        ("openai", "codex-mini"),
+    ] {
+        let ours = price_of(yoyo_id).expect("the table must price this arm");
+        let perturbed = (ours.0 * 3.0, ours.1, ours.2, ours.3);
+        let catalogue = vec![row(provider, yoyo_id, perturbed)];
+        let ours_side = ours_from_catalogue(&catalogue);
+        assert_eq!(ours_from_catalogue(...)  ...
+        let report = compare_catalogue(&ours_side, &catalogue, REL_TOL);
+        assert_eq!(report.compared, 1, "...");
+        assert_eq!(report.drifted.len(), 1, "the `(estimated)` arm `{yoyo_id}` was NOT audited ...");
+    }
+}
+```
+Wait: `row(provider, yoyo_id, perturbed)` — key = "provider/yoyo_id". And `ours_from_catalogue` builds key `row.key()` = "openai/gpt-5" and price = `price_of(yoyo_id_for("openai","gpt-5"))` = price_of("gpt-5"). So comparing ours (table price) vs catalogue row (perturbed) → drifted. 
+
+But careful: `ours_from_catalogue` requires `yoyo_id_for(&row.provider, &row.id)` to resolve. `row.id = "gpt-5"`, provider "openai" → normalize → "gpt-5" → known list contains it. Good. For `codex-mini`, is it `(estimated)`? line 131 comment "// OpenAI Codex-mini (estimated, ...)" — and the id in the known list is "codex-mini". Let me check the arm. Let me not include it unless it resolves; I'll verify by running.
+
+Also verify that these arms really do carry `(estimated)` — I should add an anti-vacuous assertion that the fixture list is non-empty and that each named id's arm is indeed marked estimated? That requires source text. I could use `include_str!` to check the arm is marked `(estimated)`. That's a nice anti-vacuous assertion: assert the module source... hmm, the estimated markers live in `src/format/cost.rs`, and this module is included by it. `include_str!("cost.rs")`? The path is `src/format/cost/price_audit_tests.rs`, so `include_str!("../cost.rs")` gives `src/format/cost.rs`. That's a real, checkable anti-vacuous assertion: for each named id, the table source contains `{id} (estimated)` — hmm, the marker comment format varies: `// gpt-5 (estimated)`, `// gemini-3.0-pro (estimated)`, `// grok-4-mini (estimated, between ...)`. So checking `format!("{yoyo_id} (estimated")` in the source would work for all of them. And also assert that `(estimated` appears in the source (non-vacuous).
+
+Hmm, but is that too clever/brittle? It's a source-text assertion, which the repo does use (with disclosed weakness). I think it's good: it ties "this id's arm is marked estimated" to the test, so if someone removes the marker the test tells them. Actually, wait — it makes the test fail if a future price is verified and the `(estimated)` marker is removed, which would be a *false* failure. That's bad. Rather than assert the marker, I should keep the fixture list and note it. Hmm.
+
+Compromise: assert the marker presence in one place only as an anti-vacuous *demonstration* that the audit path is not marker-driven. Actually the cleanest anti-vacuous statement: the audit module contains no skip logic keyed on `(estimated)`. Test: `assert!(!include_str!("price_audit_tests.rs").contains("estimated"))`? But I'm about to write the word "estimated" in the test names/comments, so that self-match is a problem. The repo's rule: assemble needles at runtime so the test can't match itself. I could compute the needle at runtime: `let marker = format!("({})", "estimated");` then assert the *audit module* source doesn't contain it... but my test's own source would contain the runtime-assembled string, not the literal. Hmm, `format!("({})", "estimated")` — the literal word "estimated" appears in the file. So a source check on the file that contains the check would fail.
+
+OK simpler: drop the source-text check entirely. The behavioural test (perturbed estimated arm → reported as drifted) IS the proof that the arm is audited by the same path with no hand-listed skip set. That's the strongest form: behavioural, not textual. To keep it honest I state in the test's doc comment that the ids are the ones the table comments `(estimated)` and that the test's point is that they go through the same comparator.
+
+To keep it from silently going stale (ids disappearing), add an anti-vacuous assertion: the list is non-empty, and `price_of(yoyo_id)` is Some for each (i.e., the table still prices it).
+
+Good. That's test (d).
+
+4. Doc comment above `builtin_model_pricing` naming the ignored test + command.
+
+Also: should I wire the `unaudited` printing into the live test? Yes, plus assert `examined > 0` (anti-vacuous).
+
+Now, module size: `src/format/cost/price_audit_tests.rs` — is it covered by the module-size gate? The gate checks `src/` modules; `path.contains("/tests")` maybe excluded? Let me check tests/module_size.rs to see whether nested test modules count. The file is 41KB — let me count lines. If it's over MAX_MODULE_LINES=2000 and not registered, my addition could break the gate. Let me check.
+
+Also `tests/orphan_modules.rs` — the `mod` declaration exists, fine.
+
+Let me check the line count of price_audit_tests.rs and whether the gate excludes it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/cost/price_audi… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+954 lines — under 2000, fine. Adding ~120 lines keeps it under. Good.
+
+Now let me write the changes. Let me view the exact insertion points.
+
+Insert (A): doc comment above `fn builtin_model_pricing` in src/format/cost.rs.
+
+Insert (B): in price_audit_tests.rs:
+- `Unaudited` struct + `unaudited_shipped_rows` function near `ours_from_catalogue`.
+- wire into live test printing + anti-vacuous assert.
+- offline tests.
+
+Let me check exact text for the live test print area and the end of the fixture/test helpers for insertion.
+
+First, let me write a failing test first (the skill says write tests first). Actually I'll do: add function + tests in one edit (rule: definition needs consumer in the same edit).
+
+Let me get exact current text.
+
+For `our_from_catalogue`, insert after it.
+
+Let me check imports: `use super::{model_pricing_overrides, model_pricing_with};` — I need `crate::providers::known_models_for_provider`. Used already via `crate::providers::known_models_for_provider(provider)` in `yoyo_id_for`. Good, full path, no import change needed.
+
+Now write the code.
+
+```rust
+/// Table rows the *source* never mentions — the direction the comparator above
+/// structurally cannot see.
+///
+/// `ours_from_catalogue` builds its list **from** the catalogue, so every row it
+/// hands `compare_catalogue` is by construction a row the source carried: a table
+/// arm models.dev says nothing about never enters the comparison at all, and a
+/// silent omission is exactly the shape this alarm exists to refuse — *a detector
+/// reports the leaks it happens to trigger and certifies nothing by its silence*.
+/// So the audited population is enumerated from the repo's own side, and the ids
+/// the source does not carry are named with a count.
+///
+/// **The population's bound is stated rather than implied: it is the ids
+/// `providers::known_models_for_provider` ships for [`PROVIDER_KEYS`]**, which is
+/// the repo's single authority for "a model id we support". Arms priced by a
+/// `contains` match that no provider table lists (the Day-204 alarm's
+/// `UNAUDITED_DEEPSEEK_ARMS` are exactly those) are outside this enumeration and
+/// are reported by that alarm instead, not quietly counted as audited here.
+struct Unaudited {
+    /// `provider/id` labels of shipped ids no catalogue row maps to.
+    ids: Vec<String>,
+    /// How many shipped ids the question was asked of. Reported so an empty
+    /// answer cannot be confused with an empty question.
+    examined: usize,
+}
+
+/// Which of the table's own shipped ids the source never mentions.
+fn unaudited_shipped_rows(catalogue: &[CatalogueRow]) -> Unaudited {
+    let mut ids = Vec::new();
+    let mut examined = 0usize;
+    for provider in PROVIDER_KEYS {
+        for shipped in crate::providers::known_models_for_provider(provider) {
+            examined += 1;
+            let carried = catalogue.iter().any(|candidate| {
+                candidate.provider == *provider
+                    && yoyo_id_for(candidate.provider.as_str(), &candidate.id) == Some(*shipped)
+            });
+            if !carried {
+                ids.push(format!("{provider}/{shipped}"));
+            }
+        }
+    }
+    Unaudited { ids, examined }
+}
+```
+
+Wait: `known_models_for_provider(provider)` takes `&str`, and `provider` here is `&&str` from iterating `&[&str]`. So `crate::providers::known_models_for_provider(provider)` with `provider: &&str` → deref coercion works for function args? `&str` param, passing `&&str` → auto-deref applies for method calls but not function args. Actually Rust does not auto-deref function arguments. Need `*provider` or `.as_str()` hmm `provider: &&str`, `*provider: &str`. But in the closure, `candidate.provider == *provider` compares String with &str — `String == &str` requires PartialEq<&str> for String, which exists. Good.
+
+But `shipped` is `&&str` from iterating `&'static [&'static str]`. `Some(*shipped)` gives `Option<&str>`. Good.
+
+Careful with borrow: `for provider in PROVIDER_KEYS` iterates `&'static [&'static str]` → items are `&&'static str`. Fine.
+
+Now wiring into the live test: add after the cache_read_only/unpriced prints:
+
+```rust
+    let unattributed = unaudited_shipped_rows(&catalogue);
+    const UNAUDITED_SAMPLE: usize = 12;
+    println!(
+        "price audit: {} of {} shipped id(s) are NOT carried by models.dev — silence is \
+         `not audited`, never `correct`. First {}: {:?}",
+        unattributed.ids.len(),
+        unattributed.examined,
+        UNAUDITED_SAMPLE.min(unattributed.ids.len()),
+        &unattributed.ids[..UNAUDITED_SAMPLE.min(unattributed.ids.len())]
+    );
+    assert!(
+        unattributed.examined > 0,
+        "the unaudited-row census examined ZERO shipped ids — a broken provider table is a \
+         FAILED audit, not a clean one"
+    );
+```
+
+Hmm — careful about string slicing: `&unattributed.ids[..n]` is a slice of String, fine (not byte indexing on str).
+
+Then offline tests:
+
+```rust
+#[test]
+fn a_shipped_row_the_source_omits_is_named_unaudited_not_matched() {
+    // The fixture catalogue carries `deepseek/alpha`, which is not a shipped id,
+    // and no row for `deepseek-flash`, which is.
+    let catalogue = fixture_catalogue();
+    let unaudited = unaudited_shipped_rows(&catalogue);
+    assert!(unaudited.examined > 0, "the question must be asked of a non-empty population");
+    assert!(
+        unaudited.ids.contains(&"deepseek/deepseek-flash".to_string()),
+        "..."
+    );
+    // And the near-miss: a shipped id the source DOES carry must not be listed.
+    ...
+}
+```
+
+For the near-miss I need a catalogue that carries a shipped id. E.g. `row("deepseek", "deepseek-flash", price)` — `yoyo_id_for("deepseek","deepseek-flash")` → normalize → "deepseek-flash" → in known list → Some("deepseek-flash"). Good.
+
+```rust
+    let carried = vec![row("deepseek", "deepseek-flash", (0.15, 0.0, 0.003, 0.60))];
+    let unaudited = unaudited_shipped_rows(&carried);
+    assert!(
+        !unaudited.ids.contains(&"deepseek/deepseek-flash".to_string()),
+        "a shipped id the source DOES carry must not be listed as unaudited: {:?}",
+        unaudited.ids
+    );
+    assert!(
+        unaudited.ids.contains(&"deepseek/deepseek-v4-pro".to_string()),
+        "the sibling shipped id with no catalogue row must still be named: {:?}",
+        unaudited.ids
+    );
+```
+
+And anti-vacuous / empty-source test:
+
+```rust
+#[test]
+fn an_empty_source_cannot_make_the_table_look_audited() {
+    let unaudited = unaudited_shipped_rows(&[]);
+    assert_eq!(
+        unaudited.ids.len(),
+        unaudited.examined,
+        "with nothing carried, EVERY examined id is unaudited — the census must not be \
+         satisfiable by an empty source"
+    );
+    assert!(unaudited.examined > 0, "...");
+}
+```
+
+And the estimated test:
+
+```rust
+#[test]
+fn estimated_arms_are_audited_by_the_same_path_with_no_skip_set() {
+    // The ids whose table arms carry an `(estimated)` comment. The point is
+    // behavioural, not textual: a hand-listed skip set keyed on that marker
+    // would show up here as an arm that reports `compared == 0`, so this pins
+    // that they reach the SAME comparator as every verified row.
+    let estimated = [
+        ("openai", "gpt-5"),
+        ("openai", "gpt-5-mini"),
+        ("openai", "codex-mini"),
+        ("google", "gemini-3.0-pro"),
+        ("google", "gemini-3.0-flash"),
+        ("xai", "grok-4"),
+        ("xai", "grok-4-mini"),
+        ("groq", "llama-4-maverick-17b"),
+    ];
+    assert!(!estimated.is_empty(), "an empty list would make this vacuous");
+    for (provider, yoyo_id) in estimated {
+        let ours = price_of(yoyo_id)
+            .unwrap_or_else(|| panic!("the table must still price `{yoyo_id}`"));
+        // Perturb the table's OWN reading rather than a literal, so this stays
+        // true whichever number is eventually verified: the assertion is about
+        // the function's output, never about the table being wrong.
+        let perturbed = (ours.0 * 3.0, ours.1, ours.2, ours.3);
+        let catalogue = vec![row(provider, yoyo_id, perturbed)];
+        let our_side = ours_from_catalogue(&catalogue);
+        assert_eq!(
+            our_side.len(),
+            1,
+            "`{provider}/{yoyo_id}` did not map to a shipped id — the fixture is not \
+             exercising the arm it names"
+        );
+        let report = compare_catalogue(&our_side, &catalogue, REL_TOL);
+        assert_eq!(report.compared, 1, "`{yoyo_id}` was skipped, not compared");
+        assert_eq!(
+            report.drifted.len(),
+            1,
+            "a 3x repricing of the `(estimated)` arm `{yoyo_id}` was NOT reported — an \
+             `(estimated)` arm must go through the same path as every verified row"
+        );
+    }
+}
+```
+
+Careful: `row(provider, yoyo_id, perturbed)` builds `CatalogueRow { provider: provider.to_string(), id: yoyo_id.to_string(), price }` — key = "provider/yoyo_id". And `ours_from_catalogue` keys by row.key() too. Fine.
+
+Hmm, one risk: `ours.0 * 3.0` — could the table's price be 0.0 for some arm? For gpt-5 etc., no. Fine.
+
+Another risk: perturbation on input only; `cells_within` false → then `only_cache_read_differs`? It checks cells 0,1,3 within and 2 not. Since cell 0 differs, false. So → drifted. Good. But wait: REL_TOL=0.01, and 3x differs by more. Good.
+
+Another risk: does `price_of("gpt-5-mini")` resolve to the estimated arm? `builtin_model_pricing("gpt-5-mini")`: check the openai branch order. Let me check lines 125-160 for gpt-4.1 vs gpt-5 ordering, and confirm ids.
+
+Let me look at lines 125-165.
+
+Also for `codex-mini`: the comment at 131 says "(estimated, code-focused model similar to gpt-4.1-mini)". Need to confirm the arm resolves for "codex-mini". Let me read.
+
+Also `gemini-3.0-flash` — the arm `model.contains("gemini-3")` → yes (contains "gemini-3"). Good.
+
+`llama-4-maverick-17b` → contains "llama-4" → Some((0.59,0,0,0.79)) estimated. Good.
+
+`grok-4`, `grok-4-mini` → contains grok-4. Good.
+
+Let me read the openai section to confirm.
+
+Then the doc comment above builtin_model_pricing (deliverable 4):
+
+```rust
+/// The local price table, consulted when neither a user override nor a yoagent
+/// preset applies.
+///
+/// **Audited by an ignored test, to be run before a release:** `cargo test
+/// price_drift_audit_and_unaudited_rows -- --ignored` hmm the name is `audit_table_against_models_dev`. Command: `cargo test audit_table_against_models_dev -- --ignored --nocapture`
+```
+Name the command exactly: from the release skill: `cargo test price_drift_audit -- --ignored --nocapture` (the Day-204 alarm) and `cargo test audit_table_against_models_dev -- --ignored --nocapture` (the general sweep). I'll name both since both audit the table. Let me check the release skill gate text to be consistent.
+
+Let me look at skills/release/SKILL.md lines 100-135.
+
+Let me run these reads.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '124,162p' src/format/cos… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now let me make the edits. First the doc comment above `builtin_model_pricing` — this adds lines to `src/format/cost.rs` which is registered at 3446 with drift grace 100 (so up to 3546 is fine without register edit... actually the register entry says 3446 and REGISTER_DRIFT_GRACE_LINES = 100 → growing beyond 3546 is fatal; +12 lines is fine and no register edit needed). Wait — but is growing past the recorded ceiling an issue? "a grandfathered module that grew past its recorded ceiling by at most REGISTER_DRIFT_GRACE_LINES" — warns/fails? Let me check branch 2/3. It says grandfather + drift grace 100. Day 207's diff added 7 lines and left the register untouched ("register untouched"). So +7 was fine. My doc comment will add ~12 lines, similar scale. But to be safe I could keep the doc comment short (4-6 lines). Good practice: keep it tight.
+
+Actually better: put the doc comment as a short comment block. Let me make it ~8 lines.
+
+Now let's do the edits.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the full picture. Let me make the edits — first the documentation on the table (deliverable 4):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (2 → 11 lines)
+  + /// The local price table, consulted only when neither a user override nor a
+  + /// yoagent preset applies.
+  + ///
+  + /// **This table is audited by an `#[ignore]`d network test that MUST be run
+  + /// before a release, and it is deliberately not in CI** (it needs the network):
+  + /// `cargo test audit_table_against_models_dev -- --ignored --nocapture` for the
+  + /// general sweep, `cargo test price_drift_audit -- --ignored --nocapture` for the
+  + /// DeepSeek rows with their admitted-divergence register. Read them, do not
+  + /// auto-patch a constant from them — the alarm sends you to the vendor's page.
+    fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
+        // Returns (input_per_MTok, cache_write_per_MTok, cache_read_per_MTok, output_per_MTok)
+ ✓ (1m 37s)
+  + /// The local price table, consulted only when neither a user override nor a
+  + /// yoagent preset applies.
+  + ///
+  + /// **This table is audited by an `#[ignore]`d network test that MUST be run
+  + /// before a release, and it is deliberately not in CI** (it needs the network):
+  + /// `cargo test audit_table_against_models_dev -- --ignored --nocapture` for the
+  + /// general sweep, `cargo test price_drift_audit -- --ignored --nocapture` for the
+  + /// DeepSeek rows with their admitted-divergence register. Read them, do not
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the pure unaudited-rows census plus its consumer (deliverable 1's second half):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost/price_audit_tests.rs (11 → 56 lines)
+                price_of(yoyo_id).map(|price| (row.key(), price))
+            })
+            .collect()
+  + }
+  + 
+  + /// Which of the table's own shipped ids the source never mentions, and how many
+  + /// ids that question was asked of.
+  + struct Unaudited {
+  +     /// `provider/id` labels of shipped ids no catalogue row maps to.
+  +     ids: Vec<String>,
+  +     /// The size of the population the question was asked of, reported so an
+  +     /// EMPTY ANSWER can never be read as an empty question.
+  +     examined: usize,
+  + }
+  + 
+  + /// Table rows the source does not carry — the direction the comparator above is
+  + /// **structurally blind to**, and the reason this exists.
+  + ///
+  + /// `ours_from_catalogue` builds its list *from* the catalogue, so every row it
+  + /// hands `compare_catalogue` is by construction a row the source carried. A table
+  ... (29 more lines)
+ ✓ (13.2s)
+                price_of(yoyo_id).map(|price| (row.key(), price))
+            })
+            .collect()
+  + }
+  + 
+  + /// Which of the table's own shipped ids the source never mentions, and how many
+  + /// ids that question was asked of.
+  + struct Unaudited {
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+As expected — consumer needed in the same edit. Now wire into the live test + add offline tests.
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the consumer must land in the same edit. Wiring it into the live test now:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost/price_audit_tests.rs (5 → 24 lines)
+        println!(
+            "price audit: {no_cost_published} catalogue entry/entries publish no `cost` object \
+             (priced per image or per second) and are not comparable to a per-MTok rate"
+  +     );
+  + 
+  +     // The other direction, and the one the comparator above cannot reach: table
+  +     // rows the SOURCE never mentions. Silence is `not audited`, never `correct`.
+  +     let unaudited = unaudited_shipped_rows(&catalogue);
+  +     const UNAUDITED_SAMPLE: usize = 12;
+  +     println!(
+  +         "price audit: {} of {} shipped id(s) are NOT carried by models.dev — silence is \
+  +          `not audited`, never `correct`; first {}: {:?}",
+  +         unaudited.ids.len(),
+  +         unaudited.examined,
+  +         UNAUDITED_SAMPLE.min(unaudited.ids.len()),
+  +         &unaudited.ids[..UNAUDITED_SAMPLE.min(unaudited.ids.len())]
+  +     );
+  +     assert!(
+  +         unaudited.examined > 0,
+  +         "the unaudited-row census examined ZERO shipped ids — a provider table that resolves \
+  ... (4 more lines)
+ ✓ (1m 37s)
+        println!(
+            "price audit: {no_cost_published} catalogue entry/entries publish no `cost` object \
+             (priced per image or per second) and are not comparable to a per-MTok rate"
+  +     );
+  + 
+  +     // The other direction, and the one the comparator above cannot reach: table
+  +     // rows the SOURCE never mentions. Silence is `not audited`, never `correct`.
+  +     let unaudited = unaudited_shipped_rows(&catalogue);
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the offline tests (deliverables 3c and 3d). Let me see the tail of the file to place them:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/format/cost/price_a… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/f… (122 lines) ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Oops, I made a typo in the test name: `an_empty_source_cannon_make_the_table_look_audited` — "cannon" instead of "cannot". Let me fix that.
+
+Also run the checks.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/an_empty_source_cannon… ✓ (14.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test price_audit 2>&1 | ta… ✓ (21.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo price_audi… ✓ (103ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to continue. Tests pass (16 passed, 1 ignored — the 3 new tests are among them). Let me verify the new tests specifically ran and then run the full check suite, then commit.
+
+Let me be efficient now — the budget is being consumed. Run fmt check, clippy, build, test, then check module size, then commit.
+────────────────────────────────────────────────────────────────────────────────
+
+Tests pass. Let me verify my three new tests ran by name, then run the full gate:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo price_audi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/cost.rs && carg… ✓ (107ms)
+ ✓ (992ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+cost.rs is now 3455 lines, register says 3439. Drift is +16, within the 100-line grace (warning only), so the test passes. But is the register drift a warning that prints? Let me check: 3455 - 3439 = 16, within REGISTER_DRIFT_GRACE_LINES=100. It will warn but pass. Good, no register edit needed (and the register cannot be genuinely improved, only pasted; but the task said the register only requires an edit when fatal). Actually — best practice per ARCHITECTURE is to paste the new number. Let me check whether the gate warns and whether the ARCHITECTURE file says to paste. Earlier entries say "Pasted from what the gate printed." Since it warns, updating keeps it clean and prevents accumulating drift. But careful: tests/module_size.rs has a test `grandfathered_module_may_shrink_while_still_over_cap`. If I paste 3455, that's fine (a paste is allowed).
+
+Let me first run the module_size test to see if it warns/fails.
+
+Also do the positive control: neuter the census and watch the new tests fail. Let me do that atomic: mutate→run→restore.
+
+Let me run full test suite first (it's big; the watch normally does it). Let me run module_size + full tests.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.2s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (8 lines) ✓ (174ms)
+ ✓ (21.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Positive control worked: neutering the census reddened exactly the two census tests, and the third (estimated arms) stayed green because it tests a different property. Restored — `grep -c NEUTERED` = 0, so the marker is gone. Now let me verify green again after restore.
+
+The register warning: cost.rs grew to 3455, 16 past 3439. Best practice per ARCHITECTURE is to paste. Let me paste `("src/format/cost.rs", 3439)` → 3455 with a reason. Also note src/help.rs and others warn (pre-existing, from a prior session — I shouldn't touch those; they're not mine... actually help.rs warning at 2876 vs 2856 is from a prior session, likely Day 209 session 1? Let me check git status/diff to see what's uncommitted. Actually `git status --short` was empty earlier. Hmm, earlier `git status --short | head` returned nothing — clean. And branch is main. So help.rs warnings are pre-existing drift on committed main. Fine, not mine.
+
+Wait — but if git status is clean and these are committed, that means the drift warnings existed. Let me just fix my own file's entry (paste 3455) as best practice, and leave others.
+
+Hmm, but careful: if I paste 3455 for cost.rs and the file later shrinks... no, it's fine.
+
+Actually, should I paste? The task said the register doesn't need an edit (non-fatal). But ARCHITECTURE entries consistently say "pasted from what the gate printed". Pasting keeps the ratchet accurate and prevents the 100-line band from silently absorbing. I'll paste it with a reason in the commit message.
+
+Also I should add an ARCHITECTURE.md entry (the repo convention: new history goes in ARCHITECTURE.md). That's important — CLAUDE.md says "New history goes in ARCHITECTURE.md, never here" and "Read ARCHITECTURE.md's entry for any file you are about to change."
+
+Let me limit budget: 
+1. Restore check green (quick test).
+2. Paste register.
+3. Add a concise ARCHITECTURE.md entry under the cost.rs bullet.
+4. Run clippy/build/test full.
+5. Commit.
+
+Let me do 1 & 2 now.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 25.6s (2 ✓)
+
+Positive control confirmed: neutering the census reddened exactly the two census tests (the estimated-arms test, a different property, stayed green), and the restore is verified (zero NEUTERED markers left). Now pasting the register as the gate asked:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '("src/format/cost.rs", … ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 8 lines)
+  -     ("src/format/cost.rs", 3439), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
+  +     // #937 option 1: the seven-line doc comment above `builtin_model_pricing` naming the
+  +     // ignored audit command (deliverable 4 — an alarm nobody can find is the #745/#767/#769
+  +     // discoverability defect) plus the `#[cfg(test)] mod price_audit_tests;` declaration's
+  +     // own doc line. Every other byte of this change went into the child module, which is
+  +     // why the delta is single digits and not low hundreds: growth is information, and this
+  +     // one says the child-module seam is still carrying the weight.
+  +     ("src/format/cost.rs", 3455), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+ ✓ (1m 41s)
+  -     ("src/format/cost.rs", 3439), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+  +     // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
+  +     // #937 option 1: the seven-line doc comment above `builtin_model_pricing` naming the
+  +     // ignored audit command (deliverable 4 — an alarm nobody can find is the #745/#767/#769
+  +     // discoverability defect) plus the `#[cfg(test)] mod price_audit_tests;` declaration's
+  +     // own doc line. Every other byte of this change went into the child module, which is
+  +     // why the delta is single digits and not low hundreds: growth is information, and this
+  +     // one says the child-module seam is still carrying the weight.
+  +     ("src/format/cost.rs", 3455), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (145ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Register warning gone for cost.rs. Now add the ARCHITECTURE.md entry. Let me find the end of the Day-207 price audit bullet in ARCHITECTURE.md and append a Day-209 paragraph to it.
+
+Let me find the line numbers of that bullet's end.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the ARCHITECTURE.md entry (the repo rule: history goes there, not CLAUDE.md). Let me find the end of the Day-207 price-audit bullet:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Day 207 (#937 option 1"… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=475 && NR<=478 {print N… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the cost.rs bullet continues up to line 474 or so. Let me check which lines belong to the cost.rs bullet (444 onwards) and find where it ends — line 474ish.
+
+Let me look at line 470-475.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=470 && NR<=475 {print N… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> /tmp/… (19 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Inserted after line 472 (blank line at 473 then my entry). Wait, output shows line 473 blank and 474 my entry. Good.
+
+Now full verification: fmt check, clippy, build, test. Then commit.
+
+The full test suite is large; let me run it with a timeout.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the full gate:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (15.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (2m 39s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The awk didn't parse. Let me just check the test result lines directly — no "FAILED" and no "failures:" lines appeared (grep found none; EXIT=1 is grep's no-match exit code). 17 suites all ok. So the full suite is green.
+
+Let me get the total pass count properly and then verify the ignored test still doesn't run, then commit.
+
+Actually the important thing: no FAILED lines. 17 "test result: ok" lines. Good.
+
+Let me do a final sanity check of the diff and commit.
+────────────────────────────────────────────────────────────────────────────────
+
+No FAILED and no failures: lines — grep's exit 1 is "no match", which is what we want. All 17 suites report ok. Let me confirm the ignored test still doesn't run in CI and review the diff:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo -- --list … ✓ (1m 22s)
+ ✓ (1m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green: 5791 (bin) + 267 across integration tests, 0 failures. The ignored network test is in the list (registered) but reported as ignored, not run.
+
+Now review the final diff before committing.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 24s (2 ✓)
+
+Full suite green (5791 bin tests + 267 integration, 0 failures). Final diff review:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Everything is in place. One thing to double check: the doc comment I wrote says "the seven-line doc comment" in module_size.rs but it's 9 added lines in cost.rs (the doc + blank line? actually 9 lines added to cost.rs). Let me check: the diff shows +9 in cost.rs. The doc comment is 7 lines of `///` + 1 blank line = 8, plus... hmm. Let me count: lines added:
+
+```
++/// The local price table, consulted only when neither a user override nor a
++/// yoagent preset applies.
++///
++/// **This table is audited by an `#[ignore]`d network test that MUST be run
++/// before a release, and it is deliberately not in CI** (it needs the network):
++/// `cargo test audit_table_against_models_dev -- --ignored --nocapture` for the
++/// general sweep, `cargo test price_drift_audit -- --ignored --nocapture` for the
++/// DeepSeek rows with their admitted-divergence register. Read them, do not
++/// auto-patch a constant from them — the alarm sends you to the vendor's page.
+```
+That's 9 lines. My module_size comment says "seven-line doc comment ... plus the `#[cfg(test)] mod price_audit_tests;` declaration's own doc line" — that's wrong: it's 9 lines of doc, and I did NOT change the mod declaration doc. Let me fix that prose so it doesn't leave a false statement in a register (Day 202's lesson: I write the register's prose in the tense of my plan, not my diff). Fix it to say 9 lines of doc above `builtin_model_pricing`.
+
+Let me correct.
+────────────────────────────────────────────────────────────────────────────────
+
+One thing to fix: the register prose says "seven-line doc comment ... plus the mod declaration's doc line", but the diff is 9 doc lines and I didn't touch the mod declaration — exactly the Day-202 defect (writing the register's prose from my plan instead of my diff). Correcting:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (6 → 6 lines)
+  -     // #937 option 1: the seven-line doc comment above `builtin_model_pricing` naming the
+  -     // ignored audit command (deliverable 4 — an alarm nobody can find is the #745/#767/#769
+  -     // discoverability defect) plus the `#[cfg(test)] mod price_audit_tests;` declaration's
+  -     // own doc line. Every other byte of this change went into the child module, which is
+  -     // why the delta is single digits and not low hundreds: growth is information, and this
+  -     // one says the child-module seam is still carrying the weight.
+  +     // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
+  +     // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769
+  +     // discoverability defect). Read off the diff, not the plan: every other byte of this
+  +     // change went into `src/format/cost/price_audit_tests.rs` (now 1037 lines), which is
+  +     // why the delta is single digits and not low hundreds — the child-module seam from
+  +     // Day 207 is still carrying the weight, and this number says so.
+ ✓ (1m 22s)
+  -     // #937 option 1: the seven-line doc comment above `builtin_model_pricing` naming the
+  -     // ignored audit command (deliverable 4 — an alarm nobody can find is the #745/#767/#769
+  -     // discoverability defect) plus the `#[cfg(test)] mod price_audit_tests;` declaration's
+  -     // own doc line. Every other byte of this change went into the child module, which is
+  -     // why the delta is single digits and not low hundreds: growth is information, and this
+  -     // one says the child-module seam is still carrying the weight.
+  +     // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
+  +     // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/now 1037 lines/1037 li… ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The file is 1142 lines, not 1037. I wrote 1142 incorrectly (read off my plan, again!). Fix to 1142. Let me correct it and be careful.
+────────────────────────────────────────────────────────────────────────────────
+
+The file is 1142 lines, not the 1037 I wrote — caught the same defect twice. Fixing from the measurement:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/(1037 lines, read off … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the final full gate run and commit:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (15.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (1m 8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Committing:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (61ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed as bb3e6585.
+
+## What I did
+
+The task file's deliverables 1–3 were largely landed by Day 207 (the general sweep audit_table_against_models_dev, the comparator, and the network test already exist). I checked rather than assumed: unaudited_shipped_rows and the doc comment both returned zero hits, so those two pieces were genuinely missing. I built exactly those.
+
+1. The census for the direction the comparator is structurally blind to. ours_from_catalogue builds yoyo's side from the catalogue, so every row reaching compare_catalogue is by construction one the source carried — a table row models.dev never mentions never enters the comparison at all, and an omission that reports nothing looks exactly like a clean bill. unaudited_shipped_rows enumerates the population from the repo's own side and names the ids the source omits, printing the count with the sample and asserting examined > 0. Its bound is stated in the doc: the ids providers::known_models_for_provider ships for PROVIDER_KEYS — so the contains-matched arms no provider table lists sit outside it and are reported by the Day-204 alarm, never silently counted as audited here.
+
+2. The doc comment above `builtin_model_pricing` naming both ignored commands. I resolved the exact test names rather than guessing, and noted that price_drift_audit is a prefix of price_drift_audit_against_models_dev.
+
+3. Three offline tests. A two-direction census test (omitted id named; carried id not; examined independent of the source), an anti-vacuous test asserting an empty source makes every examined id unaudited, and deliverable 3(d) as a behaviour test: eight (estimated)-commented arms driven through the ordinary comparator with a 3× perturbation on the table's own reading — so a skip set would show up as compared == 0, and the assertion stays true whichever number is eventually verified.
+
+Positive control, one atomic mutate→run→restore: neutering the census's ids.push reddened exactly the two census tests by name while the eight-arm test stayed green; restore verified by grep (0 occurrences of the marker). Register pasted 3439 → 3455.
+
+One thing I got wrong twice and want on the record: I first wrote the register prose from my plan ("seven-line doc comment", "1037 lines") instead of my diff. Both were wrong — 9 lines, 1142 lines — and I fixed both from measurement. That is the Day-202 defect recurring in the exact file whose purpose is tracking reality.
+
+Not settled, as the issue insists: which DeepSeek number is correct. This makes the contradiction alarmable, not resolved — and honestly, I still cannot verify my own cost figures from inside.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

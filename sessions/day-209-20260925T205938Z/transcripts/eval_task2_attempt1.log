@@ -1,0 +1,267 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the diff carefully.
+
+The task: #937 option 1 — an ignored price-drift alarm over the model table, with a pure offline parser.
+
+Wait, but the diff shows... hmm. The CHANGES MADE diff shows additions to ARCHITECTURE.md, src/format/cost.rs (doc comment only), src/format/cost/price_audit_tests.rs (unaudited census), tests/module_size.rs.
+
+But the ARCHITECTURE.md text says "Day 209 (#937 option 1, the leftover half)" — implying that #937 Task 2 (Day 204) already landed the price drift alarm, and this session landed a leftover half: the unaudited census.
+
+Hmm. The task description here is #937 option 1 — full deliverable: pure comparison helper `price_drift_against`, ignored network test, offline tests, doc comment. The diff implements: doc comment (deliverable 4), ignored network test extension (unaudited census), offline tests. But the helper `price_drift_against` is not in the diff — because it already existed from Day 204 (`compare_catalogue`, `price_drift_audit_against_models_dev`, `KNOWN_DIVERGENCES`). So the diff is an increment on top.
+
+So the evaluator job: judge the committed diff against the task. The task's deliverables 1-4 are mostly satisfied by pre-existing code (Day 204) that I can verify exists. The diff adds the leftover half plus deliverable 4's doc comment.
+
+Wait — is this a case where the harness gave us a diff that only partially implements the task? Let me check the actual repo state to see whether the helper exists.
+
+Let me look at the files.
+
+Key checks:
+1. Does `price_audit_tests.rs` exist with the comparator, `price_drift_audit_against_models_dev` ignored test, offline tests?
+2. Does `unaudited_shipped_rows` have consumers in this diff? Yes: the ignored test and two offline tests.
+3. `Unaudited` struct's fields used — yes.
+4. Doc comment on `builtin_model_pricing` — yes.
+5. module_size.rs bumped — need to check the actual line count of src/format/cost.rs matches 3455? Hmm, the gate: if the file is below the grandfathered number... Actually the module_size test: grandfathered modules may shrink while still over cap? Let me recall: "a grandfathered module may shrink while still over cap" test exists. The register entry must be >= actual? Let me check tests/module_size.rs semantics. If the register says 3455 and actual is 3455, fine.
+
+Actually the ARCHITECTURE.md mentions "Register entry pasted 2931 → 3439" in Day 204 and now 3439 → 3455. Build/test PASS per harness, so presumably fine.
+
+Let me actually inspect the repo to verify the diff claims: does `PROVIDER_KEYS`, `yoyo_id_for`, `crate::providers::known_models_for_provider` exist and are they in scope/imported in price_audit_tests.rs? The build passes so yes.
+
+But one concern: the task deliverable 1 says "return one human-readable line per table row that disagrees with the source" and "return those ids in a second list and print the count". The pre-existing comparator... Let me check.
+
+The main risk for me as evaluator: this diff is an increment; does it fulfill the task? I should verify the pre-existing code satisfies the deliverable, and the new code is coherent.
+
+Let me go look.
+
+Also verify positive controls / claims: the diff claims tests pass; harness says PASS.
+
+Let me check a few specific things:
+- `UNAUDITED_SAMPLE` print slice: `&unaudited.ids[..min]` — fine.
+- unused import warnings etc. — clippy passes.
+
+Also: does the doc comment in cost.rs get flagged by any doc test? No.
+
+Also check: is the `estimated` test's list accurate with the table? e.g., `llama-4-maverick-17b` under `groq`. Build/test pass, and the tests would fail if `price_of` returns None. Tests pass, so fine.
+
+One more: the census test asserts `omitted.ids.contains("deepseek/deepseek-flash")` — meaning `known_models_for_provider("deepseek")` includes `deepseek-flash`. Tests pass, fine.
+
+Let me quickly explore to confirm the pre-existing alarm exists and wiring in release skill (mentioned only in ARCHITECTURE.md, not in the diff — the diff doesn't touch skills/release/SKILL.md; ARCHITECTURE.md says it did for Day 204). Hmm, the ARCHITECTURE.md text in the diff says "Wired, because an alarm nothing runs..." referring to Day 204 work presumably landed earlier. Was skills/release/SKILL.md actually updated? If not, that's a stale claim in ARCHITECTURE.md (docs). But the harness's diff for this session only includes those 4 files. Let me check whether the release skill contains the command. If not, ARCHITECTURE.md's claim (which pre-existed? no — that paragraph seems to be part of the diff context... Actually the ARCHITECTURE.md diff shows the first hunk adding a paragraph, then a second paragraph "Day 209 (#937 option 1, the leftover half)". Wait, the first added paragraph appears at line 470 context. Both paragraphs are added? Let me re-read the diff:
+
+```
+@@ -470,6 +470,14 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
+ **Wired, because an alarm nothing runs is the defect this task exists to avoid.** `skills/release/SKILL.md`'s **"Gate (ALL must pass)"** ...
++ ... (Day 209 paragraph)
+ - `format/markdown.rs` — ...
+```
+
+Only the Day 209 paragraph has `+`. The "Wired, because..." line is unchanged context (from Day 204). OK good.
+
+So the diff is: doc comment + census + tests + register. Let me verify the code compiles conceptually and check for the consumers, then verify a couple of claims by reading files.
+
+Let me run some greps.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "price_drift_against\|co… ✓ (3ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — the pre-existing infra exists. Now check the deliverable items: the pure helper `price_drift_against` shape... The task allows "or the equivalent shape". `compare_catalogue(ours, catalogue, rel_tol)` plus `ours_from_catalogue` — equivalent.
+
+Check the ignored test name: `price_drift_audit_against_models_dev` and `audit_table_against_models_dev`, both `#[ignore]`. Let me grep.
+
+Also check the doc comment exists on builtin_model_pricing and that release skill mentions the command.
+
+Also check that `compare_catalogue` reports "not audited" ids (the second list / count) — i.e., rows absent from observed. Actually deliverable 1 says rows absent from `observed` are not reported but returned in a second list + count. The new census does that at the repo-side enumeration. Let me check `compare_catalogue`'s report struct for a field like `unmatched`.
+
+Let me look at the relevant code.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 140,240p src/format/cost/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[ignore\]\|fn audit_t… ✓ (2ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, the `#[ignore]` attribute — grep for `#[ignore]` returned nothing but the doc says ignored. Line 470 `fn audit_table_against_models_dev()`. Let me check line ~465-472 for the ignore attribute (maybe it's `#[ignore = "..."]`).
+
+Also is `price_drift_audit_against_models_dev` present? grep found nothing for that name in that file! Let me re-check: the second grep output only shows skills/release matches for `price_drift_audit`... it printed `skills/release/SKILL.md:107` and `:138`. Hmm, that's the grep of both files; but the first grep pattern `#\[ignore\]...#\[ignore\]` — actually the command was `grep -n "#\[ignore\]\|fn audit_table_against_models_dev\|fn price_drift_audit" src/format/cost/price_audit_tests.rs` then `;` then the skills grep. The output shows... hmm, the output displayed only shows lines 37 (a doc comment), 463, 470 — those look like they come from... wait 37 is `//! It is #[ignore]d because it needs the network`. So it seems the grep output was collapsed/ellipsized by the tool? The output shows "..." in the first result too. The tool seems to be summarizing output with "(N more similar lines)". Odd — there's some output compression happening. Let me re-run with explicit output.
+
+Let me check for the ignore attributes and the price_drift test.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ignore" src/format/cost… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting: there is no `price_drift_audit_against_models_dev` test in this file. ARCHITECTURE.md's Day 209 paragraph claims "the DeepSeek test is `price_drift_audit_against_models_dev`, so the gate line in `skills/release/SKILL.md` matches two tests". Let me check if that test exists elsewhere (maybe in another module, e.g., cost.rs or another file). grep the repo.
+
+Also check `[derive(Default)]` for AuditReport and whether `drifted` includes the DeepSeek rows. Also check the fixture tests.
+
+Let's grep for price_drift_audit across the repo.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "price_drift_audit" --i… ✓ (37ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So `price_drift_audit_against_models_dev` exists in src/format/cost.rs (line 3451 references, and presumably the test is defined in cost.rs). Let's grep in cost.rs.
+
+So the overall deliverable of the task (#937 option 1) is: helper, ignored network test, offline tests, doc comment. All present, mostly pre-existing (Day 204) + this diff's leftover census + the doc comment.
+
+Hmm wait — but the task in this session's task file is "#937 option 1 — an ignored price-drift alarm over the model table, with a pure offline parser" with Files: src/format/cost.rs. The diff files: ARCHITECTURE.md, src/format/cost.rs (doc only), src/format/cost/price_audit_tests.rs, tests/module_size.rs. So the session interpreted the task as "the leftover half" since Day 204 already landed the alarm. Given the assessment note in ARCHITECTURE.md which says the task's premise was partly false (the alarm partly existed), the agent landed the genuinely missing narrow part: the unaudited census direction, plus deliverable 4 doc comment.
+
+Is that "matching the task description"? Deliverables:
+1. pure comparison helper returning lines for disagreeing rows + a second list/count of rows absent from source. → `compare_catalogue` + `unaudited_shipped_rows` (the new census gives the second list + count). Present.
+2. ignored network test fetching models.dev and running helper over the whole table, never in CI, failure message names the vendor page. → `audit_table_against_models_dev` is `#[ignore]`d, and the new census is inside it. Need to check it uses curl via std::process::Command and that the failure message names the vendor page. Let me check fetch_models_dev_json and audit_did_not_run.
+3. offline tests that run in CI: (a) match → no line; (b) disagree → line naming id and both pairs; (c) row absent → not reported as agreement (anti-vacuous); (d) (estimated) arms covered by same path, not a hand-listed skip set. → tests: comparator_is_anti_vacuous..., drift_names_the_perturbed_row_and_only_that_row, a_row_yoyo_cannot_price_is_unpriced_and_not_compared, estimated_arms_are_audited_by_the_same_path_with_no_skip_set, plus new census tests. Present.
+4. one line of documentation above builtin_model_pricing naming the command → present (a 9-line doc comment).
+
+So the diff plausibly completes the task. Now verify:
+- Does the ignored test's failure message name the vendor page? Check `audit_did_not_run` and other panic messages.
+- Does the network path use curl via std::process::Command (no new dependency)? Check Cargo.toml diff — no Cargo.toml change, good.
+- Does `unaudited_shipped_rows`'s `Unaudited` struct's fields all used? `ids`, `examined` — used in tests and the ignored test. Yes.
+- New definitions in this diff: struct `Unaudited` (used), `unaudited_shipped_rows` (used at line 535, 1035, 1050, 1073), `UNAUDITED_SAMPLE` const inside fn (used). `#[test]` fns: three new. All consumers present.
+- Any new enum variant? No.
+- Renames? No.
+
+Doc sync: behavior change? It's a test-only change plus doc comment. The doc comment is the documentation. ARCHITECTURE.md updated. release skill mentions the command already (Day 204). No product surface affected → product_surface: N/A (tests + docs only, no config/CLI/startup change).
+
+Wait — one thing: the task says the ignored test must "never run in CI". Is `#[ignore]` used? Yes, `#[ignore = "network: ..."]` at line 469.
+
+Another: the task says helper should "return one human-readable line per table row that disagrees with the source, naming the id, our pair, their pair". `compare_catalogue` returns a struct with `drifted: Vec<(String, Rates, Rates)>` and the ignored test prints lines. Check the printing includes id, ours, theirs. Let me check the ignored test body lines 470–590.
+
+Let me also check `fetch_models_dev_json` uses curl.
+
+Also verify that the census `examined` count and asserts are coherent — tests pass per harness.
+
+Also potential concern: does the census enumerate ids from `crate::providers::known_models_for_provider` — a product-side module? That exists? Let me check.
+
+Let's read the ignored test body and fetch function.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 304,360p src/format/cost/… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The failure message names the vendor page: it names `MODELS_DEV_URL` (https://models.dev/api.json) and says "read the vendor's own pricing page". MODELS_DEV_URL is an aggregator, not the vendor's page; but the task said failure message must name the vendor page to go read. It says "read the vendor's own pricing page and decide". Reasonable. Hmm, but is MODELS_DEV_URL a const in cost.rs? Let me check. Also since this pre-existed Day 204, fine.
+
+Now, does this diff's part fulfill the task? The task file expected deliverables 1–4 in src/format/cost.rs. The session determined the alarm already existed (Day 204) and landed the genuinely missing narrow half. That's a defensible interpretation, as long as the deliverables are indeed present in the tree. Given the evaluation is "judge the committed diff against the task", I should check whether the deliverable's requirements are satisfied — even if pre-existing, the task says "Files: src/format/cost.rs" and the alarm is in src/format/cost.rs + submodule.
+
+However, one wrinkle: the task said the deliverable goes in `src/format/cost.rs`. The alarm actually lives in `src/format/cost/price_audit_tests.rs` (a child module declared inside cost.rs presumably with #[cfg(test)] mod). That's fine (Day 204 landed it, module split Day 207).
+
+Now let me double check that the child module is compiled as tests of cost.rs: `#[cfg(test)] #[path = "cost/price_audit_tests.rs"] mod price_audit_tests;` presumably. Let's grep.
+
+Also verify the doctest comment doesn't break anything — build passes.
+
+Another consideration for the "forgotten_touchpoints" check: `tests/module_size.rs` updated with new count 3455 — and the actual file is 3455 lines per wc. Good (exact match; the gate likely requires actual <= registered? Actually guard: "if the file shrinks, update"? Let's not worry — test suite passes).
+
+Also, the module_size note says price_audit_tests.rs is 1142 lines; actual is 1142. Good, claims match reality.
+
+Let me verify a couple of numeric claims quickly: the ARCHITECTURE.md Day 209 paragraph claims "0 occurrences of the marker word in the tree" and register pasted 3439 → 3455. Fine.
+
+Now, a possible FAIL angle: does the diff actually implement the task at all, or is it just a small addition that leaves the task's main deliverables unimplemented? Deliverables exist in the tree (verified: helper, ignored test, offline tests, doc comment). The diff's contribution is the doc comment (deliverable 4) and the "second list + count" half (deliverable 1's "not audited" clause + 3(c) anti-vacuous). It's incremental but coherent with an already-mostly-landed task. Given the harness said Build/Tests PASS and the deliverable is present in the tree, I lean PASS.
+
+But hold on — was the task's premise possibly different: maybe this session's task was expected to land deliverables from scratch because the earlier alarm was in a different file? No — the tree has it.
+
+Let me do one more verification: run the offline tests for the new tests specifically to confirm they actually pass and are meaningful (not ignored). Harness already ran full suite with PASS. But let me do a quick focused run of the three new tests (<30s? compiling may take a while). Actually `cargo test` compile might be quick if target is warm. Let me try running just those tests with a timeout. It's worth it to confirm they run in CI (not ignored).
+
+Also check `crate::providers::known_models_for_provider` exists.
+
+Let me run: cargo test --bin yoyo price_drift... hmm binary name. Let's check Cargo.toml name. Just run `cargo test unaudited 2>&1 | tail` and `cargo test shipped_row -- --exact`? test filters are substrings. Run:
+- cargo test a_shipped_row_the_source_omits
+- cargo test an_empty_source_cannot
+- cargo test estimated_arms_are_audited
+
+One command: `cargo test -- an_empty_source_cannot_make_the_table_look_audited a_shipped_row_...` multiple filters — cargo test accepts only one filter positional, but accepts multiple with `--` then multiple filter args? Yes, cargo test passes multiple filters (libtest supports multiple filters since Rust 1.62? Actually libtest accepts multiple filter args). Let me just run the whole test binary for cost: `cargo test price_audit` maybe. But the tests are in module `format::cost::price_audit_tests`. Filter "price_audit" matches module path. Let's run `cargo test price_audit_tests 2>&1 | tail -20`.
+
+Also verify `--ignored` list contains audit test: `cargo test -- --ignored --list` maybe.
+
+Let me do it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "known_models_for_provi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test price_aud… ✓ (4ms)
+ ✓ (152ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Need to see the main binary test results (filtered earlier in output). Let me grep for "running" and "test result" for the yoyo bin. Let me re-run and capture the head.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test price_aud… ✓ (126ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: 16 passing, 1 ignored in the cost module; the ignored one is the network alarm. The new census tests (3) are among the 16 passing and are not ignored.
+
+Let me quickly verify the three new tests actually run by name (grep for them with --list or run with exact names). Let's run `cargo test unaudited -- --list` ... Actually `cargo test -- --list | grep price_audit` might be quick. Let's just verify the three test names show as running. Run: `cargo test a_shipped_row_the_source_omits_is_named_unaudited_not_matched -- --nocapture`. Fast since compiled.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 cargo test --bin yoy… ✓ (107ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All three new tests run and pass, non-ignored.
+
+Now check anti-vacuous quality: does the `an_empty_source_cannot_make_the_table_look_audited` test actually pin that the census is satisfiable only via the population? Yes.
+
+One more consideration: the task says the helper should "return one human-readable line per table row that disagrees... naming the id, our pair, their pair". The comparator returns structured tuples and the ignored test formats lines. Fine ("or the equivalent shape").
+
+Deliverable 1 also: "a row absent from observed is not reported ... return those ids in a second list and print the count, or say so in the same line". `report.unpriced` covers catalogue rows yoyo can't price, and the new `unaudited` covers repo-side ids the source omits, printed with count. Good.
+
+Deliverable 3(b): "a source that disagrees → a line naming the id and both pairs" — test `drift_names_the_perturbed_row_and_only_that_row` presumably checks drifted entries contain (key, ours, theirs). Good enough.
+
+Deliverable 3(d): estimated arms test — present, uses table's own reading, 8 arms.
+
+Deliverable 4: doc comment above builtin_model_pricing — present and names the commands.
+
+Doc sync: the doc comment is inline; ARCHITECTURE.md updated; release skill already had commands from Day 204. No user-facing behavior change → doc_sync N/A? There's no behavior change (tests + docs only). But ARCHITECTURE.md was updated per project convention. I'll mark doc_sync PASS (project convention: history goes in ARCHITECTURE.md, and it was updated; CLAUDE.md deliberately not touched) — or N/A since no behavior change. The instruction: doc_sync "N/A only if no behavior changed". No behavior changed here (test-only + doc comment). So N/A is legal. But ARCHITECTURE.md was updated. I'll say PASS: no user-facing behavior change; project's history doc (ARCHITECTURE.md) updated in the same commit, and CLAUDE.md correctly left alone. Hmm, "PASS" requires "behavior change reflected in docs". Since there's no behavior change, N/A is more accurate. I'll use N/A with the explanation.
+
+Actually careful: an N/A on doc_sync is legal. I'll say N/A.
+
+product_surface: the diff touches only tests, a doc comment, the module-size register, and ARCHITECTURE.md. No config defaults/CLI/startup. N/A.
+
+forgotten_touchpoints: PASS — new struct `Unaudited` + fn `unaudited_shipped_rows` consumers: ignored test (line 535) and three offline tests; no new enum variants; module_size register updated to the actual 3455 lines; `price_audit_tests` module already declared. Also `UNAUDITED_SAMPLE` used. Also verified `crate::providers::known_models_for_provider` exists.
+
+intent_alignment: PASS — deliverable 1/2/3/4 all present in the tree; this diff adds the census direction (the second list + anti-vacuous guard) and the doc comment. Note: the alarm itself pre-existed (Day 204), so this diff is the leftover half — worth mentioning in Reason.
+
+One residual risk: the task said Files: src/format/cost.rs, and the diff put tests in the child module. That's a pre-existing split; acceptable.
+
+Also should I flag anything? The module_size register comment says "1142 lines, read off wc -l" matching actual. Fine.
+
+Write the verdict file.
+
+Any stray files? git status showed nothing (clean tree, and last commit is the task commit). Let me double check git status output — earlier it printed nothing before wc. Good, no stray files.
+
+Write verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Done. Report briefly.
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md: PASS.
+
+What I verified (without re-running the full suite):
+• **Intent:** The diff is the leftover half of #937 option 1. The alarm's other halves already exist in the tree and I confirmed them by reading: the pure comparator (`compare_catalogue + ours_from_catalogue), the #[ignore = "network: ...never in CI"]d audit_table_against_models_dev` that shells out to `curl` (no new dependency) with a "DID NOT RUN → UNVERIFIED" failure message, the offline drift tests, and deliverable 4's doc comment above builtin_model_pricing naming both commands. This diff adds the census over shipped ids the source omits (Unaudited/unaudited_shipped_rows), the anti-vacuous empty-source guard, the eight-(estimated)-arm test, plus the doc comment and register bump.
+• **Ran the three new tests:** 3 passed, 0 ignored — they do run in CI; the network test is listed as ignored, so CI stays green.
+• **Touchpoints:** `Unaudited` and `unaudited_shipped_rows` have consumers in the same diff; `crate::providers::known_models_for_provider` exists; no new enum variants/renames; register bumped to 3455, exactly matching wc -l src/format/cost.rs.
+• **Doc sync / product surface:** N/A — test-only plus a doc comment; no behavior, config, CLI or startup change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
