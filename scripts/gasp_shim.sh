@@ -51,6 +51,10 @@ GASP_GOAL_TITLE="${GASP_GOAL_TITLE:-}"
 GASP_GOAL_SUMMARY="${GASP_GOAL_SUMMARY:-}"
 # Extra repo-relative paths for the boundary commit (set by gasp_mirror_skills)
 GASP_EXTRA_PATHS=""
+GASP_DELIVERY_STATUS="not_started"
+GASP_END_STARTED=false
+GASP_HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GASP_VALIDATOR_BIN="${GASP_VALIDATOR_BIN:-$(pwd)/target/gasp-delivery-validator/debug/gasp-delivery-validator}"
 
 # Remove credentials from any text we are about to print.
 _gasp_scrub() {
@@ -80,6 +84,10 @@ _gasp_off() {
     [ -d "$GASP_STATE_DIR" ] && echo "  [gasp] partial state left at ${GASP_STATE_DIR}" >&2
     _gasp_note_failure
     GASP_ENABLED=false
+    GASP_DELIVERY_STATUS=local_only
+    if [ -n "${GITHUB_OUTPUT:-}" ]; then
+        printf 'gasp_delivery=local_only\n' >> "$GITHUB_OUTPUT" || true
+    fi
     return 0
 }
 
@@ -108,6 +116,15 @@ gasp_session_start() {
         --target-dir target/gasp-yoyo 2>&1); then
         _gasp_off "featured yoyo build failed: $(printf '%s' "$out" | tail -n 3 | tr '\n' '; ')"
         return 0
+    fi
+
+    # Use the same reducer as the runtime to validate rebased deliveries.
+    # A missing validator prevents publication, but we still record the run
+    # and can preserve its original commit on a recovery branch.
+    if ! out=$(cargo build --quiet --locked \
+        --manifest-path "$GASP_HARNESS_DIR/gasp-delivery-validator/Cargo.toml" \
+        --target-dir target/gasp-delivery-validator 2>&1); then
+        echo "  [gasp] delivery validator unavailable; publication will require recovery" >&2
     fi
 
     # 2. clone the state repo (authenticated when GH_PAT is available).
@@ -149,6 +166,7 @@ gasp_session_start() {
 
     GASP_RUN_ID="run_${kind}${day}_$(date -u +%Y%m%dT%H%M%SZ)"
     GASP_ENABLED=true
+    GASP_END_STARTED=false
     # flags are passed unconditionally (empty = use default) — conditional
     # ${var:+...} argv splicing is a bash-only subtlety worth avoiding
     _gasp_emit session-start --state-dir "$GASP_STATE_DIR" --run-id "$GASP_RUN_ID" \
@@ -515,6 +533,8 @@ MAP
 # only complete record.
 gasp_session_end() {
     [ "$GASP_ENABLED" = true ] || return 0
+    [ "$GASP_END_STARTED" = false ] || return 0
+    GASP_END_STARTED=true
     local outcome="${1:-done}" out
 
     # memory/journal/dream streams sync on every session close; everything
@@ -534,44 +554,24 @@ gasp_session_end() {
         return 0
     fi
     printf '%s\n' "$out" | sed 's/^/  [gasp] /' || true
-    # The clone is hours old by session end; any other loop (social runs
-    # ~4x/day) that pushed its own record in the meantime makes our push a
-    # non-fast-forward reject. Day 160 lost a full session record this way:
-    # "preserved at /tmp/..." on an EPHEMERAL runner is deletion with extra
-    # steps. A rebase retry recovers DISJOINT-file races only — concurrent
-    # gasp pushes both append to the shared state/events.jsonl (yoagent-state
-    # DEFAULT_EVENTS_PATH) and the memory mirrors rewrite shared files, so
-    # same-file races still conflict unless the state repo's .gitattributes
-    # marks *.jsonl merge=union (added alongside this fix). Best-effort; the
-    # structural fix is #683's single in-process writer.
-    local push_ok rb
-    push_ok=false
-    rb=""
-    if out=$(git -C "$GASP_STATE_DIR" push --quiet "$GASP_PUSH_URL" HEAD:main 2>&1); then
-        push_ok=true
-    elif rb=$(git -C "$GASP_STATE_DIR" pull --rebase --quiet "$GASP_PUSH_URL" main 2>&1) \
-        && out=$(git -C "$GASP_STATE_DIR" push --quiet "$GASP_PUSH_URL" HEAD:main 2>&1); then
-        echo "  [gasp] state pushed after rebase (another session pushed mid-run)"
-        push_ok=true
-    else
-        # A failed rebase leaves the clone mid-rebase with conflict markers —
-        # abort so the "preserved" boundary commit is actually readable.
-        git -C "$GASP_STATE_DIR" rebase --abort 2>/dev/null || true
+    # session-end appends events. It must never run again, including an EXIT
+    # trap, even when delivery fails. The helper retries only this commit.
+    GASP_ENABLED=false
+    local delivery_rc=0
+    out=$(GASP_PUSH_URL="$GASP_PUSH_URL" python3 "$GASP_HARNESS_DIR/gasp_delivery.py" \
+        "$GASP_STATE_DIR" --run-id "$GASP_RUN_ID" --validator "$GASP_VALIDATOR_BIN") || delivery_rc=$?
+    GASP_DELIVERY_STATUS=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' 2>/dev/null) || GASP_DELIVERY_STATUS=local_only
+    printf '  [gasp] delivery: %s\n' "$(_gasp_scrub "$out")"
+    # GitHub consumes this only after attempts finish; a recording failure
+    # must never cause the evolution itself to run again.
+    if [ -n "${GITHUB_OUTPUT:-}" ]; then
+        printf 'gasp_delivery=%s\n' "$GASP_DELIVERY_STATUS" >> "$GITHUB_OUTPUT" || true
     fi
-    if [ "$push_ok" = true ]; then
-        echo "  [gasp] state pushed to ${GASP_STATE_REPO}"
+    if [ "$delivery_rc" -eq 0 ] && [ "$GASP_DELIVERY_STATUS" = published ]; then
         echo 0 > "$GASP_FAIL_COUNTER" 2>/dev/null || true
         rm -rf "$GASP_STATE_DIR" 2>/dev/null || true
-        GASP_ENABLED=false  # terminal: a later abort-trap call is a no-op
     else
-        echo "  [gasp] WARNING: state push failed — boundary commit preserved at ${GASP_STATE_DIR}" >&2
-        # Label the two errors separately: ${rb}${out} concatenation let the
-        # stale pre-rebase push error shadow the actual rebase failure
-        # (review finding — the message named the wrong cause).
-        if [ -n "$rb" ]; then
-            echo "  [gasp]   rebase failed: $(_gasp_scrub "$(printf '%s' "$rb" | tail -n 2 | tr '\n' '; ')")" >&2
-        fi
-        echo "  [gasp]   push: $(_gasp_scrub "$(printf '%s' "$out" | tail -n 2 | tr '\n' '; ')")" >&2
+        echo "  [gasp] $GASP_DELIVERY_STATUS — original run retained at $GASP_STATE_DIR; retry delivery only" >&2
         _gasp_note_failure
     fi
     return 0

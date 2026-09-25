@@ -218,6 +218,21 @@ jobs:
           echo "::error::All three evolution attempts failed; no completed session was recorded."
           exit 1
 
+      - name: Report GASP delivery needing recovery
+        if: always()
+        env:
+          ATTEMPT1_DELIVERY: ${{ steps.attempt1.outputs.gasp_delivery }}
+          ATTEMPT2_DELIVERY: ${{ steps.attempt2.outputs.gasp_delivery }}
+          ATTEMPT3_DELIVERY: ${{ steps.attempt3.outputs.gasp_delivery }}
+        run: |
+          for delivery in "$ATTEMPT1_DELIVERY" "$ATTEMPT2_DELIVERY" "$ATTEMPT3_DELIVERY"; do
+            case "$delivery" in
+              saved_for_recovery|local_only)
+                echo "::error::GASP delivery is $delivery. Recover the existing record; do not rerun evolution."
+                exit 1 ;;
+            esac
+          done
+
       - name: Check for clippy warnings
         if: always()
         run: cargo clippy --quiet --all-targets 2>&1 || true
