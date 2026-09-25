@@ -415,6 +415,51 @@ fn ours_from_catalogue(catalogue: &[CatalogueRow]) -> Vec<(String, Rates)> {
         .collect()
 }
 
+/// Which of the table's own shipped ids the source never mentions, and how many
+/// ids that question was asked of.
+struct Unaudited {
+    /// `provider/id` labels of shipped ids no catalogue row maps to.
+    ids: Vec<String>,
+    /// The size of the population the question was asked of, reported so an
+    /// EMPTY ANSWER can never be read as an empty question.
+    examined: usize,
+}
+
+/// Table rows the source does not carry — the direction the comparator above is
+/// **structurally blind to**, and the reason this exists.
+///
+/// `ours_from_catalogue` builds its list *from* the catalogue, so every row it
+/// hands `compare_catalogue` is by construction a row the source carried. A table
+/// arm models.dev says nothing about never enters the comparison at all, and an
+/// omission that reports nothing looks exactly like a clean bill: *a detector
+/// reports the leaks it happens to trigger and certifies nothing by its silence*.
+/// So the audited population is enumerated from the repo's own side here, and the
+/// ids the source omits are named **with the count they were drawn from**.
+///
+/// **The population's bound is stated rather than implied:** it is the ids
+/// [`crate::providers::known_models_for_provider`] ships for [`PROVIDER_KEYS`],
+/// which is the repo's single authority for "a model id we support". Arms reached
+/// by a `contains` match that no provider table lists — the Day-204 alarm's
+/// `UNAUDITED_DEEPSEEK_ARMS` are exactly those — sit outside this enumeration and
+/// are reported by that alarm, not silently counted as audited here.
+fn unaudited_shipped_rows(catalogue: &[CatalogueRow]) -> Unaudited {
+    let mut ids = Vec::new();
+    let mut examined = 0usize;
+    for provider in PROVIDER_KEYS {
+        for shipped in crate::providers::known_models_for_provider(provider) {
+            examined += 1;
+            let carried = catalogue.iter().any(|candidate| {
+                candidate.provider == *provider
+                    && yoyo_id_for(candidate.provider.as_str(), &candidate.id) == Some(*shipped)
+            });
+            if !carried {
+                ids.push(format!("{provider}/{shipped}"));
+            }
+        }
+    }
+    Unaudited { ids, examined }
+}
+
 /// The alarm. Network-only, `#[ignore]`d, **never in CI**.
 ///
 /// Read it before a release: paste the summary line into the release notes, and
@@ -484,6 +529,25 @@ fn audit_table_against_models_dev() {
         "price audit: {no_cost_published} catalogue entry/entries publish no `cost` object \
          (priced per image or per second) and are not comparable to a per-MTok rate"
     );
+
+    // The other direction, and the one the comparator above cannot reach: table
+    // rows the SOURCE never mentions. Silence is `not audited`, never `correct`.
+    let unaudited = unaudited_shipped_rows(&catalogue);
+    const UNAUDITED_SAMPLE: usize = 12;
+    println!(
+        "price audit: {} of {} shipped id(s) are NOT carried by models.dev — silence is \
+         `not audited`, never `correct`; first {}: {:?}",
+        unaudited.ids.len(),
+        unaudited.examined,
+        UNAUDITED_SAMPLE.min(unaudited.ids.len()),
+        &unaudited.ids[..UNAUDITED_SAMPLE.min(unaudited.ids.len())]
+    );
+    assert!(
+        unaudited.examined > 0,
+        "the unaudited-row census examined ZERO shipped ids — a provider table that resolves \
+         to nothing is a FAILED audit, not a clean one"
+    );
+
     println!(
         "price audit: SUMMARY compared {}, matched {}, drifted {}, cache_read_only {}, unpriced {} \
          of {} catalogue rows (rel_tol {}%)",
@@ -951,4 +1015,128 @@ fn the_did_not_run_message_says_not_checked_and_quotes_the_command() {
         msg.contains("cargo test audit_table_against_models_dev -- --ignored --nocapture"),
         "{msg}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The unaudited census — table rows the SOURCE never mentions
+// ---------------------------------------------------------------------------
+
+/// The direction `compare_catalogue` cannot see, pinned: a shipped id the source
+/// omits is NAMED, and the near-miss beside it — a shipped id the source does
+/// carry — is not.
+///
+/// Both halves matter and they are the same test on purpose: a census that names
+/// every shipped id would be as useless as one that names none, and the second
+/// half is the one that would go green by printing garbage.
+#[test]
+fn a_shipped_row_the_source_omits_is_named_unaudited_not_matched() {
+    // The fixture catalogue carries `deepseek/alpha` — an id the repo does not
+    // ship — and no row for any deepseek id it does ship.
+    let omitted = unaudited_shipped_rows(&fixture_catalogue());
+    assert!(
+        omitted.examined > 0,
+        "the question must be asked of a non-empty population"
+    );
+    assert!(
+        omitted.ids.contains(&"deepseek/deepseek-flash".to_string()),
+        "a shipped id with no catalogue row must be reported as NOT AUDITED rather than \
+         silently omitted: {:?}",
+        omitted.ids
+    );
+
+    // Near miss: a catalogue row that DOES map to that id removes exactly that
+    // entry, and leaves its un-carried sibling listed.
+    let carried = vec![row("deepseek", "deepseek-flash", (0.15, 0.0, 0.003, 0.60))];
+    let census = unaudited_shipped_rows(&carried);
+    assert!(
+        !census.ids.contains(&"deepseek/deepseek-flash".to_string()),
+        "`deepseek-flash` is carried by the source, so it must not be listed: {:?}",
+        census.ids
+    );
+    assert!(
+        census.ids.contains(&"deepseek/deepseek-v4-pro".to_string()),
+        "its un-carried sibling must still be named — one row does not audit the provider: {:?}",
+        census.ids
+    );
+    assert_eq!(
+        census.examined, omitted.examined,
+        "the population the question is asked of must not depend on the source's contents"
+    );
+}
+
+/// ANTI-VACUOUS, and the reason this census exists rather than a bare `is_empty`:
+/// a source that carries nothing must make EVERY examined id unaudited, so the
+/// census cannot be satisfied by an empty source — the shape an alarm that
+/// "reports what it triggers" degrades into.
+#[test]
+fn an_empty_source_cannot_make_the_table_look_audited() {
+    let census = unaudited_shipped_rows(&[]);
+    assert!(
+        census.examined > 0,
+        "an empty examination would make this assertion vacuous"
+    );
+    assert_eq!(
+        census.ids.len(),
+        census.examined,
+        "with the source carrying nothing, every examined id is unaudited: {:?}",
+        census.ids
+    );
+}
+
+/// The eight arms the table comments `(estimated)` — plus `codex-mini` — are
+/// audited by the **same** comparator as every verified row, with no hand-listed
+/// skip set keyed on that marker.
+///
+/// Behavioural rather than textual, deliberately: a skip set would show up here as
+/// an arm the comparator never counted, so this pins the property the marker
+/// threatens (that an unverified-looking row gets excused from the sweep) instead
+/// of grepping for the word. The perturbation is applied to the table's OWN
+/// reading, never to a literal, so the assertion is about the function's output
+/// and stays true whichever number is eventually verified.
+#[test]
+fn estimated_arms_are_audited_by_the_same_path_with_no_skip_set() {
+    let estimated = [
+        ("openai", "gpt-5"),
+        ("openai", "gpt-5-mini"),
+        ("openai", "codex-mini"),
+        ("google", "gemini-3.0-pro"),
+        ("google", "gemini-3.0-flash"),
+        ("xai", "grok-4"),
+        ("xai", "grok-4-mini"),
+        ("groq", "llama-4-maverick-17b"),
+    ];
+    assert!(
+        !estimated.is_empty(),
+        "an empty list would make this vacuous"
+    );
+
+    for (provider, yoyo_id) in estimated {
+        let ours = price_of(yoyo_id)
+            .unwrap_or_else(|| panic!("the table must still price the arm `{yoyo_id}`"));
+        let catalogue = vec![row(
+            provider,
+            yoyo_id,
+            (ours.0 * 3.0, ours.1, ours.2, ours.3),
+        )];
+        let our_side = ours_from_catalogue(&catalogue);
+        assert_eq!(
+            our_side.len(),
+            1,
+            "`{provider}/{yoyo_id}` did not map back to a shipped id, so this fixture is not \
+             exercising the arm it names"
+        );
+
+        let report = compare_catalogue(&our_side, &catalogue, REL_TOL);
+        assert_eq!(
+            report.compared, 1,
+            "`{yoyo_id}` was SKIPPED rather than compared — an `(estimated)` arm must not be \
+             excluded from the sweep"
+        );
+        assert_eq!(
+            report.drifted.len(),
+            1,
+            "a 3x repricing of the `(estimated)` arm `{yoyo_id}` was not reported: {:?}",
+            report.drifted
+        );
+    }
 }

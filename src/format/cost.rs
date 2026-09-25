@@ -55,6 +55,15 @@ pub fn model_pricing_with(
     builtin_model_pricing(model)
 }
 
+/// The local price table, consulted only when neither a user override nor a
+/// yoagent preset applies.
+///
+/// **This table is audited by an `#[ignore]`d network test that MUST be run
+/// before a release, and it is deliberately not in CI** (it needs the network):
+/// `cargo test audit_table_against_models_dev -- --ignored --nocapture` for the
+/// general sweep, `cargo test price_drift_audit -- --ignored --nocapture` for the
+/// DeepSeek rows with their admitted-divergence register. Read them, do not
+/// auto-patch a constant from them — the alarm sends you to the vendor's page.
 fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // Returns (input_per_MTok, cache_write_per_MTok, cache_read_per_MTok, output_per_MTok)
     // For providers without caching, cache_write and cache_read are set to 0.0.

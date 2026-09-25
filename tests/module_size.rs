@@ -359,7 +359,14 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // and this file is the CLI dispatcher every subcommand route passes through.
     // The next task that has to grow this file should split it, not bump this.
     ("src/dispatch_sub.rs", 2162),
-    ("src/format/cost.rs", 3439), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+    // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
+    // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
+    // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769
+    // discoverability defect). Read off the diff, not the plan: every other byte of this
+    // change went into `src/format/cost/price_audit_tests.rs` (1142 lines, read off `wc -l`), which is
+    // why the delta is single digits and not low hundreds — the child-module seam from
+    // Day 207 is still carrying the weight, and this number says so.
+    ("src/format/cost.rs", 3455), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
     // Day 204 (#937 Task 2): 2931 -> 3439 (+508, the count after `cargo fmt`). The price drift alarm against
     // models.dev — an `#[ignore]`d audit plus its offline arm and the
     // `KNOWN_DIVERGENCES` register's anti-rot guard. Mostly tests (as with every
