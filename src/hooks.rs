@@ -57,6 +57,28 @@ fn cap_hook_stderr(raw: &str, head: usize, tail: usize) -> String {
     )
 }
 
+/// The reason a blocking pre-hook is reported with.
+///
+/// `stderr` is the hook's own output, already capped by [`cap_hook_stderr`]
+/// inside `ShellHook::run_command` — do **not** cap it again here.
+///
+/// An **empty or whitespace-only** stderr returns byte-identical text to the
+/// pre-existing message. That is the whole near-miss surface: every hook that
+/// blocks without printing anything (the common case) renders exactly as
+/// before, so this change cannot alter the output of a hook that says nothing.
+///
+/// No byte indexing touches `stderr` (rule #250): the cap already happened
+/// char-boundary-safely in `cap_hook_stderr`, and re-slicing here is how a
+/// planner crashed on a multi-byte character.
+fn pre_hook_block_message(name: &str, code: i32, stderr: &str) -> String {
+    let detail = stderr.trim();
+    if detail.is_empty() {
+        format!("Pre-hook '{name}' exited with code {code}")
+    } else {
+        format!("Pre-hook '{name}' exited with code {code}: {detail}")
+    }
+}
+
 /// Chars of tool output handed to a hook through `TOOL_OUTPUT` by
 /// [`hook_tool_output`].
 ///
@@ -661,6 +683,9 @@ pub fn hook_phase_teaching_lines() -> Vec<String> {
     lines.push("  Pre-hooks that exit non-zero block the tool.".to_string());
     lines.push("  Post-hooks always pass through the tool output.".to_string());
     lines.push("  All hooks have a 5-second timeout.".to_string());
+    lines.push(
+        "  A blocking pre-hook's own stderr is shown to the agent as the reason.".to_string(),
+    );
     lines.push(format!(
         "  A {} hook can read the tool's error from $TOOL_ERROR.",
         HookPhase::PostFailure.as_str()
@@ -808,7 +833,11 @@ impl Hook for ShellHook {
 
         match self.run_command(&env_vars, &stdin_payload) {
             Ok((0, _)) => Ok(None), // Success — proceed with tool execution
-            Ok((code, _)) => Err(format!("Pre-hook '{}' exited with code {code}", self.name)),
+            // The hook's own stderr is the *reason* the gate exists to convey:
+            // `maybe_hook` puts this string into `Blocked by hook: {reason}`,
+            // i.e. straight into the agent's next turn. Discarding it leaves a
+            // gate that closes a door and says nothing.
+            Ok((code, stderr)) => Err(pre_hook_block_message(&self.name, code, &stderr)),
             Err(e) => Err(e),
         }
     }
@@ -2833,6 +2862,116 @@ mod tests {
              time so every consumer of the returned pair inherits it."
         );
     }
+
+    // --- Day 209: a blocking pre-hook's stderr is the reason, not waste ---------
+    //
+    // `pre_execute` captured and capped the hook's stderr and then dropped it on
+    // the floor with a `_` pattern, so a gate that exists to convey a reason
+    // refused without one. The fix is additive by construction: empty stderr is
+    // byte-identical to the pre-existing message.
+
+    /// The pure decision, whole-string `assert_eq!` rather than `contains`.
+    ///
+    /// The first two rows are the entire regression surface — a hook that blocks
+    /// **without printing anything** is the common case and must render exactly
+    /// as it always has.
+    #[test]
+    fn pre_hook_block_message_table() {
+        // Multi-byte fixtures, asserted non-vacuous first: if a later edit
+        // reintroduces byte indexing (`&stderr[..n]`, `.truncate(n)`), these rows
+        // redden here — and a transcription slip that dropped the multi-byte
+        // character would otherwise let the row pass by agreeing with itself.
+        let check = "\u{2713} cargo fmt then retry";
+        let em = "blocked \u{2014} run cargo fmt first";
+        assert!(
+            check.contains('\u{2713}'),
+            "fixture must carry the check mark"
+        );
+        assert!(em.contains('\u{2014}'), "fixture must carry the em dash");
+
+        let cases: &[(&str, i32, &str, &str)] = &[
+            // Empty → byte-identical to the pre-existing message.
+            ("x", 1, "", "Pre-hook 'x' exited with code 1"),
+            // Whitespace-only → also byte-identical (trim, never a length check).
+            ("x", 7, "   \n\t", "Pre-hook 'x' exited with code 7"),
+            // A reason renders after the code, trimmed of its own outer blanks.
+            (
+                "pre:bash",
+                3,
+                "  run cargo fmt first\n",
+                "Pre-hook 'pre:bash' exited with code 3: run cargo fmt first",
+            ),
+            // Multi-byte on both sides of the trim.
+            (
+                "pre:bash",
+                2,
+                check,
+                "Pre-hook 'pre:bash' exited with code 2: \u{2713} cargo fmt then retry",
+            ),
+            (
+                "pre:bash",
+                2,
+                em,
+                "Pre-hook 'pre:bash' exited with code 2: blocked \u{2014} run cargo fmt first",
+            ),
+            // A negative code (killed by signal) still renders its reason.
+            (
+                "pre:bash",
+                -1,
+                "killed",
+                "Pre-hook 'pre:bash' exited with code -1: killed",
+            ),
+        ];
+
+        for (name, code, stderr, expected) in cases {
+            assert_eq!(
+                pre_hook_block_message(name, *code, stderr),
+                *expected,
+                "row ({name:?}, {code}, {stderr:?})"
+            );
+        }
+    }
+
+    /// BEHAVIOURAL, through the real registry and the real `ShellHook` — the
+    /// stderr has to survive `run_command`'s capture and the `Ok((code, _))`
+    /// arm, not merely the pure formatter.
+    ///
+    /// The near-miss twin is the row that proves this is additive rather than a
+    /// rewrite: a hook that blocks silently must be byte-identical to before,
+    /// asserted with `assert_eq!` rather than `contains`.
+    #[tokio::test]
+    async fn blocking_pre_hook_reports_its_stderr() {
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(ShellHook {
+            name: "pre:bash".to_string(),
+            phase: HookPhase::Pre,
+            tool_pattern: "*".to_string(),
+            command: "echo 'run cargo fmt first' >&2; exit 3".to_string(),
+        }));
+
+        let err = registry
+            .run_pre_hooks("bash", &serde_json::json!({}))
+            .expect_err("a non-zero pre-hook blocks the tool");
+        assert!(err.contains("exited with code 3"), "code missing: {err}");
+        assert!(
+            err.contains("run cargo fmt first"),
+            "the hook's own reason must reach the caller: {err}"
+        );
+
+        // NEAR-MISS TWIN: silence renders exactly as it did before this change.
+        let mut silent = HookRegistry::new();
+        silent.register(Box::new(ShellHook {
+            name: "pre:bash".to_string(),
+            phase: HookPhase::Pre,
+            tool_pattern: "*".to_string(),
+            command: "exit 3".to_string(),
+        }));
+        let err = silent
+            .run_pre_hooks("bash", &serde_json::json!({}))
+            .expect_err("a silent non-zero pre-hook still blocks");
+        assert_eq!(err, "Pre-hook 'pre:bash' exited with code 3");
+    }
+
     // --- Round 93 (#844's missing twin): the TOOL_OUTPUT channel ---------------
     //
     // Two defects with one mechanism — the value handed to a hook through the

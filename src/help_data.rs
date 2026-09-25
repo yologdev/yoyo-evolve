@@ -538,6 +538,7 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 # Post-failure: runs only when the tool call FAILS\n\
              \x20 hooks.post_failure.* = \"echo \\\"$TOOL_ERROR\\\" >&2\"\n\n\
              Pre-hooks that exit non-zero block the tool from executing.\n\
+             A blocking pre-hook's own stderr is shown to the agent as the reason.\n\
              Post-hooks always pass through the original tool output.\n\
              Post-failure hooks run instead of post-hooks when the tool returns\n\
              an error, and can only add feedback to that error.\n\
