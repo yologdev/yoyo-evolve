@@ -1612,6 +1612,34 @@ def diff_mentions_assertion_shape(diff_text: str) -> bool:
     return False
 
 
+def wall_facts_from_diff(status_text: str, src_diff_text: str = "") -> dict:
+    """PURE: the three buckets for ONE commit, from text. No git, no I/O, no `run_cmd`.
+
+    The DECISION half of `commit_fix_loop_wall_facts`, split out so it can be driven by an
+    offline fixture on the three shapes it is actually able to be wrong about -- a commit
+    touching only `tests/`, one touching only `src/` with no assertion words, and one
+    touching `src/` whose diff carries `#[test]`. A classifier with no fixture on those
+    shapes is a count, not a check, and the git half cannot supply one because it shells
+    out. `src_diff_text` defaults to `""`, which short-circuits: a commit that touched no
+    `src/` is never assertion-shaped however the diff reads.
+
+    REUSE, NOT A THIRD COPY OF A RULE, and the helpers it reuses are the file's own
+    authorities rather than fresh predicates: `top_level_test_files` decides the `tests/`
+    side (so there is no second `tests/*.rs` rule that could drift from the census's), and
+    `parse_name_status` parses the status rows (so a rename yields both paths here too).
+    `src_splice_candidates` is deliberately NOT reused for the `src/` side: it keeps only
+    `M` rows because the splicer needs a parent version to lay back, whereas the question
+    here is merely "did this commit touch src/", which an added or renamed file answers yes.
+    """
+    paths = [p for _status, p in parse_name_status(status_text)]
+    src = bool([p for p in paths if p.startswith("src/") and p.endswith(".rs")])
+    return {
+        "tests": bool(top_level_test_files(paths)),
+        "src": src,
+        "assertion_shaped": src and diff_mentions_assertion_shape(src_diff_text),
+    }
+
+
 def commit_fix_loop_wall_facts(root: str, sha: str):
     """The I/O half: what does THIS commit's diff touch? `None` when it could not be read.
 
@@ -1620,38 +1648,33 @@ def commit_fix_loop_wall_facts(root: str, sha: str):
     touched `src/`. Scoped to the fix-loop arm by the caller, exactly as the src-census
     resolver is, because the arm is the ~199 commits DREAM.md asks about and not the ~1014.
 
-    REUSE, NOT A THIRD PASS OVER THE LOG, and the helpers it reuses are the file's own
-    authorities rather than fresh predicates: `top_level_test_files` decides the `tests/`
-    side (so there is no second `tests/*.rs` rule that could drift from the census's), and
-    `parse_name_status` parses the status rows (so a rename yields both paths here too).
-    `src_splice_candidates` is deliberately NOT reused for the `src/` side: it keeps only
-    `M` rows because the splicer needs a parent version to lay back, whereas the question
-    here is merely "did this commit touch src/", which an added or renamed file answers yes.
+    This is now ONLY the two `run_cmd` calls and the two `None` arms: every decision about
+    what the text means lives in `wall_facts_from_diff`, which is the single statement of
+    that rule and is table-tested without git.
 
     A `<sha>^` that does not resolve -- a root commit, or a shallow-clone boundary -- is
     `None`, never False: "I could not check" must not read as "checked; it touches nothing".
+    The same goes for a `-U0` read that fails on a commit which DID touch `src/`: the text
+    is then unknown, so the row is unreadable rather than "no assertion shape found".
     """
     rc, out = run_cmd(
         ["git", "-C", root, "diff", "--name-status", f"{sha}^", sha], timeout=60
     )
     if rc != 0:
         return None
-    rows = parse_name_status(out)
-    all_paths = [p for _status, p in rows]
-    facts = {
-        "tests": bool(top_level_test_files(all_paths)),
-        "src": bool([p for p in all_paths if p.startswith("src/") and p.endswith(".rs")]),
-        "assertion_shaped": False,
-    }
-    if facts["src"]:
-        rc2, text = run_cmd(
-            ["git", "-C", root, "diff", "--unified=0", f"{sha}^", sha, "--", "src/"],
-            timeout=60,
-        )
-        if rc2 != 0:
-            return None
-        facts["assertion_shaped"] = diff_mentions_assertion_shape(text)
-    return facts
+    # The probe decides WHETHER the second diff is worth shelling for; it is not a second
+    # rule, it is the same pure function, and every return below is built by it -- so a
+    # change to the bucket rules cannot land in one path and miss the other.
+    probe = wall_facts_from_diff(out)
+    if not probe["src"]:
+        return probe
+    rc2, text = run_cmd(
+        ["git", "-C", root, "diff", "--unified=0", f"{sha}^", sha, "--", "src/"],
+        timeout=60,
+    )
+    if rc2 != 0:
+        return None
+    return wall_facts_from_diff(out, text)
 
 
 def fix_loop_wall_split(rows, wall_of) -> dict:
@@ -6299,6 +6322,43 @@ def run_self_tests():
           not diff_mentions_assertion_shape(""), "fixture")
     check("wall-heuristic: a CONTEXT line carrying #[test] is not a change",
           not diff_mentions_assertion_shape(" #[test]\n"), "fixture")
+
+    # -- THE THREE BUCKETS, decided offline on the three shapes they can be wrong about --
+    # #870 option 3, Step 3. `commit_fix_loop_wall_facts` shells git, so it can never be
+    # driven from a self-test; the DECISION it makes is what the census reads, so it is
+    # split into `wall_facts_from_diff` and pinned here on exactly the three required
+    # shapes. Without this row the fold below is driven by dicts I wrote BY HAND, i.e. it
+    # tests that `fix_loop_wall_split` sums correctly and says nothing about whether the
+    # buckets are computed correctly -- a classifier with no fixture on its shape is a
+    # count, not a check.
+    _only_tests = wall_facts_from_diff("M\ttests/x.rs\n")
+    check("wall-facts: a tests/-only commit is tests, not src, not assertion-shaped",
+          _only_tests == {"tests": True, "src": False, "assertion_shaped": False},
+          _only_tests)
+    _only_src = wall_facts_from_diff("M\tsrc/gasp.rs\n", "@@ -1 +1 @@\n-    let x = 1;\n")
+    check("wall-facts: a src/-only commit with no assertion words is src only",
+          _only_src == {"tests": False, "src": True, "assertion_shaped": False},
+          _only_src)
+    _src_test = wall_facts_from_diff(
+        "M\tsrc/cli.rs\n", "+++ b/src/cli.rs\n@@ -1 +1 @@\n+#[test]\n")
+    check("wall-facts: a src/ commit carrying #[test] is src AND assertion-shaped",
+          _src_test == {"tests": False, "src": True, "assertion_shaped": True},
+          _src_test)
+    # The two near-misses that keep the row honest: a commit touching BOTH is in both
+    # buckets (which is why they are never summed), and a src/ commit whose diff read
+    # returns nothing is never assertion-shaped by default -- an empty diff is False, and
+    # "nothing to look at" must not read as "found one".
+    _both = wall_facts_from_diff("M\ttests/x.rs\nM\tsrc/a.rs\n", "-    assert!(x);\n")
+    check("wall-facts: a commit touching both is in BOTH buckets, never summed",
+          (_both["tests"], _both["src"], _both["assertion_shaped"]) == (True, True, True),
+          _both)
+    _src_no_diff = wall_facts_from_diff("A\tsrc/new.rs\n")
+    check("wall-facts: a src/ commit with no diff text is src, not assertion-shaped",
+          _src_no_diff == {"tests": False, "src": True, "assertion_shaped": False},
+          _src_no_diff)
+    _test_only_src_absent = wall_facts_from_diff("M\ttests/x.rs\n", "-    assert!(x);\n")
+    check("wall-facts: a src/ diff CANNOT make a tests/-only commit assertion-shaped",
+          _test_only_src_absent["assertion_shaped"] is False, _test_only_src_absent)
 
     # -- the fold: pure, injected, and three buckets that are NOT a partition ----------
     class _WallRow:
