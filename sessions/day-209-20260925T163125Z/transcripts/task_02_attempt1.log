@@ -1,0 +1,511 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the relevant sections of the file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 175,230p scripts/extract_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GREEN_OUTCOMES\|def run… ✓ (6ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 230,250p scripts/extract_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 7150,7230p scripts/extrac… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note there was a line "`assert_eq!` on the WHOLE render rather than a `contains`:" followed by "(6 more similar lines)" — that's the read tool's shorthand. Let me look at the run_self_tests structure and assert helpers to know which to use (assert_eq, assert_true).
+
+Let me check the helper definitions.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^def assert_true\|^def …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3964,3990p scripts/extrac… ✓ (3ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The helpers are assert_eq and assert_true defined inside run_self_tests. Let me check assert_true signature.
+
+Also the task mentioned `assert_equal` — but the actual helper is `assert_eq`. I'll use the existing ones.
+
+Let me check assert_true definition.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def assert_true" -A 12 … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+assert_true is defined at line 4108, after the GREEN_OUTCOMES block at 7172? No, 4108 < 7172, so it's defined earlier — fine, it's in the same function scope.
+
+Now let's implement Step 1. Add the pure helper above render_outcomes.
+
+Let me check the verbose flag handling for --test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"--test"\|--verbose\|VE… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No --verbose flag exists. The task file asks for `--test --verbose` to confirm the new rows ran. Hmm — there's no verbose flag; the self-tests print "ok:" lines always. So `--test` alone shows all rows. I'll note that. Let me check the other python scripts for similar helper; but no need. I'll just run `--test` and grep.
+
+Let me check the `parse_yoyo_verbose`... Not needed. Just run --test and grep for the new labels.
+
+Now implement.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 45 lines)
+  + # The word used for `succeeded < attempted` when the tree was green and no revert was
+  + # recorded. `outcome.json` carries the COUNT of tasks that did not succeed and does
+  + # NOT carry their cause — see scripts/evolve.sh's SESSION_REVERTED (session-level,
+  + # build-fix arm only). "reverted" is one cause among at least three (evaluation FAIL,
+  + # budget kill before evaluation, empty task file), and the count alone cannot pick one.
+  + NO_VERDICT_NOTE = "did not reach a verdict (tree green, no revert recorded)"
+  + 
+  + 
+  + def session_row_note(o: dict) -> tuple[str, str]:
+  +     """(icon, note) for one outcome row. Pure — no session directory, no git repo.
+  + 
+  +     The ladder is the one `render_outcomes` used to inline, moved here unchanged
+  +     except for ONE branch: `succeeded < attempted` no longer says "task(s)
+  +     reverted". `outcome.json`'s `reverted` field is SESSION-level (set in exactly
+  +     one place in scripts/evolve.sh, the build-fix-exhausted arm), so a per-task
+  +     revert claim has no field behind it — and the session the old wording was
+  +     written about (day 209) finished its edit correctly and lost its budget before
+  +     the commit. The count is real; the cause is not in the artifact.
+  +     """
+  +     attempted = o.get("tasks_attempted", 0)
+  ... (25 more lines)
+ ✓ (2m 0s)
+  + # The word used for `succeeded < attempted` when the tree was green and no revert was
+  + # recorded. `outcome.json` carries the COUNT of tasks that did not succeed and does
+  + # NOT carry their cause — see scripts/evolve.sh's SESSION_REVERTED (session-level,
+  + # build-fix arm only). "reverted" is one cause among at least three (evaluation FAIL,
+  + # budget kill before evaluation, empty task file), and the count alone cannot pick one.
+  + NO_VERDICT_NOTE = "did not reach a verdict (tree green, no revert recorded)"
+  + 
+  + 
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — the task says: "otherwise `("⚠️", ...)`, where the `succeeded < attempted` clause becomes `f"{attempted - succeeded} task(s) {NO_VERDICT_NOTE}"`".
+
+But should it apply only when the tree is green? The task's near-miss twin says: same fixture with build_ok=False must NOT carry the new phrase and must still read `1 task(s) reverted, build broken`. So yes, the reword is conditioned on green tree. My implementation does that.
+
+Hmm, but is that faithful to the task's literal instruction? The task said "the `succeeded < attempted` clause becomes `f"..."`" unconditionally, but then step 2.2 asserts that with build_ok=False it must still read "1 task(s) reverted, build broken". These two conflict unless conditioned. My conditional interpretation satisfies both stated requirements. Good — the test is the authority.
+
+Actually wait: does `reverted` need to also be False for the green-tree sub-case? If reverted=True, first branch fires, so it never gets to the ⚠️ branch. Fine.
+
+Also `test_ok` — should the reword apply when build_ok=True and test_ok=False? Task says "when the tree was green and no revert was recorded". Tree green = build_ok and test_ok. My condition requires both. The near-miss tests only cover build_ok=False. I'll keep both for the "tree green" reading; it's consistent with the const doc comment.
+
+Hmm, but consider: build_ok=True, test_ok=True with succeeded<attempted is the exact reported case. Good.
+
+Now update render_outcomes to call it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 228,262p scripts/extract_… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (30 → 8 lines)
+            ts = (o.get("ts") or "").replace("T", " ").rstrip("Z")
+            attempted = o.get("tasks_attempted", 0)
+            succeeded = o.get("tasks_succeeded", 0)
+  -         build_ok = o.get("build_ok", False)
+  -         test_ok = o.get("test_ok", False)
+  -         reverted = o.get("reverted", False)
+  - 
+  -         if reverted:
+  -             icon = "❌"
+  -             note = "REVERTED entire session"
+  -         elif attempted == 0:
+  -             icon = "•"
+  -             note = "no tasks attempted"
+  -         elif succeeded == attempted and build_ok and test_ok:
+  -             icon = "✅"
+  -             note = "build OK, tests OK"
+  -         else:
+  -             icon = "⚠️"
+  -             issues = []
+  -             if succeeded < attempted:
+  ... (9 more lines)
+ ✓ (1m 59s)
+            ts = (o.get("ts") or "").replace("T", " ").rstrip("Z")
+            attempted = o.get("tasks_attempted", 0)
+            succeeded = o.get("tasks_succeeded", 0)
+  -         build_ok = o.get("build_ok", False)
+  -         test_ok = o.get("test_ok", False)
+  -         reverted = o.get("reverted", False)
+  - 
+  -         if reverted:
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the self-tests:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 7245,7275p scripts/extrac… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I'll insert the new block right after the GREEN_OUTCOMES near-miss block (after the "no audit-log sessions renders exactly as it did before" assert_eq, before "print("\n=== doc freshness self-tests ===\n")"). Actually better: put it as its own section after the outcomes block. Let me find exact text.
+
+The GREEN block ends with:
+```
+    # The true no-op: no sessions read at all is byte-identical, whole render.
+    assert_eq(
+        "near-miss: no audit-log sessions renders exactly as it did before",
+        render_outcomes(GREEN_OUTCOMES, []),
+        render_outcomes(GREEN_OUTCOMES),
+    )
+
+    print("\n=== doc freshness self-tests ===\n")
+```
+
+I'll insert between.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (8 → 71 lines)
+            "near-miss: no audit-log sessions renders exactly as it did before",
+            render_outcomes(GREEN_OUTCOMES, []),
+            render_outcomes(GREEN_OUTCOMES),
+  +     )
+  + 
+  +     print("\n=== session row note / the word behind `reverted` ===\n")
+  + 
+  +     # The three real rows from the briefing, as `outcome.json` actually carries
+  +     # them: build_ok/test_ok true, reverted false, one task that did not succeed.
+  +     # Pinned on the WHOLE line, so the `day-N (ts): tasks A/B <glyph> — <note>`
+  +     # shape is checked as well as the note text.
+  +     KILLED_BEFORE_VERDICT = {
+  +         "day": 209, "ts": "2026-09-25T01:18:08Z", "tasks_attempted": 1,
+  +         "tasks_succeeded": 0, "build_ok": True, "test_ok": True,
+  +         "reverted": False,
+  +     }
+  +     assert_eq(
+  +         "a green tree with no revert recorded does NOT claim the task was reverted",
+  +         render_outcomes([KILLED_BEFORE_VERDICT]),
+  +         "## Recent session outcomes (last 1)\n"
+  ... (49 more lines)
+ ✓ (1m 58s)
+            "near-miss: no audit-log sessions renders exactly as it did before",
+            render_outcomes(GREEN_OUTCOMES, []),
+            render_outcomes(GREEN_OUTCOMES),
+  +     )
+  + 
+  +     print("\n=== session row note / the word behind `reverted` ===\n")
+  + 
+  +     # The three real rows from the briefing, as `outcome.json` actually carries
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, the last two assertions got mangled: I wrote "the all-green row ... carries no ⚠ or new phrase" which is fine, and then "the phrase really is absent from the fixture that must not carry it (anti-vacuous)" — but the second one asserts NO_VERDICT_NOTE IS in the fixture that MUST carry it. Label is wrong. Let me fix that label.
+
+Also I use `pre_change_rows` which is defined earlier in the same scope — good.
+
+Also assert_eq signature is (label, got, want) — I passed (label, render_outcomes(...), expected). Good.
+
+Let me fix the label.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 4 lines)
+        assert_true(
+  -         "the phrase really is absent from the fixture that must not carry it (anti-vacuous)",
+  +         "anti-vacuous: the phrase is actually present on the row that must carry it",
+            NO_VERDICT_NOTE in render_outcomes([KILLED_BEFORE_VERDICT]),
+        )
+ ✓ (1m 58s)
+        assert_true(
+  -         "the phrase really is absent from the fixture that must not carry it (anti-vacuous)",
+  +         "anti-vacuous: the phrase is actually present on the row that must carry it",
+            NO_VERDICT_NOTE in render_outcomes([KILLED_BEFORE_VERDICT]),
+        )
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (92ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All new tests pass. Let me confirm the whole self-test suite passes and the count of tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/lint_evolve_here… ✓ (41ms)
+ ✓ (98ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+Now the positive control, as one atomic mutate→run→restore:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (15 lines) ✓ (213ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The control reddens exactly test (1) by name, plus its own anti-vacuous companion; tests (2), (3), (4) stayed green. Restored byte-empty (back to the pre-control content — the diff shown is my intended change).
+
+Let me verify the restore was byte-exact: diff against /tmp/et.bak — actually I restored from backup so it is byte-identical. Good. And no "NEUTERED" string remains.
+
+Now run cargo fmt/clippy/build/test. Python-only diff, but the gate is the gate.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "NEUTERED" scripts/extra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (80ms)
+ ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.3s (2 ✓)
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (1m 42s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check cargo test fully passed (it was cut off by the timeout). Then run the verbose self-test and commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 28s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm the grep matched lines with "error" in test names. Let me run a proper check for failures.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 27s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now the verbose self-test listing to confirm the new rows ran, then commit:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && git status --… ✓ (11ms)
+ ✓ (92ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Only the Python file changed. Now let me add an ARCHITECTURE.md entry (the task says the per-file history paragraph belongs in ARCHITECTURE.md). Let me check ARCHITECTURE.md format for scripts/extract_trajectory.py.
+
+Also should I journal? The task says the ONLY job is implement and commit. But rules say I write a journal every session. The task file says docs: "None — this is an instrument's own vocabulary, and the per-file history paragraph belongs in ARCHITECTURE.md". So add an ARCHITECTURE entry.
+
+Let me find the entry.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_trajectory" ARC… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ARCHITECTURE.md is huge with per-file entries. Let me find the specific per-file section for scripts/extract_trajectory.py to append a paragraph. Let me search for the heading line.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^### \|^## " ARCHITECTU… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_trajectory.py" … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1148,1160p ARCHITECTURE.m… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I'll insert a new bullet after the Day 209 (#944) bullet in the extract_trajectory section (line 1149-1150). Let me find the exact end of that bullet to append after it.
+
+Actually simpler: insert a new bullet right before the "- **Day 209 (#944 slice) — `scripts/social.sh`" line, keeping it in the extract_trajectory.py section. Let me get the exact text at line 1149-1151.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1149 && NR<=1151 {print… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1149,1150p ARCHITECTURE.m… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now appending the ARCHITECTURE.md entry after the #944 bullet:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (34ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — I inserted at line index 1149, which pushed the original line 1149 (#944 bullet) down. Actually the line I split at: lines[:1149] is lines 1..1149 (index 0..1148), then entry, then lines[1149:] which starts at original line 1150. Hmm, let me check. Actually the output shows the new entry appears before the #944 bullet. Good — the entry landed in the right section (preceded by line 1149 which was... let me verify the surrounding context is still the extract_trajectory.py section).
+
+Line 1149 (1-indexed) was the "The division is honest rather than absolute" line about CLAUDE.md? No wait, sed -n 1149p showed that text. Hmm, that was line 1149 in the original. But grep said line 1133 is `- scripts/extract_trajectory.py —`. Let me just check the section ordering around now.
+
+Actually the output above shows my new bullet at 1150 followed by #944 at 1152. That's fine, the section is intact. Let me verify by checking a wider window.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1145 && NR<=1156 {print… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, it's in the right section (among the Day-* bullets for extract_trajectory.py). Now re-run python tests and lint, then commit.
+
+Also check if the pre-push hook lint matters — only evolve.sh, not touched.
+
+Let me re-run --test, and also run the repo's check_assertion_weakening? Not needed.
+
+Let's also verify ARCHITECTURE.md size didn't blow past limits — there may be a test. Let me run the module_size test plus relevant tests. Actually cargo test already passed before ARCHITECTURE edit. Let me check whether there is a doc-size gate. Search tests for ARCHITECTURE.md size.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ARCHITECTURE.md" tests…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (9ms)
+ ✓ (153ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No ARCHITECTURE.md size gate (grep exit 1). Good.
+
+Now check the assertion-weakening linter over my diff (it's a CI check? Let me check ci.yml). Let's run it on the working diff.
+
+Actually check_assertion_weakening.py checks diffs for weakened assertions. My change moved code from render_outcomes to session_row_note — that could look like deletion in a diff. Let's run it.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (61ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note: the script only examines *.rs hunks — my diff is Python, so 0 hunks seen is expected (Python files aren't scanned by design). That's fine.
+
+Actually wait — that means the assertion-weakening checker doesn't look at Python test files at all. Not my concern for this task.
+
+Now, should I also journal? The task says only implement and commit. The system prompt says I write a journal every session, but this is a single-task session with the explicit "Do NOT work on anything else." The evolve pipeline does respond phase separately. I'll skip journaling to stay in scope (the task's Docs section explicitly says None besides ARCHITECTURE.md).
+
+Let me re-run the final checks quickly (fmt/clippy/build already passed before ARCHITECTURE edit; ARCHITECTURE is markdown so no effect, but let me run the full sequence briefly) and commit.
+
+Actually cargo test with 6053 tests took a long time. The ARCHITECTURE.md change is markdown-only; no Rust code changed since the passing run. But there could be a test that checks ARCHITECTURE.md contents (e.g., a doc test). Let me check quickly for tests referencing ARCHITECTURE.md.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "ARCHITECTURE" tests/ … ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test doc_version_cl… ✓ (381ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (18.3s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I've made the changes; all checks pass individually. The last remaining step is the full `cargo test` (which I ran earlier and passed 6053/0 before the ARCHITECTURE.md edit — but the ARCHITECTURE edit could affect doc tests; I ran doc_version_claims and doc_symbols which passed). Let me run the full cargo test once to be safe, then commit.
+
+Actually the full cargo test takes long. Let me run it with a generous timeout but capture only results. Earlier it took under 600s. Let me do it.
+
+Actually, I already ran cargo test after the Python change (6053 passed, 0 failed) — that was before the ARCHITECTURE.md append. The ARCHITECTURE append is prose-only; docs tests are doc_version_claims and doc_symbols which I just ran green. But there's also possibly a test checking ARCHITECTURE.md isn't quoted in CLAUDE.md, or a size check on ARCHITECTURE.md... Let me quickly grep for a size/max cap on ARCHITECTURE.md and run the full test suite in the background-ish.
+
+Let me just run full cargo test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 43s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All checks green: fmt, clippy, build, test (6053/0), python self-tests ALL PASSED, positive control run and restored, no NEUTERED markers.
+
+Now commit.
+────────────────────────────────────────────────────────────────────────────────
+
+All checks green. Committing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c NEUTERED scripts/extract… ✓ (58ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done — committed as baaaae53.
+
+What changed
+
+scripts/extract_trajectory.py:
+• Added NO_VERDICT_NOTE + the pure session_row_note(o) -> (icon, note), holding the four-branch ladder moved unchanged, with exactly one branch reworded: succeeded < attempted on a green tree now reads N task(s) did not reach a verdict (tree green, no revert recorded) instead of asserting a reverted the artifact has no field for.
+• `render_outcomes now calls it; the row shape day-N (ts): tasks A/B <glyph> — <note>` is byte-identical.
+• Six new self-tests in run_self_tests(), including the discriminating near-miss twin (build_ok: False → still 1 task(s) reverted, build broken, whole-line assert_eq!), the reverted: True ❌ case, and an anti-vacuous assertion that the phrase really is present on the row that must carry it.
+
+ARCHITECTURE.md: per-file history entry recording the measurement, the mechanism (reverted is session-level, set in one place), the control result, and the two named limits (#951 the writer needs a human; count_task_reverts/render_reverts deliberately untouched).
+
+Verification
+• `python3 scripts/extract_trajectory.py --test --verbose → new block ran, ALL PASSED`, exit 0.
+• Positive control as one atomic mutate→run→restore: neutering the branch reddened test (1) by name plus its anti-vacuous partner, and nothing else; restored to a byte-empty residue, 0 NEUTERED markers.
+• `cargo fmt -- --check OK, cargo clippy --all-targets -- -D warnings clean, cargo build clean, cargo test` 6053 passed / 0 failed.
+• `check_assertion_weakening.py --stdin` over the diff: no WEAKENED hunks (Python-only, non-Rust).
+
+One honest note on what this does not do: it stops the reader inventing a cause; it does not make the cause observable. scripts/evolve.sh is protected, so outcome.json gains no killed_before_verdict field here — that half, and the build-before-commit ordering, still need a human.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

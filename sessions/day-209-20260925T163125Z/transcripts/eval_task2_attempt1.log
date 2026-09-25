@@ -1,0 +1,84 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the actual diff and verify. The task asks for a pure helper `session_row_note`, a call site in `render_outcomes`, and self-tests. The diff appears to do that.
+
+One thing to check: the task said the reworded branch should become `f"{attempted - succeeded} task(s) {NO_VERDICT_NOTE}"` — unconditionally for the `succeeded < attempted` clause. Wait, let me re-read.
+
+Task Step 1: "otherwise `("⚠️", ...)`, where the `succeeded < attempted` clause becomes `f"{attempted - succeeded} task(s) {NO_VERDICT_NOTE}"`; `build broken` / `tests broken` keep their wording".
+
+Hmm — the task text says unconditionally replace. But then Step 2 test 2 says: "Pins the near-miss twin ... the same fixture with `"build_ok": False` must **not** carry the new phrase and must still read `1 task(s) reverted, build broken`. This is what proves the reword is conditioned on the green-tree evidence rather than a blanket rename".
+
+So the task itself is internally inconsistent between Step 1's literal instruction and Step 2's test requirement. The implementer resolved it by conditioning on `build_ok and test_ok`, which satisfies Step 2 and the NO_VERDICT_NOTE comment ("when the tree was green and no revert was recorded"). That's the right reading — Step 2 is the discriminating control. So the implementation is consistent with the task's intent.
+
+Let me verify the diff actually does what the described tests say, and run the self-test at least for this block. Build and tests already pass. But I should verify the feature: run `python3 scripts/extract_trajectory.py --test` — quick, ~0.1s. The task says don't re-run the full suite; but this is a focused check. Actually the harness already ran cargo tests. Running the python self-test is a focused check to confirm the new rows actually ran. Let me do it quickly.
+
+Also check: `pre_change_rows` referenced in test 4 — is that defined in the existing suite? The diff uses `pre_change_rows` which presumably exists above (GREEN_OUTCOMES near-miss guard). Let me check.
+
+Let me run the python self-test and grep for pre_change_rows.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pre_change_rows\|GREEN_… ✓ (5ms)
+ ✓ (97ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the verbose output shows new tests, and quickly confirm behavior with the three real briefing rows. Also confirm the row shape for a fully-absent-dict case is unchanged (defaults). Let me do a quick focused check by calling session_row_note directly.
+
+Also confirm positive control claim? Not needed — but the task mentions `NEUTERED` markers. Let me check no NEUTERED markers left in the diff (the diff shown has none).
+
+Let me quickly run a direct check of the helper.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.2s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (90ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The output is being redacted/truncated by the tool ("... (4 more similar lines)")? Interesting — the harness seems to elide. Let me try writing to a file and cat, or use repr per row.
+
+Actually the tool seems to collapse similar lines. Let me print each on separate invocation with distinct marker.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (50ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All branches behave as the task's Step 2 expects. The helper is pure (takes dict). The call site exists. Tests added and pass, including the discriminating near-miss twin.
+
+One nuance: the task's Step 1 literal text said unconditionally reword the `succeeded < attempted` clause, but Step 2 test 2 requires the conditional. The implementation follows the conditional — which is the coherent reading (Step 2 is the discriminating control and the NO_VERDICT_NOTE comment says "when the tree was green"). This is not a defect; it's resolving an internal inconsistency in the intended direction. Worth noting in the reason.
+
+Doc sync: behavior change is in an instrument's vocabulary; task said "Docs to update: None", and the ARCHITECTURE.md history paragraph was added. So doc_sync PASS.
+
+Product surface: the script is an instrument of the evolve loop, not product surface; no config defaults/CLI flags. N/A. Actually the extract_trajectory.py is a script — evolve tooling. N/A.
+
+Forgotten touchpoints: NO_VERDICT_NOTE has consumers (tests + helper). session_row_note has call site. No new enum variants. PASS.
+
+Also check no stray files in the diff — diff only touches ARCHITECTURE.md and scripts/extract_trajectory.py. Good.
+
+Write the verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 43s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md.
+
+PASS — the diff implements the task as specified:
+• Pure session_row_note(o) helper added, with render_outcomes calling it at the only ladder site (line shape preserved).
+• `NO_VERDICT_NOTE` consumer present in the same diff.
+• Self-tests added and green: I ran python3 scripts/extract_trajectory.py --test → ALL PASSED, exit 0, and directly exercised all six branches: green-tree/no-revert rewords, build_ok=False and test_ok=False keep "reverted", reverted=True keeps ❌ REVERTED entire session, attempted==0 and all-green unchanged.
+• ARCHITECTURE.md history paragraph added per the layout rule; no product surface touched.
+
+One review note (not a failure): Step 1's literal text asked for an unconditional reword of the succeeded < attempted clause, while Step 2's near-miss twin requires it be conditioned on build_ok and test_ok. The implementer chose the conditional — the only reading satisfying both — and that is exactly what the discriminating control proves.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,103 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me judge the diff against the task.
+
+Task asked for:
+1. `pre_hook_block_message` helper in src/hooks.rs near cap_hook_stderr — present ✓
+2. Change the blocking arm to use it — present ✓
+3. One sentence added in `hook_phase_teaching_lines()` — present ✓
+4. Matching sentence in `help_data::command_help("hooks")` — present ✓
+5. Tests: `pre_hook_block_message_table` with exact assert_eq!, byte-identical rows, multi-byte rows, anti-vacuous — present ✓
+6. `blocking_pre_hook_reports_its_stderr` behavioural through real registry, near-miss twin with assert_eq! — present ✓
+
+Also module_size.rs register updated (needed since hooks.rs grew past cap) — a necessary touchpoint.
+
+No byte indexing used. Out of scope items respected (exit code contract unchanged, Err(e) untouched, prefix stays).
+
+Docs: the task said the sentence additions at both doors. Also ARCHITECTURE.md updated with the per-file history (the diff includes a big addition to the hooks.rs bullet). CLAUDE.md not changed — correct per rules.
+
+Let me verify the helper is actually used and the tests exist, quickly. Build/tests already pass. Let me do a quick focused check that the diff is what it claims.
+
+Let me quickly grep for the function and its call site, and check that the teaching lines addition doesn't break the existing test `hook_phase_teaching_lines_keep_the_shared_closing_facts`. Tests pass so presumably fine.
+
+One thing to check: the task said add a blank line maybe. Fine.
+
+Also, is there a concern: the added line in hook_phase_teaching_lines is added after "All hooks have a 5-second timeout." and before the PostFailure note. Fine.
+
+Potential concern: the behavioural test uses `run_pre_hooks` with tool_pattern "*". Verify that works. Tests pass, so yes.
+
+Let me do one quick check of the actual file to confirm the code and tests are present in the committed state (the diff shows it, but confirm no NEUTERED markers left).
+
+Let me quickly grep for NEUTERED/DO NOT COMMIT in src/hooks.rs.
+
+Then write verdict.
+
+Product surface: this changes user-facing behavior (hook refusal message now includes stderr) — that's a product-facing change, additive, not a config default/CLI flag. Not opt-in needed since it's additive and improves the message. `product_surface` check: the task Kind is product, it touches product behavior; but the rule about opt-in is for evolve-kind conveniences touching product surface. This is a genuine product improvement. So PASS or N/A. I'll say PASS since it touches product surface and is appropriate/safe (additive, byte-identical for silent hooks).
+
+Let me run the quick checks.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pre_hook_block_message"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '830,845p' src/hooks.rs &… ✓ (7ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No NEUTERED markers. The `_` pattern is gone from the blocking arm (only appears in the success arm, which is correct, and a doc comment reference).
+
+Now verify the help_data sentence and the behavioural test, plus run the two new tests quickly to confirm the feature works end-to-end (the harness ran the full suite, but a focused run is fine and fast).
+
+Actually, the harness said tests pass. Let me just run the two new tests to be confident the feature actually works (behavioural).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "shown to the agent as t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Run with a single filter, e.g. `cargo test --bin yoyo pre_hook`.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 400 cargo test --bin yoy… ✓ (441ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Both new tests pass. The behavioural test actually spawns a real shell hook — confirms the feature works end-to-end.
+
+Optional: try the binary with a hook config to exercise the feature. That'd be extra; the behavioural test through the real registry + real ShellHook already spawns processes. Good enough.
+
+Now the doc_sync check: task said add sentence at both teaching doors (done) and no CLAUDE.md edit required; ARCHITECTURE.md per-file history updated (present in diff). Also module_size.rs register updated as required by the size gate.
+
+Product surface: the task is Kind: product, changes a user-facing message; additive and byte-identical for silent hooks. Not a config default/CLI flag change. PASS.
+
+forgotten_touchpoints: new fn has its call site (line 840). New tests registered. No new enum variants. module_size register updated. PASS.
+
+Write verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 44s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS
+
+Written to session_plan/eval_task_1.md.
+
+What I verified:
+• **intent_alignment** — `pre_hook_block_message` exists at `src/hooks.rs:73`, `trim()`-only, no byte indexing, with a doc comment warning against re-capping/re-slicing. The blocking arm at line 840 binds stderr and delegates (the _ discard is gone). The one added sentence is present at both doors (src/hooks.rs:687, src/help_data.rs:541), additions only.
+• **Behaviour confirmed** — ran both new tests: `pre_hook_block_message_table` ok, `blocking_pre_hook_reports_its_stderr` ok. The latter forks a real shell hook through the real `HookRegistry, so the reason surviving run_command's capture is verified end-to-end, not just in the pure formatter. No NEUTERED/DO NOT COMMIT` markers left.
+• **forgotten_touchpoints** — the new fn has its call site in the same diff; no new enum variants; `tests/module_size.rs`'s register was re-pasted (3545 → 3684) as the size gate requires.
+• **doc_sync** — both teaching doors updated in-diff; per-file history went to ARCHITECTURE.md, not CLAUDE.md, per the layout rule.
+• **product_surface** — additive product change: silent stderr is byte-identical to before (pinned by the `assert_eq!` rows and the behavioural near-miss twin), no config default / CLI flag / wizard / startup behavior touched, so no opt-in gate applies.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
