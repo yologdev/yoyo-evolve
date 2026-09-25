@@ -1,0 +1,2179 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by verifying the task's premises at HEAD, then measure the census.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unhittable_surprises" s… ✓ (12ms)
+ ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The premise holds. Now let's look at the retrospective reader in commands_risk_unhittable.rs.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+Premises confirmed. Now let me examine the retrospective reader.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "retrospective\|Retrospe…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/commands_risk… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting - there's already a "git check" in the count function. Let me look at the retrospective reader more closely and see what it reports.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '475,665p' src/commands_r… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the retrospective reader runs only the ledger join. So Step 1 shows the retrospective reports only the ledger join. Let me measure it first.
+
+Let me find where retrospective_unhittable_at is called (the CLI path).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "retrospective_unhittab…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '155,345p' src/commands_r… ✓ (4ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the retrospective reader (`retrospective_unhittable`) runs only the ledger join. Step 1 will show that. So the code half applies: extend the retrospective reader to run both legs.
+
+Let me first measure the current retrospective reading. Let me find the CLI path at commands_risk.rs:717 and run it.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,740p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls .yoyo/ && wc -l .yoyo/risk_va… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+Now let me measure the current retrospective reading (Step 1) with a scratch harness.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_surprise_rows\|is…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines) ✓ (7ms)
+ ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need to write a harness that measures the retrospective reading. Best way: add a temporary test in the module that prints the readings, or write a Rust test file. Let me write a test in the module that prints. Actually the simplest: write a temp test that reads the actual files and prints both readings.
+
+But wait — the git leg needs the snapshot's git_hash. The retrospective reader only reads ts and surprises from validation rows. To run the git check retrospectively I need each row's snapshot git_hash. Let me check what fields a validation row has.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (10 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '390,475p' src/commands_r… ✓ (3ms)
+ ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The row field is `snapshot_git_hash`, not `git_hash`. So the retrospective reader would need the snapshot_git_hash too to run the git leg.
+
+Let me write a scratch test that measures the current state and prints. I'll write a temporary binary or a test. Simplest: a `#[test]` in a scratch file under tests/, but the functions are `pub(crate)` so not accessible from integration tests. So I need to put a temporary test inside the module.
+
+Let me add a temporary test in `src/commands_risk_unhittable.rs` that measures and prints, run it with `--nocapture`, then remove it.
+
+Actually, let me be efficient. I'll add the measurement test temporarily, get the numbers, then implement the real change (extend the reader to run both legs), then write the permanent tests.
+
+Let me first check the git leg's cost. There are 272 validation rows, but for the post-ledger population only ~116. And each row's snapshot_git_hash — running `git cat-file -t` per distinct hash would be cheap-ish, but `git cat-file -e hash:path` per surprise. Let's count surprises.
+
+Let me do the measurement in Python first, using the same logic, to know what to expect.
+
+Actually, better: the task says measure the retrospective reader's literal output. Let me write the temp Rust test.
+
+Let me check how many post-ledger events and surprises.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.9s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (17 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+150 surprises over 120 post-ledger rows. That's manageable for git checks — but each needs `git cat-file -e <hash>:<path>`. Distinct hashes? Let's see.
+
+Actually the population is 120 not 115/116 (dream said 115/116). That's because more sessions have run. Fine.
+
+Let me count distinct hashes.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (14 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && time (for x in 6e07a63f dcc72f63… ✓ (5ms)
+ ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+119 distinct hashes × ~1.26 surprises avg = ~150 git calls. Fast. Let me measure how fast.
+
+Let me do a quick python measurement of both readings to know the numbers before writing the Rust.
+
+Actually, better to just do it in Rust to get the "literal output". But knowing the expected numbers helps validate. Let me do a quick shell measurement first for the git leg.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.7s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (52 lines) ✓ (454ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting. Both give 4. The git check has 1 with_unmeasurable. 5 unresolvable hashes — hmm, the "unresolvable hashes" count is counting cache False values, which includes `spec` entries too (since I used the same cache dict for hashes and specs). Let me fix that, but not critical — the git_unmeasurable=1 accounts for a row whose hash didn't resolve.
+
+Wait, ledger with_unhittable=4? Earlier the day-206 dream said 3 of 116. Now 4 of 120. Population grew.
+
+Let me refine the measurement and check the disagreement. Let me redo it more carefully with separate caches, and identify the rows.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (47 lines) ✓ (449ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Two disagreements:
+1. Day 178 row: ledger says hittable (ledger join: no unhittable, no unmeasurable) but git says unhittable (some file didn't exist at 13a3c6f8). So the git leg found one more unhittable event that the ledger join did not. Yet totals both show 4 — meaning the ledger and git disagree in both directions: git found one that ledger didn't, and ledger found one that git didn't... but no: the disagreement list shows only L!=G for day 178. So lh count and gh count both = 4 but the sets differ. There must be a row where L=True, G=False. But it's not shown... wait, the disagreement printing also includes the day 206 row where L=True. Hmm, the day 206 row: L=True, G=False, lmu=False, gmu=True. So that's the row where ledger says unhittable and git says unmeasurable (hash 0ec456e0 doesn't resolve).
+
+And day 178: L=False, G=True → git found unhittable that ledger join missed.
+
+So both counts are 4, but they are different 4s. That's the interesting finding!
+
+Wait but git says with_unmeasurable=1 (the day-206 row). And the day-178 row: git_unmeasured=False, so hash 13a3c6f8 resolves, and some file was born after.
+
+Hmm wait — but the day-206 row has L=True (ledger says unhittable) yet the git check couldn't run. And the day-178 row has G=True but L=False. So:
+- Ledger's 4 = {day178? no...}. Let me identify which rows are L=True and which are G=True.
+
+Let me list them.
+
+Also note: `0ec456e0` is unresolvable — this is a snapshot hash from day 206. Let me check. And 5 unresolvable earlier was wrong because of the mixed cache.
+
+Let me list the L=True and G=True rows explicitly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (33 lines) ✓ (445ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Excellent. This is a genuinely interesting finding:
+
+- The two independent instruments agree on 3 of 4 rows: day 177, 202, 203.
+- They disagree on 2 rows:
+  - **Day 178** (`src/gasp_cli.rs`): the git check says the file did not exist at snapshot `13a3c6f8`, but the ledger join says it did (it has a first-scored entry before the event, or no entry... wait no). Let me check: the ledger join found no unhittable in day 178 and no unmeasurable, so src/gasp_cli.rs has a first-scored ts ≤ event ts. But git says it didn't exist. Which means the file was created after the snapshot but the ledger's first-scored ts backfilled it earlier?? Or the file existed... Hmm. Actually the ledger's first_scored for unpredicted paths is written at grading time (the first time the path appears in a scoring event). So a file created at day 178 would get a first-scored ts around day 178 — possibly slightly *before* the event ts if the event ts is the snapshot ts rather than the grading ts.
+
+    Wait — important: the ledger join compares the first-scored ts against the **event ts**, which is the snapshot creation time (before the failure). Hmm, actually let me check. The row ts is when the validation event was written. The first-scored ts is when the path was first scored.
+
+    Actually more likely: `13a3c6f8` is the snapshot hash taken at the *previous* snapshot, and the row ts is the grading time. Let me check details.
+
+  - **Day 206** (`src/format/cost/price_audit_tests.rs`): the ledger says unhittable (first scored after the event), but the git hash `0ec456e0` does not resolve in this clone, so the git leg can't decide → unmeasurable.
+
+So the git leg found one event the ledger join missed (day 178) and could not decide one the ledger join flagged (day 206). Net both = 4, but the membership differs. That's exactly the "residue" the task asks for.
+
+Now: Step 1 shows the retrospective reader reports only the ledger join (RetrospectiveCount has no git fields). So the code half applies:
+
+Extend the retrospective reader to run both legs over one event list and return both counts plus unmeasurable counts, as a pure function taking already-parsed events and already-resolved git readings as data.
+
+Hmm — "the already-resolved git readings as data (so the table tests do not shell out)". So the pure function takes rows + first_scored map + founding + a git-reading provider. Let's design:
+
+- Extend `SurpriseRow` to carry `snapshot_git_hash` (parsed from the row).
+- Add `git_unhittable` and `git_unmeasurable` fields to `RetrospectiveCount`.
+- The pure function `retrospective_unhittable` needs a way to know, for each (hash, path), whether the file existed. To keep it pure (no shelling out in table tests), pass a closure or a pre-resolved map: `BTreeMap<(hash,path), bool>`-ish. Simpler: pass a `&dyn Fn(&str, &str) -> Option<bool>` where None = hash unresolvable. Hmm, closures in tests are fine.
+
+Actually simplest and most in keeping with the codebase: a trait-free approach — pass a lookup map `gexists: &BTreeMap<(String,String), bool>` plus a set of resolvable hashes. Or pass a slice of `GitReading { hash: String, resolves: bool, members: Vec<(String,bool)> }`.
+
+Hmm, but the retrospective function iterates rows and for each row's surprises. A pre-resolved map keyed by `(hash, path) -> bool` plus resolvable-hash set is clean and pure.
+
+Let me design:
+
+```rust
+/// Pre-resolved git readings for the retrospective git leg: which snapshots
+/// resolve, and which of their surprise members existed at that snapshot.
+/// Passed in as data so the section's table tests never shell out.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct GitReadings {
+    /// The snapshot hashes that resolve in this clone.
+    resolves: std::collections::BTreeSet<String>,
+    /// `(hash, path) -> did the path exist at that hash`.
+    exists: BTreeMap<(String, String), bool>,
+}
+```
+
+with constructors:
+- `GitReadings::resolved(hash, members)` for tests
+- and a `None`-ish default meaning "git leg not consulted" → the ledger-only reading must be byte-identical.
+
+Hmm, but if GitReadings is absent (empty), the git counts would be 0, and then... the note would say "git leg: 0 of 120" which is wrong-ish. We need a tri-state: git leg ran vs git leg not consulted.
+
+The task says: "add a near-miss guard: the ledger-only reading must be byte-identical to today's for every fixture where the git leg is not consulted".
+
+So: the retrospective function gets an `Option<&GitReadings>`. When `None`, git fields stay `None` (not 0) and the note is byte-identical to today's.
+
+Better: make the git fields `Option<u32>`:
+```rust
+pub(crate) git_with_unhittable: Option<u32>,
+pub(crate) git_with_unmeasurable: Option<u32>,
+pub(crate) git_unresolved_hashes: Option<u32>,
+```
+Hmm, that complicates the note. Alternatively keep it simpler.
+
+Hmm. Let me think about what's minimal and honest:
+
+The note currently prints: "unhittable: {with_unhittable} of {population} post-ledger grading events carried a file first scored after the event[; N carried at least one undecidable surprise][; M undated row(s)]".
+
+The extension should print the git reading beside it, and the disagreement when the two differ. Keep `None` distinct from `0`.
+
+Design:
+```rust
+pub(crate) struct RetrospectiveCount {
+    pub(crate) population: u32,
+    pub(crate) with_unhittable: u32,      // ledger join
+    pub(crate) with_unmeasurable: u32,    // ledger join
+    pub(crate) undated: u32,
+    /// The git leg's readings. `None` when the git leg was not consulted
+    /// (the ledger-only call sites from before Day 209), which is what keeps
+    /// the ledger-only note byte-identical to what it has always printed.
+    pub(crate) git: Option<GitRetrospective>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct GitRetrospective {
+    /// Rows with ≥1 surprise that did not exist at the snapshot's own hash.
+    pub(crate) with_unhittable: u32,
+    /// Rows with ≥1 surprise the git check could not decide (unresolvable
+    /// snapshot hash, empty/`"unknown"` sentinel).
+    pub(crate) with_unmeasurable: u32,
+    /// Distinct snapshot hashes that did not resolve in this clone — counted
+    /// and named out loud, never silently treated as hittable.
+    pub(crate) unresolved_hashes: u32,
+    /// Rows where the two instruments do not agree on "carried ≥1 unhittable".
+    pub(crate) disagreements: u32,
+}
+```
+
+And `retrospective_unhittable(rows, first_scored, founding, git: Option<&GitReadings>)`.
+
+`GitReadings`:
+```rust
+pub(crate) struct GitReadings {
+    resolvable: BTreeSet<String>,
+    exists: BTreeMap<(String,String), bool>,
+}
+```
+Pure function to compute the git reading for one row:
+```rust
+fn git_row_reading(hash: &str, surprises: &[String], readings: &GitReadings) -> bool /*unhittable*/ + bool /*unmeasurable*/
+```
+Actually use existing `git_born_after_by_check`? That takes `hash_resolves: bool, members: &[(String,bool)]`. But our data is a flat map. Let's just compute inline:
+
+```rust
+let mut git_unhittable = false;
+let mut git_unmeasurable = false;
+if let Some(readings) = git {
+    if hash.is_empty() || hash == "unknown" || !readings.resolves(hash) {
+        git_unmeasurable = true;
+    } else {
+        for p in &row.surprises {
+            if !readings.existed(hash, p) { git_unhittable = true; }
+        }
+    }
+}
+```
+
+Hmm, but task says "Do not re-derive the rule... if the git leg needs an 'was this file born after the snapshot' predicate, it reads the one that exists." The existing predicate is `git_born_after_by_check` / `git_born_after_at`. To honor that, I should build a `LedgerBornAfter` per row from the pre-resolved readings and use `git_born_after_by_check`. Let me do that: for each row, gather members `(path, exists)` from the readings (exists=false if not present? No — careful). Hmm, `GitReadings` may not have an entry for every (hash,path). If missing, we can't know.
+
+Cleaner: have `git_born_after_by_check(resolves, members)` called with members built from the readings where every surprise has a resolved bool. So `GitReadings::members(hash, surprises) -> Option<Vec<(String,bool)>>` returns None if the hash doesn't resolve; otherwise Some(vec) with exists looked up (default false? no — default should be... if missing from the map, that's a hole). Let's just require the constructor to fill every member for the hashes it's given. In the I/O half, we build exactly that.
+
+OK. Implementation of the I/O half:
+
+```rust
+/// Resolve the git readings the retrospective git leg needs: for every row's
+/// own `snapshot_git_hash`, whether it resolves in this clone, and for each of
+/// that row's surprises whether the path existed at that hash.
+///
+/// Unresolvable hashes are **skipped explicitly** — the clone here is shallow
+/// (`git rev-parse --is-shallow-repository` is `true`), so some snapshot hashes
+/// cannot be resolved, and the honest reading for those rows is `unmeasurable`,
+/// never "nothing was born late". Nothing here deepens the clone, renames a
+/// remote or fetches: the answer for an unresolvable hash is `unmeasurable` and
+/// the count is printed.
+pub(crate) fn resolve_git_readings(rows: &[SurpriseRow]) -> GitReadings {
+    let mut out = GitReadings::default();
+    for row in rows {
+        let hash = row.snapshot_git_hash.as_str();
+        if hash.is_empty() || hash == "unknown" || out.seen(hash) { continue; }
+        let resolves = crate::git::run_git(&["cat-file", "-t", hash]).is_ok();
+        if !resolves { out.mark_unresolved(hash); continue; }
+        out.mark_resolved(hash);
+        for p in &row.surprises {
+            let spec = format!("{hash}:{p}");
+            let exists = crate::git::run_git(&["cat-file", "-e", &spec]).is_ok();
+            out.set_exists(hash, p, exists);
+        }
+    }
+    out
+}
+```
+
+Wait: careful — a hash may appear on multiple rows with different surprise lists. `seen(hash)` skipping means we only probe the first row's surprises. That's a bug: different rows share a hash but with different surprises. Hmm. Actually the snapshot hash identifies a snapshot, so the surprises of other rows with the same hash... Let me check whether hashes repeat.
+
+Let me check: 119 distinct hashes for 120 rows → at most one repeat. But generally hashes could repeat. Better to probe per (hash, path) pair, caching hash-resolvability separately.
+
+Let me restructure:
+- `resolves: BTreeMap<String, bool>` (hash -> resolves) with a cache
+- `exists: BTreeMap<(String,String), bool>` (probed lazily per pair)
+
+Then `GitReadings` is just a pair of maps. Members for a row = lookup per (hash, path); if missing → treat as... hmm, in the pure function, if the map has no entry we should not silently say false. But in practice the I/O constructor fills exactly the pairs present in rows.
+
+Simpler design for the pure function: for each row, for each path: `readings.existed(hash, path) -> Option<bool>`; `None` means "not resolved" → unmeasured.
+
+Let me define:
+
+```rust
+impl GitReadings {
+    /// `Some(true/false)` = the check ran and answered; `None` = the check
+    /// could not run at all (unresolvable hash, or a sentinel we never asked
+    /// git about).
+    fn existed(&self, hash: &str, path: &str) -> Option<bool> {
+        if *self.resolves.get(hash)? { self.exists.get(&(hash.to_string(), path.to_string())).copied() } else { None }
+    }
+}
+```
+
+Hmm, `resolves.get(hash)?` returns None if hash not probed → also None (unmeasured). Good, that's the honest default.
+
+But then for the table tests, constructing `GitReadings` requires the private fields. Provide a test-friendly constructor `GitReadings::from_parts(resolves: &[(hash,bool)], exists: &[(hash,path,bool)])`. Or make fields `pub(crate)`. Since tests live in the same module (`mod tests` inside commands_risk_unhittable.rs), private fields are accessible. Let's just use `pub(crate)` fields with plain constructors, or derive Default and let tests populate directly. Tests in the same file can access private fields. 
+
+Now: `disagreements`. Should I compute it? The task says "if the git leg and the ledger join disagree on any event, that disagreement is the interesting finding and belongs in the record". So the record needs it. Reporting it in the note is optional but valuable. Let me include a `disagreements` count in `GitRetrospective` and print it when > 0. Hmm — keep the note from getting too long. Let's think.
+
+The note should print both readings and the unmeasurables. Something like:
+
+"unhittable: 4 of 120 post-ledger grading events carried a file first scored after the event; the git existence check says 4 of 120 (1 event undecidable, 2 the two readings disagree on, 1 unresolvable snapshot hash)"
+
+Hmm, that's getting long. Let me draft carefully:
+
+Current body (post-ledger, count>0):
+```
+unhittable: {L} of {P} post-ledger grading events carried a file first scored after the event[; {lm} carried at least one undecidable surprise][; {u} undated row(s)]
+```
+
+Extended when git leg ran:
+```
+unhittable: {L} of {P} post-ledger grading events carried a file first scored after the event; the git existence check says {G}[; {gu} event(s) the git check could not decide][; {d} the two readings disagree on][; {lm} carried at least one undecidable surprise][; {u} undated row(s)]
+```
+
+Hmm the `{lm}` "carried at least one undecidable surprise" refers to the ledger join's unmeasurable. With git also having unmeasurable, need to disambiguate. Let me restructure the clause:
+
+`; the git existence check says {G} of {P} (git undecidable: {gu})`.
+
+Let me be concrete and simple:
+
+For Counted with population > 0 and git = Some:
+```
+unhittable: ledger join {L} of {P} post-ledger grading events, git check {G} of {P}
+[; {d} differ]
+[; ledger undecidable {lm}, git undecidable {gu}]
+[; {ur} unresolved snapshot hash(es) - git could not check those rows]
+[; {u} undated row(s)]
+```
+When git = None, keep byte-identical to today. Let me keep the existing sentence structure and append a git clause:
+
+```
+unhittable: {L} of {P} post-ledger grading events carried a file first scored after the event[, the git existence check says {G}][; {d} the two readings disagree on][; ledger undecidable {lm}][; git undecidable {gu}][; {ur} unresolved snapshot hash(es), skipped][; {u} undated row(s)]
+```
+
+Hmm — but the existing `with_unmeasurable` clause says "N carried at least one undecidable surprise". Existing tests assert on this text. If I keep the ledger clause byte-identical when git is None, and only add git clauses when Some, tests stay green.
+
+Let me look at existing note tests to see exact expected strings.
+
+Let me read lines 990-1150 of the file.
+
+Also need to check: `retrospective_unhittable_at` is the I/O wrapper called at commands_risk.rs:717. That one should run the git leg (it's the live CLI path). But is that OK for a product user? The task Kind is evolve but this touches `src/commands_risk.rs` which is product surface (`/risk` command). Running git cat-file over 120 rows on a user's repo... hmm. `git_born_after_at` already runs git for the live validation path (`count_unhittable_surprises_with_git` is called in commands_risk.rs:2731, 2915 and commands_risk_snapshots.rs:838). So git usage is already established in this command. And the retrospective git leg is 150 `git cat-file` calls — cheap, and a non-git project simply gets unmeasurable.
+
+Hmm, but wait: "Do not deepen the repo, do not rename a remote, do not re-fetch" — fine, just cat-file.
+
+But there's a performance concern: `run_git` spawns a process per call. 150 spawns ≈ 0.4s as measured by python (which also spawns). Acceptable? The `/risk` command already calls compute_file_risk_scores etc. 0.4s is fine.
+
+Hmm, but actually let me reconsider: should `retrospective_unhittable_at` (the CLI path) run the git leg? The dream says the retrospective pass should report "how many had ≥1 such member" under the git reading. The task Step 1 says run both readings. Step 2's "if only ledger join" → "extend the retrospective reader to run both legs over one event list". Yes — the retrospective reader should run both.
+
+However — caution: `retrospective_unhittable_at` is called in `commands_risk.rs` in the `/risk` report path. For a product user with a non-git project, `run_git` returns Err → unmeasurable. Fine.
+
+But what about `run_git`'s `#[cfg(test)]` guard? It panics only for destructive subcommands from the project root. `cat-file` is not destructive. Good.
+
+Let me now check the existing note tests and the `git` helper.
+
+Let me read the relevant test sections.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1020,1150p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1390,1450p' src/commands… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me read the full retrospective_tests module to know what I must not break, and the note tests for the retrospective.
+
+Let me look at lines 1140-1420.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1148,1400p' src/commands… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's read the retrospective tests module fully (lines 1420-1721 region). Actually the file is 1721 lines. Let me read from ~1420 to end.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1420,1721p' src/commands… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I have the picture. `RetrospectiveCount` is constructed with struct literals in tests. If I add a field, those literals break unless I add `..Default::default()` — they don't use it. Let me check: `RetrospectiveCount { population: 116, with_unhittable: 3, with_unmeasurable: 86, undated: 0 }` — I'd need to add the new field. That's fine, I'll update them (that's not "deleting tests", just adapting).
+
+But careful: the task says the ledger-only reading must be byte-identical "for every fixture where the git leg is not consulted". I'll make the git leg `Option`, and `retrospective_unhittable` (the pure fn) takes `Option<&GitReadings>`.
+
+Hmm, but there's a subtlety: `retrospective_unhittable_at` (the I/O wrapper) will run the git leg. All table tests calling `retrospective_unhittable(&rows, &map, founding)` pass `None` → unchanged. And `the_io_wrapper_reads_both_ledgers_and_keeps_the_three_states_apart` uses `retrospective_unhittable_at` which will now have git fields Some(...). Its assertions compare against `RetrospectiveReading::Counted(RetrospectiveCount{...})` — with the tempdir ledger rows having no `snapshot_git_hash`, the git leg gets hash "" → sentinel → unmeasurable. So the expected value needs the git field. I'll update it.
+
+Hmm, but that means `retrospective_unhittable_at` will call `run_git` in the test. `run_git` has a `#[cfg(test)]` destructive-command guard — `cat-file` isn't destructive, fine. But `git_born_after_at` already calls run_git in tests (e.g. `an_absent_object_id_reaches_unmeasured_through_the_real_subprocess`), so it's fine.
+
+Actually wait — with a `""` hash, `git_born_after_at` short-circuits and does NOT shell out ("a sentinel or empty hash does not shell out"). Good, so the tempdir test won't shell out.
+
+Now, let me design the I/O resolution to reuse `git_born_after_at` per row? That would spawn `cat-file -t` once per row (120 times) plus one per surprise — no caching across rows sharing hashes. That's 120 + 150 = 270 spawns, ~1s. Hmm. Better to cache. But reusing the existing predicate is required by the task ("Do not re-derive the rule").
+
+Compromise: `resolve_git_readings` resolves each **distinct hash** once, and for each **(hash, path)** pair once — then builds `GitReadings`. And the pure function computes the per-row reading via `git_born_after_by_check(hash_resolves, members)` — the existing predicate — so the "was this file born after the snapshot" rule is not re-derived.
+
+Let me define:
+
+```rust
+/// Pre-resolved git readings for the retrospective git leg: which snapshot
+/// hashes resolve in this clone, and which of their `(hash, path)` members
+/// existed at that snapshot. Passed in as **data** so the section's table tests
+/// never shell out.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct GitReadings {
+    /// hash → does it resolve? A hash absent from this map was never probed.
+    resolves: BTreeMap<String, bool>,
+    /// `(hash, path)` → did the path exist at that hash?
+    exists: BTreeMap<(String, String), bool>,
+}
+```
+
+Hmm, `retrospective_unhittable` returning git readings per row needs to build members. Let me write a helper:
+
+```rust
+impl GitReadings {
+    /// The `git_born_after_by_check` inputs for one row: the hash's
+    /// resolvability plus `(member, existed)` for each surprise. `None` when the
+    /// hash was never probed — an unknown is not a `false`.
+    fn members(&self, hash: &str, surprises: &[String]) -> Option<(bool, Vec<(String, bool)>)> { ... }
+}
+```
+
+Hmm, actually let's simplify. The existing predicate `git_born_after_at(hash, surprises) -> LedgerBornAfter` is the I/O one. The pure one `git_born_after_by_check(hash_resolves, members)`.
+
+Plan: put the *cache* in the I/O layer:
+
+```rust
+/// Resolve the retrospective git leg's readings for a batch of rows, probing
+/// each **distinct** snapshot hash once and each `(hash, path)` pair once.
+/// Unresolvable hashes are **skipped and counted**, never deepened, never
+/// re-fetched — the clone this runs on is shallow, and a hash that does not
+/// resolve makes its rows `unmeasurable`, not hittable.
+pub(crate) fn resolve_git_readings(rows: &[SurpriseRow]) -> GitReadings { ... }
+```
+
+and the pure fn:
+
+```rust
+pub(crate) fn retrospective_unhittable(
+    rows: &[SurpriseRow],
+    first_scored: &BTreeMap<String, String>,
+    founding: Option<&str>,
+    git: Option<&GitReadings>,
+) -> RetrospectiveCount
+```
+
+Inside, per row, after the ledger leg:
+
+```rust
+if let Some(g) = git {
+    let hash = row.snapshot_git_hash.as_str();
+    // The sentinel rule and the resolvability rule are `git_born_after_at`'s
+    // ones — read here as data rather than re-derived.
+    let born = match g.probe(hash, &row.surprises) {
+        Some((resolves, members)) => git_born_after_by_check(resolves, &members),
+        None => /* never probed: sentinel or empty */ sentinel_reading(&row.surprises),
+    };
+    ...
+}
+```
+
+Hmm, getting complicated. Let me simplify by making `GitReadings::reading(hash, surprises) -> LedgerBornAfter` — a pure method that reuses `git_born_after_by_check`:
+
+```rust
+impl GitReadings {
+    /// One row's git reading, through the **same predicate** the live path uses
+    /// ([`git_born_after_by_check`]) — this struct supplies the probe results,
+    /// it does not re-decide what "born after" means.
+    fn reading(&self, hash: &str, surprises: &[String]) -> LedgerBornAfter {
+        if hash.is_empty() || hash == "unknown" {
+            let members = sentinel_members(surprises);
+            return git_born_after_by_check(false, &members);
+        }
+        match self.resolves.get(hash) {
+            Some(true) => {
+                let members: Vec<(String,bool)> = surprises.iter()
+                    .map(|p| (p.clone(), *self.exists.get(&(hash.to_string(), p.clone())).unwrap_or(&false)))
+                    .collect();
+                git_born_after_by_check(true, &members)
+            }
+            _ => { // unresolved or never probed — both are "the check did not run"
+                let members = sentinel_members(surprises);
+                git_born_after_by_check(false, &members)
+            }
+        }
+    }
+}
+```
+
+Wait, but `unwrap_or(&false)` — if a (hash,path) pair wasn't probed it defaults to "did not exist" → born after. That's the dangerous direction! Must not. Instead, if any pair is missing, treat the whole row as unmeasured. Let me handle: build members only if all pairs present, else fall back to `git_born_after_by_check(false, ...)`.
+
+Actually the I/O resolver guarantees completeness: it probes every (hash, path) for resolvable hashes. So it can't be incomplete in production. But defensive coding matters. Let me make `reading` return None-ish properly:
+
+```rust
+fn reading(&self, hash: &str, surprises: &[String]) -> LedgerBornAfter {
+    let sentinel = |s: &[String]| -> LedgerBornAfter {
+        let members: Vec<(String, bool)> = s.iter().map(|p| (p.clone(), false)).collect();
+        git_born_after_by_check(false, &members)
+    };
+    if hash.is_empty() || hash == "unknown" { return sentinel(surprises); }
+    if self.resolves.get(hash) != Some(&true) { return sentinel(surprises); }
+    let mut members = Vec::with_capacity(surprises.len());
+    for p in surprises {
+        match self.exists.get(&(hash.to_string(), p.clone())) {
+            Some(exists) => members.push((p.clone(), *exists)),
+            // A pair the resolver never probed: the check is incomplete for this
+            // row, so it is unmeasured — never "did not exist".
+            None => return sentinel(surprises),
+        }
+    }
+    git_born_after_by_check(true, &members)
+}
+```
+
+Good. Note: this also avoids allocating `(hash.to_string(), p.clone())` for lookups — could use a nested map. Let me use `BTreeMap<String, BTreeMap<String,bool>>` keyed by hash → path → exists. Cleaner:
+
+```rust
+pub(crate) struct GitReadings {
+    /// hash → the paths probed at that hash → did the path exist there.
+    /// A hash key present here is **resolvable**; an unresolvable or sentinel
+    /// hash is absent, which reads as "the check did not run".
+    probes: BTreeMap<String, BTreeMap<String, bool>>,
+    /// Distinct hashes that did **not** resolve in this clone. Counted and
+    /// printed, never silently treated as hittable.
+    unresolved: std::collections::BTreeSet<String>,
+}
+```
+
+Hmm, but then a hash that resolves but had no surprises probed... a row with empty surprises gives an empty inner map, still keyed. Fine.
+
+Hmm, but `unresolved` — also need to count sentinel hashes? The dream cares about unresolvable hashes being counted. Let me count both: `unresolved_hashes` (probed and did not resolve) and print.
+
+Wait, but is it fine for the sentinel? The `git_born_after_at` treats ""/"unknown" as unmeasured without shelling out. In the retrospective, a row without `snapshot_git_hash` gets "" → unmeasured. Should that be counted as "skipped"? I'd say name it separately. Let's keep it simple: count rows whose git leg was undecided (`with_unmeasurable`) and count distinct unresolvable hashes (`unresolved_hashes`). The sentinel rows land in `with_unmeasurable` but not in `unresolved_hashes`. Hmm — but then a project with no snapshot hashes reports "N git-undecidable, 0 unresolvable hashes", which is honest enough.
+
+Hmm, actually let me also count `unhashed` rows: rows whose own snapshot_git_hash is empty/unknown. That distinguishes "git could not check because the row carries no hash" from "because the hash doesn't resolve". That's an honest split and cheap. Let me include it as a field but... more fields = more test surface. Let's decide: three git fields.
+
+```rust
+pub(crate) struct GitRetrospective {
+    /// Rows carrying ≥1 surprise that did not exist at the snapshot's own hash.
+    pub(crate) with_unhittable: u32,
+    /// Rows the git check could not decide: an unresolvable snapshot hash, or a
+    /// row carrying none (empty / `"unknown"`).
+    pub(crate) with_unmeasurable: u32,
+    /// Distinct snapshot hashes that did **not** resolve in this clone.
+    pub(crate) unresolved_hashes: u32,
+    /// Rows where this reading and the ledger join disagree on the one question
+    /// both answer: did the event carry ≥1 unhittable member?
+    pub(crate) disagreements: u32,
+}
+```
+
+Good — 4 fields. That covers "the residue honestly".
+
+Now the note. Requirements:
+- When `git` is `None` → byte-identical to today's output for all three states (NoLedger / zero-population / counted).
+- When `git` is `Some` → add the git clause.
+
+Draft for `Counted` with population > 0:
+```
+unhittable: {L} of {P} post-ledger grading events carried a file first scored after the event; the git existence check reads {G} of {P}
+[; {d} the two readings disagree on]
+[; git undecidable for {gu}]
+[; {ur} unresolved snapshot hash(es), skipped]
+[; {lm} carried at least one undecidable surprise]
+[; {u} undated row(s)]
+```
+
+Hmm, ordering: the existing clause `; {lm} carried at least one undecidable surprise` is placed right after the main sentence. If I put the git sentence in between, then the ledger-only fixture with git=None stays identical, and the git=Some fixtures have a different order. That's fine.
+
+But for readability, let me put git clauses after the ledger clauses. Let me write:
+
+```
+let mut body = format!("unhittable: {} of {} post-ledger grading events carried a file first scored after the event", ...);
+if let Some(g) = c.git {
+    body.push_str(&format!("; the git existence check reads {} of {}", g.with_unhittable, c.population));
+}
+if c.with_unmeasurable > 0 { body.push_str(&format!("; {} carried at least one undecidable surprise", c.with_unmeasurable)); }
+if let Some(g) = c.git {
+    if g.disagreements > 0 { ... }
+    if g.with_unmeasurable > 0 { ... }
+    if g.unresolved_hashes > 0 { ... }
+}
+if c.undated > 0 { ... }
+```
+
+Hmm, with git=None the string is exactly today's. 
+
+Now, what about the `population == 0` state (b)? Today:
+```
+"unhittable: no post-ledger grading events yet - this is not the same as zero unhittable" [+ "; N undated row(s)"]
+```
+With git=Some, should it add the git clause? population 0 → no rows to read, so nothing to add. Keep byte-identical. Good — and that's a nice near-miss guard: git readings present but no population → unchanged.
+
+Hmm, but with population 0, `git.with_unhittable` would be 0 anyway. So skip. But careful: what if population==0 and there IS a git disagreement? Impossible — no rows.
+
+Hmm, one thing: unresolved hashes could be > 0 even with population 0? Only rows in the population are probed... Actually `resolve_git_readings` probes all rows, including undated and pre-founding ones. Hmm — should it? To keep `unresolved_hashes` meaningful, probe only the population rows. But the pure function decides the population. Simpler: probe all parseable rows (the I/O half doesn't know the founding instant). Hmm, but then unresolved_hashes counts hashes over all 272 rows including pre-ledger ones. That's a distortion.
+
+Hmm. Currently 272 validation rows, 120 post-ledger. Probing all 272 rows' hashes: how many distinct? Let's check — could be more. And pre-ledger rows' hashes may be unresolvable (old snapshots) → inflating unresolved_hashes.
+
+Better: make the I/O resolver take the population predicate as data, i.e. the already-filtered rows. But filtering requires founding_ts + first_scored, which `retrospective_unhittable_at` has. So: parse rows → read first_scored → compute founding → filter rows to the gradeable population → resolve git readings over that filtered set → call pure fn with git readings.
+
+But then the pure fn filters again (it must, to stay the single place the rule lives). It's fine to hand it readings resolved over a superset or exactly the population. Since the filter is `placeable && ts > founding`, I can pass the same predicate... that duplicates the rule.
+
+Alternative: resolution is lazy — the pure function asks for readings. That breaks purity.
+
+Alternative: hand `resolve_git_readings` all rows (it probes only hashes it needs). Then in the pure fn, only count `unresolved_hashes` for rows *in the population*. That requires the unresolved set to be available... but the pure fn shouldn't re-derive.
+
+Hmm, simpler: the pure fn counts unresolved hashes per population row but dedups. So `GitReadings` should expose `is_unresolved(hash) -> Option<bool>` and the pure fn collects the distinct unresolved hashes of population rows into a set, then counts. But `RetrospectiveCount` is `Copy` — a set can't be Copy. I could count distinct by... hmm.
+
+Alternative: keep `unresolved_hashes` computed in the I/O layer over exactly the rows that will be in the population. To do that, `retrospective_unhittable_at` needs the same filter. I can factor the filter into a small predicate function used by both:
+
+```rust
+/// Is this row one the first-scored join can grade at all? `Some(orderable_ts)`
+/// when it is: a placeable `ts` strictly after `founding`. The one place this
+/// filter lives — the retrospective pass and the git resolver both ask it.
+fn gradeable(row: &SurpriseRow, founding: Option<&str>) -> Option<&str> { ... }
+```
+
+Hmm, but "undated" counting happens outside the filter. Careful — currently rows with no placeable ts are counted in `undated`, and rows at/before founding are silently out. So `gradeable` returning Option<&str> works, with the caller handling undated separately.
+
+Hmm, this is getting complex. Let me reconsider: do I really need `unresolved_hashes` over only the population? The task says: "A hash that does not resolve must be counted and named as unmeasurable, never silently treated as hittable". "Counted and named as unmeasurable" — that's about the *rows* (with_unmeasurable). The distinct-hash count is my addition. To keep it simple and honest, I can report it as "N snapshot hashes did not resolve in this clone" scoped to the rows the git leg consulted — which will be the population rows if I only resolve those.
+
+Let me just do it cleanly: the I/O wrapper filters to population rows first, using a shared helper. That's honest and keeps the count meaningful.
+
+Actually — simpler idea that avoids the duplicate-filter problem entirely: have `resolve_git_readings` take the *population* rows as the caller already computed. Is there a caller-side way to know? `retrospective_unhittable_at` has `rows`, `map`, `founding`. I'd write:
+
+```rust
+let population: Vec<SurpriseRow> = rows.iter().filter(|r| gradeable_row(r, founding)).cloned().collect();
+let git = resolve_git_readings(&population);
+```
+
+and `gradeable_row` is the shared predicate used inside `retrospective_unhittable` too. Let me define:
+
+```rust
+/// The one filter that decides whether a row is in the retrospective pass's
+/// population: a `ts` the join can place ([`is_placeable_ledger_ts`]) that is
+/// strictly **after** the ledger's own founding instant. Both the pure pass and
+/// the git resolver ask this, so the population the git readings cover is the
+/// same one the count is reported over — never two filters that agree today.
+fn is_gradeable_row(row: &SurpriseRow, founding: Option<&str>) -> bool {
+    is_placeable_ledger_ts(&row.ts) && founding.is_none_or(|f| row.ts.as_str() > f)
+}
+```
+
+Hmm, `is_none_or` — is that stable in this rust version? Let me just write `founding.map_or(True, |f| ...)`. Let me check rust version... I'll use match.
+
+Then in `retrospective_unhittable`, the filter becomes:
+```rust
+if !is_placeable_ledger_ts(&row.ts) { out.undated += 1; continue; }
+if let Some(f) = founding { if row.ts.as_str() <= f { continue; } }
+```
+I could rewrite using is_gradeable_row but the undated count needs the first check separately. Keep:
+```rust
+if !is_placeable_ledger_ts(&row.ts) { out.undated += 1; continue; }
+if !is_gradeable_row(row, founding) { continue; }
+```
+Redundant but harmless. Actually cleaner: keep the undated branch, then `if !after_founding(row, founding) { continue; }` where `after_founding` is the shared helper. Let me name it `row_is_after_founding`.
+
+OK. Let me now write the code.
+
+Also: performance. `run_git` per probe. 120 rows, 119 distinct hashes → 119 `cat-file -t` + 150 `cat-file -e` = 269 spawns. Python did it in 0.42s total. Fine.
+
+But hold on — this runs on *every* `/risk` invocation for a product user. If a user has a huge validation ledger (they might, after many sessions), this could be slow. Hmm. 269 spawns is fine; but 10,000 rows would be 10,000+ spawns. That's a product concern.
+
+Mitigation: the task says "If the git leg over the full population is too slow to finish inside the session, stop and report the partial count". So a bound is anticipated. Let me add a probe cap: `GIT_RETROSPECTIVE_PROBE_CAP` — when exceeded, stop probing and report the remainder as unmeasurable (with the count of rows left unprobed, printed). Hmm, that adds another field and more complexity.
+
+Alternative lighter mitigation: batch the git calls using `git cat-file --batch-check` fed via stdin. That's one process for all hashes. But that changes the "reads the predicate that exists" doctrine and adds a new git interaction path. Hmm, and `run_git` doesn't support stdin input.
+
+Let me weigh: the live path already calls `git_born_after_at` per validation event (1 hash + N paths). So per-session git probing is established. The retrospective pass over all history is new and unbounded.
+
+I think a cap is the right call and the task explicitly anticipates a bounded partial. Let me implement:
+
+```rust
+/// Cap on the distinct snapshot hashes the retrospective git leg will probe in
+/// one report. A ledger with thousands of rows would otherwise spawn a git
+/// process per row on a screen the user just asked for; past the cap the
+/// remaining rows are reported `unmeasurable`, never implied hittable. The
+/// measured cost at the cap is ~120 probes, about half a second on this repo.
+pub(crate) const GIT_RETROSPECTIVE_HASH_CAP: usize = 400;
+```
+
+Hmm, but then I need a `skipped_rows` field. Hmm.
+
+Let me reconsider the complexity budget. The task's core deliverable is the two numbers + the record. I want a clean, minimal diff. Let me reconsider whether the cap is needed.
+
+Actually — simpler and better: probe **hashes** lazily but bound the total number of *probe spawns*. Hmm.
+
+Let me reconsider: is `/risk` a commonly-run product command? Let me check what `/risk` is. It's a slash command in the REPL. `retrospective_note` prints one line. Running 269 git subprocesses adds ~0.5s to `/risk`. For a user with 5,000 validation rows, that's ~20s. That's bad but not catastrophic... still, it's a real product-surface regression for long-running users.
+
+I'll add the cap — it's honest and the task names it. Keep it simple: cap on **rows** with a fresh hash probed.
+
+Design: `resolve_git_readings(rows) -> GitReadings` where GitReadings has `probes: BTreeMap<hash, BTreeMap<path,bool>>`, `unresolved: BTreeSet<hash>`, and `skipped: u32` (rows not probed because the cap was hit).
+
+Hmm, "skipped rows" — but the resolver doesn't know rows→probe mapping once capped. Actually it does: it iterates rows and stops probing.
+
+Hmm, but a capped row must read `unmeasurable`, not hittable. In `reading()`, an unprobed hash → `self.resolves.get(hash) != Some(&true)` → sentinel (unmeasured). Good, automatic.
+
+So: `skipped_rows: u32` counts rows the resolver did not probe (because the cap was hit). Add to `GitRetrospective`? It needs to reach the count struct. Let me carry it in `GitReadings` and have the pure fn copy it into `GitRetrospective.unprobed_rows`. Hmm, growing.
+
+Let me simplify: I'll fold it into `with_unmeasurable` naturally (unprobed rows read unmeasured), and report a distinct clause. Hmm, I need the number.
+
+OK, decision: `GitReadings` carries only probe data plus `unresolved: BTreeSet` and `unprobed: usize` (count of population rows not probed). The pure fn:
+
+```rust
+let mut git_unresolved: BTreeSet<&str> = ...  // needs Copy-free
+```
+No — let me just have the resolver count `unresolved` distinct hashes itself (it knows the set), and store `unresolved_hashes: usize` in GitReadings. Then the pure fn copies: `git.unresolved_hashes as u32`. But then the count isn't scoped to population rows... unless the resolver is fed population rows only, which is my plan.
+
+Wait, but there's a subtlety: if a hash is unresolvable, the resolver records it in `unresolved`; if the cap stops probing, hashes beyond the cap are neither resolved nor unresolved. Fine.
+
+Hmm, but the resolver is fed the population rows, and the pure fn iterates the same rows. So `unresolved_hashes` = distinct unresolvable hashes among population rows. And `unprobed` = population rows not probed. 
+
+Let me now also double-check: do I even want the cap? Let me measure worst case in this repo: 119 hashes for 120 rows. Cap 400 gives ~4x headroom. The repo's ledger grows ~4 rows/day → cap hit in ~70 days. Hmm, then it'd start reporting partial. That's a degradation of the instrument over time. Hmm.
+
+Alternative: raise cap to 2000. 2000 spawns ≈ 3-4s. Too slow for a report line.
+
+Hmm. Better: dedupe by hash — the number of *distinct* hashes grows with sessions too though (one per snapshot).
+
+OK, honestly: the cleanest scalable fix is `git cat-file --batch-check` with stdin, one process. But `run_git` can't feed stdin. I could use `std::process::Command` directly... but that's re-deriving git plumbing.
+
+Let me look at whether there's an existing batch helper. Let me grep for `--batch-check` or `cat-file`.
+
+Actually, let me step back and scope this properly. The task's Step 2 code half says: "extend the retrospective reader to run both legs over one event list and return both counts plus the unmeasurable counts, as a pure function that takes the already-parsed events and the already-resolved git readings as data (so the table tests do not shell out)."
+
+It doesn't mention a cap. The cap is my own addition. Given the task also says "A bounded partial beats a timeout" and "If the git leg over the full population is too slow to finish inside the session, stop and report the partial count" — that's about *my session*, not the runtime.
+
+Let me measure the actual runtime in Rust first, then decide. If ~0.5s at 120 rows, linear growth to a few seconds at 1000 rows is acceptable-ish for an explicit slash command. Let me set a cap of 1000 probes to bound the worst case (~2s) and report the skipped count. That's honest and bounded. I'll go with that — it's a small amount of extra code.
+
+Hmm, let me reduce complexity: instead of counting "rows skipped", count "hashes skipped"... no, rows is what matters for the count. OK, I'll do rows.
+
+Hmm, actually wait. Let me reconsider once more, minimizing risk. Adding a cap adds: a const, a field in GitReadings, a field in GitRetrospective, a clause in the note, and tests. That's maybe 40 lines + tests. Doable.
+
+Hmm, but there's a risk: the cap interacts with `unresolved_hashes` and the note. Let me keep the cap but fold its reporting into the existing unmeasurable concept... no, honest naming requires it.
+
+Let me just do it. Actually — let me reconsider one more time and simplify by making the cap a per-report *probe* budget that's large (e.g. 1000 rows), and report `unprobed_rows`. Fine.
+
+Hmm, hold on. Let me reconsider the whole thing once more for a smaller diff that still satisfies the task.
+
+Minimal viable:
+1. Add `snapshot_git_hash: String` to `SurpriseRow` (parsed in `parse_surprise_rows`).
+2. Add `git: Option<GitRetrospective>` to `RetrospectiveCount`.
+3. Add `GitReadings` (probes + unresolved count + unprobed count) and `resolve_git_readings`.
+4. `retrospective_unhittable(rows, first_scored, founding, git: Option<&GitReadings>)`.
+5. `retrospective_unhittable_at` filters to population, resolves git, passes Some.
+6. Note: append git clauses when `git` is Some.
+7. Tests: table tests for the two legs, anti-vacuous, near-miss (git=None byte-identical), disagreement counting.
+8. Positive control: neuter the git leg to always 0 → the new count assertion fails by name.
+9. ARCHITECTURE.md: new entry + correction at line ~462.
+
+That's the shape. Let me go.
+
+Let me also double check `line_is_gradable` to make sure snapshot_git_hash isn't required.
+
+Let me check the ARCHITECTURE.md line 462 area first, and also check module size gate for commands_risk_unhittable.rs (1721 lines).
+
+Let me check tests/module_size.rs for the cap.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_unhittab…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,480p' ARCHITECTURE.m… ✓ (8ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The line 462 in ARCHITECTURE.md — the task's reference. Let me grep for the specific sentence about `the_real_dcc72f63_does_not_resolve_in_this_clone`.
+
+Note: ARCHITECTURE.md is huge. Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "the_real_dcc72f63_does_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_unhittabl… ✓ (5ms)
+ ✓ (7ms)
+  2 tools completed in 8ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I've hit the token limit. Let me pick up where I was. I have measured:
+
+- Ledger join: 4 of 120 post-ledger events with_unhittable, 0 with_unmeasurable, 0 undated
+- Git check: 4 of 120 with_unhittable, 1 with_unmeasurable (one row: day 206, hash 0ec456e0 unresolvable), disagreements on 2 rows.
+
+The current `retrospective_unhittable` only runs the LEDGER JOIN — no git leg. So Step 1 shows the retrospective reader reports only the ledger join → the code half applies.
+
+But I need to be careful about budget. I've used ~1M tokens of context. Let me be efficient and surgical now.
+
+The plan:
+1. Add a `RetrospectiveGitCount` / extend `RetrospectiveCount` with git fields? The task says: extend the retrospective reader to run both legs over one event list and return both counts plus the unmeasurable counts, as a pure function that takes the already-parsed events and the already-resolved git readings as data (so table tests don't shell out).
+
+So: `SurpriseRow` needs a `git_hash` field. Then a pure function `retrospective_unhittable_with_git(rows, first_scored, founding, git: &dyn Fn(&str,&str)->bool)` — hmm, but "takes the already-parsed events and the already-resolved git readings as data". So pass a map of (hash, path) -> exists.
+
+Let me design minimally:
+
+```rust
+/// The git instrument's readings for the retrospective pass, already resolved
+/// by an I/O half: for each (snapshot hash, path) the caller looked up, whether
+/// the path existed in that tree.
+pub(crate) struct GitReadings {
+    /// The hashes that do not resolve in this clone — counted and named, never
+    /// silently treated as hittable.
+    pub(crate) unresolved: ...,
+    ...
+}
+```
+
+Hmm. Simpler: pass a closure? No — "as data".
+
+Let me define:
+
+```rust
+/// A pure view of the git instrument's answers, keyed by (hash, path).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct GitReadings {
+    /// Trees the caller actually resolved: value is the set of paths that did
+    /// NOT exist in that tree at `hash`... 
+}
+```
+
+Actually simplest data shape: `BTreeMap<(String, String), bool>` — (hash, path) -> existed. Plus a `hash_resolves: BTreeMap<String, bool>`. Hmm, that's two maps.
+
+Better: mirror the existing `git_born_after_by_check(hash_resolves, members)` shape at the row level. Define per-row git reading:
+
+```rust
+pub(crate) struct RetrospectiveGitReading {
+    pub(crate) hash_resolves: bool,
+    pub(crate) members: Vec<(String, bool)>,
+}
+```
+
+And the pure fn takes `rows: &[SurpriseRow]` where SurpriseRow gains `git_hash: String`, plus `git: &[Option<RetrospectiveGitReading>]`? That's awkward.
+
+Alternative and cleanest: `SurpriseRow` gains `git_hash: String`. Define a lookup trait-free data map: `git: &BTreeMap<String, bool>` keyed by `"{hash}:{path}"` and a separate `BTreeMap<String, bool>` keyed by hash for resolvability. Two maps, but honestly fine and testable without shelling out.
+
+Let me write:
+
+```rust
+/// The git instrument's **already-resolved** answers, keyed by the two probes
+/// the live path makes, so the retrospective pass can be table-tested without
+/// shelling out: `resolves[hash]` is whether the tree exists in this clone, and
+/// `present["hash:path"]` is whether the path existed in it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct GitProbes {
+    pub(crate) resolves: BTreeMap<String, bool>,
+    pub(crate) present: BTreeMap<String, bool>,
+}
+```
+
+Then:
+
+```rust
+pub(crate) struct RetrospectiveCount {
+    population, with_unhittable, with_unmeasurable, undated,
+    // NEW
+    git_population: u32,
+    with_git_unhittable: u32,
+    with_git_unmeasurable: u32,
+    git_unresolvable: u32,   // rows whose snapshot hash does not resolve
+    skipped_total: u32,      // surprises not probed because their hash didn't resolve
+}
+```
+
+Hmm, growing a struct with many fields. But that's what "both counts plus the unmeasurable counts" means.
+
+Wait — I should be careful about `retrospective_note` and existing tests. The task says "the ledger-only reading must be byte-identical to today's for every fixture where the git leg is not consulted (every user whose events have no snapshot hash is the regression surface)."
+
+So: when a row has no `git_hash` (empty), the git leg contributes nothing, and the note must be byte-identical. That means `retrospective_note` gains a clause ONLY when git readings exist.
+
+Design decision: separate the git pass into its own pure function and its own note clause. Let me keep it simple:
+
+- `SurpriseRow` gains `git_hash: String`.
+- New pure fn `retrospective_git_census(rows, founding, probes) -> GitCensus` which returns `{ population, with_unhittable, with_unmeasurable, unresolvable_hashes: Vec<String>, unprobed: u32 }`. Population = post-founding rows that carry a non-empty `git_hash`.
+- `retrospective_note` appends a clause when the git census has population > 0.
+
+Hmm, but that requires passing both to the note. Change signature: `retrospective_note(reading, plain)` — the reading enum carries `RetrospectiveCount`. If I put the git census inside `RetrospectiveCount` as an `Option<GitCensus>`, the signature stays.
+
+That's clean: `RetrospectiveCount { population, with_unhittable, with_unmeasurable, undated, git: Option<GitCensus> }`. Default None → old fixtures byte-identical. 
+
+Let me now decide the I/O half: `retrospective_unhittable_at` currently reads files. It must now also run git probes — bounding work: only probe hashes for rows in the population. Add a guard: cap the number of git probes? The task says "If the git leg over the full population is too slow to finish inside the session, stop and report the partial count". Measured: 0.42s for the full population. So no cap needed, but I should still handle non-git projects gracefully (a product user running `yoyo risk` in a non-git dir → `run_git` fails → hash wouldn't resolve... careful: that would report everything as unmeasurable, which is the safe direction but noisy). Actually for a project with no snapshots carrying git_hash, population=0 and nothing happens. For a project with hashes but no git, all unresolvable → counted and named. That's the safe direction and it's honest.
+
+Hmm, but there's a real risk: `crate::git::run_git` has a `#[cfg(test)]` destructive-command guard — but `cat-file` is not destructive, so fine. But the tests must NOT shell out (task says so). So `retrospective_unhittable_at` (the I/O wrapper) shells out; the pure fns don't, and the tests for the pure fns pass `GitProbes` data. Existing test `the_io_wrapper_reads_both_ledgers_and_keeps_the_three_states_apart` calls `retrospective_unhittable_at` with fixtures whose rows carry NO `git_hash` → git census population 0 → no shelling out. Good, that keeps it intact.
+
+But wait: tempdir tests using `retrospective_unhittable_at` — the rows have no snapshot_git_hash, so `git: None` and assert_eq! on `RetrospectiveReading::Counted(RetrospectiveCount{...})` still holds if I use `..Default::default()`? No — that test writes the full struct literal without `..Default`. Let me check: 
+
+```rust
+assert_eq!(
+    retrospective_unhittable_at(&val, &led),
+    RetrospectiveReading::Counted(RetrospectiveCount {
+        population: 1,
+        with_unhittable: 1,
+        with_unmeasurable: 0,
+        undated: 0,
+    })
+);
+```
+
+Adding a field breaks this struct literal → compile error. I'll need to add `git: None` there. That's an edit to an existing test — allowed (not deleting, just completing). Actually better: `..Default::default()`. Hmm, the task says never delete existing tests; editing to add a field is fine and necessary.
+
+Now, let me also reconsider: is the code half really needed? Step 1 shows the retrospective reader reports only the ledger join (confirmed: `retrospective_unhittable` has no git at all). The live path (`count_unhittable_surprises_with_git`) runs both, but the *retrospective* reader does not. So yes, the code half applies: "extend the retrospective reader to run both legs over one event list and return both counts plus the unmeasurable counts".
+
+Given my context is nearly exhausted, I must be economical. Let me write the code now, carefully, in one or two edits.
+
+Let me look at the exact region once more to make the edit. I need:
+1. `SurpriseRow` + `parse_surprise_rows` to carry `git_hash`.
+2. New `GitProbes` struct + `GitCensus` struct + pure `retrospective_git_census`.
+3. `RetrospectiveCount.git: Option<GitCensus>`.
+4. `retrospective_unhittable_at` to build probes from the rows (I/O).
+5. `retrospective_note` clause.
+6. Tests: table tests for the pure fn (both readings, anti-vacuous, unmeasurable), near-miss guard that git-less fixtures are byte-identical.
+7. ARCHITECTURE.md corrections.
+
+Note: the row's field is `snapshot_git_hash` in the ledger JSON, not `git_hash`. Let me check: yes, last row has `"snapshot_git_hash"`. So parse that key.
+
+Careful: the risk_snapshots file uses `git_hash`. Our validations ledger uses `snapshot_git_hash`. Let me grep to be sure.
+
+Let me be very economical with tool calls now. Let me do one grep and then write the edits.
+
+Also need to check module size gate: commands_risk_unhittable.rs is 1721 lines. What's its cap? Let me check tests/module_size.rs for the file list — earlier grep showed `("src/commands_risk.rs", 6526)` at line 293, and line 283-290 comments mention commands_risk_unhittable.rs. Let me look at that region to find the cap for commands_risk_unhittable.rs.
+
+Let me do both greps in one call.
+────────────────────────────────────────────────────────────────────────────────
+
+I have the measurements. Now let me check the constraints I need before writing code (module size cap, ledger key name).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '275,300p' tests/module_s… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Key is `snapshot_git_hash`, present in 235 of 272 rows.
+
+Line 468 mentions a 2042 entry for some file. Let me check whether commands_risk_unhittable.rs has its own register entry with a cap. It's not in the grandfather list visibly (grep found no direct line). 1721 lines < 2000 so it's fine, but I must stay under 2000. I have ~279 lines of headroom including tests. Fine.
+
+Now let me write the code. I'll add:
+
+1. `git_hash` field on `SurpriseRow`, parsed from `snapshot_git_hash`.
+2. `GitProbes` + `GitCensus` structs.
+3. `RetrospectiveCount.git: Option<GitCensus>`.
+4. Pure `retrospective_git_census(rows, founding, probes)`.
+5. I/O in `retrospective_unhittable_at`.
+6. Note clause.
+7. Tests.
+
+Let me read the exact text of the region I need to edit precisely. I already have lines 390-475 and 475-665. Let me now make the edits.
+
+First: SurpriseRow struct + parse.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll implement the code half. The retrospective reader currently runs only the ledger join — confirmed by reading retrospective_unhittable, which has no git leg at all.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (4 → 10 lines)
+    pub(crate) struct SurpriseRow {
+        pub(crate) ts: String,
+        pub(crate) surprises: Vec<String>,
+  +     /// The snapshot whose own `git_hash` this event graded, when the event
+  +     /// carries one. Empty means the row cannot be read by the git instrument at
+  +     /// all — which is the whole regression surface: a ledger written before
+  +     /// `snapshot_git_hash` was recorded (Day 165, #723, forward-only and
+  +     /// deliberately un-back-filled) must read exactly as it did before.
+  +     pub(crate) git_hash: String,
+    }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (2 → 8 lines)
+            let ts = val["ts"].as_str().unwrap_or("").to_string();
+  +         // `snapshot_git_hash` is the validation ledger's own key name (the
+  +         // snapshot ledger's is `git_hash`); absent is `""`, never `"unknown"`.
+  +         let git_hash = val["snapshot_git_hash"]
+  +             .as_str()
+  +             .unwrap_or("")
+  +             .to_string();
+            let surprises = val["surprises"]
+ ✓ (17.2s)
+    pub(crate) struct SurpriseRow {
+        pub(crate) ts: String,
+        pub(crate) surprises: Vec<String>,
+  +     /// The snapshot whose own `git_hash` this event graded, when the event
+  +     /// carries one. Empty means the row cannot be read by the git instrument at
+  +     /// all — which is the whole regression surface: a ledger written before
+  +     /// `snapshot_git_hash` was recorded (Day 165, #723, forward-only and
+  +     /// deliberately un-back-filled) must read exactly as it did before.
+  +     pub(crate) git_hash: String,
+    }
+ ✓ (34.1s)
+            let ts = val["ts"].as_str().unwrap_or("").to_string();
+  +         // `snapshot_git_hash` is the validation ledger's own key name (the
+  +         // snapshot ledger's is `git_hash`); absent is `""`, never `"unknown"`.
+  +         let git_hash = val["snapshot_git_hash"]
+  +             .as_str()
+  +             .unwrap_or("")
+  +             .to_string();
+            let surprises = val["surprises"]
+
+── Thinking ────────────────────────────────────────────────────────────────
+Expected — the consumer is the next edit (my own rule: never add a definition without its consumer in the same edit). Let me continue and add the consumer immediately.
+
+Now add the git census. Let me put it after `retrospective_unhittable`.
+
+I need to see the is_placeable_ledger_ts/RetrospectiveCount region again — I have it. Let me now write:
+
+- `GitProbes` struct
+- `GitCensus` struct
+- `RetrospectiveCount.git: Option<GitCensus>`
+- `retrospective_git_census`
+- `retrospective_unhittable_at` wiring
+- note clause
+
+Then fix `parse_surprise_rows` push to include git_hash.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 36.3s (2 ✓)
+
+Now the consumer — adding the git census pass:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (1 → 5 lines)
+  -         rows.push(SurpriseRow { ts, surprises });
+  +         rows.push(SurpriseRow {
+  +             ts,
+  +             surprises,
+  +             git_hash,
+  +         });
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (5 → 108 lines)
+        /// [`is_placeable_ledger_ts`]) — out of the population because there is no
+        /// moment to compare a birthday against.
+        pub(crate) undated: u32,
+  +     /// The **second instrument's** own retrospective reading, `None` when no
+  +     /// row in the population carries a snapshot hash — which is every ledger
+  +     /// written before Day 165 and the whole regression surface of this pass
+  +     /// (a project whose events have no hash reads byte-identically to before).
+  +     pub(crate) git: Option<GitCensus>,
+  + }
+  + 
+  + /// The git instrument's **already-resolved** answers, as data rather than as
+  + /// I/O: `resolves[hash]` is whether that tree exists in this clone at all, and
+  + /// `present["hash:path"]` is whether the path existed inside it. Passing the
+  + /// readings in is what lets the table tests below exercise both instruments
+  + /// without shelling out — and it is the same split [`git_born_after_by_check`]
+  + /// already uses one row at a time.
+  + #[derive(Debug, Clone, Default, PartialEq, Eq)]
+  + pub(crate) struct GitProbes {
+  +     pub(crate) resolves: BTreeMap<String, bool>,
+  +     pub(crate) present: BTreeMap<String, bool>,
+  ... (87 more lines)
+ ✓ (14.6s)
+  -         rows.push(SurpriseRow { ts, surprises });
+  +         rows.push(SurpriseRow {
+  +             ts,
+  +             surprises,
+  +             git_hash,
+  +         });
+ ✓ (29.1s)
+        /// [`is_placeable_ledger_ts`]) — out of the population because there is no
+        /// moment to compare a birthday against.
+        pub(crate) undated: u32,
+  +     /// The **second instrument's** own retrospective reading, `None` when no
+  +     /// row in the population carries a snapshot hash — which is every ledger
+  +     /// written before Day 165 and the whole regression surface of this pass
+  +     /// (a project whose events have no hash reads byte-identically to before).
+  +     pub(crate) git: Option<GitCensus>,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Two issues: (1) `Copy` can't be derived — drop `Copy` from RetrospectiveCount. (2) The SurpriseRow edit apparently didn't apply the git_hash field? Error says available fields are `ts`, `surprises` at line 563 — but my first edit replaced 4 lines with 10 and reported success. Hmm, maybe the struct at line ~401 was already changed... wait error says only ts and surprises. Let me check the actual struct.
+
+Actually the first edit DID report success ("Replaced 4 lines with 10 lines"). But then the auto-check ran against a stale compile? No — the sequence: edit 1 succeeded, edit 2 succeeded, then the errors are from the combined check. The error is stale relative to... no, it should include both. Unless the struct edit landed at a different place. Let me just look.
+
+Wait — actually the second error at line 563 refers to `retrospective_git_census` which I just added. And it says SurpriseRow has only `ts`, `surprises`. So the struct edit must not have applied... but it reported "Replaced 4 lines with 10 lines". Hmm, but there were TWO `pub(crate) struct SurpriseRow` blocks? No.
+
+Oh! I see — the auto-check output shown for edit 2 is truncated at 2000 chars and may be the *older* cached output. Actually the first auto-check (after edit 1) reported "unused variable git_hash" — that means the struct edit DID apply then (git_hash was parsed but... no wait, the unused variable error was for the `let git_hash` in parse_surprise_rows at line 430, which is edit 2's content).
+
+Hmm, confusing. Edit 1 = struct field; edit 2 = let git_hash + parse. Both ran in one block. The error after edit 1 mentioned `let git_hash` unused — so edit 2 had already applied. So the tool shows effects of both.
+
+But now after edit 3/4, error says no field git_hash. Let me just read the current struct.
+
+Possibly the struct edit matched a *different* occurrence — e.g., a test fixture struct or the doc-comment copy. Let me check.
+
+Also I need to remove `Copy` from RetrospectiveCount and check all uses of RetrospectiveCount (`.git` field with Option<GitCensus>). Let me read the relevant parts.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 33.2s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate) struct Surpr… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The struct edit did NOT apply — the `SurpriseRow` at line 401 still lacks `git_hash`. The first edit must have matched something else... but it reported "Replaced 4 lines with 10 lines". Hmm, maybe it added the field but then my second edit's old_text `rows.push(SurpriseRow { ts, surprises });` — no.
+
+Wait: maybe the edits applied but then... Actually there may be a second `SurpriseRow` definition? grep shows only line 401 (grep -n for "pub(crate) struct SurpriseRow" found one). And the doc comment block at 390-400 is the one I edited with the 10-line replacement... Ah — I bet the edit replaced the *doc comment + struct* region and the tool reverted? Let me look at lines 390-405.
+
+Actually simpler explanation: my first edit's old_text was
+```
+pub(crate) struct SurpriseRow {
+    pub(crate) ts: String,
+    pub(crate) surprises: Vec<String>,
+}
+```
+and new_text added the git_hash. "Replaced 4 lines with 10 lines" — 4 lines old (3 + ...) hmm 4 lines? The old_text is 4 lines (including trailing newline handling). New is 10 lines? My new_text: struct line + ts + surprises + 6 comment lines + git_hash + } = 1+1+1+6+1+1 = 11. Close enough with newline counting.
+
+But the file now shows the OLD content with a 9-line doc comment before it (lines 391-400). Did another process revert? The auto-check runs `cargo clippy && cargo test`, not a revert.
+
+Hmm — could the parallel edits in one block have raced? I sent edit 1 and edit 2 in one block; then edit 3 and edit 4 in another block (also parallel). They both modified the same file! Parallel edits to one file can race and clobber. That's exactly it: edit 3 and edit 4 both write the file, and one overwrote the other's change — and edit 4's write was based on a snapshot without edit 1/2? No...
+
+Actually more likely: edit 1 and edit 2 raced, and the final file content is from edit 2's write (which included the let git_hash change — confirmed, line 430 has it) but edit 1's struct change was lost. Yes! Line 430 has `let git_hash` (edit 2 applied) but struct lacks field (edit 1 lost). And edit 4's big addition applied, edit 3's `rows.push` — need to check.
+
+Lesson: don't send parallel edits to the same file. Let me now apply the missing pieces serially.
+
+Check rows.push state.
+────────────────────────────────────────────────────────────────────────────────
+
+Parallel edits to the same file raced and one was lost. Applying them serially now.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '425,450p' src/commands_r… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (4 → 10 lines)
+    pub(crate) struct SurpriseRow {
+        pub(crate) ts: String,
+        pub(crate) surprises: Vec<String>,
+  +     /// The snapshot whose own `git_hash` this event graded, when the event
+  +     /// carries one. Empty means the row cannot be read by the git instrument at
+  +     /// all — which is the whole regression surface: a ledger written before
+  +     /// `snapshot_git_hash` was recorded (Day 165, #723, forward-only and
+  +     /// deliberately un-back-filled) must read exactly as it did before.
+  +     pub(crate) git_hash: String,
+    }
+ ✓ (14.7s)
+    pub(crate) struct SurpriseRow {
+        pub(crate) ts: String,
+        pub(crate) surprises: Vec<String>,
+  +     /// The snapshot whose own `git_hash` this event graded, when the event
+  +     /// carries one. Empty means the row cannot be read by the git instrument at
+  +     /// all — which is the whole regression surface: a ledger written before
+  +     /// `snapshot_git_hash` was recorded (Day 165, #723, forward-only and
+  +     /// deliberately un-back-filled) must read exactly as it did before.
+  +     pub(crate) git_hash: String,
+    }
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (1 → 5 lines)
+  -         rows.push(SurpriseRow { ts, surprises });
+  +         rows.push(SurpriseRow {
+  +             ts,
+  +             surprises,
+  +             git_hash,
+  +         });
+ ✓ (15.2s)
+  -         rows.push(SurpriseRow { ts, surprises });
+  +         rows.push(SurpriseRow {
+  +             ts,
+  +             surprises,
+  +             git_hash,
+  +         });
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now: drop `Copy` from RetrospectiveCount, and fix test fixtures. Let me do the derive first, plus wire the I/O and the note. Then fix test fixtures.
+
+Dropping Copy: check who uses RetrospectiveCount by value in a way requiring Copy. `retrospective_note(&RetrospectiveReading)` takes a ref, and inside matches `RetrospectiveReading::Counted(c)` where c: &RetrospectiveCount. Fine.
+
+Let me make the edits serially.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (2 → 2 lines)
+  - #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+  + #[derive(Debug, Clone, PartialEq, Eq, Default)]
+    pub(crate) struct RetrospectiveCount {
+ ✓ (15.1s)
+  - #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+  + #[derive(Debug, Clone, PartialEq, Eq, Default)]
+    pub(crate) struct RetrospectiveCount {
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Good — the derive is fixed. Now wiring the I/O half and the note clause:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (5 → 58 lines)
+        let rows = parse_surprise_rows(&content);
+        let (map, _dropped) = read_first_scored(first_scored_path);
+        let founding = founding_ts(&map);
+  -     RetrospectiveReading::Counted(retrospective_unhittable(&rows, &map, founding))
+  +     let probes = probe_git_for(&rows, founding);
+  +     let mut count = retrospective_unhittable(&rows, &map, founding);
+  +     let git = retrospective_git_census(&rows, founding, &probes);
+  +     // `None` when no row in the population carries a hash: a ledger written
+  +     // before Day 165 has nothing to ask git, and must read exactly as it did.
+  +     count.git = (git.population > 0).then_some(git);
+  +     RetrospectiveReading::Counted(count)
+  + }
+  + 
+  + /// I/O half of the second instrument: **one `git cat-file` per distinct
+  + /// snapshot hash in the population**, and one per (hash, path) pair — the same
+  + /// two probes [`git_born_after_at`] makes, hoisted so a shared hash is not
+  + /// resolved once per row.
+  + ///
+  + /// Bounded by construction rather than by a timeout: only hashes carried by
+  + /// rows already inside the post-founding, placeable population are probed, and
+  ... (39 more lines)
+ ✓ (14.6s)
+        let rows = parse_surprise_rows(&content);
+        let (map, _dropped) = read_first_scored(first_scored_path);
+        let founding = founding_ts(&map);
+  -     RetrospectiveReading::Counted(retrospective_unhittable(&rows, &map, founding))
+  +     let probes = probe_git_for(&rows, founding);
+  +     let mut count = retrospective_unhittable(&rows, &map, founding);
+  +     let git = retrospective_git_census(&rows, founding, &probes);
+  +     // `None` when no row in the population carries a hash: a ledger written
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (8 → 7 lines)
+            for path in &row.surprises {
+  -             let key = probe_key(&hash, path);
+  -             if !probes.present.contains_key(&key) {
+  -                 let spec = format!("{hash}:{path}");
+  -                 let exists = crate::git::run_git(&["cat-file", "-e", &spec]).is_ok();
+  -                 probes.present.insert(key, exists);
+  -             }
+  +             let spec = format!("{hash}:{path}");
+  +             probes
+  +                 .present
+  +                 .entry(probe_key(&hash, path))
+  +                 .or_insert_with(|| crate::git::run_git(&["cat-file", "-e", &spec]).is_ok());
+            }
+ ✓ (14.4s)
+            for path in &row.surprises {
+  -             let key = probe_key(&hash, path);
+  -             if !probes.present.contains_key(&key) {
+  -                 let spec = format!("{hash}:{path}");
+  -                 let exists = crate::git::run_git(&["cat-file", "-e", &spec]).is_ok();
+  -                 probes.present.insert(key, exists);
+  -             }
+  +             let spec = format!("{hash}:{path}");
+  ... (5 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the note clause, and then the fixtures. Let me add the note clause first.
+
+The note needs to print the git reading. It should be silent when `git` is None (byte-identical for everyone with no hashes). And when Some, print the count. Importantly the task says the clause must not be presented as one number.
+
+Design of the clause:
+- Always print when Some and population>0? The live `unhittable_note` is silent when the instruments agree. For consistency and to avoid noise in `yoyo risk` output... but this is the retrospective report line, which already prints unconditionally (it prints the ledger join count whenever population > 0). So printing the git reading unconditionally when available is consistent — it's a report, not an alarm.
+
+But: if the two agree, adding a clause is redundant noise. The live note's rule (agreement is silence) exists for stderr per-event. The retrospective line is a report the user explicitly asked for via `/risk`. Hmm. Let me follow the live note's discipline where it matters: print the git reading when it differs from the ledger join, or when there is something the ledger join cannot say (unresolvable/skipped). That keeps ordinary output as-is AND surfaces the disagreement, which is the interesting finding.
+
+But wait — the task says "extend the retrospective reader to run both legs over one event list and return both counts plus the unmeasurable counts". Returning both counts is the code requirement. Printing: I'll print the git leg whenever it is available and (differs OR has unresolvable), else stay silent. Hmm, but then my own measured finding — that the git leg found a row the ledger join could not (day 178) — would be silent only if they agree. They don't agree (4 vs 4 same count but different rows; and the disagreement is the interesting part). Hmm, counts agree at 4 vs 4! So a count-only comparison would say "agree" while the *rows* differ. That's a subtle trap.
+
+Actually: ledger=4 with_unhittable, git=4 with_unhittable. But git has 1 with_unmeasurable (the unresolvable hash row) and the sets differ (day 178 in git not ledger; day 206 in ledger not git).
+
+So a silence-on-count-agreement rule would print nothing here — hiding both the disagreement and the unresolvable row. That's bad. Better: print the git line whenever it is available (population > 0), stating its count, its unmeasurable count, and the unresolvable/skipped count. And state the disagreement explicitly when the sets... we don't have sets in the census, only counts. Hmm.
+
+Let me reconsider — maybe simpler and more honest: print the git census line whenever `git` is Some, always. It's a report line on `/risk`, printed next to the ledger join. Then the near-miss guard (byte-identity) applies only to the git-less user, which is every fixture with no hashes.
+
+But should the reader be noisy for real users? `/risk` already prints a retrospective line. Adding one more line only when the user's ledger has snapshot hashes (i.e., yoyo's own repo / anyone using yoyo's risk tooling since Day 165) is reasonable and informative.
+
+I'll make it: `git` clause printed always when Some. Include unresolvable count when > 0, and skipped surprises. That satisfies "A hash that does not resolve must be counted and named as unmeasurable, never silently treated as hittable".
+
+Now let me write the clause. I'll add to the Counted(c) arm, after the ledger-join sentence.
+
+Also need to handle `RetrospectiveReading::Counted(c) if c.population == 0` arm — if population==0 but git.population>0? Impossible-ish: git rows are a subset of placeable post-founding rows, and population counts those too. Actually population counts placeable post-founding rows regardless of hash. So git.population <= population. So population==0 → git is None. Good, no clause needed there.
+
+Let me write the edit.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the note clause:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (5 → 29 lines)
+                if c.undated > 0 {
+                    note.push_str(&format!("; {} undated row(s)", c.undated));
+  +             }
+  +             // The second instrument, printed only where it exists at all: a
+  +             // ledger whose events carry no snapshot hash (every event written
+  +             // before Day 165) reads exactly as it did before this pass.
+  +             if let Some(git) = &c.git {
+  +                 note.push_str(&format!(
+  +                     "; the git check reads {} of {} rows with a snapshot hash",
+  +                     git.with_unhittable, git.population
+  +                 ));
+  +                 if git.unresolvable > 0 {
+  +                     // Named, counted, and never silently hittable — a check
+  +                     // that did not run is not a check that found nothing.
+  +                     note.push_str(&format!(
+  +                         " ({} row(s) skip: their snapshot hash does not resolve in this clone, \
+  +                          {} surprise(s) unprobed)",
+  +                         git.unresolvable, git.skipped_surprises
+  +                     ));
+  +                 }
+  ... (9 more lines)
+ ✗ (0ms)
+    │ old_text matches 2 locations in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs. Include more surrounding context to make the match unique.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (8 → 32 lines)
+                }
+                if c.undated > 0 {
+                    note.push_str(&format!("; {} undated row(s)", c.undated));
+  +             }
+  +             // The second instrument, printed only where it exists at all: a
+  +             // ledger whose events carry no snapshot hash (every event written
+  +             // before Day 165) reads exactly as it did before this pass.
+  +             if let Some(git) = &c.git {
+  +                 note.push_str(&format!(
+  +                     "; the git check reads {} of {} rows with a snapshot hash",
+  +                     git.with_unhittable, git.population
+  +                 ));
+  +                 if git.unresolvable > 0 {
+  +                     // Named, counted, and never silently hittable — a check
+  +                     // that did not run is not a check that found nothing.
+  +                     note.push_str(&format!(
+  +                         " ({} row(s) skip: their snapshot hash does not resolve in this clone, \
+  +                          {} surprise(s) unprobed)",
+  +                         git.unresolvable, git.skipped_surprises
+  +                     ));
+  ... (10 more lines)
+ ✓ (14.7s)
+                }
+                if c.undated > 0 {
+                    note.push_str(&format!("; {} undated row(s)", c.undated));
+  +             }
+  +             // The second instrument, printed only where it exists at all: a
+  +             // ledger whose events carry no snapshot hash (every event written
+  +             // before Day 165) reads exactly as it did before this pass.
+  +             if let Some(git) = &c.git {
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me fix the three remaining test-construction sites. Let me look at them.
+
+The `row()` helper at 1624 and the two `RetrospectiveCount` constructions at 1817 and 1896.
+
+Rather than `git: None` everywhere, maybe better to give the test helper `row()` a git_hash param? That would require editing many call sites. Simpler: keep `row()` producing `git_hash: String::new()` and add a separate `row_with_hash()` helper for the new git-leg tests. And add `git: None` to the two RetrospectiveCount literals.
+
+Let me do that.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1618,1632p' src/commands… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now fix these three. For 1892, the io-wrapper test writes validations without `snapshot_git_hash`, so `git` should be `None`. But wait — the test runs `retrospective_unhittable_at` which now calls `probe_git_for`, which runs git commands. With no hashes, no git calls happen. Good, and `git` will be `None` since population is 0. But careful: this test runs in a tempdir, not the repo... `probe_git_for` returns early since all git_hash are empty. Fine.
+
+For the `row()` helper, add `git_hash: String::new()` and a `row_h()` variant.
+
+Let me apply edits serially.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (6 → 17 lines)
+            SurpriseRow {
+                ts: ts.to_string(),
+                surprises: surprises.iter().map(|s| (*s).to_string()).collect(),
+  +             // No snapshot hash: the shape every event written before Day 165
+  +             // has, and the regression surface of the git pass.
+  +             git_hash: String::new(),
+  +         }
+  +     }
+  + 
+  +     /// The same row, carrying the snapshot hash the git instrument reads.
+  +     fn row_h(ts: &str, git_hash: &str, surprises: &[&str]) -> SurpriseRow {
+  +         SurpriseRow {
+  +             git_hash: git_hash.to_string(),
+  +             ..row(ts, surprises)
+            }
+        }
+ ✓ (14.9s)
+            SurpriseRow {
+                ts: ts.to_string(),
+                surprises: surprises.iter().map(|s| (*s).to_string()).collect(),
+  +             // No snapshot hash: the shape every event written before Day 165
+  +             // has, and the regression surface of the git pass.
+  +             git_hash: String::new(),
+  +         }
+  +     }
+  ... (8 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (6 → 9 lines)
+                with_unhittable: 3,
+                with_unmeasurable: 86,
+                undated: 0,
+  +             // The ledger-only shape: no git reading at all, which is what this
+  +             // fixture has always been about.
+  +             git: None,
+            });
+ ✓ (14.6s)
+                with_unhittable: 3,
+                with_unmeasurable: 86,
+                undated: 0,
+  +             // The ledger-only shape: no git reading at all, which is what this
+  +             // fixture has always been about.
+  +             git: None,
+            });
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (6 → 10 lines)
+                    with_unhittable: 1,
+                    with_unmeasurable: 0,
+                    undated: 0,
+  +                 // Neither fixture event carries a snapshot hash — the shape of
+  +                 // every ledger written before Day 165, pinned here as still
+  +                 // reading as `None` rather than as an empty census.
+  +                 git: None,
+                })
+ ✓ (17.0s)
+                    with_unhittable: 1,
+                    with_unmeasurable: 0,
+                    undated: 0,
+  +                 // Neither fixture event carries a snapshot hash — the shape of
+  +                 // every ledger written before Day 165, pinned here as still
+  +                 // reading as `None` rather than as an empty census.
+  +                 git: None,
+                })
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need to add the tests that use `row_h` — which is the consumer half. Let me write the tests now (test-first discipline: I'm adding the tests that pin the new behavior).
+
+Tests to add in `retrospective_tests`:
+1. Anti-vacuous: a fixture whose git leg genuinely fires with ≥1 unhittable member, plus a twin that does not — so a reader that always returns 0 cannot pass.
+2. `None` when no row carries a hash (regression surface, byte-identical) — `retrospective_unhittable_at` on a hashless ledger gives `git: None` (already pinned at 1910).
+3. An unresolvable hash → counted as unresolvable + unmeasurable + skipped_surprises, never unhittable (the dangerous direction). Uses row_h with a hash absent from probes.
+4. The two instruments can disagree — the day-178 shape (tie: ledger says not born-after; git says the path did not exist at the snapshot). That's the interesting finding.
+5. Note clause: glyph-free/plain, and byte-identical when `git: None`.
+
+Let me write them.
+
+For the day-178 shape, I want: ledger join `with_unhittable = 0` (tie), git census `with_unhittable = 1` (path absent at snapshot tree). That's a real measured disagreement.
+
+Let me add a helper for probes.
+
+Now writing the test module addition. Where to add: end of `retrospective_tests` module, before the closing brace. Let me find the end of that module.
+
+Actually the `retrospective_tests` mod ends right before `}` at the end of file (line ~1930). Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests — the consumer half:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/commands_risk_unhit… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (8 → 226 lines)
+                    assert!(msg.contains("a-directory"), "{msg}")
+                }
+                other => panic!("expected Unreadable, got {other:?}"),
+  +         }
+  +     }
+  + 
+  +     /// Probes for the git leg, built as data — the whole reason that pass takes
+  +     /// its readings as a parameter rather than shelling out.
+  +     fn probes(
+  +         resolved: &[(&str, bool)],
+  +         present: &[(&str, bool)],
+  +     ) -> GitProbes {
+  +         GitProbes {
+  +             resolves: resolved
+  +                 .iter()
+  +                 .map(|(h, r)| ((*h).to_string(), *r))
+  +                 .collect(),
+  +             present: present
+  +                 .iter()
+  +                 .map(|(k, v)| ((*k).to_string(), *v))
+  ... (204 more lines)
+ ✓ (2m 2s)
+                    assert!(msg.contains("a-directory"), "{msg}")
+                }
+                other => panic!("expected Unreadable, got {other:?}"),
+  +         }
+  +     }
+  + 
+  +     /// Probes for the git leg, built as data — the whole reason that pass takes
+  +     /// its readings as a parameter rather than shelling out.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+It's compiling now and running tests. Let me run the specific test module.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk_unhitta… ✓ (242ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+My fixture is wrong, not the code. The git check is existence at the *snapshot tree*, and both rows share hash `aaaaaaa1`, so both rows see the same probes — both fire. My "twin" comment was wrong: I claimed the second row is a near-miss but gave it the same hash, so it hits the same absent file.
+
+The right near-miss twin for the git instrument is a row whose snapshot tree *has* the path — i.e. a different hash whose probe is `true`. Let me fix the fixture: give the second row a different hash `aaaaaaa2` with `present = true`, so only the first row fires.
+
+That's the honest near-miss: same file, present at the other snapshot's tree.
+
+Also fix the "2 rather than 1" assertion — that part was accidental. Let me rewrite that test cleanly.
+────────────────────────────────────────────────────────────────────────────────
+
+My fixture was wrong, not the code — both rows shared one hash, so both hit the same absent file. Fixing the near-miss twin:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (37 → 71 lines)
+            let rows = [
+  -             row_h("2026-09-03T17:23:00Z", "aaaaaaa1", &["src/born.rs", "src/old.rs"]),
+  -             // The near-miss: the same hash, both files present at that tree.
+  -             row_h("2026-09-04T17:23:00Z", "aaaaaaa1", &["src/born.rs", "src/old.rs"]),
+  +             row_h(
+  +                 "2026-09-03T17:23:00Z",
+  +                 "aaaaaaa1",
+  +                 &["src/born.rs", "src/old.rs"],
+  +             ),
+  +             // The near-miss, and it has to be a *different tree*: the same
+  +             // members under a snapshot taken after the file was added. (A twin
+  +             // sharing the first row's hash would hit the identical probe and
+  +             // prove nothing — that mistake was made and caught by this test.)
+  +             row_h(
+  +                 "2026-09-04T17:23:00Z",
+  +                 "aaaaaaa2",
+  +                 &["src/born.rs", "src/old.rs"],
+  +             ),
+            ];
+            let p = probes(
+  ... (59 more lines)
+ ✓ (2m 18s)
+            let rows = [
+  -             row_h("2026-09-03T17:23:00Z", "aaaaaaa1", &["src/born.rs", "src/old.rs"]),
+  -             // The near-miss: the same hash, both files present at that tree.
+  -             row_h("2026-09-04T17:23:00Z", "aaaaaaa1", &["src/born.rs", "src/old.rs"]),
+  +             row_h(
+  +                 "2026-09-03T17:23:00Z",
+  +                 "aaaaaaa1",
+  +                 &["src/born.rs", "src/old.rs"],
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk_unhitta… ✓ (261ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk_unhitta… ✓ (237ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+46 passed, 0 failed (was 41 before — 5 new tests). Now let me measure the real census by running the actual pass on the repo's ledger. I need an end-to-end way to run `retrospective_unhittable_at` on the real repo paths. 
+
+Options: write a temporary test that runs it against the real `.yoyo/` paths and prints. Actually there might be a CLI path: `yoyo risk` prints the retrospective note. Let me check whether `yoyo risk` command exists and run it.
+
+Actually the note is printed in `handle_risk` (commands_risk.rs:717). Let me just build and run `yoyo risk` — but that's a product command that might be interactive/permission-gated. Let me try `cargo run -- risk` maybe. Or better: a temporary `#[ignore]`d... no, adding an ignored test is a definition without a consumer issue? No, it's a test.
+
+Simplest: run the binary. Let's check what `yoyo /risk` does.
+
+Actually I can write a tiny throwaway test file that isn't committed... but any added file must be removed. Alternative: use a `--nocapture` test temporarily. Hmm, "never finish with analysis only" — I already have the code. For the measurement I can run the real binary.
+
+Let me check the CLI: `yoyo risk` subcommand.
+────────────────────────────────────────────────────────────────────────────────
+
+5 new tests green (41 → 46). Now let me measure the real census by running the actual pass on this repo's ledger:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ls… ✓ (142ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me run the actual pass on the real ledger. The /risk command is a REPL command; but there's `yoyo risk` subcommand? Let me check how to invoke. Actually `handle_risk` is the /risk REPL handler. Let me try piping input.
+
+Actually let me just write a small integration check via the test harness — or run `yoyo -p "/risk"`. Let me try.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 ./target/debug/yoyo … ✓ (919ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test c… (3 lines) ✓ (242ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need a way to run the real pass. Best: add a temporary test that prints the real output, or just run the code path in a temp integration. Let me write a one-off test in the file temporarily? Better: use the existing test binary with a temporary ignored test... Actually simplest is to write a small standalone check by running the note composer over the real ledgers via a temporary test that I then remove. But the task says report literal output.
+
+Alternative: The `/risk` REPL path. Let me check if there's a non-interactive REPL echo mechanism. `yoyo` REPL reads stdin. Let me try piping.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "/risk" | timeout 90 ./targ… ✓ (916ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No non-interactive path. I'll add a temporary `#[test] #[ignore]` that prints the real note, run it, and then remove it. Actually simpler: I can keep a permanent test that runs the real pass over the repo's own ledger? That would be environment-dependent — bad. So temporarily add, measure, remove.
+
+Let me do that with a temp file approach: append a test, run, then revert that append.
+
+Actually cleaner: write the measurement as a temporary test in the file, run with --nocapture, then delete. Let me do it atomically.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (25 lines) ✓ (28.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Real numbers:
+- LEDGER: population=120, with_unhittable=4, with_unmeasurable=89, undated=0
+- GIT: population=120, with_unhittable=4, with_unmeasurable=1, unresolvable=1, skipped=2
+
+Both readings agree on 4. My independent Python was 4 and 4 too. 
+
+Note the 28.5s — that's mostly the debug build. The actual git probing timing: my Python did it in 0.42s. Let me measure the pass time separately. Actually the test build + compile dominated. Let me note the real elapsed for probing. From Python: 0.42s for the same probe set. Close enough — I'll state the measured compile+run and the python cross-check.
+
+Actually let me measure the git probing directly in the test to give an honest number. Let me just time it.
+
+Let me remove the temp module and restore.
+────────────────────────────────────────────────────────────────────────────────
+
+Real census measured. Now removing the temp harness:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/backup_unhittable.rs src… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, temp removed. Note: the 89 with_unmeasurable — that's the founding-batch paths. Good, matches the dream's "unmeasurable is the half that keeps the count from certifying by its silence".
+
+Wait — earlier my Python said with_unmeasurable=0 for the ledger. But now it says 89. Why? Because `first_scored_age` returns None for founding-batch paths. My Python used the raw map (min ts per path), so a founding-batch path DOES have an entry and I compared it directly → some were before, counted as hittable. But `first_scored_age` excludes founding-batch paths (returns None) → unmeasurable. That's the survivor-trap guard. So the real code says 89 rows carry ≥1 undecidable surprise. That's the "97 paths are 95 founding-batch rows" from day 206's lesson. Consistent.
+
+Now: run the positive control (atomic mutate→run→restore), then full checks, then ARCHITECTURE.md.
+
+Positive control: neuter the git leg so it always returns 0.
+
+Let me do it as one atomic command.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive control — atomic mutate → run → restore:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (34 lines) ✓ (56.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Positive control works: neutering the git leg's `with_unhittable` reddens exactly the 3 git-count tests by name, and none of the ledger-join or note tests. Restored: 46 passed.
+
+Now: module size check — 1934 + my additions. Let me check the module gate.
+
+Also need to check `commands_risk_unhittable.rs` is not on the grandfathered register. Earlier grep showed only `src/commands_risk.rs` at 6526 in that area. Let me verify the module size test passes.
+
+Then run full checks and write ARCHITECTURE.md.
+
+Let me also verify: does the `retrospective_unhittable_at` git probing slow down `/risk`? 28.5s was compile-dominated. Let me measure the actual probe pass time honestly. My python equivalent was 0.42s. Let me get a real number by timing inside the test... Actually let me just time the git commands count.
+
+Let me quickly measure: 119 hashes + ~150 probes = ~270 git cat-file invocations. Let me time that.
+
+Actually let me just time it with a shell loop to get an honest number. But I already have: python subprocess doing exactly those calls = 0.42s. I'll report that as the measured pass time, attributed to the equivalent probe set. Better: let me measure it directly.
+
+Let me run the module size test and fmt/clippy first, then do a direct timing.
+
+Actually, one concern: this pass now runs `git cat-file` inside `retrospective_unhittable_at`, which is called from `/risk` (handle_risk). That's a product-facing path. 270 subprocess spawns on every `/risk` invocation could be slow for a big ledger. Let me measure honestly.
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control reddened exactly the 3 git-leg tests by name; restore is green. Now let me measure the real probe cost, since this runs on /risk:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (19 lines) ✓ (454ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+0.42s for 269 git calls on this repo's 120-row post-ledger population. Acceptable but worth disclosing: it scales with distinct (hash, path) pairs, and the alive cost on `/risk` grows with ledger length. Let me note that as a stated limit.
+
+Now run the full checks.
+────────────────────────────────────────────────────────────────────────────────
+
+Now full verification:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (29.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 57s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B5 -A20 … ✓ (1m 29s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The module size gate fired: `src/commands_risk_unhittable.rs` is 2175 lines (the test-count attribution: 175 past the 2000 cap). The task explicitly said: "Do not touch `commands_risk_snapshots.rs`'s module-size budget... put the new code in `commands_risk_unhittable.rs` (which is where Day 206 put the join, for exactly this reason)."
+
+So my code landed in the right file — but that file is now 175 lines past the cap, which is fatal. The gate offers two remedies: split it, or register it with the reason in the commit message.
+
+Hmm. Which is right? The file was 1721 lines at HEAD (under the 2000 cap). My +468 pushed it to 2175. The gate's own preference is "split it". But the task said the new code goes here. Now I need to decide.
+
+Best: split the tests out? No — splitting tests out of a src module is not the convention here (tests live inline per CLAUDE.md). Actually, looking at the project structure, there are separate test files in `tests/`. But the project's convention is inline `#[cfg(test)] mod`.
+
+Let me check the register entry format and whether there's precedent. The gate says "Fix: split it. If growth is genuinely intended, add (...) to GRANDFATHERED_OVERSIZED_MODULES with a reason in the commit message."
+
+Actually, the cleanest honest move: reduce the size. My test module is large (226 lines of tests). I could trim tests, but they're the deliverable's evidence.
+
+Alternative: the retrospective half (the census + note) could be extracted to its own module — that's the same move that produced `commands_risk_unhittable.rs` from `commands_risk_snapshots.rs`. But that's a bigger refactor.
+
+Let me reconsider. The pragmatic and honest option: register the file with the gate, with the reason in the commit message. But +175 is a lot, and the register is supposed to be "modules already over MAX_MODULE_LINES when the gate was installed" plus deliberate growth. The project has precedent — `src/commands_risk.rs` is registered at 6526, `src/format/output.rs` moved 2680 → 2885 in a diff.
+
+Wait — but registering a file for the first time requires care. Let me look at the register and whether newly-added entries are common. From the earlier read: "Day 183: first entry for this file — 2042, i.e. 42 past MAX_MODULE_LINES and..." So yes, first entries happen, with a reason.
+
+But honestly, is growing to 2175 the right call? The cleaner solution given the gate's stated preference ("split it") would be to move the *retrospective* half into its own module. Let me check how big the retrospective section is — it might be a clean split.
+
+Actually, let me weigh budget. I've used a lot of context. The simplest correct path that doesn't hide anything: register the file with the reason. But that's absorbing growth.
+
+Hmm, let me actually check: can I trim? The `probe_git_for` doc comment is long. But tests are the bulk.
+
+Let me measure the sections.
+
+Actually — better idea. The real question: is there a natural split? `commands_risk_unhittable.rs` now holds: (1) the live join, (2) the git instrument, (3) the retrospective census. Splitting (3) into `commands_risk_retrospective.rs` would be principled and would drop this file back under the cap.
+
+Let me check sizes to see if that works.
+
+Let me be efficient and check line ranges.
+────────────────────────────────────────────────────────────────────────────────
+
+The gate fired correctly — my +468 pushed the file from 1721 to 2175. Let me check whether a principled split brings it back under, before considering registration.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_unhittab… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The retrospective half is lines ~386-843 (production) plus the retrospective_tests module (1605-2175). That's roughly 458 + 570 = ~1028 lines. Extracting the retrospective half into `src/commands_risk_retrospective.rs` would leave `commands_risk_unhittable.rs` at ~1147 lines and create a new ~1028-line file. Both under the cap. That's the principled split the gate is asking for.
+
+But: the task said "put the new code in `commands_risk_unhittable.rs`". Extracting the whole retrospective half back out is a larger change and touches `commands_risk.rs`'s import. Risk of breaking things.
+
+Let me weigh: the extraction is mechanical (move lines, add module decl in main.rs/lib, re-export). The project has done exactly this move before ("the same move that produced `commands_risk_unhittable.rs` from `commands_risk_snapshots.rs`").
+
+But there's a real cost: `commands_risk.rs` imports `retrospective_note, retrospective_unhittable_at`. I'd need to keep those re-exported. Also `orphan_modules.rs` test requires modules be reachable.
+
+Given budget constraints, which is safer? The register option is a one-line change with a reason in the commit message — explicitly sanctioned by the gate ("If growth is genuinely intended"). But +175 lines is not "genuinely intended" in the sense of an unavoidable feature; it's mostly my ~290 lines of new tests plus ~180 lines of production code.
+
+Hmm, actually: is the growth genuinely intended? Yes — the task explicitly required this code and this file. The task file says: "Do not touch `commands_risk_snapshots.rs`'s module-size budget. It is on the grandfathered register; if the extension would grow it, put the new code in `commands_risk_unhittable.rs` (which is where Day 206 put the join, for exactly this reason)."
+
+The task author anticipated growth in `commands_risk_unhittable.rs` but did not anticipate it would cross the cap. The gate's first remedy is "split it".
+
+Let me do the split — it's the honest fix and the gate explicitly prefers it. I'll extract the retrospective half into `src/commands_risk_retrospective.rs`.
+
+Wait, but I should be careful about time/context. Let me estimate: moving lines 386-843 and 1605-2175. That's a big mechanical move. Let me do it with python to be safe, then fix imports.
+
+Actually, let me reconsider one more time. A cheaper, equally principled split: the file has 5 test modules. `retrospective_tests` (1605-2175 = 570 lines) is the biggest. But splitting tests out of src is unusual here.
+
+Let me check: does the project ever have separate test files? Yes — `tests/` dir with integration tests (orphan_modules.rs, module_size.rs, etc.). Those are for cross-module behaviour. But `src/commands_risk_epistemic_tests.rs` exists! From the file list: `src/commands_risk_epistemic_tests.rs`. So the convention of a sibling `_tests.rs` file DOES exist in this repo.
+
+That's the cheaper split: move `retrospective_tests` (and possibly the new git tests) into `src/commands_risk_unhittable_tests.rs` as a `#[cfg(test)] mod`. Let me check how `commands_risk_epistemic_tests.rs` is wired.
+
+That gets 570 lines out, leaving 1605 — under the 2000 cap. 
+
+Let me check the wiring pattern.
+────────────────────────────────────────────────────────────────────────────────
+
+The gate's preferred remedy is a split, and this repo already has the pattern (src/commands_risk_epistemic_tests.rs). Let me check how it's wired.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "commands_risk_epistemi… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The pattern is clear: a sibling `src/commands_risk_X_tests.rs` with `#[cfg(test)] mod ...`, declared in `main.rs`. The tests use `crate::commands_risk_X::*`.
+
+I'll extract the `retrospective_tests` module (lines 1605-2175 = 570 lines) into `src/commands_risk_unhittable_tests.rs`. That leaves `commands_risk_unhittable.rs` at ~1605 lines, under the cap.
+
+But wait — the tests in `retrospective_tests` are inline `mod retrospective_tests` with private access to `super::*` items including private `is_placeable_ledger_ts`, `probe_git_for`. If I move them to a sibling file, they can only access `pub(crate)` items. `is_placeable_ledger_ts` is private (`fn is_placeable_ledger_ts`, no pub). The tests reference it: `assert!(is_placeable_ledger_ts("2026-09-03T17:23:00Z"))`. I'd need to make it `pub(crate)`.
+
+Also `probes()` helper builds `GitProbes` which is `pub(crate)` — fine. `row_h` uses `SurpriseRow` fields `pub(crate)` — fine.
+
+`retrospective_unhittable`, `retrospective_git_census`, `retrospective_note`, `RetrospectiveReading`, `RetrospectiveCount`, `GitCensus`, `parse_surprise_rows`, `is_placeable_ledger_ts`, `founding_ts` (imported from elsewhere), `scored`, `row`, `row_h`, `paths` are used.
+
+Let me check what's used in retrospective_tests precisely and what's private.
+
+Also `born_after_ledger_tests` (1332-1604) uses `born_after_by_ledger`, `git_born_after_by_check`, `git_born_after_at`, `LedgerBornAfter`, `ABSENT_OBJECT_ID` — all pub(crate) probably.
+
+Simplest safe approach: move only `retrospective_tests` out (570 lines) → 1605 lines in the main file. And make `is_placeable_ledger_ts` pub(crate) if used.
+
+Let me check what private items `retrospective_tests` uses.
+
+Also there's `tests/orphan_modules.rs` which requires modules be reachable — declaring in main.rs handles that.
+
+Let me do it carefully with python.
+
+Actually wait. Let me reconsider: is moving tests to another file going to break the "never delete existing tests" rule or the assertion-weakening checker? No, tests are preserved, just relocated. The `check_assertion_weakening.py` might flag a move as... it has M_TEST_ADDED / S_TEST_REMOVED. A pure move within the same commit — it reconciles moved tests (`reconcile_moved_tests`). Should be fine.
+
+Let me do the extraction.
+
+Plan:
+1. Extract lines 1605-2175 (from `#[cfg(test)]\nmod retrospective_tests {` to the closing `}` before EOF... actually the file ends at 2175 with the mod's closing brace? Let me check the tail.
+
+Earlier tail showed the file ends with:
+```
+        }
+    }
+}
+```
+That's the end of `retrospective_tests`. Good.
+
+2. Write `src/commands_risk_unhittable_tests.rs` with a doc header + `#[cfg(test)] mod retrospective_tests { use crate::commands_risk_unhittable::*; ... }`.
+
+3. Add `#[cfg(test)] mod commands_risk_unhittable_tests;` to main.rs.
+
+4. Make `is_placeable_ledger_ts` pub(crate) if needed.
+
+Let me check the private-item usage first.
+────────────────────────────────────────────────────────────────────────────────
+
+The split pattern is established. Let me check what retrospective_tests needs from private items before extracting it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1605,2175p' src/commands… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`is_placeable_ledger_ts` is used and is private. `first_scored_age`, `founding_ts` come from `super::*` which re-exports from `commands_risk_snapshots`. Let me check the top of the file for those imports.
+
+From line 1-10 earlier: `use crate::commands_risk_snapshots::{first_scored_age, founding_ts, read_first_scored};` — so in the new file I need to import those explicitly plus `use crate::commands_risk_unhittable::*;` and make `is_placeable_ledger_ts` pub(crate).
+
+Also `read_first_scored` is used? In the tests — the io wrapper test uses `retrospective_unhittable_at` on tempdir files. `read_first_scored` probably not directly.
+
+Let me do the extraction.
+
+Line ranges: the `retrospective_tests` module starts at 1605 (`#[cfg(test)]`) and ends at 2175. But note between 1604 and 1605 there might be a doc comment for the module. Let me check lines 1595-1610.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1596,1610p' src/commands… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now extracting the retrospective test module into a sibling file:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (34 lines) ✓ (186ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1599 && NR<=1607 {print… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Off by one: doc starts at 1602 (index 1601), `#[cfg(test)]` at 1605 (index 1604), `mod` at 1606 (index 1605). Let me redo with correct indices.
+
+Python list index = file line - 1.
+- doc comment starts file line 1602 → index 1601
+- keep = lines[:1601] (file lines 1..1601, i.e. through the blank line 1601)
+- block = lines[1601:2175] (file lines 1602..2175)
+- rest = lines[2175:] (nothing, file ends at 2175)
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (32 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wiring the module declaration and making the private helper accessible:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod commands_risk_ungra… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (1 → 3 lines)
+    mod commands_risk_unhittable;
+  + #[cfg(test)]
+  + mod commands_risk_unhittable_tests;
+ ✓ (14.6s)
+    mod commands_risk_unhittable;
+  + #[cfg(test)]
+  + mod commands_risk_unhittable_tests;
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (23ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_r… ✓ (27.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 46 still pass after the extraction (the test names are now `commands_risk_unhittable_tests::retrospective_tests::…`, and the filter matched). Let me verify the module-size gate and the rest.
+
+Also need to check: `git_hash` field on SurpriseRow is `pub(crate)`, `GitProbes`, `GitCensus` etc. all pub(crate) — fine.
+
+Let me run the full checks.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (29.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Module size gate passes now. `commands_risk.rs` grew to 6528 vs recorded 6526 — that's a warning (2 past, within REGISTER_DRIFT_GRACE_LINES=100), pre-existing/non-fatal. Wait, did I touch commands_risk.rs? No. Let me check git status — maybe it was already 6528 (the register entry was stale). Let me check.
+
+Actually `git diff --stat` earlier showed only commands_risk_unhittable.rs changed. So commands_risk.rs at 6528 is pre-existing drift, warn-only. Fine — not my doing.
+
+Now run the full test suite.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (1m 56s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green. `src/commands_risk.rs` unmodified (the 6528 drift is pre-existing, warn-only).
+
+Now: the task says ARCHITECTURE.md must be corrected, plus a one-line correction at line 462. Let me do Step 2.
+
+Also I should check `cargo fmt -- --check`.
+
+And check whether the orphan_modules test needs the new test file registered (it passed in the full suite, so fine). Let me confirm the new file isn't flagged as orphan — tests/orphan_modules.rs passed.
+
+Let me also double check: does the new test module file being in src/ count for module_size? It's 585 lines, under 2000. Fine.
+
+Now ARCHITECTURE.md. I need to:
+1. Read the context around line 462 (the Day-207/price-drift entry).
+2. Add a one-line correction marking the claim superseded.
+3. Add a new entry for this session.
+
+Let me look at line 462's surroundings and find where entries are structured. Let me look at the structure of ARCHITECTURE.md — where does a session entry go?
+
+Let me check the top of ARCHITECTURE.md and how entries are organized.
+
+Also important: the task says the corrected status of `the_real_dcc72f63_does_not_resolve_in_this_clone` — that test exists (I saw `the_real_dcc72f63...` referenced?). Let me verify the test name at HEAD.
+
+Actually earlier grep for `the_real_dcc72f63_does_not_resolve_in_this_clone` in ARCHITECTURE.md found line 462. Let me check if that test exists in src now.
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now Step 2 — the ARCHITECTURE.md record correction. First verifying the claims I must record:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== does the named test ex…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1 7aaf95fc 2>… ✓ (31ms)
+ ✓ (178ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Important findings:
+
+1. **The named test `the_real_dcc72f63_does_not_resolve_in_this_clone` does NOT exist at HEAD** — `cargo test the_real_dcc72f63` → 0 passed, 0 failed, 5787 filtered out. So the ARCHITECTURE sentence at line 462 names a test that no longer exists. But wait — the task said "cargo test commands_risk_unhittable -> 41 passed". Before my change it was 41 tests. And the named test... let me search more carefully. `grep -rn "the_real_dcc72f63"` in src returned nothing (only dcc72f63 mentions in comments at :81 and :1535).
+
+So the test named at ARCHITECTURE.md:462 does not exist at HEAD. That's a *different* correction than the task assumed: the task's Step 2.2 says "The corrected status of `the_real_dcc72f63_does_not_resolve_in_this_clone`: `dcc72f63` resolves in this clone and `cargo test commands_risk_unhittable` is 41 passed / 0 failed". But I should record what I actually find: the test **does not exist** at HEAD; what exists is `an_absent_object_id_reaches_unmeasured_through_the_real_subprocess` (using ABSENT_OBJECT_ID = 40 zeros), which is a genuinely unresolvable id and passes. So the fixture was **repaired** — replaced by an absent-object-id fixture — rather than left red. That's the honest finding.
+
+Let me verify what happened: `git log -S "the_real_dcc72f63_does_not_resolve_in_this_clone"` to see when it was added/removed.
+
+2. `git_born_after_by_check` was added in `7aaf95fc` (Day 207) — confirmed via git log -S. Also 28013ff5 (Day 206 session wrap-up) — hmm, that means `git_born_after_by_check` string existed in a Day-206 commit too? `git log -S` shows commits where the count of occurrences changed. 28013ff5 is Day 206 wrap-up. So the string appeared in a Day-206 commit?? Let me check more carefully. `git log -S` with tail shows the oldest commit that changed the count. So the string first appeared in 28013ff5 (Day 206 session wrap-up). Hmm, that contradicts the task's claim that the git leg landed in Day 207.
+
+Wait — actually `git log -S` lists newest first; `tail -5` gives the oldest. So order: 7aaf95fc (Day 207) is newest, 28013ff5 (Day 206 wrap-up) is oldest. So the string was introduced in Day 206's wrap-up commit? That's strange. Let me investigate properly.
+
+Actually, hold on. The Day 206 wrap-up commit might have *removed* an occurrence — no, `-S` finds commits where the *number* of occurrences changed. Let me look at what happened in each.
+
+Hmm, but the task asserted the git leg landed in 7aaf95fc (Day 207). My measurement says otherwise, or partially. Let me check the actual history carefully. The task says "If Step 1 finds otherwise, record what you found instead."
+
+Let me check.
+
+3. Also I need to verify: is `count_unhittable_surprises_with_git` present in Day 206's tree?
+
+Let me run these investigations.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.8s (2 ✓)
+
+Two surprises to resolve before writing the record — the named test doesn't exist at HEAD, and the git leg's attribution needs checking:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== when was the named tes…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for c in 28013ff5 7aaf95fc; do e… ✓ (31ms)
+ ✓ (108ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting! `28013ff5` is the **graft point / shallow clone boundary** — it shows a huge stat (adds every file) because it's the shallow-clone's root commit (the truncated history). So `git log -S` shows it as "oldest" only because the shallow clone can't see older commits. That's the survivor trap. So the string appears in 28013ff5 because that's the graft, not because Day 206 introduced it.
+
+So attribution is: `git_born_after_by_check` appears in Day 206's wrap-up *as far as this shallow clone can see*, but the actual origin commit is before the graft — unresolvable here. And 7aaf95fc (Day 207) *changed the count* 9 → 11, i.e. Day 207 added usages, and possibly the function.
+
+Let me check: does the *function definition* `pub(crate) fn git_born_after_by_check` exist in 28013ff5's tree, and in 7aaf95fc's?
+
+And the named test `the_real_dcc72f63_does_not_resolve_in_this_clone`: `git log -S` shows 7aaf95fc and 28013ff5 — again 28013ff5 is the graft. So the test was *removed or modified* in 7aaf95fc (Day 207) — i.e. the price-drift session either deleted it or repaired it. And it does not exist at HEAD. So at HEAD that test is **gone**, not red.
+
+This is the crucial correction: the task's premise ("that sentence was true in the authoring session's environment and is false at HEAD — the hash resolves and all 41 tests pass") is about the *test's assertion*, but my measurement is stronger: **the test no longer exists at HEAD**. Let me verify precisely by examining 7aaf95fc's diff of commands_risk_unhittable.rs.
+
+Let me confirm:
+- Does `the_real_dcc72f63_does_not_resolve_in_this_clone` exist in 28013ff5 tree? (yes if grep found it)
+- Does it exist in 7aaf95fc tree? (grep won't find it if removed)
+
+And whether the function definition existed before.
+
+Let me run.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.9s (2 ✓)
+
+28013ff5 is the shallow-clone graft point (it adds every file) — a survivor-trap artefact, not Day 206. Verifying the real attribution:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== graft points ===" && c… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: `28013ff575df...` is the shallow graft point (also `cdf8bbda`, `c59afeb8`, `32da96ed` are in .git/shallow — 4 graft points). The named test `the_real_dcc72f63_does_not_resolve_in_this_clone` does NOT exist in 7aaf95fc's tree — 0 occurrences. And it doesn't exist at HEAD.
+
+The `grep -c "pub(crate) fn git_born_after_by_check"` command exited 1 (0 matches → grep returns 1), so the whole `&&` chain stopped. So in 7aaf95fc tree, `pub(crate) fn git_born_after_by_check` count = 0? Wait no — the chain: `grep -c "the_real_dcc72f63"` printed 0 and returned exit 1, so the `&&` stopped. So the third command never ran. Let me rerun.
+
+Also need: was the test present at the graft point 28013ff5? Earlier `git show 28013ff5:src/commands_risk_unhittable.rs | grep -c git_born_after_by_check` = 9, so the file exists there.
+
+Let me now check:
+1. Does `pub(crate) fn git_born_after_by_check` exist in 28013ff5 tree? (i.e., was the git leg already there at the graft boundary, meaning it predates what this clone can see)
+2. Did the test exist at 28013ff5?
+3. What did 7aaf95fc change in commands_risk_unhittable.rs?
+
+This matters for the record's attribution claim.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "graft 28013ff5: fn def cou… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I have the full picture, and it differs materially from the task's premise:
+
+**Corrected findings:**
+
+1. **The git leg (`git_born_after_by_check`) did NOT land in Day 207 (`7aaf95fc`).** Both the function definition and the named test already exist in `28013ff5` — the shallow clone's **graft point**. So the git leg predates what this clone can resolve; its true authoring commit is not in this clone. The task asserted Day 207 per the `grep -rn` listing; that listing shows *call sites*, not authorship, and the Day-206 `ARCHITECTURE.md` sentence ("the git path was not attempted") is contradicted by the graft-point tree already carrying it.
+
+Wait — careful. Let me re-read. The Day-206 ARCHITECTURE entry says "The fallback was taken deliberately and the git path was not attempted." But the git leg exists at the graft point 28013ff5 (`Day 206 (23:59): session wrap-up`). Hmm — 28013ff5 is *itself* a yoyo commit ("Day 206 (23:59): session wrap-up"), and it's the graft point, meaning the clone was truncated at it. It adds every file because git can't see its parent. So the tree at 28013ff5 is the state at the *end of Day 206* — which already contains `git_born_after_by_check` and the `the_real_dcc72f63_does_not_resolve_in_this_clone` test.
+
+So: the git leg was added *within* Day 206 (after the ARCHITECTURE paragraph was written for the Day-206 morning task?) — or the ARCHITECTURE Day-206 entry is about a *different* sub-task. Hmm. Actually, Day 206 had multiple tasks. The "the git path was not attempted" line is from the cycle-9→10 task; a *later* Day-206 task could have added the git leg. But the clone can't see the intermediate commits (grafted), so I cannot resolve which commit added it. The honest statement: within this clone, the git leg is present at the earliest resolvable tree (the Day-206 graft point `28013ff5`), so it did **not** first land in Day 207's `7aaf95fc`; what `7aaf95fc` did was **repair the fixture** — replacing `the_real_dcc72f63_does_not_resolve_in_this_clone` (which had gone red because the hash now resolves) with `an_absent_object_id_reaches_unmeasured_through_the_real_subprocess` + `ABSENT_OBJECT_ID`.
+
+That's a materially different (and much better) story than the task's premise: the "pre-existing breakage" the Day-207 entry reported was **fixed by the Day-207 session itself**, in the same commit, and the correct record is that the test was *renamed and re-fixtured*, not that it "fails two tests". Let me verify: was `the_git_wrapper_leaves_the_recorded_count_alone_and_fills_the_git_leg` also broken then fixed? It exists at HEAD and passes. Let me check if 7aaf95fc's diff touched it.
+
+Let me see the rest of the diff.
+
+2. So the correction to ARCHITECTURE.md:462 is: that sentence describes breakage that `7aaf95fc` **itself fixed in the same commit** — so it was never true of the committed tree; it was true only of the working tree *before* the fix landed. And `dcc72f63` resolves at HEAD; the named test no longer exists.
+
+Let me get the full diff to be precise.
+
+3. My census numbers:
+   - LEDGER: population=120, with_unhittable=4, with_unmeasurable=89, undated=0
+   - GIT: population=120, with_unhittable=4, with_unmeasurable=1, unresolvable=1, skipped=2
+   - Disagreement: 2 rows (day 178 tie→git says absent; day 206 ledger says unhittable→git hash unresolvable)
+
+Let me get the rest of the 7aaf95fc diff to confirm the wrapper test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 7aaf95fc -- src/command… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed fully. `7aaf95fc` (Day 207, price-drift, Task 1) **repaired both tests** in the same commit that ARCHITECTURE.md:462 says they were broken. And ARCHITECTURE.md:462 says "Named, not fixed" — which is the opposite of what the commit did.
+
+So the ARCHITECTURE.md:462 sentence is wrong in **three** ways:
+1. The two named tests do not fail at HEAD — and never did in the committed tree, because `7aaf95fc` itself fixed them in the same commit.
+2. The named test `the_real_dcc72f63_does_not_resolve_in_this_clone` no longer exists (renamed to `an_absent_object_id_reaches_unmeasured_through_the_real_subprocess`).
+3. The attribution: the git leg did not land in Day 207; it is present at the earlier graft-point tree `28013ff5`.
+
+Now let me look at the exact ARCHITECTURE.md line 462 and its surroundings, plus find where to add my new entry. Let me look at the file structure — how are sessions' entries laid out?
+
+Let me get line 455-470 and understand which bullet this is inside.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the full correction. Let me read the ARCHITECTURE.md context and the file's entry conventions:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=455 && NR<=464 {printf …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 ARCHITECTURE.md && echo… ✓ (5ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I understand the file's structure. The invariant gates are first, then `## Architecture` with per-file notes. Line 462 is inside the `src/format/cost.rs` bullet (the Day-207 price-drift entry). I need to:
+
+1. Add a correction at line 462 in place (mark superseded).
+2. Add a new session entry for Day 209.
+
+Let me see how entries are dated/laid out in the "Day N" pattern, and find where the most recent entries begin. Let me search for the newest Day entries.
+
+The pattern is `**Day 204 (#937 task 2 ...)**` etc. within the per-file bullet. So new entries go into the file's bullet. But the task says "Put the correction in ARCHITECTURE.md under **its own new entry for this session**".
+
+Given the file's structure, the natural place is within the `commands_risk_unhittable.rs` bullet (if one exists) or creating one. Let me check if there's a bullet for commands_risk_unhittable.rs.
+
+Earlier grep showed `commands_risk_unhittable` references at line 551 (commands_risk_snapshots.rs bullet) — the Day-206 text. Let me check if there's a dedicated bullet.
+
+Let me search for bullets starting with `- \`commands_risk`.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`" ARCHITECTURE.md … ✓ (16ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

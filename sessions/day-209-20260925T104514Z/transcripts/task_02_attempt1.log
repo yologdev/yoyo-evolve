@@ -1,0 +1,786 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the relevant code to ground the change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 330,395p scripts/social.s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "usage_print_line\|forma… ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The line is printed with DIM prefix and a leading blank line. Let me read format_usage_line fully to know the exact literal shape.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 660,745p src/format/mod.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "USAGE_NO_TERMINAL_EMIT\… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now check the wording used by extract_trajectory.py for no_terminal_emit, and where it's rendered — to reuse exactly. Let's read around lines 1890-1960 and 2050-2080.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1885,1960p scripts/extrac…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "YOYO_AUDIT\|audit.jsonl… ✓ (6ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the audit writer in prompt_budget.rs to know what the usage line looks like in audit.jsonl, and where the file path is decided (YOYO_AUDIT_DIR). Also check evolve.sh:431 and 3779 context for the pattern.
+
+Also the usage line printed by yoyo: `↳ {elapsed} · {in}→{out} tokens (speed) · $cost`. Under tee it's plain text with DIM escape codes (colored), since output goes to a pipe → color disabled? Let's check: color is based on NO_COLOR / stderr_is_terminal. `usage_print_line` via print_usage uses DIM/RESET consts. Whether color codes appear depends on `disable_color` etc. In social.sh, output is tee'd to a file — stdout is a pipe. Let me check `color_enabled_from_env` usage and how COLOR_DISABLED is set — likely tied to tty detection for stdout.
+
+Better: grep for how the binary strips color when piping. In social.sh, the agent's output might contain ANSI codes, and there's a strip_ansi helper in extract_trajectory. Let me check what social.sh does with AGENT_LOG for ANSI. Safer: strip ANSI codes in the grep pattern using a robust match. Let me look at how color is decided.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.3s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "COLOR_DISABLED\|fn disa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 425,440p scripts/evolve.s… ✓ (6ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now, the audit file: does the audit.jsonl carry a usage record? Let me check the writer in cli.rs / prompt_budget.rs. #848 made audit carry cost_usd per run. Let's find `write_audit_entry` and the "usage" type.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '"usage"' src/*.rs src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "cost_usd\|usage" src/p… ✓ (4ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. The audit file has a `"type": "usage"` line per run.
+
+Now let's look at the top of social.sh (for style) and the bottom (Step 8 safety check, which reverted unexpected files). Note step 8 reverts anything not in the allowlist. Does it `git checkout` untracked files? Let's look further.
+
+Also important: audit file `.yoyo/audit.jsonl` is gitignored, and the safety check's UNTRACKED_FILES uses `git ls-files --others --exclude-standard` which excludes gitignored files → the audit file won't be in ALL_CHANGED. Good. But I must verify that rather than trust.
+
+Wait — there might be a subtlety: does social.sh run in a fresh checkout where `.yoyo/audit.jsonl` doesn't exist? Yes probably. Then the watermark is 0, and after the run the file has lines.
+
+Now the design:
+
+1. Before the invocation: `export YOYO_AUDIT=1`, and watermark = line count of `.yoyo/audit.jsonl` (0 if absent).
+2. After the run (both in the API-error early-exit path and the normal path, before `rm -f "$AGENT_LOG"`), extract the usage line from AGENT_LOG and print with a label; print per-run audit delta and cumulative file size.
+
+Let me design the code to be a small function block to avoid duplication between the two rm sites. Since `set -o errexit` is re-enabled after the run, must be fail-soft. I'll write a shell function `social_report_spend()` defined before, and call it at both sites.
+
+Actually the API-error path exits 1 at :372-374. The task says "Before deleting `$AGENT_LOG` (at `:376`, and the early-exit `:373`), read the usage line out of it and echo it with a label."
+
+Let me write:
+
+```bash
+# ── #944: per-run spend accounting (fail-soft; see ARCHITECTURE.md) ──
+# `yoyo` prints this run's usage line (print_usage → format_usage_line,
+# src/format/mod.rs); social.sh tees it into $AGENT_LOG and used to delete the
+# file without reading it. Report it, plus the per-run audit delta, before the
+# rm. Every branch warns and continues: the social phase must never fail
+# because its own accounting did.
+AUDIT_FILE=".yoyo/audit.jsonl"
+AUDIT_BEFORE=0
+if [ -f "$AUDIT_FILE" ]; then
+    AUDIT_BEFORE=$(wc -l < "$AUDIT_FILE" 2>/dev/null || echo 0)
+fi
+```
+
+Hmm, careful: `wc -l < file` with no trailing newline undercounts. The audit writer presumably ends with newline. Let's just use `wc -l`.
+
+Then function:
+
+```bash
+report_run_spend() {
+    # $1 = agent exit code
+    local exit_code="${1:-0}"
+    # 1. This run's own usage line, as the binary emitted it.
+    local usage_line
+    usage_line=$(grep -a '↳' "$AGENT_LOG" 2>/dev/null | tail -1 || true)
+```
+
+Matching by the `↳` glyph is fragile — but it's the literal shape of the compact line. However in `--verbose` the line is "tokens: N in / M out ...". Is social.sh verbose? Probably not. The task says "Match the line by the shape the binary actually emits — read `format_usage_line` at HEAD and match on that".
+
+Better: match either shape: the compact "tokens" suffix or the verbose "tokens: ". A robust regex: `grep -aE '↳ .*tokens|tokens: [0-9]+ in'`. Also ANSI DIM escape codes may wrap the line: `\n{DIM}  {line}{RESET}`. DIM is an escape code like `\x1b[2m`? Let's check the Color constants — if color is on when piped. Under tee, stdout is a pipe. Does yoyo disable color when not a tty? Look at main.rs:881 `disable_color()` context.
+
+Let me check.
+
+Actually, line 293: `STDERR_IS_TTY` for stderr. For stdout color... let's check `color()` usage. Let me grep how DIM is applied — `impl Color { fn apply }` maybe checks `color_enabled()`. But is there a `IsTerminal::is_terminal(&stdout)` check anywhere? grep isatty showed only stderr. Let me look at main.rs:875-885 and the Color Display impl.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.0s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 860,890p src/main.rs && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,120p scripts/social.sh ✓ (3ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good — color is auto-disabled when stdout is not a terminal, so the tee'd log has no ANSI codes for the usage line. Still, I'll keep the match robust (strip ANSI-ish) — actually simpler: match the literal shape and not worry. But to be safe, I'll match with a pattern that tolerates an optional escape prefix.
+
+Since the run in CI: stdout is piped to tee → not a terminal → no color. So the line is literally `  ↳ 12.3s · 1234→567 tokens (45 tok/s) · $0.0123` with two leading spaces and a preceding blank line.
+
+Matching: `grep -a '↳' ` on the log. But the log also contains streaming content that might contain `↳`? The agent's own output could include it (unlikely). Also tool output could. Safer pattern: `grep -aE '↳ [0-9]+(\.[0-9]+)?(ms|s|m |h )' ...`. Hmm, format_duration. Let me check format_duration output shape.
+
+Let me check format_duration.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn format_duration"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,200p scripts/social.s… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let's look at the region around line 300-395 more carefully to write the edit, and the full head of the invocation setup (PROMPT creation).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 250,330p scripts/social.s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 395,470p scripts/social.s… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now verify the safety-check concern for the audit file, in a temp repo sandbox later. But first: `git ls-files --others --exclude-standard` excludes ignored files. Confirm `.yoyo/audit.jsonl` is ignored → yes, `.gitignore:31` (well the grep showed `.yoyo/audit.jsonl` in the "skill-evolve runtime state" block). Let me confirm line number and that there's no negation later.
+
+Now write the change. Structure:
+
+Before invocation (around line 353-358):
+
+```bash
+echo "→ Running social session..."
+AGENT_LOG=$(mktemp)
+# ── #944: this run's own spend, captured rather than deleted ──
+# `yoyo` prints its usage line at the end of every prompt ... The line is
+# tee'd into $AGENT_LOG and, before this change, deleted unread. Turn the
+# audit stream on (same shape evolve.sh uses) and take a per-run WATERMARK:
+# .yoyo/audit.jsonl is append-only and survives between runs on a persistent
+# checkout, so a bare line count answers "what has this repo ever spent",
+# never "what did THIS run spend" (#944 complaint 2).
+export YOYO_AUDIT=1
+AUDIT_FILE=".yoyo/audit.jsonl"
+AUDIT_BEFORE=0
+if [ -f "$AUDIT_FILE" ]; then
+    AUDIT_BEFORE=$(wc -l < "$AUDIT_FILE" 2>/dev/null || echo 0)
+fi
+```
+
+Hmm, `wc -l < file` inside `$( ... || echo 0)`: if wc fails, output "0" but also maybe empty. Use `AUDIT_BEFORE=$(wc -l < "$AUDIT_FILE" 2>/dev/null | tr -d ' ' || true); AUDIT_BEFORE=${AUDIT_BEFORE:-0}` and validate numeric. Careful with empty → arithmetic later needs a number. Let me do:
+
+```bash
+AUDIT_BEFORE=0
+if [ -f "$AUDIT_FILE" ]; then
+    AUDIT_BEFORE=$(wc -l < "$AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+    case "$AUDIT_BEFORE" in ''|*[!0-9]*) AUDIT_BEFORE=0 ;; esac
+fi
+```
+
+That's robust and avoids errexit issues (the `|| true` inside command substitution, plus case).
+
+Now the reporting function. Define it before Step 7 maybe, or right there. Note `set -u` is on (set -euo pipefail) — so `${1:-}` needed for unset params, and reading unset vars is fatal. Careful. Also `set +o errexit` around the agent run; but function defined earlier executes later after errexit restored.
+
+Wait: errexit is re-enabled at :360 `set -o errexit`. And `pipefail` is set globally. So `grep` in a pipeline may return nonzero → with errexit, the pipeline fails and script exits. Must guard with `|| true`.
+
+Function:
+
+```bash
+# Report this run's own spend. Fail-soft: every branch warns and continues,
+# because the social phase must never fail because its accounting did.
+report_social_spend() {
+    local usage_line=""
+    # 1. The line the binary itself prints at the end of a prompt
+    #    (print_usage → format_usage_line, src/format/mod.rs): the compact
+    #    form is "↳ <elapsed> · <in>→<out> tokens[...]". Match the shape the
+    #    binary emits rather than a hand-written regex.
+    usage_line=$(grep -aE '↳ [0-9]+(\.[0-9]+)?(ms|s|m |h |d )' "$AGENT_LOG" 2>/dev/null | tail -n 1 || true)
+    if [ -n "$usage_line" ]; then
+        echo "  Spend (this run): ${usage_line#"${usage_line%%[![:space:]]*}"}"
+    else
+        # An absent usage line is not a zero. A run killed by the timeout
+        # (exit 124) never reaches print_usage, and neither does a run that
+        # died before its terminal emit. Same vocabulary as
+        # scripts/extract_trajectory.py's USAGE_NO_TERMINAL_EMIT — never a
+        # second wording, and never rendered as 0.
+        echo "  Spend (this run): no usage record — the process did not reach its terminal emit (no_terminal_emit)"
+    fi
+    ...
+}
+```
+
+Hmm — should I attribute the absent case to timeout? The task says: "If the line is absent, say so explicitly: a timed-out run (`AGENT_EXIT -eq 124`) never reaches `print_usage`, so its absence is *'no usage record — the process did not reach its terminal emit'*". So use that exact sentence regardless. Good, and mention timeout when exit is 124? Maybe append. Keep simple: use that sentence, and if exit_code is 124 also note the timeout. Actually simplest and closest to instruction: single sentence. But giving the exit code helps. I'll pass exit code and append "(exit N)" maybe. Hmm, keep it minimal-faithful: the exact sentence. Adding exit code is extra info that could be useful. I'll include the exit code only when non-zero? That risks diverging from wording. Let me just print the sentence verbatim per instruction, no extra.
+
+Actually I do pass AGENT_EXIT into the reporting to decide... no, not needed. Keep it simple: no parameter. But the two call sites differ: early-exit path (API error) and normal. Both print same. Fine, no args.
+
+Then the audit delta:
+
+```bash
+    # 2. The per-run audit delta, and the cumulative file size as a SECOND,
+    #    differently-labelled fact (never merged into one number).
+    local audit_after=0 delta=0 size=0
+    if [ -f "$AUDIT_FILE" ]; then
+        audit_after=$(wc -l < "$AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+        case "$audit_after" in ''|*[!0-9]*) audit_after=0 ;; esac
+        delta=$((audit_after - AUDIT_BEFORE))
+        [ "$delta" -lt 0 ] && delta=0
+        size=$(wc -c < "$AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+        case "$size" in ''|*[!0-9]*) size=0 ;; esac
+        echo "  Spend audit: ${delta} record(s) written this run (audit line ${AUDIT_BEFORE} → ${audit_after}); audit file ${size} bytes cumulative"
+    else
+        echo "  Spend audit: no .yoyo/audit.jsonl — audit records not written this run (cumulative size unknown)"
+    fi
+}
+```
+
+Hmm wait: what if audit file doesn't exist at all → warn and continue. Yes handled.
+
+But careful: `local` is fine in bash. Also `[ "$delta" -lt 0 ] && delta=0` — with errexit, if the test fails, `&&` short-circuits and the compound command returns 1 → does errexit trigger? A command that is part of `&&` list: if the whole list returns non-zero, errexit triggers... Actually the rule: errexit doesn't apply to commands in a `&&`/`||` list except the last one. Here `[ ... ] && delta=0` — the list's exit status is 1 when the test fails, and it's a standalone statement → errexit fires! Yes, that's a classic gotcha. Use `if [ "$delta" -lt 0 ]; then delta=0; fi`.
+
+Also `local audit_after=0` then reusing — fine.
+
+Also we need the function defined before its call sites. Where? I'll put it just before `echo "→ Running social session..."`, i.e. in Step 7 region. Actually cleaner: define it right after YOYO_BIN detection or in the Step 7 block. Put in Step 7 block right before `AGENT_LOG=$(mktemp)`.
+
+Hmm, but the watermark must be taken BEFORE the run and the reporting AFTER. Both in the same region. Good.
+
+Also: `export YOYO_AUDIT=1` — does yoyo write audit to `.yoyo/audit.jsonl` relative to cwd? Check the path resolution: cli.rs / prompt_budget.rs:139 "per-run usage record — go through here, so they cannot drift in path". Let me read prompt_budget.rs 120-200 to see path and whether YOYO_AUDIT_DIR matters.
+
+Also does the audit only write when `--audit`/env? Yes: audit_log_usage_when(enable, ...) where enable is from YOYO_AUDIT=1.
+
+Now the safety-check concern: after our change, if a social run produces `.yoyo/audit.jsonl`, is it caught by the safety check? gitignored → excluded from untracked list. Also `git diff --name-only` won't show it since it's untracked. So safe. But I must verify in a temp repo that `git ls-files --others --exclude-standard` excludes it.
+
+Let me read prompt_budget.rs path resolution quickly.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.8s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,200p src/prompt_budge…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "audit" .gitignore ✓ (2ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good: `.gitignore:31` is `.yoyo/audit.jsonl` exactly as the task said, and audit_base resolves to `.yoyo` by default (with YOYO_AUDIT_DIR override). Let me confirm audit_base.
+
+Now make the edits. Let me view exact lines 350-380 with line numbers to edit precisely.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn audit_base" -A 15 sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n scripts/social.sh | sed -… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+Now the edit. First, the pre-run watermark and audit enablement:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/social.sh (3 → 75 lines)
+  + # ── #944: this run's own spend, captured instead of deleted ──
+  + #
+  + # `yoyo` already prints this run's token usage at the end of a prompt
+  + # (`print_usage` -> `format_usage_line`, src/format/mod.rs); the line below
+  + # tees it into $AGENT_LOG, which social.sh then deleted unread. Nothing was
+  + # missing but one read, so the accounting lives here rather than in a new
+  + # feature.
+  + #
+  + # `YOYO_AUDIT=1` (the same shape scripts/evolve.sh uses) turns on the per-run
+  + # record `.yoyo/audit.jsonl` carries since #848. That file is **gitignored**
+  + # (.gitignore:31), so it never appears in `git ls-files --others
+  + # --exclude-standard` and the Step 8 safety revert cannot see it — verified
+  + # against a throwaway repo rather than assumed, because a safety check that
+  + # starts reverting real files is the failure this must rule out.
+  + export YOYO_AUDIT=1
+  + AUDIT_FILE=".yoyo/audit.jsonl"
+  + # Per-run watermark. The audit file is append-only and survives between runs
+  + # on a persistent checkout, so a bare line count answers "what has this repo
+  + # ever spent"; the delta below answers "what did THIS run spend" (#944's
+  + # complaint 2, in its own words: "a per-run watermark or truncate so the
+  ... (55 more lines)
+ ✓ (1m 27s)
+  + # ── #944: this run's own spend, captured instead of deleted ──
+  + #
+  + # `yoyo` already prints this run's token usage at the end of a prompt
+  + # (`print_usage` -> `format_usage_line`, src/format/mod.rs); the line below
+  + # tees it into $AGENT_LOG, which social.sh then deleted unread. Nothing was
+  + # missing but one read, so the accounting lives here rather than in a new
+  + # feature.
+  + #
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the two call sites, before each rm -f "$AGENT_LOG":
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/social.sh (7 → 9 lines)
+    # Exit early on API errors
+    if grep -q '"type":"error"' "$AGENT_LOG" 2>/dev/null; then
+        echo "  API error detected. Exiting."
+  +     report_social_spend
+        rm -f "$AGENT_LOG"
+        exit 1
+    fi
+  + report_social_spend
+    rm -f "$AGENT_LOG"
+ ✓ (1m 27s)
+    # Exit early on API errors
+    if grep -q '"type":"error"' "$AGENT_LOG" 2>/dev/null; then
+        echo "  API error detected. Exiting."
+  +     report_social_spend
+        rm -f "$AGENT_LOG"
+        exit 1
+    fi
+  + report_social_spend
+    rm -f "$AGENT_LOG"
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && bash -n scripts/social.sh && ech…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm -rf /tmp/… (17 lines) ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Avoid `rm -rf /tmp/stubby` (blocked due to literal pattern). Use mktemp -d instead.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (1 ✓, 1 ✗)
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && STUB=$(mktemp -d) && mkdir -p "$STUB/work/.yoyo" … (15 lines) ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need to run the new accounting block against the stub in a throwaway copy. I'll extract the block from social.sh? Better approach: build a harness that sources the relevant portion. But the block depends on `$AGENT_LOG`, `$AUDIT_FILE`, and functions defined in the same block. Sourcing social.sh wholesale would run the whole script (git, gh, etc.).
+
+Best: extract the chunk of social.sh between the "# ── #944:" marker and the `rm -f "$AGENT_LOG"` after report_social_spend, plus define AGENT_LOG and run the stub. But the invocation lines are in the block too — the block contains the real invocation via "$YOYO_BIN" with --model/--skills and `< "$PROMPT"`. I can set YOYO_BIN=stub, MODEL=stub, PROMPT=<a file>, TIMEOUT_CMD="" and run the extracted chunk verbatim in a temp dir. That's a faithful end-to-end test of the new code path.
+
+Let me extract with sed: from line of `# ── #944:` to the line `rm -f "$AGENT_LOG"` that follows `report_social_spend` (second one). Simpler: extract from `# ── #944:` through the line after the API-error block. Let's find line numbers.
+
+Actually extract from `# ── #944:` up to and including the second `report_social_spend` + `rm -f "$AGENT_LOG"`. Note the API error grep block is included and will `exit 1` if the stub log contains `"type":"error"` — our stub doesn't.
+
+Let's do it. Note: extracted chunk uses `set +o errexit` / `set -o errexit` — fine.
+
+Cases:
+1. Normal: usage line present, audit enabled → prints usage line + delta (2 records).
+2. Line absent (simulate timeout shape): stub that prints nothing usage-like and exits 124. Also with audit file present.
+3. No audit file at all: stub that doesn't write audit (YOYO_AUDIT ignored) → warns. But careful: our code exports YOYO_AUDIT=1 always; the stub decides whether to write. For case 3, use a stub that ignores YOYO_AUDIT and writes nothing → file absent → warning branch.
+4. Near-miss: YOYO_AUDIT previously unset in the environment... hmm, our change *sets* YOYO_AUDIT=1, which is a behavior change. The near-miss the task names: "with `YOYO_AUDIT` unset and no usage line, the script's exit status and its `main`-path behaviour are unchanged from HEAD". I'll test exit status preserved (stub exit 3 → AGENT_EXIT 3, script continues, exit code of the chunk = 0).
+
+Let me write a harness script.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "── #944" scripts/social… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 352,450p scripts/social.s… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ STUB=$(cat /tmp/stubdir.txt); WRK="$STUB/work"; cat > "$STUB… (43 lines) ✓ (63ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to continue the task. I was at Step 2 case verification — all three cases passed. Remaining:
+
+1. Verify watermark behavior on a persistent checkout (second run with existing audit lines) — the per-run delta test.
+2. Near-miss: with YOYO_AUDIT unset and no usage line, script behaviour unchanged.
+3. Record in ARCHITECTURE.md.
+4. Run cargo build/test/clippy/fmt.
+5. Commit.
+
+Let me continue. First check the state of the tree (did my edits persist?).
+────────────────────────────────────────────────────────────────────────────────
+
+Continuing. Let me verify my edits are still in place and run the remaining verification cases (persistent-checkout watermark delta + the unset near-miss).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && grep -n "repo…  ▶ $ cat /tmp/harness_chunk.sh 2>/dev/null | head -5; echo "---"; ls /tmp/stubdir.txt… ✓ (6ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, edits persist and the harness is still there. Now the remaining cases:
+
+Case 4: persistent checkout — pre-existing audit lines, verify delta measures THIS run only.
+Case 5: near-miss — YOYO_AUDIT unset + no usage line: script continues, exit unchanged.
+
+Let me run those.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+Both edits persist. Now the two remaining cases — the per-run watermark on a persistent checkout, and the near-miss:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ STUB=$(cat /tmp/stubdir.txt) (20 lines) ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The watermark works: "2 record(s) this run (line 5 → 7)" — the delta is this run's 2, not the cumulative 7. That's exactly #944's complaint (2).
+
+Now case 5: near-miss. YOYO_AUDIT unset and no usage line → nothing printed except the explicit absence sentence... wait, "near-miss that matters: with YOYO_AUDIT unset and no usage line, the script's exit status and its main-path behaviour are unchanged from HEAD".
+
+Hmm — with YOYO_AUDIT unset, the script itself exports YOYO_AUDIT=1 now (step 1 of the task). So the binary WILL write audit lines. The near-miss they mean: the accounting is additive and cannot break a real social run. Let me test: stub that ignores YOYO_AUDIT entirely and emits nothing (no usage line, no audit) — i.e., the degenerate case. The old behaviour: `grep -q '"type":"error"'` fails, rm, continue. New: same, plus two informational lines. Exit status must be 0 and no failure.
+
+Let me also test the `errexit` safety: a stub that emits a usage line and an error marker (`"type":"error"`) → early-exit path (`exit 1`) with the spend reported before rm. That's the `:373` call site the task named. Let me test that too — it's an important one (the early-exit door).
+
+Case 5: error-shaped output → early exit path.
+Case 6: totally silent stub, no audit, no usage → script continues to exit 0.
+
+Let me run both.
+
+Note: exit code of the harness is a subshell exit... The `exit 1` in the chunk will exit the subshell, which is fine.
+
+Let me write these.
+────────────────────────────────────────────────────────────────────────────────
+
+The watermark is correct — 2 record(s) this run (line 5 → 7), not the cumulative 7. Now the early-exit door and the degenerate near-miss:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ STUB=$(cat /tmp/stubdir.txt) (25 lines) ✓ (40ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All six cases behave. The early-exit door reports spend before rm, and exit status is preserved (exit=1 in case 5, exit=0 in case 6) — the accounting is additive and does not change exit codes.
+
+Now the todo says: "Confirm the near-miss that matters: with YOYO_AUDIT unset and no usage line, the script's exit status and its main-path behaviour are unchanged from HEAD". Case 6 shows exactly that (exit 0, plus informational lines).
+
+Let me also verify the Step 8 safety check concern: that `.yoyo/audit.jsonl` is not seen by `git ls-files --others --exclude-standard` and by `git diff --name-only` in the real repo. Let me verify in a throwaway git repo + also in this repo.
+
+Actually the task says "verify that rather than trusting this task file". Let me do it in a temp git repo:
+- create git repo, .gitignore with `.yoyo/audit.jsonl`, create `.yoyo/audit.jsonl`, run `git ls-files --others --exclude-standard` and `git diff --name-only`.
+
+Let me do that now.
+
+Then: ARCHITECTURE.md entry, then the four cargo checks, then commit.
+
+Let me run the gitignore verification.
+────────────────────────────────────────────────────────────────────────────────
+
+All six cases behave, and exit codes are preserved. Now the safety-check claim — verify .yoyo/audit.jsonl is invisible to Step 8's three probes rather than trusting the task file:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ G=$(mktemp -d) && cd "$G" && git init -q . && git config user.email t@t && git c… ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The control proves the file exists and git sees it with `--others`, but `--exclude-standard` correctly filters it. So Step 8's `UNTRACKED_FILES` is empty for the audit file → no revert.
+
+Note: interesting — the output for "--- untracked (--exclude-standard) ---" and "--- changed ---" and "--- staged ---" sections appears to be empty (the tool compressed similar lines). Let me re-run more explicitly to get clean evidence for the write-up.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ G=$(mktemp -d) && cd "$G" && git init -q . && git config user.email t@t && git c… ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: all three of Step 8's probes return 0 lines for the audit file, while the control proves the file is really there. So step 1 (enabling YOYO_AUDIT) does not trip the safety revert.
+
+Also let me verify in the actual repo that `.yoyo/audit.jsonl` is gitignored — already saw `.gitignore:31`.
+
+Now: ARCHITECTURE.md entry. But first, let me check whether there's an existing entry for scripts/social.sh in ARCHITECTURE.md and what the session heading format is.
+
+Also — one more thing. The task said the write-up goes under "this session's heading for `scripts/social.sh`". Let me look at ARCHITECTURE.md structure.
+
+Let me also double check the final diff re-read: "confirm that nothing outside the accounting block changed".
+
+Let me look at ARCHITECTURE.md.
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed — all three Step 8 probes return 0 lines for the audit file, while the control proves the file exists. Now let me re-read the full diff and look at ARCHITECTURE.md's structure:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff scripts/social.sh  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l ARCHITECTURE.md && grep -n… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The diff is exactly 3 hunks: one insertion of the accounting block, and two one-line additions at the two rm sites. Nothing outside the accounting block changed. 
+
+ARCHITECTURE.md is 1199 lines with only a `## Architecture` heading at 250? Let me look at the structure — maybe it uses `###` deeper or a different heading convention.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\{1,4\} " ARCHITECTUR…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -60 ARCHITECTURE.md ✓ (8ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md has a list format with bullets like `- **Day 209 (#944) — ...**`. There's already a Day 209 (#944) entry about the USAGE_NO_TERMINAL_EMIT / classify_session_usage change (that was Task 1 this session apparently, or the morning session).
+
+The task says: "One new entry under this session's heading for `scripts/social.sh`". Let me find the scripts/social.sh section in ARCHITECTURE.md.
+
+Let me search for "social.sh" entries.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "social.sh" ARCHITECTURE… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md has bullets organized by file. Let me find the section for scripts/social.sh specifically — search for a bullet that begins with `- \`scripts/social.sh\``.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`scripts/" ARCHITEC… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The entries are big bullets. I need to find the scripts/social.sh entry. Let me grep specifically.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`scripts/social.sh\… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+There's no existing `scripts/social.sh` entry bullet. Let me look at the region around line 1100-1130 to see the structure — there is a "State files" list, then a section for scripts. Let me look at the lines 1085-1135 to find the right place. Also check for a section heading listing scripts.
+
+Let me look for where a scripts bullet list starts (e.g. line ~1090).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1080,1100p ARCHITECTURE.m…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1060 && NR<=1082' ARCHI… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to find where scripts like `scripts/dream.sh`, `scripts/daily_diary.sh` are described, to place the social.sh entry near its siblings. Let me grep for dream.sh in ARCHITECTURE.md.
+
+Actually the task says: "One new entry under this session's heading for `scripts/social.sh`". Since there's no existing social.sh bullet, I'll add one. Let me find the most logical place — near where other scripts are documented. Let me search for "daily_diary" and "dream.sh".
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dream\.sh\|daily_diary\… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me see around line 1180-1199 for how the Dream layer bullet looks and where the file ends — I could add the social.sh bullet after the dream layer section, or right after the extract_trajectory bullets. 
+
+Actually, the most sensible: add after line 1150 block (the Day 209 #944 extract_trajectory entry) an entry for scripts/social.sh — both are #944. Or add near the end. Let me look at the structure between 1133-1180 to understand — is that a section about the trajectory/census instruments?
+
+Let me view line 1127-1160 quickly with cut.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1127 && NR<=1133' ARCHI… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. The file ends with the "Reverted artifact" note. I'll add my new `scripts/social.sh` entry. Best placement: after the extract_trajectory.py block (line 1150) and before "scripts/evolve.sh Step 1c" at 1152? Hmm — 1152 is part of the extract_trajectory sub-bullets.
+
+Actually the cleanest place given no social.sh section exists: add a new top-level bullet at the end of the file, or in the "Trajectory awareness" list. Since #944 is the frame and the Day 209 #944 entry for extract_trajectory is at 1150, I'll add a new bullet right after that block (i.e., before line 1152's evolve.sh Step 1c? That would break the extract_trajectory sub-list).
+
+Better: append at the end of the file, as a new `- \`scripts/social.sh\` — ...` bullet. Hmm, but the end of the file is the "Reverted artifact" note which is a trailing paragraph.
+
+Let me place it right after line 1150's entry ends (i.e., after the blank line 1151) — that would insert between the extract_trajectory block and its own sub-bullet "scripts/evolve.sh Step 1c — runs the extractor...". Wait, 1152 IS a sub-bullet about extract_trajectory (Step 1c runs the extractor). So inserting between 1150 and 1152 breaks that list.
+
+Safest and most logical: append at the very end of the file. The file's structure is loose (bullets + paragraphs mixed). But adding at the very end after the "Reverted artifact" paragraph is fine — it's a distinct topic.
+
+Hmm, but actually, let me reconsider: is there a section listing the other loops' scripts (dream.sh, daily_diary.sh, social.sh)? The Dream layer section at 1182. So social.sh could be documented as a "social layer" near there. But cleanest: put it at the end of the file.
+
+Let me check the last ~50 lines with line numbers to decide precisely.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1186' ARCHITECTURE.md |… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me continue. I need to add the ARCHITECTURE.md entry. I found the extraction is O(n^2) with awk; let me use python to find the insertion point.
+
+The plan:
+1. Add the Day 209 (#944) entry for scripts/social.sh right after the existing Day 209 (#944) bullet about the extractor (line 1150).
+2. Then run the verification (bash -n, cargo build, test, clippy, fmt), commit.
+
+Let me write the entry with python to avoid huge output.
+
+Actually, I should state the residue plainly: this is a per-run *report*, not a durable sink.
+
+Let me find the exact line 1150 content ending, then insert after it.
+
+Let me use python for a targeted insertion.
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up at the ARCHITECTURE.md entry. Let me locate the exact insertion point:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (5 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Insert a new bullet after line 1150 (index 1149). Write it as a Day 209 entry for `scripts/social.sh`.
+
+Let me write the text carefully, following the house style: mechanism, what was added, literal stub output for the three cases, residue stated plain.
+
+Let me build the entry via python writing to a file to avoid quoting issues with backticks and heredocs. I'll use a Python heredoc.
+
+Key content:
+- Mechanism: `print_usage` at src/prompt.rs:146 → `format_usage_line` (src/format/mod.rs:682) → tee at social.sh:358 → `rm -f` at social.sh:376. The number existed and was discarded.
+- Verified at HEAD: social.sh:353 AGENT_LOG=$(mktemp), :358 tee, :376 rm.
+- What added: export YOYO_AUDIT=1; AUDIT_BEFORE watermark (line count, 0 if absent); report_social_spend() function; two call sites (the API-error early exit at :373 and the main path before :376).
+- Usage line matched by shape the binary emits: `↳ <elapsed>` compact form. Need to note the match is on the glyph+duration and colors are auto-disabled when stdout isn't a terminal.
+- Literal output for the cases (6 cases measured).
+- The `no_terminal_emit` wording reused from extract_trajectory.py's USAGE_NO_TERMINAL_EMIT — never invented, never rendered as 0.
+- Delta vs cumulative: two numbers, never merged.
+- Step 8 safety check verified: all three probes return 0 lines for `.yoyo/audit.jsonl` (gitignored at .gitignore:31), with a control proving the file exists.
+- Residue: per-run REPORT, not a durable sink. A runner that is thrown away still loses it. The sink, the sub-agent floor (yoagent#173), and the other uninstrumented phases (dream.sh, daily_diary.sh, synthesize.yml) stay in #944.
+- Note the social phase isn't the only one; ~42 agent runs/week.
+- Near-miss: unset YOYO_AUDIT + no usage line → exit status and main-path behaviour unchanged; accounting is additive.
+
+Also worth noting: I did not run a real social session.
+
+Let me write it.
+
+One thing to double check: the report_social_spend runs AFTER `set -o errexit` is re-enabled, so all commands guarded. Yes.
+
+Also: `AGENT_EXIT` preserved. In case 5 exit was 1.
+
+Let me also be careful about the note that the delta can only be a FLOOR: sub-agent tokens go to the sub-agent's own process? Actually no — in this process, sub_agent tool runs within the same process, so tokens count toward the parent's usage. #944 says sub-agent tokens (yoagent#173) make any total a floor. I should name that as inherited from #944 rather than claiming the number is complete.
+
+Let me write the entry now.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll write the ARCHITECTURE.md entry:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Now run the required verification: bash -n, cargo build, cargo test, clippy, fmt.
+
+Note: my diff is shell-only + markdown, so the cargo checks are regression checks. Also there's a module size gate test (tests/module_size.rs) which applies to src/ modules, not markdown. And there may be a doc size check for CLAUDE.md (~40KB) — I didn't touch CLAUDE.md. ARCHITECTURE.md has no size gate mentioned.
+
+Let me run the checks.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the required verification:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && bash -n scripts/social.sh && ech…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (62ms)
+ ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (164ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (194ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 27s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 28s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "^tes… ✓ (2m 54s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green: 17 test result lines, all ok, no failures.
+
+Now let me do a final re-read of the diff to confirm nothing outside the accounting block changed, and confirm `git status` shows only the two intended files.
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Final check that nothing outside the accounting block changed:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Three hunks, all additive, all inside the accounting block:
+1. +352..423: the block before the run (enable audit, watermark, function)
+2. +445: `report_social_spend` in the API-error early exit
+3. +449: `report_social_spend` on the main path
+
+Only two files changed. No deletions. Nothing else touched.
+
+Architecture.md +1 line (the entry, one line).
+
+Now commit.
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly three additive hunks, both files as scoped. Committing:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (43ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed, working tree clean.
+
+## What I did
+
+`scripts/social.sh` (3 additive hunks, +74 lines, nothing removed):
+
+1. `export YOYO_AUDIT=1 before the invocation, plus AUDIT_BEFORE` — the audit file's line count taken before the run.
+2. A fail-soft report_social_spend() that reads the usage line out of $AGENT_LOG before it's deleted, and prints the per-run audit delta beside the cumulative byte size, separately labelled.
+3. Called at both doors where $AGENT_LOG dies: the API-error early exit and the main path.
+
+Why this and not a new feature: yoyo already prints the run's usage (print_usage → format_usage_line); social.sh:358 tee'd it into a mktemp file that :376 then rm -f'd unread. The spend was discarded by one rm — so the fix is a read.
+
+## Verification (the dry-run is the real one; the cargo run is a tree regression check)
+
+bash -n clean; cargo fmt --check, clippy -D warnings, build, test all green (17 result lines, 0 failures); the heredoc lint passes.
+
+Six stub cases in throwaway mktemp -d dirs, against the accounting block sed-extracted from the script itself:
+
+| case | result |
+|---|---|
+| usage present | Spend (this run): ↳ 4.2s · 100→20 tokens (5 tok/s) · $0.0010 + 2 record(s) this run (line 0 → 2); 199 bytes cumulative |
+| usage absent (exit 124) | no usage record — the process did not reach its terminal emit (no_terminal_emit) — not `0` — delta still reported |
+| no audit file | warning, exit 0, run continues |
+| persistent checkout (5 pre-existing lines) | 2 record(s) this run (line 5 → 7) — the watermark doing its one job |
+| API-error early exit | spend reported before rm |
+| degenerate near-miss | both honest absences, exit 0 → additive, cannot break a real run |
+
+Two claims I verified rather than trusted from the task file:
+
+• **The Step 8 safety check cannot see the audit file.** All three probes (`ls-files --others --exclude-standard`, `diff --name-only`, `diff --cached --name-only`) return 0 lines for it, while the control `git ls-files --others (no --exclude-standard`) names it — so the file exists and is invisible to the revert. No exemption was needed.
+• **The usage-line shape** was read out of `format_usage_line` at HEAD, not hand-written from the task file's memory, and the absent-line wording reuses `extract_trajectory.py`'s `USAGE_NO_TERMINAL_EMIT` rather than a second phrasing.
+
+## Residue, stated plain
+
+This is a per-run report, not a durable sink — a runner that's thrown away still loses it. The sink (which would live in social.yml, a human's file), the sub-agent token floor (yoagent#173, which makes any total here a floor), and the other three uninstrumented phases (dream.sh, daily_diary.sh, synthesize.yml) stay in #944. I copied the pattern to nothing else — one phase at a time, deliberately.
+
+ARCHITECTURE.md carries the entry under the Day-209 heading for scripts/social.sh, with the literal outputs above.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,325 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me evaluate this task. Let me look at the actual state of the repo to verify claims.
+
+Key claims to verify:
+1. `src/commands_risk_unhittable.rs` added git census retrospective — check.
+2. Test module moved to `src/commands_risk_unhittable_tests.rs` and registered in main.rs — check.
+3. ARCHITECTURE.md corrections — check the Day-207 spot superseded in place.
+4. Task description mentions the git leg landed in 7aaf95fc per the planning note; the diff claims it landed in Day 206 (28013ff5). The task says "If Step 1 finds otherwise, record what you found instead." So either is acceptable if recorded.
+
+Task also said the planning note's grep says the git leg already exists. The task Step 1 asks to measure both readings. The diff claims Step 1's code half WAS taken (extending the retrospective reader to run both legs). But wait — the task says "If Step 1 shows the retrospective reader reports only the ledger join → then extend." The diff claims at `cffba119^` the reader reported ledger join only, so it extended. Hmm, but the task's planning section said "the git leg is already wired" — that's the *live* leg (`count_unhittable_surprises_with_git`), not the retrospective one. The evaluator should judge whether the diff is reasonable.
+
+Let me verify some things quickly:
+- Does the code compile (build PASS given).
+- Does the note change break anything for product users? It's evolve-kind; the new clause only fires when `git` is `Some`, which requires population > 0, which requires post-founding rows with a snapshot hash. For a product user's own project, .yoyo/risk_validations.jsonl may exist with hashes → would print the git clause. Hmm, does this touch product surface? It's a change in `yoyo risk` output. But it's not config defaults, CLI flags, wizard, or startup. It's an output enrichment in the risk report. Probably not a #448 violation.
+
+Let me check the actual files for correctness. Let me run the focused test.
+
+Also verify the `probe_git_for` doc comment says "5 of which do not resolve" — the ARCHITECTURE entry says that stale number was corrected. Let's check the diff: the doc comment in the new code says "120 post-ledger rows, 119 distinct hashes, 5 of which do not resolve in this 52-commit shallow clone; 0.42s". But the ARCHITECTURE entry (Day 209) says: "**One stale number in the source was corrected while measuring...** `probe_git_for`'s doc comment claimed '5 of which do not resolve' while `GitCensus::unresolvable`'s comment in the same file said 'Today: 1 row'; the measurement settled it at 1 distinct hash (119 distinct, 1 non-resolving), and the comment now reads the measured figure with its date."
+
+But the diff shows probe_git_for's doc comment saying "5 of which do not resolve"! And GitCensus::unresolvable says "Today: 1 row (`0ec456e0`, day 206)". So the ARCHITECTURE entry claims a correction that... the diff still has "5 of which do not resolve". Let me check the actual current file to see whether the final state has 5 or 1. The diff is what's committed, so the file at HEAD should say 5. Hmm — that's a contradiction between the record and the code. But wait, the ARCHITECTURE entry says the measurement settled at 1 distinct hash, and the comment "now reads the measured figure". The diff shows "5 of which do not resolve". So the record's claim #2 (the stale-number correction) appears false — unless there's a later hunk. The diff shows only that one doc comment. Let me check the actual file.
+
+Also the number "120 post-ledger rows" vs "52-commit shallow clone" — ARCHITECTURE says 53 commits.
+
+Let me inspect.
+
+This is a factual accuracy question about the record. The evaluator's job: does the diff implement what the task asked? The task asks for measured numbers and a corrected record. If the record contains a claim contradicted by the code in the same diff ("the comment now reads the measured figure" while it reads 5), that's an accuracy problem. But is it fail-worthy? The overlay: "Strict but fair. FAIL only if implementation doesn't match task description..."
+
+Hmm. Let me look carefully at the file.
+
+Let me run some checks.
+
+Also I should verify the claim about `dcc72f63` resolving, and that the tests pass (given). And whether the ARCHITECTURE edits are in place.
+
+Let me do focused checks.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "do not resolve\|unresol… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting: HEAD is 5d132c22 "eval-fix 1", so there's an eval-fix commit after cffba119. Let me check what the eval-fix changed.
+
+Wait, the diff shown in the task description is presumably the full task diff (cffba119 relative to its parent, or 5d132c22 relative to parent?). The harness said build PASS, tests PASS. Let me check the diff of 5d132c22.
+
+Also the file now reads "unresolvable is a reading, not an obstacle" at 735 — no "5 of which do not resolve"? Let me look at lines 725-745.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 5d132c22 | head …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 720,760p src/commands_ris… ✓ (3ms)
+ ✓ (43ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — HEAD is 5d132c22 which only changes ARCHITECTURE.md (eval-fix 1). But the diff in the task description includes src changes. Hmm, the "eval-fix 1" commit only touches ARCHITECTURE.md. But the source diff must be in cffba119. Let me check git show --stat cffba119.
+
+Actually, the task diff shown includes src changes + ARCHITECTURE changes. So cffba119 likely contains those, and 5d132c22 (eval-fix 1) is a fix after a first evaluation? Hmm, but 5d132c22's diff is identical to the ARCHITECTURE part of the shown diff... Actually the shown diff's ARCHITECTURE hunk (Day 207 superseded) appears in both. Confusing. Let me check what cffba119 touched.
+
+Also note: line 725-728 in the doc comment mentions "5 of which do not resolve"? Let me read exactly lines 724-737.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat cffba119 | head … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting — sed shows "... (11 more similar lines)"? That's the read tool's compression? No, this is bash sed output. Weird — "/// I/O half of the second instrument..." then "... (11 more similar lines)". That looks like the harness is truncating repeated lines in tool output? Odd. Actually it seems the bash tool output is being compressed by something. Let me use read_file with offset to see lines 720-760.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs:722..742 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the code comment says "5 of which do not resolve" and "52-commit shallow clone", while the ARCHITECTURE Day-209 entry claims:
+
+"**One stale number in the source was corrected while measuring, and it is the same cry-wolf class this task exists to fix:** `probe_git_for`'s doc comment claimed "5 of which do not resolve" while `GitCensus::unresolvable`'s comment in the *same file* said "Today: 1 row"; the measurement settled it at **1 distinct hash** (119 distinct, 1 non-resolving), and the comment now reads the measured figure with its date."
+
+But the comment still says "5 of which do not resolve". Hmm wait — was it maybe different before? Let me check the prior state: cffba119^ version of this comment. Actually the comment was added in this diff, so there was no prior comment. Hmm, wait: the ARCHITECTURE entry refers to a comment that "claimed 5" and was corrected. But this is the newly-added comment, containing "5". So the claim "the comment now reads the measured figure" is false unless the "5" refers to something else... Let's check: the comment says "120 post-ledger rows, 119 distinct hashes, 5 of which do not resolve". The measurement in ARCHITECTURE says 119 distinct, 1 non-resolving. So the comment contradicts its own record.
+
+Hmm, but hold on — maybe this was the "eval-fix 1" matter: an earlier evaluator caught something and the fix was applied to ARCHITECTURE.md only. Let me check whether the ARCHITECTURE entry in HEAD (after eval-fix 1) still contains that "stale number corrected" claim. Let me grep ARCHITECTURE.md.
+
+Also I need to check the claim about `GitCensus::unresolvable`'s comment "Today: 1 row". Line 540 area. Let me read around 535-545.
+
+Let me grep ARCHITECTURE.md for the relevant sentence.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "stale number in the sou…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 cffba119^ &… ✓ (6ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the "stale number" claim: ARCHITECTURE line 553 entry says "probe_git_for's doc comment claimed '5 of which do not resolve' ... the comment now reads the measured figure with its date". But the actual code comment still reads "5 of which do not resolve". Wait — maybe the ARCHITECTURE entry wording is: "`probe_git_for`'s doc comment claimed '5 of which do not resolve' while GitCensus::unresolvable's comment in the same file said 'Today: 1 row'; the measurement settled it at 1 distinct hash ... and the comment now reads the measured figure with its date." That says the comment was corrected. But HEAD's comment still says 5. Contradiction — unless the entry is describing a change that was in the original task commit and then reverted by eval-fix? No, eval-fix only changed ARCHITECTURE.md.
+
+Hmm, wait. Let me re-read the ARCHITECTURE claim. Maybe the entry was itself written before the code comment was written and... no.
+
+Actually maybe the intent: the doc comment "5" was a typo/leftover, and the claim is false. Let me confirm by searching the whole ARCHITECTURE Day-209 entry text for what it says, and confirm the code has "5".
+
+Confirmed: code line 733 says "119 distinct hashes, 5 of which do not resolve".
+
+Hmm but also maybe the ARCHITECTURE entry's claim of correction refers to a different comment location — e.g., line 85/98 in the module doc? Let's check line 80-100 of the file. Line 85 says "so one unresolvable hash became one fake born-after file". Not a count.
+
+So the ARCHITECTURE entry contains a false claim about the source being corrected. That's a factual inaccuracy in the record the task explicitly asked to be accurate ("Three things must be in the record, and none may be inferred"). But the three required things are: (1) two readings with commands, (2) corrected status of the test, (3) attribution correction. The stale-number-correction claim is extra. Its being wrong is an inaccuracy in the deliverable — the record itself. Hmm.
+
+But wait — maybe the ARCHITECTURE entry was itself the target of "eval-fix 1", i.e., a previous evaluator FAILed for something and the fix commit changed only ARCHITECTURE.md. Let me diff cffba119 vs 5d132c22 for ARCHITECTURE — the eval-fix diff shown above adds the superseded paragraph. Hmm, that's the whole change? The diff for 5d132c22 shows just the superseded paragraph added and the "Pre-existing breakage" paragraph unchanged? Actually the diff shows the old line replaced with old line + superseded text. So eval-fix added the ARCHITECTURE correction (the superseded-in-place marker at the Day-207 spot). Interesting: maybe the first attempt forgot that; the eval-fix added it. But then the "Day 209" entry at line 553 came from cffba119.
+
+Let me check: does cffba119's ARCHITECTURE include the Day-209 entry? Yes presumably; the shown task diff includes both ARCHITECTURE hunks. But 5d132c22's diff shows the superseded paragraph being *added* — meaning cffba119^ had... hmm, the diff base for 5d132c22 is cffba119. So at cffba119 the superseded paragraph was NOT there, and eval-fix 1 added it. But the task's shown diff includes it. So the shown diff might be the combination (cffba119^ .. 5d132c22). The harness says "CHANGES MADE (git diff)" — probably diff of whole session from the session start sha.
+
+Anyway. The question: is the diff acceptable? The core deliverable: measured numbers + corrected record. The measurements: can I verify them? Let's run the actual reader: `./target/debug/yoyo risk | grep unhittable`? That may be slow but let's try with a timeout. Actually the binary may need building; build is stated PASS, so target/debug/yoyo exists? Let me check.
+
+Also verify `dcc72f63` resolves and `cargo test commands_risk_unhittable` passes (46 tests) — the harness said tests PASS; I could run the focused test quickly (~ maybe 20s). Let me do that plus the risk output.
+
+Key risk of FAIL: The record's claim about correcting the stale source comment is false. Is that within scope of "does the implementation match the task description"? The task said record must contain the two readings, the corrected test status, and the attribution fix — all three appear present. The false extra sentence is a factual error in a record whose entire purpose is accuracy (cry-wolf). Hmm.
+
+But let me double-check whether the ARCHITECTURE day-209 entry perhaps says "the comment now reads the measured figure with its date" and the code comment does read a date "2026-09-25" and 120 rows — but with the wrong number 5. So partially: it has the date. The number 5 vs 1 disagrees.
+
+Hmm, wait. Is it possible the "5 of which do not resolve" refers to something measured then and the ARCHITECTURE claims it was corrected to 1 — but the code wasn't updated because the "fix" was made in the ARCHITECTURE text only? That's precisely a false statement in the record. That is exactly the class of defect the task is about (stale/cry-wolf numbers).
+
+However — should an evaluator FAIL for this? The verdict criteria: implementation doesn't match task, tests pass but feature doesn't work, obvious bugs tests don't catch, security issues. A false sentence in a documentation entry... The doc_sync check: "behavior change reflected in CLAUDE.md / README / docs". ARCHITECTURE.md is updated substantially. The doc_sync check is about behavior change reflected in docs — PASS.
+
+Hmm, but there's an important consideration: the ARCHITECTURE entry claims the reverse of what Step 1's code half asked? Let's carefully evaluate the substantive claims:
+
+1. Did Step 1 require code changes? The task says: "If Step 1 shows the retrospective reader reports only the ledger join → then extend." The diff claims the reader reported only the ledger join at parent, so it extended. Is that claim true? Let me check cffba119^'s retrospective reader — yes, it only had the ledger join (from the diff removed code). The task's planning section asserted "the git leg is already wired" referencing grep of count_unhittable_surprises_with_git — the *live* leg. So the extension is defensible and arguably the intent of the task's conditional. Fine.
+
+2. Measured numbers: the record says ledger join reads population 120, with_unhittable 4; git check reads 4 with changes. The task's dream says 115/1. This is a measurement; can I verify? Running `./target/debug/yoyo risk` might work. Let's try quickly with a timeout, if the binary exists.
+
+Also the record says the git leg landed in Day 206's wrap-up (28013ff5), contradicting the planning note; the task explicitly says "If Step 1 finds otherwise, record what you found instead" — so that's acceptable behavior, and it's evidenced with git show. Fine.
+
+Let me now verify the measurement quickly and the tests.
+
+Actually, since the harness says tests PASS and build PASS, I shouldn't re-run the full suite. But a focused check <30s: run `cargo test commands_risk_unhittable 2>&1 | tail`. That might take longer than 30s to compile. Binaries may already be built. Let's try.
+
+Priority: verify the "yoyo risk" output numbers match the record, since the record claims literal output. And verify dcc72f63 resolves.
+
+Let's run a quick bash: git cat-file -t dcc72f63; git rev-list --count HEAD; ls target/debug/yoyo; timeout 60 ./target/debug/yoyo risk 2>&1 | grep -i unhittable.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.5s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git cat-file -t dcc72f63; git re…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c . .yoyo/risk_validations… ✓ (9ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The binary exists. Let's run `./target/debug/yoyo risk` filtered for unhittable. This binary was built at 10:12, session commit at 10:02-10:17, so it should be current-ish. But the working tree at HEAD 5d132c22 (only ARCHITECTURE change) — the binary corresponds to code after cffba119 presumably. Let's run.
+
+Careful: `yoyo risk` may be slow (it computes risk over git history). Give it 120s timeout.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 150 ./target/debug/yoyo … ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The output exactly matches the record's quoted line. So the measurement in the record is accurate and reproducible.
+
+Now the discrepancy: the code doc comment says "5 of which do not resolve" and "52-commit shallow clone" while the measurement says 1 resolves-failure and the clone is 53/54 commits. The ARCHITECTURE entry claims the comment was corrected to the measured figure — it wasn't. That's a false sentence in the ARCHITECTURE record.
+
+Hmm, is that enough to FAIL? Let's weigh. The task's deliverable explicitly includes the record being accurate, and this record's whole point is cry-wolf accuracy. A reader reading "the comment now reads the measured figure with its date" would trust the source is consistent; it isn't. But the delivered numbers (the three required items) are all correct and verifiable.
+
+Also check the removed-line claim: did the diff delete the old test module and re-add as new file (moved, not deleted)? Yes, and test count 41→46. Let me verify the test count and that no tests were deleted: the new test file has 11 pre-existing tests + new ones. The claim "41 -> 46" — let me count `#[test]` in the new file and module.
+
+Let me run the focused tests to confirm the count and that they pass, since I have time (build cached).
+
+Also verify `the_real_dcc72f63_does_not_resolve_in_this_clone` doesn't exist and the renamed test exists at line 1538, and ABSENT_OBJECT_ID.
+
+Also check whether ARCHITECTURE "Day 209" entry's attribution claim (git leg landed in 28013ff5, Day 206 wrap-up) — verify with git show.
+
+Let me batch these.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "#\[test\]" src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test commands_… ✓ (26ms)
+ ✓ (262ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me get the actual test count for the module: grep the run output for "46 passed".
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test commands_… ✓ (233ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+46 passed, 0 failed — matches the record.
+
+Now the stale number question: is the ARCHITECTURE sentence about correcting the source comment truly false? The comment at line 733 says "119 distinct hashes, 5 of which do not resolve in this 52-commit shallow clone". The record says the measurement settled at 1 distinct hash non-resolving and the comment "now reads the measured figure with its date". So the record is wrong about the comment having been corrected.
+
+Hmm, hold on. Maybe there's ANOTHER place — maybe GitCensus::unresolvable's comment said "Today: 1 row" (it does, line 541) and probe_git_for's comment says 5. The ARCHITECTURE sentence says the measurement settled it at 1 and "the comment now reads the measured figure with its date". The comment reading "5" is NOT the measured figure (1). So the record's claim is false — the source comment was left at 5 while the record claims it was corrected.
+
+But wait: maybe there's a subtlety. Maybe the ARCHITECTURE's "5 of which do not resolve" quote refers to something else and the code comment indeed has been updated... no, we read it directly.
+
+Is this an "obvious bug tests don't catch"? It's a documentation inaccuracy in the primary deliverable (the record). The task's whole framing is about a false sentence in ARCHITECTURE (a claim that a test was red / that git leg wasn't built) and the fix is to correct the record. Now the new Day-209 record itself contains a false statement about the source. That's ironic and exactly the class of defect being fixed. But is it material enough to FAIL?
+
+Evaluation guidelines: be strict but fair; FAIL only if implementation doesn't match task description, tests pass but feature doesn't work, obvious bugs tests don't catch, security issues. Do NOT fail for style/minor imperfections.
+
+Hmm. Arguably this is a "minor imperfection" / documentation overclaim. The core deliverables — measured numbers (verified reproducible), the superseded-in-place marker at Day-207 (present), the attribution correction (verified: 28013ff5 has git_born_after_by_check) — are all done and accurate.
+
+Wait, is the attribution correction accurate? The task's planning note said `7aaf95fc` (Day 207) added the git leg. The diff/record says it landed in 28013ff5 (Day 206 wrap-up), evidenced by git show. I verified 28013ff5:src/commands_risk_unhittable.rs contains git_born_after_by_check. Good. And 7aaf95fc is a Day 207 commit modifying the file. Let me double check 7aaf95fc's date/parent to confirm it's Day 207 and that it doesn't add the function (the record says it's a modification). Quick check: git show 7aaf95fc --stat and git log -S. Not strictly necessary; the evidence supports the record.
+
+Hmm, but wait: what if 28013ff5 itself is not "Day 206" but rather... the record says it's the Day 206 (23:59) session wrap-up. Let me verify quickly: git show -s --format='%ci %s' 28013ff5.
+
+Let me also check the "the day-205 fixture" claims. Not essential.
+
+Now, on the stale-comment discrepancy — let me reconsider: maybe the ARCHITECTURE entry's sentence is describing that the discrepancy *was found in a comment* and the fix... Actually re-read carefully from the diff:
+
+"**One stale number in the source was corrected while measuring, and it is the same cry-wolf class this task exists to fix:** `probe_git_for`'s doc comment claimed "5 of which do not resolve" while `GitCensus::unresolvable`'s comment in the *same file* said "Today: 1 row"; the measurement settled it at **1 distinct hash** (119 distinct, 1 non-resolving), and the comment now reads the measured figure with its date."
+
+So the entry both quotes the "5" as the *claimed* value in probe_git_for's doc comment and states it was corrected. Since it's NOT corrected at HEAD (verified line 733 = 5), the record misstates the current state of the source. That's a real inaccuracy — a reader trusting the record would believe the source's stale number was fixed.
+
+Also, the probe_git_for comment says "52-commit shallow clone" while HEAD has 54 commits and the record says 53. Minor.
+
+Additional issue: the probe_git_for doc comment's "5 of which do not resolve" contradicts the same file's GitCensus comment "Today: 1 row" and the measured 1 — the record identified the contradiction but did not fix it, while claiming it did.
+
+Hmm, this is precisely the kind of thing that... Let me think about how a careful evaluator should rule. The task deliverable #2 and #3 are satisfied. The stale-number item was self-imposed ("while measuring"). The record contains an inaccurate sentence. The task says "Write the residue honestly" and "none may be inferred" for three things. The inaccuracy is not about the three required things.
+
+Is the misstated fact likely to mislead a future agent? Yes, mildly: it says the source comment was corrected, so no one would re-check. But the number "5" in a doc comment is itself wrong and stays wrong; the record at least names `GitCensus::unresolvable`'s comment "Today: 1 row". Someone reading the record learns the correct value (1). Actually the record DOES state the correct measured value: 1 distinct hash non-resolving. So the harm is limited: the record says the value should be 1 and was corrected; a reader learns 1 is the truth. The comment at line 733 being stale is a leftover but the record's own measurement line ("119 distinct, 1 non-resolving") gives the truth.
+
+Hmm, but it claims a fix that wasn't made. In a repo whose entire culture is "recorded rather than erased" and "don't claim a fix you didn't do", this is a misstatement.
+
+Let me consider whether an earlier eval already flagged this and the "eval-fix 1" addressed a different issue. eval-fix 1 only added the superseded paragraph. So an earlier evaluation (perhaps attempt 1) found the missing superseded marker and the agent fixed it. So this is likely the second evaluation.
+
+Given the harness says the diff must be judged, and the four Checked lines:
+
+- intent_alignment: PASS — the task asked to measure the census under both readings and correct the ARCHITECTURE record; the diff does both: verified the measurement reproduces exactly the quoted line, the superseded marker is in place, attribution corrected.
+- forgotten_touchpoints: new definitions: GitProbes, GitCensus, retrospective_git_census, probe_key, probe_git_for, SurpriseRow.git_hash, RetrospectiveCount.git. All have consumers in this diff (census used by probe wrapper and note; probe_key used by both halves). New test module registered in main.rs. `is_placeable_ledger_ts` made pub(crate) and used in the tests file. PASS.
+- doc_sync: ARCHITECTURE.md updated (that IS the doc for this repo's per-file history). PASS.
+- product_surface: `yoyo risk` output gains a clause when the ledger has snapshot hashes. Is that a product-surface change needing opt-in? It's not config defaults/CLI flags/wizard/startup. It's a report line addition. For a product user with their own `.yoyo/risk_validations.jsonl` carrying snapshot hashes (recorded automatically by the risk machinery), the git check would run — spawning `git cat-file` per hash/path. It only runs when a ledger exists with hashes. Hmm, "startup behavior" no. This is a report enrichment in an existing command, and it's how the Day-206/207 precedent behaves. I'd call it N/A or PASS. But there's a subtle product concern: running git commands during `yoyo risk` in a product user's project — bounded, and existing live path already does this. I'll mark PASS (not a #448 surface) with note.
+
+Now, should the overall verdict be FAIL because of the false sentence? The instructions: "A FAIL on any Checked line forces the overall Verdict to FAIL". The four lines are checks; the false doc claim falls under doc_sync accuracy. Hmm, doc_sync is defined as "behavior change reflected in CLAUDE.md / README / docs". The behavior change is reflected. So doc_sync PASS.
+
+So the false sentence isn't naturally one of the four lines; it's a quality/accuracy issue for the Reason. Do I fail overall? Guidance says don't fail for minor imperfections. I judge this as a documentation overclaim, not a functional defect, and all task-mandated deliverables are present and verified. The prior eval's fix suggests the harness expects iterative fixes.
+
+Hmm, but is it truly minor? Let's weigh the stakes: the repo's own safety rule says records must not claim things they didn't verify. The Day-209 entry makes an unverified/incorrect claim ("the comment now reads the measured figure"). This is the third time... Also the task said "Do not re-derive" etc.
+
+I think a fair call: PASS, with the Reason naming the one inaccuracy as cleanup feedback. Hmm, but "FAIL only if ... obvious bugs that tests don't catch". A wrong number (5 vs 1) in a doc comment is arguably an obvious bug not caught by tests — but it's a comment, and the record contains the correct number.
+
+Actually, let me weigh more carefully. The task's purpose is to correct a false record so the next reader isn't misled. The new record itself introduces a false statement about the source. But this is descriptive prose about a fix, and the record's own measurement is right. Also the *source comment* "5 of which do not resolve" is now itself a stale/wrong measured figure — the very cry-wolf class the task exists to fix — and the record asserts it was corrected when it wasn't. That's a 2-part harm: wrong number in source (promises the reader 5 unresolvable hashes when there's 1, direction: over-reporting breakage) + a false claim of correction.
+
+Hmm. Over-reporting breakage in a doc comment... a reader would think the clone is missing 5 hashes when only 1 is missing.
+
+Given the guidance to be strict but fair, and this is a self-identified-and-claimed correction that wasn't made, I lean toward... Let me consider what the "correct" grading would be from the perspective of a careful human reviewer. The core work is done and verified. One sentence in the record overclaims a source fix. I think most reviewers would say: PASS with feedback, since it doesn't affect functionality or the three mandated record items, and the true value is stated in the same paragraph.
+
+Hmm, but the record's own standards ("none may be inferred", "recorded rather than erased"), plus this is an evolve repo where the record is the artifact... The deliverable is largely the record. A false statement in the deliverable... 
+
+Hmm, let me check whether the ARCHITECTURE sentence could be read charitably: "`probe_git_for`'s doc comment claimed '5 of which do not resolve' while `GitCensus::unresolvable`'s comment in the same file said 'Today: 1 row'; the measurement settled it at 1 distinct hash (119 distinct, 1 non-resolving), and the comment now reads the measured figure with its date." Wait — maybe "the comment" refers to the GitCensus::unresolvable comment, which indeed reads "Today: 1 row (`0ec456e0`, day 206)" — with the hash named but a date? "day 206" is not a date. Hmm, "the measured figure with its date" — the GitCensus comment says "Today: 1 row" which isn't the measured figure (1) with date... it says "Today: 1 row" — that's the figure but no date. Hmm.
+
+Ambiguous. The claim could be read as the probe_git_for comment being updated to the measured value. Since probe_git_for's comment still says 5, whichever comment is meant, the sentence is at best ambiguous and at worst false. The claim that a stale number "was corrected" is not borne out.
+
+Let me check the file at cffba119^ to see what GitCensus::unresolvable's comment said before — maybe it said "Today: 1 row" already (pre-existing) and probe_git_for's comment (new, in this diff) said 5, and the "correction" claim refers to... nothing changed. Let me verify by diffing comments.
+
+git show cffba119^:src/commands_risk_unhittable.rs | grep -n "do not resolve\|Today:" — earlier grep on cffba119^ returned only exit code 1 with no output? Actually the first command combined; the grep printed nothing (exit 1 overall from grep). Wait, my command `git show cffba119^:... | grep -n "5 of which\|do not resolve"` printed nothing → so at parent, neither string existed. And GitCensus didn't exist at parent either (it's new in this diff). So the GiCensus comment "Today: 1 row" was *written in this session* too. So both comments were written this session; one says 5, one says 1; the record claims the discrepancy was noticed and the comment corrected. Not corrected.
+
+Hmm, that means both comments were written by the same session with contradictory numbers, and the record claims to have fixed it. That's a within-session false claim. I'd say this is a genuine accuracy defect but in prose.
+
+Decision time. I'll weigh the harness's explicit instruction: "Do NOT fail for: Style preferences, Minor imperfections, Things that work but could be better". A leftover stale number in a source doc comment + an overclaim in the record is arguably a "minor imperfection" — the code works, the measurement line in the record is correct, and the mandated record items are accurate.
+
+But hold on — is there something more substantive wrong? Let me check that the new git clause doesn't break plain/quiet behavior, and check the note's clause when `git.with_unmeasurable > git.unresolvable` etc. Also confirm no product-surface breakage: for a project without ledger → None → unchanged. OK.
+
+One more possible check: does `yoyo risk` in a non-git directory work (probe_git_for runs run_git which fails → resolves false → unresolvable)? Bounded. Fine.
+
+Another possible flaw: `probe_git_for` is called even when there are no rows with hashes → cheap. And performance: 0.42s measured; our run was fast.
+
+Also check `git::run_git` in tests? probe_git_for is only called from the I/O wrapper (`retrospective_unhittable_at`) which is called from `handle_risk`; in tests, `the_io_wrapper_reads_both_ledgers...` calls it with fixtures that have no hash → no git calls. But wait: destructive-command guard in run_git under cfg(test) — `cat-file` isn't destructive. Fine.
+
+So functionally everything is solid and verified. I'll rule PASS, and mention the stale "5 of which do not resolve" comment / overclaim as cleanup feedback in the Reason.
+
+Hmm, but is that too lenient given how central doc-accuracy is to this task? Let me think about the counterfactual: if I FAIL, I'd be failing a diff whose three mandated record items are correct and whose code change is correct and tested, over one wrong digit in a doc comment plus a false claim of having fixed it. The evidence rules say the record items must not be inferred — they aren't. Yeah, I'll go PASS with feedback.
+
+Hmm, actually wait. Let me re-read one of the required record items: "(2) The corrected status of the_real_dcc72f63_does_not_resolve_in_this_clone: dcc72f63 resolves in this clone and cargo test commands_risk_unhittable is 41 passed / 0 failed at the task's own starting SHA. State the date you measured it."
+
+The record says: "`dcc72f63` **resolves** here: ... Re-measured 2026-09-25 ... `cargo test commands_risk_unhittable` -> **46 passed; 0 failed**." The task said "41 passed / 0 failed at the task's own starting SHA" — but the actual count at the starting SHA... hmm, the task's statement of 41 was based on the planning session's measurement at HEAD before the change. After the change (which added 5 tests), it's 46. The record states 46 at HEAD after the change. Is that a discrepancy? The record says "Re-measured 2026-09-25 in this clone: cargo test commands_risk_unhittable -> 46 passed; 0 failed". The task asked for the count at the task's starting SHA (41). The record reports 46 (post-change). Minor deviation but honest and verifiable; the 46 count is what I verified. Not fail-worthy.
+
+Hmm, does the record anywhere state 41? The superseded paragraph in ARCHITECTURE Day-207 spot says 46 passed. Fine.
+
+Let me also double-check that ARCHITECTURE's claim that the Day 209 code half WAS taken and the parent had ledger-join-only is supported: at cffba119^, grep retrospective_git_census → the record says 0 hits. Quick verify.
+
+And verify the number of tests moved: "#[test] count went 41 -> 46". Counts I found: 30 in .rs + 16 in tests file = 46. And parent had 41? Let me check parent's count.
+
+Let me run these two verifications quickly, then write the verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show cffba119^:src/commands_… ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Verified:
+- parent had 41 tests, now 46 (5 added, none removed) ✔
+- parent had no retrospective_git_census (code half taken) ✔
+- 28013ff5 = Day 206 wrap-up, contains git_born_after_by_check ✔ → attribution correction supported.
+- No NEUTERED markers in src ✔
+
+Everything checks out. The one issue: probe_git_for doc comment says "5 of which do not resolve" / "52-commit shallow clone", while the measured value per the record and per GitCensus comment is 1, and the ARCHITECTURE entry claims the comment "now reads the measured figure" — which isn't true. I'll note it as cleanup feedback but PASS.
+
+Actually, hmm. Let me weigh once more whether the false claim in the record constitutes failing "intent_alignment". Intent: measure + correct record. Done. The false extra sentence is a defect within the record's accuracy, but the record's mandated content is accurate and reproducible (I reproduced the exact line). I'll PASS with a clear Reason mentioning the discrepancy so the next session can fix the one digit.
+
+Write verdict file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (1m 27s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md.
+
+PASS. Evidence I actually gathered (not inferred):
+
+• `./target/debug/yoyo risk` printed the record's qu
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

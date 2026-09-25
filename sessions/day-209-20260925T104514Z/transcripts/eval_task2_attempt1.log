@@ -1,0 +1,235 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me analyze the diff briefly and verify the key claims.
+
+Key things to check:
+1. Does the diff implement the task? Yes — social.sh has the accounting block, ARCHITECTURE.md has the entry.
+2. Is scope respected? Only scripts/social.sh and ARCHITECTURE.md changed. Yes.
+3. Fail-soft: guarded greps with `|| true`. Let me check details.
+
+Let me look at the actual file to verify the block landed and check the usage line regex vs format_usage_line at HEAD.
+
+The regex: `'↳ [0-9]+([.][0-9]+)?(ms|s|m |h |d )'`. Let me check `format_usage_line` in src/format/mod.rs to see if the emitted shape matches.
+
+Also check that `report_social_spend` is called in the early-exit path and the main path — yes, both.
+
+Potential issue: `local` variables `usage_line`, `normalized`, etc. Fine.
+
+Another potential issue: `grep -aE` with a `↳` glyph — matching on a multibyte char in grep should be fine with UTF-8 locale, but in some locales it could be problematic. Actually grep with non-ASCII literal in a byte-oriented build... `-a` treats binary as text. In a C locale, grep may still match bytes literally. Hmm, this could be a real fragility but likely fine.
+
+Let me verify format_usage_line's actual output shape.
+
+Also check that the usage line prefix is `↳`. Let me look.
+
+Let me run a quick check on the source and a quick dry-run of the accounting block.
+
+Time budget 10 min. Let's be efficient.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '660,780p' src/format/mod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && bash -n scripts/social.sh && ech… ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting: `git diff --stat HEAD` returned nothing? Exit 0 but no output. Let me check git status. The harness gave the diff, so changes should be present. Maybe the diff was committed. Let me check.
+
+Also note `print_usage` prints with `\n{DIM}  {line}{RESET}` — so there's leading whitespace. The script's normalization strips leading whitespace. Good.
+
+Note: DIM/RESET are color codes; when stdout is not a terminal, colors disabled. The task claims `apply_cli_flags` disables color when not a terminal. Let me verify quickly. Actually let me check `color_enabled_from_env` / whether stdout-not-tty disables colors. That matters because if colors are emitted, the DIM escape would prefix the line before `↳`, and the grep pattern `'↳ ...'` would still match since grep searches anywhere in the line (not anchored). So it works either way. Good — the regex is unanchored.
+
+Wait — the regex isn't anchored and there's a subtlety: the line has `\n  ` then the usage. The grep is over lines, so the leading `  ` and DIM code prefix are on the same line but grep matches substring. Fine.
+
+Now let's verify the block is actually in the file and test a stub run.
+
+Let me check git state first.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "report_social_spend\|YO… ✓ (2ms)
+ ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me dry-run the accounting block with a stub, extracting the block from the script (as the task describes). Quick test of three cases.
+
+The block spans from `export YOYO_AUDIT=1` to the end of the function. Let me extract lines 366-419 and run it with a fake AGENT_LOG.
+
+Key concern: the `delta` arithmetic `$((audit_after - AUDIT_BEFORE))` — if audit_after is non-numeric after the case guard, it's set to 0. OK.
+
+Another: `wc -c` size. Fine.
+
+Let me test.
+
+Also important: does `report_social_spend` get called before `rm` in both places? Yes lines 445 (early exit) and 449.
+
+One subtle bug: in the early-exit at :445, the API-error path exits 1 — fine.
+
+Let me run the stub test.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf spt && mkdir spt && cd spt && sed -n '366,419p' /home/runner/w… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The sed range cut off the function before its closing brace. Let me find the exact end of the function.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '415,426p' scripts/social… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/spt && sed -n '366,422p' /home/runner/work/yoyo-evol… (5 lines)  ▶ $ cd /tmp/spt && rm -rf caseB caseC && mkdir caseB && cd caseB… (4 lines) ✓ (19ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Case A: watermark taken before = 3 lines (the file already had 3 lines when sourced — since AUDIT_BEFORE is computed at source time, and I appended before sourcing... I appended the 2 usage lines before sourcing, so watermark was 3). Then after = 3, delta 0. That's my test setup artifact, not a bug — in the real script the watermark is taken before the agent runs and the records are appended by the agent.
+
+Let me redo case A properly: source block (watermark), then append lines, then call report. Actually in the real script, watermark is taken at line 373-376, then agent runs, then report. So test correctly:
+
+Actually the key verification is: delta computed correctly. Let me do persistent-checkout test: pre-load 5 lines, source block, append 2, call report → should say line 5 → 7, 2 records.
+
+Let me do that quickly.
+
+Also verify the near-miss: with no usage line and no audit file, exit 0 - done (case C returns 0).
+
+Let me also confirm that case B's usage-line absence doesn't render "0". Confirmed.
+
+Now the main script path: is `report_social_spend` defined before use? Yes, defined at 385, used at 445/449. And `AUDIT_BEFORE` set before. Good.
+
+Potential concern: `export YOYO_AUDIT=1` placed at line 366 which is before the trap/agent invocation; fine.
+
+Another concern: does `export YOYO_AUDIT=1` cause `yoyo` to write the audit file — and could that break the Step 8 safety check? The task says gitignored. Let me verify `.gitignore:31` and that .yoyo/audit.jsonl is ignored.
+
+Let me test with git check-ignore in a temp repo... simpler: `git check-ignore -v .yoyo/audit.jsonl` in the actual repo.
+
+Also check Step 8 in social.sh to verify the revert logic only reverts tracked/changed files.
+
+Let's do it.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.1s (2 ✓)
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/spt && rm -rf caseD && mkdir caseD && cd caseD && mk… (4 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git check-ignore -v .yoyo/audit.… ✓ (7ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All key claims verified:
+
+- Case A (usage present): prints usage line + audit delta, exit 0.
+- Case B/D: usage absent → no_terminal_emit sentence, NOT 0; delta correctly 5→7 = 2 records (watermark works).
+- Case C: no audit file → warning, exit 0 (fail-soft).
+- `.yoyo/audit.jsonl` is gitignored (line 31), so the Step 8 safety check (git diff / ls-files --others --exclude-standard) won't see it. 
+
+Wait — one thing: Step 8's `UNTRACKED_FILES=$(git ls-files --others --exclude-standard)` — gitignored, so not listed. And `git diff --name-only` — untracked files don't appear in git diff. So safe. Good.
+
+One more concern: does Step 8 revert happen after report? Let's check the ordering - Step 8 at 453, after our report at 449. Fine.
+
+Now, one edge: the `export YOYO_AUDIT=1` before the invocation — check where it is relative to the actual invocation at ~:355-358 originally. It's at 366 now, before the invocation (which is now around 430?). Let me quickly confirm the export precedes the yoyo invocation and isn't inside a subshell.
+
+Also `report_social_spend` — is it defined before `AGENT_LOG=$(mktemp)`? It's used after AGENT_LOG is set. Fine.
+
+Now, `grep -aE '↳ ...'` — let me double check it handles the DIM escape prefix if present. Not needed since unanchored, and colors are disabled when stdout isn't a terminal (let me verify that claim quickly — actually the harness claim in ARCHITECTURE says `apply_cli_flags` disables colors when non-tty. Let me grep.)
+
+Actually, if colors were enabled, the line to file would be `\x1b[2m  ↳ ...\x1b[0m` and grep would still match substring `↳ 4.2s` — yes matches. And the normalization only strips leading whitespace, so `normalized` would contain the trailing RESET escape and the leading DIM escape text. Minor cosmetic risk but not a functional break. Since tee output is a pipe → not a terminal → colors disabled. Let me verify quickly with a grep for color_enabled_from_env.
+
+Also potential issue: `format_duration` — what shapes does it emit? The regex covers `ms`, `s`, `m `, `h `, `d `. Let me check format_duration to ensure e.g. "1m12s"? If it emits "1m 12s" then `m ` matches. Let me check.
+
+Let me do these two quick checks.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.1s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_duration" -A … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+`src/main.rs:880`: if `--no-color` or stdout is not a terminal → disable color. So under `tee` (pipe), colors are off. Good, the grep sees bare text. (And even with color it'd match as substring.)
+
+`format_duration` — grep didn't find "fn format_duration" in mod.rs. It's probably imported from elsewhere. Let me check where it comes from — could be `crate::cli::format_duration` or in format/tools.rs. Let me search. Not critical — the sample doc comment `↳ 1.0s ·` shows the shape, and the regex covers ms/s/m/h/d. But if format_duration emits "1m12s" without space, then `m ` wouldn't match... let me quickly check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn format_duration" sr… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '355,400p' src/format/cos… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+format_duration emits: "350ms", "1.2s", "2m 15s", "1h 5m", "2d 3h".
+
+The regex: `↳ [0-9]+([.][0-9]+)?(ms|s|m |h |d )`
+- "350ms" → `[0-9]+` = 350, then `ms` ✓
+- "1.2s" → 1.2, `s` ✓
+- "2m 15s" → 2 then `m ` ✓
+- "1h 5m" → 1 then `h ` ✓
+- "2d 3h" → 2 then `d ` ✓
+
+All cases covered. Good — the regex matches the actual emitted shape.
+
+One edge: `[0-9]+([.][0-9]+)?` for "1.2s": `[0-9]+` matches "1", then optional ".2", then `s`. ✓. But careful: alternation `ms|s|...` — for "350ms", after `[0-9]+`="350", tries `ms` ✓.
+
+Potential edge: a line with `↳` but a different duration form? All covered.
+
+Now, does the DIM prefix matter? Confirm colors disabled when piping to tee. Yes (main.rs:880). But wait — social.sh invokes `"$YOYO_BIN" ... 2>&1 | tee "$AGENT_LOG"`. stdout is a pipe → not terminal → colors off. Good.
+
+However, there's one subtlety: does yoyo's color gate use `args.iter().any(|a| a == "--no-color")` on CLI args at line 880 — that's in main before running. Fine.
+
+Everything checks out. Now check the ARCHITECTURE.md entry exists (it does, in the diff) — one line added under a heading for scripts/social.sh. The diff shows it added a new bullet. Fine.
+
+Doc sync: behavior change is to a shell script (evolve-side tooling); ARCHITECTURE.md updated as required by CLAUDE.md. That's the right doc home per project rules. PASS.
+
+product_surface: evolve-kind; no product surface (config defaults, CLI flags, wizard, startup). The change exports YOYO_AUDIT=1 in social.sh which only runs in CI/evolve. N/A-ish but should be PASS (no product surface touched). I'll say PASS with explanation: it only sets an env var for the evolve loop's own social phase, not in yoyo's product defaults.
+
+forgotten_touchpoints: `report_social_spend` defined + called at two sites; `AUDIT_BEFORE` defined + read; `AUDIT_FILE` defined + read. All consumers in the same diff. PASS.
+
+intent_alignment: PASS. All four additions present, fail-soft verified by dry-run.
+
+One thing worth a mention: the task asked for literal outputs of three cases in the write-up (ARCHITECTURE.md) — the entry does contain them (a)-(f). Good.
+
+Let me write the verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+All claims verified. Writing the verdict.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 29s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+What I actually verified (not just read):
+
+• **Scope**: commit eddb8206 touches only scripts/social.sh (+74) and ARCHITECTURE.md (+1). No protected file.
+• **bash -n scripts/social.sh** clean; the extracted accounting block is syntactically valid on its own.
+• **Dry-run of the shipped code** (extracted with sed from the script, run in mktemp dirs, set -o errexit on):
+  • usage line present → Spend (this run): ↳ 4.2s · 100→20 tokens (5 tok/s) · $0.0010 + audit delta, exit 0
+  • usage line absent → no usage record — the process did not reach its terminal emit (no_terminal_emit), not 0, exit 0
+  • no audit file → WARNING — no .yoyo/audit.jsonl, exit 0 (fail-soft holds)
+  • audit file pre-loaded with 5 lines → 2 record(s) this run (line 5 → 7) — the watermark doing its one job
+• **The regex matches the real emitter**: read `format_duration` (`src/format/cost.rs:362`) — it emits only `350ms` / `1.2s` / `2m 15s` / `1h 5m` / `2d 3h`, all covered by `(ms|s|m |h |d )`. Colors are switched off when stdout is not a terminal (src/main.rs:880), so the tee'd copy the grep reads is bare text.
+• **The Step 8 concern the task flagged is ruled out**: git check-ignore -v .yoyo/audit.jsonl → .gitignore:31, so the three probes Step 8 reverts on cannot see it.
+
+No blockers, no cleanup feedback needed.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
