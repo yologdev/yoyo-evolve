@@ -1982,7 +1982,7 @@ safety_commit() {
     git add -A 2>/dev/null || true
     staged_protected=$(git diff --cached --name-only -- \
         .github/workflows/ IDENTITY.md PERSONALITY.md \
-        scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+        scripts/evolve.sh scripts/gasp_shim.sh scripts/gasp_delivery.py scripts/gasp-delivery-validator/ tools/gasp-emit/ \
         scripts/format_issues.py scripts/build_site.py \
         skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>/dev/null || true)
     if [ -n "$staged_protected" ]; then
@@ -2256,7 +2256,7 @@ ${FILED_SECTION}"
     PROTECTED_CHANGES=""
     if ! PROTECTED_CHANGES=$(git diff --name-only "$PRE_TASK_SHA"..HEAD -- \
         .github/workflows/ IDENTITY.md PERSONALITY.md \
-        scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+        scripts/evolve.sh scripts/gasp_shim.sh scripts/gasp_delivery.py scripts/gasp-delivery-validator/ tools/gasp-emit/ \
         scripts/format_issues.py scripts/build_site.py \
         skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>&1); then
         echo "    BLOCKED: Task $TASK_NUM — git diff failed (cannot verify protected files)"
@@ -2268,7 +2268,7 @@ ${FILED_SECTION}"
     if [ "$TASK_OK" = true ]; then
         if ! PROTECTED_STAGED=$(git diff --cached --name-only -- \
             .github/workflows/ IDENTITY.md PERSONALITY.md \
-            scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+            scripts/evolve.sh scripts/gasp_shim.sh scripts/gasp_delivery.py scripts/gasp-delivery-validator/ tools/gasp-emit/ \
         scripts/format_issues.py scripts/build_site.py \
             skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>&1); then
             echo "    BLOCKED: Task $TASK_NUM — git diff --cached failed"
@@ -2284,7 +2284,7 @@ ${FILED_SECTION}"
     if [ "$TASK_OK" = true ]; then
         if ! PROTECTED_UNSTAGED=$(git diff --name-only -- \
             .github/workflows/ IDENTITY.md PERSONALITY.md \
-            scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+            scripts/evolve.sh scripts/gasp_shim.sh scripts/gasp_delivery.py scripts/gasp-delivery-validator/ tools/gasp-emit/ \
         scripts/format_issues.py scripts/build_site.py \
             skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>&1); then
             echo "    BLOCKED: Task $TASK_NUM — git diff (working tree) failed"
@@ -2470,7 +2470,7 @@ BFIXEOF
         # Re-check protected files after fix agent (committed + staged)
         if ! BFIX_PROTECTED=$(git diff --name-only "$PRE_TASK_SHA"..HEAD -- \
             .github/workflows/ IDENTITY.md PERSONALITY.md \
-            scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+            scripts/evolve.sh scripts/gasp_shim.sh scripts/gasp_delivery.py scripts/gasp-delivery-validator/ tools/gasp-emit/ \
         scripts/format_issues.py scripts/build_site.py \
             skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>&1); then
             echo "    Build-fix: git diff failed — cannot verify protected files, reverting"
@@ -2480,7 +2480,7 @@ BFIXEOF
         fi
         BFIX_PROTECTED_STAGED=$(git diff --cached --name-only -- \
             .github/workflows/ IDENTITY.md PERSONALITY.md \
-            scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+            scripts/evolve.sh scripts/gasp_shim.sh scripts/gasp_delivery.py scripts/gasp-delivery-validator/ tools/gasp-emit/ \
         scripts/format_issues.py scripts/build_site.py \
             skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>/dev/null || true)
         if [ -n "$BFIX_PROTECTED" ] || [ -n "${BFIX_PROTECTED_STAGED:-}" ]; then
@@ -2839,12 +2839,12 @@ FIXEOF
                 # Re-check protected files after fix agent
                 FIX_PROTECTED=$(git diff --name-only "$PRE_TASK_SHA"..HEAD -- \
                     .github/workflows/ IDENTITY.md PERSONALITY.md \
-                    scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+                    scripts/evolve.sh scripts/gasp_shim.sh scripts/gasp_delivery.py scripts/gasp-delivery-validator/ tools/gasp-emit/ \
         scripts/format_issues.py scripts/build_site.py \
                     skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>/dev/null || true)
                 FIX_PROTECTED_STAGED=$(git diff --cached --name-only -- \
                     .github/workflows/ IDENTITY.md PERSONALITY.md \
-                    scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+                    scripts/evolve.sh scripts/gasp_shim.sh scripts/gasp_delivery.py scripts/gasp-delivery-validator/ tools/gasp-emit/ \
         scripts/format_issues.py scripts/build_site.py \
                     skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>/dev/null || true)
                 if [ -n "$FIX_PROTECTED" ] || [ -n "$FIX_PROTECTED_STAGED" ]; then
