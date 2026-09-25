@@ -1,0 +1,765 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me start by understanding the situation. I'm in planning phase. I need to write task files.
+
+Key evidence:
+1. Four consecutive sessions failed to land #944 (the usage-record fix). The last attempt's edit was correct, self-tests green, but ran out of budget at the cargo gate.
+2. Backlog has 8 items, oldest is #738 (43 days).
+3. Release not due.
+4. Community: nothing new.
+
+Priority ladder:
+- Tier 0: no CI failures.
+- Tier 1: capability gaps.
+- Tier 3: release not due.
+- Self-driven slot: prefer DREAM next milestone.
+
+The DREAM's next milestone: "Give the risk ledger a way to say *unhittable* out loud." But the assessment says the dream milestone #944... no wait, #944 is the usage record thing, not the dream.
+
+Actually let me re-read the DREAM:
+
+**next milestone** — Give the risk ledger a way to say *unhittable* out loud. The validation event (`write_validation_event`) gains a count of its surprise files that did not exist at the snapshot's own `git_hash`, and the summary prints it next to `accuracy_pct` instead of letting a zero absorb it; the observable is that count on the next watch event, plus a retrospective pass over the 115 post-ledger events reporting how many had ≥1 such member (today: 1). If the git side cannot be built... fall back to the first-scored-ledger join.
+
+But note the day-206 lesson: that DREAM milestone was already done (the retrospective reader landed — 3 of 116). And the git path was said "cannot be built" but actually 115/115 resolve. Hmm. Actually the day-206 lesson says the fallback was taken and the git path was not attempted, and the git path actually works. So there's a real remaining piece: the git-existence check.
+
+Hmm, but that's a big design question.
+
+The dominant fact per the assessment: four consecutive non-landings of #944, a small already-designed fix. The recommendation: "A task that plans to *land #944 from the existing spec, with the verification cut to the minimum the task file already names* is defensible and probably the highest-value thing available."
+
+But the caveat: re-planning a repeatedly-failed task is risk avoidance (d28). If I re-scope it, the re-scope must name what specifically changes about the execution.
+
+So Task 1 should be #944, landed minimally. What specifically changes: the task is exactly ONE edit — add `USAGE_NO_TERMINAL_EMIT` const and a branch in `classify_session_usage` — plus update the existing test expectation. That's it. No sweeping, no measurement, no ARCHITECTURE prose beyond a couple of lines. Verification: `python3 scripts/extract_trajectory.py --test` (0.095s) plus `cargo build && cargo test` — but wait, extract_trajectory.py is Python, not Rust. So cargo build/test wouldn't be affected much... Actually the change is in scripts/extract_trajectory.py which is Python. So `cargo build && cargo test` is unaffected. The verification should be `python3 scripts/extract_trajectory.py --test`.
+
+Hmm — but the harness gate runs `cargo build && cargo test` anyway. If the change is Python-only, then the gate passes trivially and the risk is the agent runs out of budget during cargo. So the task file should say: make the edit, run the Python self-test, commit immediately. Optionally run rustfmt/clippy only if Rust files touched (none). Actually the instructions say "Prefer tasks that add/modify one thing and can be verified with cargo build && cargo test." But this is a Python script.
+
+Wait, but the day-209 transcript shows the agent did the edit and self-tests passed, then started cargo gates and ran out. So if the task file explicitly says "do NOT run cargo — this is a Python-only change; the change is verified by `python3 scripts/extract_trajectory.py --test` and `python3 -m py_compile`", that could cut the budget.
+
+Let me now think about Task 2. Options:
+- Backlog drain: oldest is #738 (43d). But #738 is "Blind-round prediction mirror (survives task reverts)" — a durable home for prediction lines, which is basically an issue used as a GitHub comment store. Hmm, actually it's an issue to store predictions in. Is it still valid? It's a process thing.
+- #858 (skill-evolve's own gate) — needs human, can't fix (skill file protected).
+- #869 (25d) /cd reloads no config — product, design pass needed.
+- #870 (25d) counterfactual fix-loop population — instrument.
+- #879 (22d) composite safe mode — product, design questions.
+- #902 (15d) seventh trust door — design questions.
+- #937 (4d) price drift alarm — I filed; there's a clear option 1: port yoagent's price_audit shape. That's well-specified and bounded. Actually #937 says "Options (not yet chosen)" 1 is smallest: port yoagent's price_audit shape to yoyo's table — add an #[ignore]d drift alarm test. Hmm, but the assessment says the day-207 session already attempted "Price-drift alarm for the cost table" and it was in per-task activity (1 attempt, last day-207). And the day-207 lesson says "Task 1's own ARCHITECTURE entry then found the number false" — wait that was about the 0-hits claim.
+
+Hmm, actually there's a note: the day-207 session's Task 1 was "Price-drift alarm for the cost table" with 1 attempt. Let me check: per-task activity lists "Price-drift alarm for the cost table — audit my rows against…": 1 attempt(s), last day-207. So it was attempted. Did it land? The lesson on day 204 says the drift alarm is `#[ignore]`d and needs network, opened by a human before release — that exists in src/format/cost.rs (`price_drift_audit_against_models_dev`, `fetch_models_dev_json`, `KNOWN_DIVERGENCES`). So #937's option 1 may already be partly done? Hmm, the day-207 lesson says the DeepSeek audit had been in src/format/cost.rs since c09152ca (day 204). So there IS an audit. So #937 might be partly resolved.
+
+Let me pick something clean and self-contained for the second slot. Given the ladder, tier 6 says "Issue you filed for yourself (agent-self) — your own continuity matters" and the backlog-drain rule says spend the second slot on the OLDEST still-valid item.
+
+But oldest valid: #738 (43d) is basically a "mirror predictions to GitHub" process issue. It's cheap and self-contained: post a comment with a prediction before the first read. Hmm, but is it a code task? Not really.
+
+Actually let me reconsider. The assessment says the highest-value thing is landing #944. The DREAM milestone is the risk-ledger unhittable count. That's tier 1-ish (self-driven/dream).
+
+Given budget constraints (the last 4 sessions died of budget), I should plan TWO small, very concrete tasks whose verification is cheap.
+
+Let me think about what's actually best:
+
+Task 1: Land #944 minimally — add `USAGE_NO_TERMINAL_EMIT` verdict. Files: `scripts/extract_trajectory.py` (1 file). Actually might need ARCHITECTURE.md note. Keep to 2 files max.
+
+Hmm wait. Let me reconsider whether #944 is the right "one small fix". Let me look at the actual state. The assessment says: `grep -c no_terminal_emit scripts/extract_trajectory.py ARCHITECTURE.md` → 0 and 0. And `classify_session_usage` has four verdicts (`recorded`/`absent`/`unreadable`/`not_measurable`) and `USAGE_ABSENT` absorbs the killed-run case.
+
+The proposed fix: distinguish "audit file exists with records but no usage line" (killed run) from "audit file exists and is empty-ish / absent". The recent attempt replaced `USAGE_ABSENT` with `USAGE_NO_TERMINAL_EMIT` in the near-miss test.
+
+I can't read source (instructions say don't read source in planning). So I must plan from the assessment. The assessment gives enough: add a fifth verdict, distinct from absent, for "readable audit file carrying records and no usage line".
+
+Hmm, but "Do NOT read source code files" — right. But I could read ARCHITECTURE.md? That's not source. The instructions say the assessment contains what's needed. I'll plan from that but I should be careful to write a task that's executable. Since I can't read source, the task should instruct the implementer to read first (they can).
+
+Actually, the risk: a fifth verdict requires updating every match on the enum (per CLAUDE.md rule). The task file must say that.
+
+Hmm, but the assessment says day-209's attempt "was made (`USAGE_NO_TERMINAL_EMIT` replacing `USAGE_ABSENT` in the near-miss test)". So the shape is known.
+
+Let me be careful: the task must be sized so the implementer finishes. The key lesson: budget died at cargo gate. So the task should say: this is a Python-only change; verify with `python3 scripts/extract_trajectory.py --test`; do not run the full cargo suite (unchanged by this edit), and commit as soon as the Python self-test is green.
+
+But the harness gate runs cargo build && cargo test after the task anyway... and the task must pass it. If no Rust files are touched, cargo test will pass trivially (assuming tree was green). The risk is the agent spending budget on cargo. So instructing "don't run cargo" is the budget fix. Hmm, but is that legitimate? The evolve skill's gate requires cargo build && cargo test. The runner does it. Hmm — if the runner does it, the agent doesn't need to. Actually the agent typically runs it itself to verify. Given four sessions died there, and the change is Python-only, saying "skip cargo; it cannot be affected by a Python-only edit and the harness gate will run it" is a legitimate budget change. But careful: CLAUDE.md says "Before declaring any task complete, run `cargo clippy --all-targets -- -D warnings` explicitly." Hmm. That's for Rust changes. A Python-only change... clippy is unaffected.
+
+Hmm, but maybe safer: instruct to run `cargo build` only if time permits, and commit FIRST after the Python self-test is green. That ordering is the real fix: commit before the expensive verification, so the work isn't lost. Actually no — the harness gate reverts on failure. But committing after python self-test green and then the harness gate runs cargo... if cargo passes, great.
+
+Actually the deeper fix for "budget dies at the gate": make the edit AND commit within the first half of the session. So: Step 1: read the relevant function, make the edit. Step 2: run `python3 scripts/extract_trajectory.py --test`. Step 3: `git commit`. Step 4: if budget remains, run cargo build && cargo test.
+
+That's a good, specific execution change — which the assessment demanded ("the re-scope must name what specifically changes about the execution — not the design").
+
+Task 2: Something independent. Let me consider the DREAM milestone: the git-existence check for born-after surprise files. Per the day-206 lesson, that milestone was already partly done (a retrospective over post-ledger events gave 3 of 116). Wait — re-read: "Tonight I built the reader that counts the same thing over the population the tool actually sees -- every post-ledger grading event -- and it printed 3 of 116, not 1 of 55." That's the ledger-join fallback (first-scored ledger). And the day-206 lesson says the git path was NOT attempted but works (115/115 hashes resolve).
+
+So the remaining dream work: actually use the git side — count surprise files that did not exist at the snapshot's `git_hash`. The issue is `count_unhittable_surprises_at` / `git_born_after_at` — the source architecture shows `src/commands_risk_unhittable.rs` already has `git_born_after_by_check`, `git_born_after_at`, `count_unhittable_surprises_at`, `count_unhittable_surprises_with_git`, `unhittable_note`, `retrospective_unhittable`, `retrospective_note`. So it looks like this is already built! Day 206's trajectory... Hmm.
+
+So the DREAM milestone may already be largely landed. That's ambiguous and I can't read source. Risky.
+
+Alternative Task 2: backlog drain on something well-specified. #937 option 1 (port yoagent's price_audit shape) — but likely already done (day 204 landed `price_drift_audit_against_models_dev`). The day-207 session attempted "Price-drift alarm for the cost table" and... the per-task activity says 1 attempt. Did it land? Unknown. Actually the day-207 15:53 session was 2/2 green with tasks "Receipt #912..." and "Wire the `-p` door...". The 10:35 session was 2/2 with "Close the two documentation-half receipts (#917, #904)" and "Price-drift alarm for the cost table". Hmm, so day-207 10:35 landed the price-drift alarm. And day-207 had 3 sessions: 10:35 (2/2), 15:53 (2/2), 20:29 (0/1 reverted). So the price-drift alarm likely landed at 10:35 on day-207. But then the day-207 20:29 session was "Receipt #912" ... hmm actually the per-task table shows the price-drift with "last day-207". So #937 may be resolved. I should verify — but I can't read source; I can run gh? Hmm, I could check via bash `git log --oneline | head` — that's not reading source code per se, but the instruction says don't read source. Reading git log is fine I think. But let me not over-engineer.
+
+Let me instead pick for task 2 something clean and bounded that the assessment supports:
+
+Option A: #902's item 4 — the note "commands_spawn.rs:810 and :961 call load_project_context() directly, outside cli.rs's safe-mode branch. Whether a --safe-mode parent's spawned worker still loads project instructions was not verified." That's a **verification task** — cheap, bounded, produces a pinning test or a doc line. And day-203's lesson about "null as a deliverable" applies: plan the task to report the measured reading either way. That's a nice, small, honest task. It's tier 6 (agent-self backlog) but it's a *verification* of a security-relevant door — actually it's #902 which is a security issue. Good value.
+
+Hmm, but the backlog drain rule says oldest-first. #738 (43d) is oldest. Is #738 still valid? It's "Blind-round prediction mirror (survives task reverts)". Looking at it: "Durable home for blind-round prediction lines... One comment per round, posted before the first read of the target." That's a process action, not code. It could be drained by: check whether the dream-round machinery still reverts predictions; if the DREAM loop is still active (dreams/experiments.jsonl exists), then... Actually implementing it would mean adding code to the dream scripts to post a comment. Hmm, complicated.
+
+Alternatively close #738 as not-planned with reason? The rule: "If the oldest is no longer worth doing, CLOSE it as not-planned with the reason written down."
+
+Hmm. Let me think about what maximizes value given the budget fragility.
+
+Given the assessment's explicit recommendation and the trajectory, the highest-value, most-defensible plan is:
+
+Task 1: Land #944 (the four-times-failed small fix), with a named execution change (edit → python self-test → commit → only then cargo; and cap the work at exactly the minimal diff).
+
+Task 2: Something small and independent. Let me consider the "shipped unverified" receipt #871: "Accepted UNVERIFIED: Take the first real counterfactual reading, and make it cumulative (DREAM milestone)". The instructions say route it: read the verdict, then either plan a small task that re-checks the objection, or close it. Reading it costs a `gh issue view`. That's a good candidate — it's a receipt that needs routing, and the harness explicitly wants one of the two responses. But I'd need to read the verdict to route it. Actually I could do that in this planning phase? "Do not read source code files" — reading a gh issue is fine.
+
+Hmm, but the routing is a deliverable in issue_responses.md or a task. Let me consider making Task 2 = "Re-check #871's objection against the current tree" — a small verification task. But it's vague without reading the verdict.
+
+Let me just read #871's body via gh in this phase — it's allowed (not source code). Let me do that.
+
+Actually, let me be efficient. Let me do a few quick reads:
+1. `gh issue view 871` — the unverified verdict.
+2. Check whether #937's price drift alarm landed (git log grep).
+3. Check #944's exact current state in extract_trajectory.py — hmm, that's source. But the assessment already told me grep count = 0. Fine.
+
+Hmm, "Do NOT read source code files." I'll interpret narrowly: no reading src/*.rs or scripts/*.py content. But grep counts? The assessment did that. I'll avoid.
+
+Let me run the gh commands.
+
+Actually wait — I need to be careful about token budget too. I'm the planner. Let me be decisive.
+
+Plan:
+- Task 1: Land #944 minimally. Kind: evolve. Files: scripts/extract_trajectory.py, ARCHITECTURE.md.
+- Task 2: Drain the oldest backlog item... let me check #738 quickly. Actually, let me reconsider: the backlog index says 8 open agent-self issues, and "If that is more than 12, spend this slot on the OLDEST" — 8 is not more than 12. So the strict oldest-drain rule does NOT bind! Good, re-read: "BACKLOG DRAIN: the index above lists 8 open agent-self issues. If that is more than 12, spend this slot on the OLDEST one that is still valid instead."
+
+Hmm, the text is templated oddly: "the index above lists 8 open agent-self issues. If that is more than 12, ..." — so since 8 ≤ 12, the rule doesn't force oldest-first. So the second slot is "highest-priority remaining item — community issues by net score, or a second self-driven item if nothing from the community queue is actionable."
+
+OK. So Task 2 = another self-driven item OR a community issue. Community: none today.
+
+So Task 2 should be a self-driven high-value item. Candidates:
+(a) #902's unverified spawn door — small verification + possible fix.
+(b) The DREAM milestone.
+(c) #937's remaining half (which model row is right + drift alarm).
+
+Hmm, the assessment says the research finding: "/usage attributing spend by skill, subagent, plugin and MCP server is exactly the capability my own #944 is the first slice of". And "the destination is per-phase/per-skill attribution rather than a fifth verdict."
+
+For a second independent task, I like (a) — it's concrete, bounded, security-relevant, and produces a pinning test or a doc correction. But is it "highest-impact"? It closes a slot in #902 which is 15 days old.
+
+Alternatively, a strong candidate: the CLAUDE_CODE_GAP.md staleness — the trajectory flags it STALE (135 days), and day-204's lesson was exactly this. The assessment lists it as capability gap #1. But re-verifying 482 rows is huge; day 204 decided NOT to refresh. Could plan a *slice*: re-verify the top N rows? That's what day 204 explicitly declined (a half-refreshed map is worse). Hmm.
+
+Let me think about what actually makes yoyo more competitive. The gap vs Claude Code: multi-agent coordination (too big), /usage per-skill attribution (that's #944's destination).
+
+I think Task 2 should be: the next slice of #944's destination? No — can't do two slices of the same thing well.
+
+Let me go with a different angle: the assessment's "Bugs/Friction Found" #2 says the failure is budget concentrated in the cargo gate. There's a real self-improvement: make the loop's own verification cheaper / commit earlier. But that's evolve.sh (protected).
+
+Hmm. Let me reconsider #870 (25d): "counterfactual_green.py: the fix-loop population is 2 behavioural commits because ~88 of its test edits sit inside src/ behind #[cfg(test)]". Option 3: "Accept the limit and report the fix-loop arm as structurally unmeasurable, with the 11/117/88 split printed on every run so the wall is never invisible again." That's a bounded, cheap task in one Python file. And it's honest (day-206 lesson: report the null/limit as a value). That's a good Task 2! It's tier 6/self-driven, bounded to one file, verifiable via the script's self-tests.
+
+Hmm, but is it the highest impact? It makes a limitation legible. Moderate.
+
+Alternatively #879 (composite safe mode) is a product feature with real user value — but needs a design pass, and the issue lists 5 open design questions. Too big/ambiguous for one task.
+
+#869 (/cd reload) is product, security-relevant, but touches 5 config gates — the issue itself says it needs its own design pass. Too big.
+
+Let me pick between (a) #902 spawn-door verification and #870 option 3.
+
+Actually, hold on. Let me reconsider the DREAM. The instructions say "for this slot, prefer advancing the next milestone in DREAM.md (your own dream) unless a higher-priority issue blocks." That's for the self-driven slot. Task 1 is the self-driven slot? #944 is an agent-self issue (tier 6) — hmm, arguably. The DREAM milestone is the preferred self-driven work.
+
+But the DREAM milestone appears already largely implemented (src/commands_risk_unhittable.rs has retrospective_unhittable, git_born_after_at, unhittable_note). The dream says the observable is "that count on the next watch event, plus a retrospective pass over the 115 post-ledger events reporting how many had ≥1 such member (today: 1)". Day 206 built the retrospective. Hmm.
+
+And the day-206 lesson #3 (the fallback clause) says the git path was never attempted even though it works. So the *remaining* dream work is: use the git-existence check instead of (or alongside) the ledger join. But `git_born_after_at` exists in the file... so maybe day 206's session did implement both? The lesson says "the branch I shipped is 94% undecidable — 135 of 144 surprises land in unmeasurable". Hmm, that's the ledger-join. And the git path "was not attempted". So `git_born_after_at` might be from a different (later) session, or it might be the check that was written but not used.
+
+This is too uncertain without reading source, and I'm told not to. Risky to plan.
+
+Hmm, but actually maybe a very small dream task: "Record the day-206 finding at the branch so nobody 'simplifies' the fallback away" — no, that's prose.
+
+Let me settle: 
+
+Task 1 = Land #944 (evolve).
+Task 2 = #902's unverified door: measure whether a `--safe-mode`/`--restricted` parent's spawned worker still loads project instruction files, and pin the answer with a test (or fix it). Kind: product (security). Files: src/commands_spawn.rs (+ possibly src/cli.rs), tests.
+
+Hmm, but "spawned worker" — `commands_spawn.rs:810,:961` call `load_project_context()` directly. A test would need to spawn... expensive. Hmm. Alternatively the measurement could be a source-level guard + a unit test on a pure seam. Risky.
+
+Let me reconsider. Given budget fragility, Task 2 should be dead simple to verify. #870 option 3 is one Python file with existing self-tests — very safe.
+
+Hmm, but I keep going back and forth. Let me apply the priority ladder properly:
+- Tier 1: capability gaps → biggest is multi-agent (too big); CLAUDE_CODE_GAP stale (day 204 declined re-verification).
+- Tier 2: self-discovered bugs → the assessment's bug #1 is #944 (Task 1). Bug #3 "CI green is not work landed" — infra.
+- Tier 6: agent-self issues.
+- Tier 8: most competitive.
+
+I think a strong Task 2 that's competitive-facing and cheap: **make the trajectory report show per-phase attribution**? No, too big.
+
+OK, decision: Task 2 = #870 option 3 (print the fix-loop wall: 11/117/88 split on every census run), because:
+- one file (scripts/counterfactual_green.py)
+- existing self-tests + a CI-able `--test`
+- honest-null discipline (day 203/206 lessons)
+- drains a 25-day-old item
+
+Hmm, wait. Actually, is that "highest-impact"? It's low impact. But it's honest and safe.
+
+Alternatively, Task 2 = #869's *narrow* half: reload `permissions`/`dir_restrictions` on `/cd`... no, too wide.
+
+Hmm, let me reconsider one more: the trajectory says "1 of 4 closed, claiming session(s): claimed success, no task commits" and Day 207's session-level corroboration reader landed. There's a "claimed success, no task commits" detector. Fine.
+
+Let me also consider: the assessment says #944's **destination** is per-phase/per-skill attribution. Task 2 could be a *second, independent* slice: instrument `scripts/social.sh` with `YOYO_AUDIT` + a durable sink? No — #944 explicitly says that was reverted and needs design (durable sink, watermark, "no terminal emit" state). That's the same issue.
+
+OK. Let me go with #870 option 3 for Task 2. Hmm, actually...
+
+Wait. Let me reconsider one more time with fresh eyes on "what will make the biggest difference today". The single most valuable thing is landing #944 (Task 1). Task 2 should be *independent* and *low-risk of eating budget from Task 1*. Tasks run in separate sessions though ("Implementation agents will execute each task in separate sessions"). So budget doesn't compete. Good.
+
+Given that, Task 2's risk is only its own landing.
+
+I'll go with #902's spawned-worker door *measurement* — no wait, the verification for a spawn test is expensive (spawning yoyo). Hmm, but day-203's task 2 did exactly that: "Measured at the CLI in a throwaway repo whose unique marker... the marker appears with no flag and zero times under either flag". So it's doable in a session. And the deliverable can be: a pinning test + a doc line, or a fix if the door is open. That's genuinely valuable (a security door). And it's in the same spirit as the recently-landed work (#902's disclosure).
+
+Hmm, but it might be "no change needed" — which the day-203 lesson handles by pre-writing the null as a deliverable. Good.
+
+Hmm, two candidate Task 2s. Let me pick based on tier: #902 is a security issue (high value), #870 is an instrument legibility item (low value). Tier 1/2 > tier 6. #902 it is. Actually the priority ladder places self-discovered bugs (tier 2) high, and #902 is a *self-filed security issue*. 
+
+But careful: is the spawn-door question actually resolvable in a bounded way? The issue says: "Whether a --safe-mode parent's spawned worker still loads project instructions was not verified and should be part of the design pass." So it's a measurement. A bounded task: write a test (in tests/) that builds the worker's arg/config path and asserts the instruction files are skipped under safe mode — or, if a full spawn is needed, do a live measurement in a throwaway repo with a unique marker and record the reading. Deliverables either way: a pinning test or a doc line naming the door's state.
+
+Hmm, a live measurement in a throwaway dir + a test... The task must fit 30 min. Let me scope it as: **measure + pin**. If the door is open (worker loads instructions despite safe mode), fix it in commands_spawn.rs by threading the flag; if closed, add the pinning test and a comment. Cap files: src/commands_spawn.rs, tests/spawn_safe_mode.rs (new), ARCHITECTURE.md. That's 3.
+
+Hmm, "if open, fix it" makes scope unpredictable → risk of a half-executed protocol (the big revert cause). Better: make the task *measurement + pin only*, and if open, file/route the fix. Hmm, but a pinning test for an open door would fail. 
+
+Let me restructure: the task is to *determine and pin* the behaviour. To keep it non-conditional: "Add a test that asserts the CURRENT measured behaviour, with the measurement recorded in a comment, and report the reading in ARCHITECTURE.md." If the door is open, the test pins the open behaviour (a characterization test) and the task file says to ALSO file an issue. Hmm, but then no fix.
+
+Hmm, this is getting complicated and conditionals are exactly what burns budget. Let me simplify.
+
+Alternative Task 2 that's clean: **#937's remaining half**. The issue says "Which DeepSeek number is correct is not settled here and must be read off the vendor's page before either row is touched." That's a bounded task: fetch DeepSeek's published pricing, decide the correct row for `deepseek-v4-flash`, fix the row (or add the alias to the correct arm), update the near-miss guard's expected values, and record which source settled it. Files: src/format/cost.rs (+ ARCHITECTURE.md). One source file! Very bounded, verifiable with cargo test. And it's a *live* correctness bug: 3.7x cost overstatement for the model the loop runs on. That's tier 2 (self-discovered bug).
+
+But: the day-204 lesson says the drift alarm is `#[ignore]`d and needs network; a human opens it. And the day-207 session attempted "Price-drift alarm". Whether the rows were fixed... The issue #937 was filed 4 days ago (day 205). The day-204 lesson about the price bug is *separate* (that was fixing deepseek-v4-flash to 0.15/0.60). Hmm — the day-204 lesson says the row was 0.55/2.19 (wrong) and true is 0.15/0.60, and the alias was bolted to the wrong arm. If day 204 fixed it, then cost.rs:187 would read... but #937 (filed day 205, after day 204) still shows `:187 deepseek-v4-flash | deepseek-r1 -> (0.55, 0.0, 0.0, 2.19)` and `:200 deepseek-flash -> (0.15, ...)`. And the day-207 lesson says the DeepSeek audit landed c09152ca (day 204). So the *audit* landed but the contradiction (two rows) remains — #937's point is the repo asserts both and can't tell you which it believes.
+
+So a task: settle which row is right using the vendor page (or the models.dev data the audit already fetches), then fix the table so there's one answer for the served id, update the guards. One file. Verifiable. Hmm, but "read the vendor's page" requires network + judgement, and the answer could be that the served model is deepseek-v4.1-flash at flash price (0.15/0.60) → the alias row is wrong. But the near-miss guard at 1705 explicitly pins 0.55/2.19 "byte-identical" for deepseek users... changing it would be "weakening" a guard per check_assertion_weakening.py. Hmm! That's a trap: the strengthening/weakening checker would flag changing assert values. Careful — `assert_eq!(model_pricing("deepseek-v4-flash"), Some((0.55, 0.0, 0.0, 2.19)))` → changing to (0.15,...) is an assertion VALUE change; check_assertion_weakening compares shapes; a byte change of a literal in a near-miss guard may read as WEAKENED/strengthened. Risky.
+
+Hmm. OK.
+
+Let me step back and be pragmatic. The dominant fact is budget exhaustion. The best plan is TWO SMALL tasks with cheap, deterministic verification and NO conditionals.
+
+Task 1: #944 — Python-only, one file + doc note, verified by the script's self-test, commit before cargo.
+Task 2: ... needs the same properties: small, deterministic, no network, no judgement calls.
+
+Candidates with those properties:
+- #870 option 3: print the 11/117/88 split in `counterfactual_green.py`'s fix-loop census. One Python file, self-test verifiable. Deterministic (counts computed from git). Hmm, requires git history reads (depth) — the script does that already.
+- #858's smallest item: the octal fix is in the protected skill file (can't).
+- A pinning test only task.
+
+I like #870 option 3. It's honest, bounded, deterministic, one file. And #870 is a real open issue (25 days). Its "Option 3: Accept the limit and report the fix-loop arm as structurally unmeasurable, with the 11/117/88 split printed on every run so the wall is never invisible again."
+
+Hmm, but wait — will the implementer be able to compute 117/88? That's a text heuristic over git diffs (the `-U0` grep for `#[test]`/`cfg(test)`/`assert`). Implementing that heuristically in Python is doable but not trivial; and it must be labelled an upper bound. Bounded to ~50 lines. Feasible in 30 min? Maybe. Risk: medium.
+
+Alternative deterministic small task: In `extract_trajectory.py`, the trajectory's "Productivity: OUT OF RANGE" message. Hmm.
+
+Hmm, what about the CLAUDE_CODE_GAP staleness — a *cheap slice*: the assessment says the fix day-204 chose was the doc-freshness reader (landed). So it's already instrumented. Nothing to do.
+
+What about #951 (wrap-up sweep ungated)? That needs evolve.sh (protected). But the assessment notes: "session_plan/task_01.md this session puts a CI gate under the instrument that was swept in ungated: `scripts/extract_trajectory.py --test` exists, runs in 0.095s offline, and no CI step invokes it." — That's a great, tiny, high-value task! Add a CI step invoking `python3 scripts/extract_trajectory.py --test`. But `.github/workflows/` is protected (never modify). Hmm — CLAUDE.md safety rules: "Never modify ... `.github/workflows/`". So can't.
+
+Hmm, but could the task add the invocation to an existing non-protected script? The lint script? `scripts/lint_evolve_heredocs.py` is invoked from the pre-push hook and CI. Hmm, modifying that is outside its purpose.
+
+Hmm. What about adding it to the pre-push hook `.githooks/pre-push`? That's tracked and not protected (it's not in the protected list: IDENTITY.md, PERSONALITY.md, ECONOMICS.md, scripts/evolve.sh, scripts/format_issues.py, scripts/build_site.py, .github/workflows/). But the hook must stay under a second (~80ms); the script test takes 0.095s — borderline but per CLAUDE.md "Keep the hook to checks well under a second (currently ~80ms) — everything slow stays in CI". 95ms + 80ms = ~175ms, still under a second. Hmm, and the hook only runs on local pushes by whoever opted in, not the bot. The value is limited.
+
+Hmm, CI is where it matters, but CI is protected. So this is a human-blocked item → it belongs in the #951 issue, which exists.
+
+OK. Let me reconsider: maybe Task 2 = **#738 drain** (oldest, 43 days). What would draining look like? Read it: "Durable home for blind-round prediction lines... One comment per round, posted before the first read of the target." A drain could be: implement a tiny script/step in `scripts/dream.sh`... but wait, is dream.sh protected? Not in the list. Hmm, but this is a process issue.
+
+Honestly, #738 is "post predictions to GitHub". The *code* part could be: add a `--mirror` step to the dream flow that posts the prediction to issue #738 before the first read. Hmm, but the DREAM loop is machine-driven; the harness's dream session could do it. This is more of a workflow convention. Low confidence.
+
+Let me just decide with the priority ladder and pick something I can specify precisely.
+
+DECISION: 
+- Task 1: Land #944 minimally (evolve). 
+- Task 2: #870 option 3 — make the fix-loop arm's structural limit visible (evolve, one file).
+
+Hmm, but is it the "highest-priority remaining item"? Community: nothing. So a second self-driven item is allowed. Between #870 and #902's spawn door, #902 is a security door. But #902's spawn-door measurement is a conditional task. Hmm.
+
+Hmm, actually — hold on. Let me reconsider #902's door once more. Actually there's a cleaner framing: the issue says the naive gate would break yoyo's own loop. Rather than the spawn door, there's a *testable* sub-question: "does any test assert that the evolve loop still receives its context?" The issue says: "cargo build && cargo test would pass, because nothing tests 'does the evolve loop still receive its context'." That's a missing-test gap — and day 200's lesson says "A missing test leaves the tree exactly as green as a written one, so my oldest rule is the one rule no check of mine can falsify."
+
+So Task 2 could be: **write the missing test that pins that the project context (including instruction files) IS loaded for the machine-driven loop, so a future gate can't silently close the door.** That's a bounded test-only task in src/context.rs or tests/. Hmm, but it's a bit speculative.
+
+I'll go with #870 option 3 as Task 2 — no wait.
+
+Ugh, let me stop oscillating and apply a tiebreaker: which task is most likely to LAND given budget fragility? Both need care. #870 requires git-diff heuristics (medium complexity, but deterministic). #944 is a small edit.
+
+Hmm, what about making Task 2 equally small: **#944's companion in the same file** would be duplication. No.
+
+Final answer:
+- Task 1: Land #944 (USAGE_NO_TERMINAL_EMIT). Files: scripts/extract_trajectory.py, ARCHITECTURE.md.
+- Task 2: #870 option 3 (fix-loop wall visibility). Files: scripts/counterfactual_green.py, ARCHITECTURE.md.
+
+Hmm, wait. Actually, let me reconsider Task 2 once more against "most impact". 
+
+Think about the two-audience/purity: both tasks touch only harness scripts (evolve-kind). That's fine — the loop's own observability. But nothing product-facing. The assessment's capability gap #1 is the stale gap doc; #2 is the loop's accounting.
+
+Hmm, a product-facing small task would be good for balance. #869 (/cd reload) or #879 (composite safe mode) are the product ones but both need design.
+
+Hmm — actually here's a nicely scoped *product* task derived from #879 without the design questions: the sibling gap — "file reads outside the working directory are unbounded today" and the ask-once machinery exists. Hmm, still design.
+
+What about a genuinely small product task: #902's disclosure already landed. 
+
+OK here's another thought. The assessment's "Bugs/Friction Found" #3: "CI green is not work landed — outcome.json for three sessions reads build_ok: true, test_ok: true, tasks_succeeded: 0. My trajectory's 'CI: no failed runs' line therefore has no resolution for the actual failure mode." The trajectory *does* now show "tasks 0/1 ⚠️ — 1 task(s) reverted" and the claimed-success section. Hmm, actually the trajectory already surfaces it. But it says "1 task(s) reverted" while outcome.json says `reverted: false`. Hmm! The trajectory line for day-209 says "⚠️ 1 task(s) reverted" but the assessment says all three sessions have `reverted: false` and were simply "did not land". So the trajectory's label may be WRONG — attributing "did not land" to "reverted". 
+
+Ooh, that's interesting: the trajectory output says:
+```
+day-209 (2026-09-25 01:18:08): tasks 0/1 ⚠️ — 1 task(s) reverted
+```
+But the assessment says: "day-209 00:15, day-208 00:13, day-207 19:26 — all `tasks_attempted: 1, tasks_succeeded: 0, reverted: false`". So the "1 task(s) reverted" label is a mis-attribution — a killed-before-landing run is being labelled a revert. That's exactly the day-204 lesson class ("a stale chooser", "a message that says the wrong thing") and it's *my own trajectory meter lying about my failure mode*. That's a great, bounded, high-value fix! And it's adjacent to #944 (same file, same theme: distinguish "did not reach terminal emit" from other states).
+
+Hmm — is it the same file? `scripts/extract_trajectory.py` renders the trajectory (session outcomes). And #944's change is in the same file (`classify_session_usage`). Two tasks in the same file — allowed (they're separate sessions), but risky to confirm without reading source. Hmm. Also, do I know where "1 task(s) reverted" comes from? `render_outcomes` / `iter_session_outcomes` / `load_outcomes` in extract_trajectory.py. Likely.
+
+But careful: maybe the label is right and the assessment's reading of outcome.json is of a different field. The assessment explicitly states the discrepancy. Hmm, but is it a mis-attribution or does `reverted: false` mean something else (whole-session revert vs per-task reset)? The trajectory also says "3 task(s) reverted across 3 of the last ~10 sessions (per-task resets, no commit)". So the harness DOES model "per-task resets" as reverts. And outcome.json's `reverted` field... The assessment says `reverted: false`. Hmm, this could be a genuine inconsistency between two recorders, or the trajectory counts "task(s) reverted" from the receipts (the auto-filed "Task reverted:" issues). 
+
+This is uncertain and I can't read source. I'd be planning on a shaky claim. Risky. But I could frame Task 2 as: "verify whether the trajectory's per-session 'N task(s) reverted' label agrees with the session's own outcome.json (`reverted`/`tasks_succeeded`), and if not, make the label honest (or add a distinct state)." Hmm, that's a conditional/measurement task again. But it aligns with the trajectory's own honesty theme and with #944.
+
+Hmm, hold on — actually this might be THE thing. Look at the trajectory:
+```
+day-209 (2026-09-25 01:18:08): tasks 0/1 ⚠️ — 1 task(s) reverted
+```
+vs the assessment: "None reverted; each simply did not land." If the meter labels a budget-death as a revert, then my own headline number about myself is wrong — and the assessment itself is built partly from it. This is exactly the "self-metric that lies" class. And it's cheap to verify (two recorders).
+
+But: the receipts block lists only #779 and #773 as recently reverted, which are old. So the "1 task(s) reverted" for day-209/208/207 is probably derived from something else. Hmm.
+
+Given uncertainty, maybe the safest framing for Task 2 is to make it a *diagnosis + honest label* task: read both recorders, determine what actually happened in those three sessions (revert? budget death? no diff?), and make the trajectory's per-session label say the true thing, with the killed-run state distinct. That is: it's the *rendering* half of #944's theme. Hmm, but that overlaps Task 1.
+
+Hmm, overlapping tasks in the same session → the "two tasks, one input" lesson (day 205): each task's remedy may damage the other. If Task 1 adds `USAGE_NO_TERMINAL_EMIT` and Task 2 changes session outcome rendering, they're independent enough (different functions), but same file. The day-205 lesson says put the sibling's case in the first one's table. Hmm.
+
+OK, I need to just commit to a decision. Let me weigh:
+
+Option A (Task 2 = #870 option 3): independent file, well-specified in the issue, honest, deterministic-ish, low risk. Value: medium-low.
+Option B (Task 2 = trajectory label honesty): same file as Task 1, uncertain premise, potentially the "meter lies" class — high value IF the premise holds. Risk: medium.
+Option C (Task 2 = #902 spawn-door measurement): different area, security value, conditional.
+
+The assessment says: "The dominant fact about this session's context is four consecutive non-landings of one small, already-designed, already-verified fix." So the sane plan is: Task 1 = #944 (land it), Task 2 = something that can't hurt.
+
+I'll pick Option A? Hmm, but it's low impact, and "Don't try to do everything. Pick the highest-impact work."
+
+Hmm, let me reconsider Option C vs A by impact: a security door (spawned worker loading untrusted instruction files under --safe-mode) vs an instrument's legibility line. Security wins on impact, but the conditional fix makes it risky.
+
+Actually, you know what — let me reconsider. Let me look again at the "SHIPPED UNVERIFIED" receipt #871: "Take the first real counterfactual reading, and make it cumulative (DREAM milestone)". The harness says route it: read the verdict, then plan a small re-check task OR close it. That's a *mandated* routing (the harness explicitly asks for one of two responses for each listed receipt). And it's a DREAM milestone item — matching "prefer advancing the next milestone in DREAM.md"! And it's about the counterfactual instrument — related to #870.
+
+Hmm! #871 is a DREAM-milestone task that shipped unverified. Re-checking its objection is a bounded task: read the objection, verify against the current tree, fix or close. That fits perfectly as Task 2 — it's mandated, dream-related, and bounded. And it might interact with #870 (same domain).
+
+But I need to read #871's verdict to know if the objection still stands. Let me do that with gh.
+
+Let me run: `gh issue view 871`. Also maybe `gh issue view 738` briefly. And check git log for the price drift alarm. Let me batch a few cheap commands.
+
+Actually, I should keep tool use tight. Let me run one bash with a few commands.
+
+Let me do it.
+
+Then decide Task 2 = #871 re-check (if the objection is still live and bounded) else #870 option 3.
+
+Let me go.
+
+Also note Day 207's task list included "Price-drift alarm for the cost table — audit my rows against…" which was attempted — I'll check if it landed with git log.
+
+Let me run the commands.
+
+Also — I should double check whether the "1 task(s) reverted" thing is real, via outcome.json. Is reading `.yoyo/audit.jsonl`/outcome.json "reading source code"? No. But the audit-log branch is a git branch. Hmm, the harness mentions "audit-branch `outcome.json`". I could `git show` it. That's fine.
+
+Let me batch:
+1. gh issue view 871 (body)
+2. git log --oneline -15
+3. git log --all --oneline | grep -i "price\|drift" | head
+4. Check outcome.json for a recent session.
+
+Let me be careful about output size.
+
+Let me run.
+────────────────────────────────────────────────────────────────────────────────
+
+I'll gather a few cheap facts before writing the plan (no source reads).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || cd "$(pwd)"; pwd; ec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null; gh issue view 871 2>&1… ✓ (12ms)
+ ✓ (602ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+#871 is from Day 184 — 25 days old. "Review the committed diff yourself, since the evaluator never did." Hmm — it's a DREAM milestone task. But day 184's work is 25 days old; later sessions likely superseded it (the counterfactual instrument has been rebuilt/used since — #870 census, `counterfactual_green.py` with `--test` self-tests, option 3, etc.). Given the later substantial work on counterfactual_green.py (day 184 census, day 193, day 206...), the receipt is probably stale/superseded.
+
+But the instruction says "never close on age — when unsure, prefer the task file over the close."
+
+Hmm. A task to "review the Day-184 diff for #871 against the current tree" is bounded: 1 diff review + either a fix or a comment+close. Could be a good Task 2! It's mandated by the harness's own instructions (route each receipt). And it's a DREAM milestone. And it's cheap if it turns out fine.
+
+Hmm, but reviewing a 25-day-old diff that has since been heavily rewritten... the honest answer is likely "superseded". That's low value but it IS a drain and the harness asks.
+
+Let me check the audit-log outcome.json to verify the "1 task(s) reverted" claim, which informs Task 2 choice.
+
+Let me look at the audit-log branch for recent outcome.json files.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.6s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; echo "=== outcome files on audit-l…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for f in $(git ls-tree -r --name-o… ✓ (11ms)
+ ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The audit-log branch's newest session is day-99 (June). So the audit-log branch hasn't been updated? Hmm, that means the audit-log branch lags. But the assessment said "audit-branch `outcome.json`" for day-209/208/207. Maybe the harness reads from a different location. Let me search for the recent ones differently — maybe there are two directories or the branch name is different.
+
+Let me check `git ls-tree -r --name-only audit-log | grep outcome | sort | tail` — sorted by name, day-99 sorts last because day-9x > day-2xx alphabetically? No: "day-99" vs "day-209" — string sort: "day-2..." < "day-9...". So tail gives day-9x. I need to sort by date. Let me grep for day-209.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git ls-tree -r --name-only audit-l… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Output got cut by exit 141 (SIGPIPE from head). Let me list the day-209 sessions and their outcome.json.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git ls-tree -r --name-only audit-l… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for f in sessions/day-207-20260923… ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting! So these three sessions have usage lines (85-105 of them with "usage"), and outcome.json says reverted:false, tasks_succeeded:0. Yet the trajectory says "1 task(s) reverted". So the trajectory's per-session rendering labels these as "1 task(s) reverted" — which contradicts outcome.json. That's a real inconsistency worth investigating... 
+
+Hmm, wait. Where does the trajectory's "tasks 0/1 ⚠️ — 1 task(s) reverted" come from? The trajectory is computed by the harness (computed 2026-09-25T07:28Z) — likely `scripts/extract_trajectory.py`? No, the trajectory header says "computed by harness from audit-log + git log + recent CI". Hmm, it could be extract_trajectory.py `render_outcomes`.
+
+Actually — `iter_session_outcomes`/`load_outcomes`/`render_outcomes` are in extract_trajectory.py. So render_outcomes probably renders "0/1 ⚠️ — 1 task(s) reverted" when tasks_attempted=1 and tasks_succeeded=0. I.e., "did not land" is being rendered as "reverted". That IS the mis-attribution.
+
+Hmm, but is it wrong? For the loop, a task that doesn't land gets its per-task reset ("per-task resets, no commit") — the trajectory's "Reverts in window" line says "3 task(s) reverted across 3 of the last ~10 sessions (per-task resets, no commit)". So the harness considers a non-landing task a "revert" (reset to PRE_TASK_SHA), even though outcome.json's `reverted` field is false (that field probably tracks whole-session reverts).
+
+So the label may be defensible within the harness's model. The assessment's framing ("None reverted; each simply did not land") is the assessor's inference.
+
+Hmm. So this is genuinely ambiguous — I'd be planning on a shaky premise. Not good for Task 2.
+
+But wait — the more interesting fact I just measured: **the day-209 session's audit.jsonl HAS 85 usage lines**, and outcome.json says build_ok/test_ok true. So the "usage record" issue in #944 is about *phases other than evolve*. Fine.
+
+OK. Let me now decide and stop. I'll check one more thing: whether the price drift alarm landed (to avoid re-planning done work), and glance at #738's state (43d old). Actually, let me instead spend remaining effort on writing good task files.
+
+Decision for Task 2. Let me reconsider the strongest option once more given what I now know:
+
+The DREAM's next milestone: "Give the risk ledger a way to say *unhittable* out loud." Note `src/commands_risk_unhittable.rs` exists with `unhittable_note`, `retrospective_unhittable`, `git_born_after_at`. So the dream milestone is *implemented*. Task 2 shouldn't re-do it.
+
+Hmm, what about the day-206 lesson #3 residue: the git path was never attempted and actually works (115/115 hashes resolve). If `git_born_after_at` exists but the code uses the ledger fallback... then a task could be: "switch/add the git existence check as the primary and keep the ledger as fallback; measure both over the 116 post-ledger events." But I can't verify the current state without reading source. Risky.
+
+Enough. I'll go with two tasks:
+
+Task 1: Land #944 (USAGE_NO_TERMINAL_EMIT). evolve. Files: scripts/extract_trajectory.py + ARCHITECTURE.md.
+Task 2: #870 option 3 — print the fix-loop structural wall (11/117/88) on every census run so the limit is never invisible. evolve. Files: scripts/counterfactual_green.py + ARCHITECTURE.md.
+
+Hmm, hold on. Let me reconsider Task 2 impact one final time... 
+
+Actually — here's a thought that might beat both: the harness's OWN routing instruction for SHIPPED UNVERIFIED receipts (#871) is a mandated deliverable, and #871 is a DREAM-milestone receipt. The cheapest correct handling: read the Day-184 diff (it's committed), check whether the later counterfactual work superseded it, and then either fix or close with a comment. That drains a receipt AND advances the dream. It's bounded (one diff review). And crucially it's *different in kind* from Task 1 (no shared file).
+
+Hmm, but does it produce a code change? Possibly not (likely "superseded, close it"). A task whose outcome is "close the receipt" is fine per the harness (issue_responses.md route). But a task file is for implementation agents... The harness says: "then do exactly ONE of these two, per receipt: plan it -> a task file: a SMALL task that re-checks the objection against the current tree, then fixes it or closes the receipt saying why".
+
+So a task file is legitimate for #871. And its protocol: (1) read the Day-184 diff `git diff a040689ca2fe6a704c72f7ca4f885debcd89001b..HEAD` — hmm, that's a huge range (everything since day 184 = 25 days of work!). That's not the task diff; "Committed anyway: git diff a040689c..HEAD" is the whole span. Hmm, so identifying the actual task commit requires looking for the day-184 task commit. Doable: `git log --oneline --all --grep="counterfactual"`. Hmm, and the receipt says "Take the first real counterfactual reading, and make it cumulative". The counterfactual work has been substantially reworked since (counterfactual_green.py today has 7 verdict states, a census, self-tests). So the honest answer is likely "superseded" — but I'd want the implementer to verify.
+
+Risk: the implementer spends the session hunting a 25-day-old commit. Medium. Hmm.
+
+Alternatively, route #871 to issue_responses.md NOW in this planning phase: "- #871: already superseded by later counterfactual work (#868–#870 rebuilt the instrument); comment and close." But I'd be closing on an unverified claim — against "when unsure, prefer the task file over the close."
+
+Hmm OK. I'll keep #871 out and note it in issue_responses as "verify next session". Hmm, no — the harness wants one of two actions.
+
+Ugh. Let me just decide: I'll make Task 2 the #870-option-3 census task AND handle #871 in issue_responses.md as... hmm.
+
+Hmm, actually, let me reconsider — maybe #871 IS the best Task 2 because it's mandated and it's a dream-milestone. But its verification cost is high.
+
+Let me look at it from "what does the loop need most": The loop needs to LAND things. Task 1 lands a 4x-failed fix. Task 2 should be similarly landable. #870 option 3 is landable (one Python file, self-test). I'll go with that.
+
+Hmm, but wait: is #870 option 3's "11/117/88 split printed on every run" easy? The counts come from the census which already computes populations (PLAIN/FIX-LOOP/UNKNOWN-SUFFIX with NO_TEST_CHANGE / touch tests/ / REGISTER-ONLY / BEHAVIOURAL). The 11/117/88 is a *different* split: of the 199 fix-loop commits, 11 touch tests/, 117 touch src/*.rs, 88 have a src diff mentioning #[test]/cfg(test)/assert. So the task = compute those three counts and print them. That's a ~40-line addition in Python using the existing git helpers, plus a self-test. Feasible.
+
+Hmm, 199 fix-loop commits require depth 4402. The script has `--deepen`. On the CI runner the clone is shallow (55 commits!). So the counts would be tiny/small in the runner. Hmm — the script handles shallow detection (`is_shallow_repo`, `deepen_repo`). So the printed numbers on the runner will be small. That's fine as long as the code is correct and self-tested on a fixture.
+
+OK, risk is acceptable.
+
+Hmm, hmm. Alternatively — simpler & more clearly valuable Task 2: **#944's smaller sibling item**: "`truncate_audit_value` truncates only top-level strings, so a nested argument can produce an arbitrarily long line; whatever reads `.yoyo/audit.jsonl` next should reuse `AUDIT_FILE_SIZE_CAP`". Hmm, that's a sub-item of #944 — same file, overlap.
+
+Let me go with #870 option 3 but frame it carefully.
+
+Hmm, actually wait. Let me reconsider one more candidate that is small, product-facing, and clearly valuable, and which I can specify precisely without reading source:
+
+From the assessment: "`/cd` re-evaluates trust but reloads no other project config" (#869) — too wide.
+
+From #879: item 5 "Env-var form (YOYO_RESTRICTED=1) or flag only?" — no, whole issue needs design.
+
+OK, no clean product task. Fine — both tasks evolve-kind. That's acceptable: the assessment's own priority list puts the loop's accounting (#944) at the top, and community queue is empty.
+
+Hmm, but "at least 1 slot MUST be self-driven (capability gaps, self-discovered bugs, competitive improvements — tiers 1-3 and 7)". #944 is an agent-self issue (tier 6) — hmm, is it "self-driven"? It's self-discovered, filed by me. Tier 7 is community issues. Hmm, the constraint says at least 1 slot must be tiers 1-3 and 7. #870/#944 are tier 6.
+
+Hmm! That's a problem. Let me re-read: "Self-driven work: at least 1 slot MUST be self-driven (capability gaps, self-discovered bugs, competitive improvements — tiers 1-3 and 7)."
+
+Tier 1: capability gaps (what Claude Code can do that I can't). Tier 2: self-discovered bugs/crashes/data loss. Tier 3: release.
+
+#944 is a self-discovered gap in my own observability — arguably tier 2 ("self-discovered bugs") or tier 1. And its destination aligns with Claude Code's `/usage`. I'd defend #944 as tier 2/1: it's a self-discovered defect (a killed run reads as an honestly-empty run). Good enough.
+
+And #870 (the counterfactual instrument's blind region) is also self-discovered. Hmm, tier 2-ish.
+
+OK. Both are self-driven/self-discovered. Good.
+
+Now, let me reconsider making Task 2 the strongest competitive item instead... 
+
+Alright — final. Let me also decide where the DREAM fits. The instructions: "for this slot, prefer advancing the next milestone in DREAM.md (your own dream) unless a higher-priority issue blocks." Higher-priority issue blocks: #944 four consecutive failures is arguably the blocking item (per the assessment). So I'll justify: the dream milestone's `unhittable` machinery already landed (day 206), and the four-times-failed #944 blocks the loop's own accounting; I'll say this explicitly in the plan/issue_responses.
+
+Hmm, but should I add a dream task? The dream says "Horizon: ~4 evolve sessions" and day 206 built the retrospective. The remaining residue: the git-existence path. I could add a *tiny* Task 2 for the dream: measure `git cat-file -e` over the 116 post-ledger snapshot hashes (a one-command measurement) and record the reading. That's exactly the day-206 lesson #3 remedy: falsify the fallback clause. And it's cheap! A measurement task with a recorded reading, no code change required.
+
+Hmm, that's a nice, small, dream-advancing task. But it's "measurement only" — day 203's lesson says write the null as a deliverable. Good fit. And it directly advances the DREAM's next milestone by resolving whether the git path can replace the 94%-undecidable ledger proxy.
+
+But: a task that produces a reading and maybe a small code change? If the git path works (115/115 resolve), the task could switch the primary to git. But that risks scope creep.
+
+Hmm. Two candidate Task 2s: (A) #870 census visibility, (B) dream git-path measurement + switch.
+
+(B) is more dream-aligned and cheaper. But it's a measurement with an uncertain deliverable — and #944's repeated non-landing shows measurement-heavy tasks die. Hmm, (B) is literally one bash command over `.yoyo/risk_snapshots.jsonl` + `git cat-file -e`. Very cheap. And the deliverable: report the reading, and if ≥95% resolve, make the git check the primary with the ledger as fallback (a small edit in commands_risk_unhittable.rs). Conditional again. Hmm.
+
+To avoid conditionals, scope (B) as: "measure and record; if the git path resolves the post-ledger population, add it as the *primary* existence check behind the existing seam, keeping the ledger join as the fallback; the observable is the count printed next to accuracy_pct." Hmm.
+
+Honestly, at this point, the *safest high-value* plan given "budget kills tasks" is:
+- Task 1: #944 minimal landing (the one thing the assessment says is highest value).
+- Task 2: a genuinely small, deterministic task.
+
+I'll choose #870 option 3? or (B)?
+
+Let me pick (B) — no. Deterministic wins. Hmm, but (B) IS deterministic-ish (git cat-file over a JSONL).
+
+Decision: Task 2 = the DREAM git-existence measurement and its promotion to primary, scoped tightly. Wait, but I can't verify what's already there... `src/commands_risk_unhittable.rs` has `git_born_after_by_check`, `git_born_after_at`, `count_unhittable_surprises_at`, `count_unhittable_surprises_with_git`, `unhittable_note`. So the git path EXISTS in code. So (B) is likely already done! The day-206 lesson refers to day 206; the file's git functions may have been added day 206 or later. Since I can't read source, planning (B) risks re-doing done work. That settles it: NOT (B).
+
+So Task 2 = #870 option 3 (census wall visibility). Good.
+
+Hmm, one more consideration: is `scripts/counterfactual_green.py` a protected file? Protected list: IDENTITY.md, PERSONALITY.md, ECONOMICS.md, scripts/evolve.sh, scripts/format_issues.py, scripts/build_site.py, .github/workflows/. Not protected. Good. And `scripts/extract_trajectory.py` — not protected. Good.
+
+Now let me write the task files.
+
+Task 1 details (from the assessment, no source reads):
+- Title: Land #944 — a killed run must not read as an honestly-empty run
+- Kind: evolve
+- Files: scripts/extract_trajectory.py, ARCHITECTURE.md
+- Issue: #944
+
+Content:
+Context: Four sessions (day-207 19:26, day-208 00:13, day-209 00:15 + one more) attempted this and landed nothing. Day-209's transcript shows the edit was made, the python self-tests were green in 956ms, and the log ends mid-`cargo build`. **The budget dies at the verification step, after the work is correct.** So the execution change for this attempt is a NAMED one: the diff is Python-only, cargo cannot be affected by it, and the commit happens BEFORE any cargo invocation.
+
+Steps:
+1. Read `classify_session_usage` and its callers/consumers in scripts/extract_trajectory.py. It returns four verdict constants: USAGE_RECORDED, USAGE_ABSENT, USAGE_UNREADABLE, USAGE_NOT_MEASURABLE. Today USAGE_ABSENT absorbs two different facts: (a) the audit file has no records at all / file missing, (b) the audit file is readable and CARRIES records but no usage line — i.e. the process died before its terminal emit (killed by timeout, SIGTERM). Add a fifth constant `USAGE_NO_TERMINAL_EMIT` for (b), and make `classify_session_usage` return it when the file is readable and non-empty (carries at least one record line) but contains no usage record. Keep USAGE_ABSENT for "no records at all".
+   - Per CLAUDE.md's "never add a definition without its consumer": every match/`if` on these constants must be updated in the SAME edit — grep for each constant name and for the renderer that turns the verdict into a printed label. Do not leave a dangling constant (clippy/dead-code doesn't apply to Python, but the renderer must print the new state or it is invisible).
+   - Update the near-miss test that Day-209's attempt had already located (the test that currently asserts USAGE_ABSENT for a records-with-no-usage file) to expect USAGE_NO_TERMINAL_EMIT, and ADD a second row that still expects USAGE_ABSENT (an empty/absent file) so the new verdict is not collapsing the old one. Both rows in ONE table so the discriminator is visible.
+2. Run `python3 scripts/extract_trajectory.py --test` (0.095s offline). It must print its self-test result and pass.
+3. `git add scripts/extract_trajectory.py ARCHITECTURE.md && git commit` — COMMIT HERE, before any cargo invocation. This is the whole point of the re-plan.
+4. Only if the commit is done and budget still remains: `cargo build`. This edit is Python-only, so cargo's outcome cannot depend on it; the harness runs the gate anyway. Do not run the full `cargo test` suite; if you run anything, `cargo build 2>&1 | tail -3`.
+5. ARCHITECTURE.md: one short entry (a few lines, not a history) under scripts/extract_trajectory.py naming the fifth verdict, why USAGE_ABSENT was absorbing the killed-run case, and the discipline: a killed process leaves records and no usage line, and a summary that reads that as "used nothing" is a confident zero for the most expensive runs.
+
+Do NOT: sweep the audit-log branch; add a durable sink; touch scripts/social.sh or dream.sh; change evolve.sh. Those are the design half of #944 and are explicitly out of scope here.
+
+Acceptance: `python3 scripts/extract_trajectory.py --test` green; the new state is observable in the rendered output; the two fixture rows (records-with-no-usage → NO_TERMINAL_EMIT, empty → ABSENT) both asserted in one test.
+
+Hmm — careful: I'm asserting the shape from the assessment. The day-209 attempt replaced USAGE_ABSENT with USAGE_NO_TERMINAL_EMIT "in the near-miss test". So the intended change was to *rename*/add the constant for that test. Hmm — the assessment says: "the classifier edit was made (USAGE_NO_TERMINAL_EMIT replacing USAGE_ABSENT in the near-miss test)". So the attempt added the const and used it in the test. Fine — my plan matches.
+
+Should I be prescriptive about the semantics of the new verdict? Yes, but the implementer reads the source first. Good.
+
+Task 2 details:
+- Title: Make the counterfactual's structural blind region visible on every census run (#870)
+- Kind: evolve
+- Files: scripts/counterfactual_green.py, ARCHITECTURE.md
+- Issue: #870
+
+Content:
+Context: #870 measured that the fix-loop arm of the counterfactual has a population of 2 behavioural commits, while ~88 of the 199 fix-loop commits edit assertion-shaped code inside src/ behind #[cfg(test)] — a region the backward counterfactual cannot reach. The instrument works; it is pointed at a region that does not contain most of its subject. Options 1 and 2 in the issue are large projects. Option 3 is the honest one and fits in a task: **report the wall on every run** so the limit can never again be invisible.
+
+Steps:
+1. Read the census code in scripts/counterfactual_green.py (`collect_census`, `parse_log_lines`, `top_level_test_files`, `behavioural_test_files`, `classify_test_diff_shape`, `parse_name_status`, the fix-loop partition, `render_population_block` / `render_census`). The census already partitions PLAIN / FIX-LOOP / UNKNOWN-SUFFIX and splits each by diff shape.
+2. Add ONE pure function + one printed block that, for the FIX-LOOP population only, reports three counts in the issue's own three buckets, using the existing git diff helpers:
+   - `touches_tests` — fix-loop commits whose diff touches a top-level `tests/*.rs`
+   - `touches_src` — fix-loop commits whose diff touches `src/*.rs`
+   - `src_assertion_shaped` — the subset of `touches_src` whose `-U0` added/removed lines mention `#[test]`, `cfg(test)` or `assert`
+   Print them as a labelled block with the 11/117/88 split shape, and print, in band, the two honesty limits the issue states: (i) `src_assertion_shaped` is a TEXT HEURISTIC and an upper bound on where to look — it cannot tell a test edit from an `assert!` in production code, nor a loosened assertion from a tightened one or a rename; (ii) the widths are measured at depth 4402 (2026-08-31) and will differ on a shallow clone — print the corpus size (commit count / depth actually used) next to them so a small number on the CI runner cannot read as a small wall.
+   Also print the sentence that the fix-loop arm's behavioural population is structurally unmeasurable by this method, matching the census's existing tone (no glyphs if the file has a plain/ASCII discipline — check and match it).
+3. `python3 scripts/counterfactual_green.py --test` must pass; add one self-test row that pins the three buckets on a fixture (at minimum: a commit touching only tests/, one touching only src/ without assertion words, one touching src/ WITH `#[test]`) so the classifier is asserted on shapes it can be wrong about, not just counted. The test must be offline.
+4. ARCHITECTURE.md: a short entry under scripts/counterfactual_green.py naming the three counts, the heuristic limit, and why the counts are printed rather than acted on.
+5. Commit order matters (see #944's four non-landings): run the script's self-test, COMMIT, and only then run cargo if budget remains. This edit is Python-only.
+
+Do NOT: extract the #[cfg(test)] modules (option 1) or write a Rust-aware splitter (option 2); do not change any existing verdict, count or gate. This task makes a limit readable; it does not move one.
+
+Acceptance: the new block appears in the census output; `--test` green with the new fixture row; no existing count changed.
+
+Hmm — "EVERY numbered step must fit in one pass". 5 steps is a lot. Let me compress to 4 and mark the ARCHITECTURE entry as part of step 3.
+
+Let me now also write issue_responses.md.
+
+For issues:
+- Community: none today → note that.
+- #944: implementing as task 01.
+- #870: implementing as task 02.
+- #871 (shipped unverified): route — say I'll verify next session? The harness wants one of two actions per receipt. Hmm. Since Task 2 is in the same domain (counterfactual_green.py), I could fold the #871 re-check into Task 2! That's elegant: Task 2 touches the same instrument; step: while in the file, check whether the Day-184 unverified change is still present/superseded. Hmm, but that adds scope. Hmm — actually a cheap and legitimate step: "if you find the day-184 artifact in this file, note in ARCHITECTURE whether it survived" — no.
+
+Better: put #871 in issue_responses.md as "plans a task next session" — but the harness says route now. Hmm, "then do exactly ONE of these two, per receipt: plan it -> a task file ... ; close it -> a line in session_plan/issue_responses.md". So I must pick one. Since the verdict has no objection ("There is no objection to answer here; the gap is that nobody looked"), and the work is 25 days old and the instrument has been substantially rebuilt since (day 184 census, day 193, day 206, #868–#870, 7 verdict states, self-tests with positive controls), the honest close is: "evaluator was wrong" → no; better: "already fixed by a later session" → the later sessions rebuilt counterfactual_green.py with a verdict ladder, a census and self-tests, superseding Day-184's first reading. Hmm — but I haven't verified that Day-184's specific change (the first real counterfactual reading + cumulative) is present. Risky to close unverified.
+
+Hmm. Option: make it a THIRD task? No, 2 slots.
+
+Alternative: put the #871 re-check as the first step of Task 2 — it's the same file, ~5 minutes (grep for whatever day-184 added). Hmm, but "each task must be completable in 30 min" and steps must all fit.
+
+Hmm, honestly: the cheapest honest route is to close #871 in issue_responses.md with the reason "superseded — the instrument it modified has since been rebuilt (7 verdict states, a census, self-tests green with serial positive controls), so the unjudged Day-184 diff is no longer the live artifact" — and have Phase C post that. But it's an unverified claim, and my own wisdom says "never close on age... prefer the task file over the close."
+
+OK: I'll make the #871 re-check a bounded, explicitly-timeboxed sub-step... no.
+
+Cleanest: add it as a task? I only have 2 slots per session. Hmm, "You have 2 task slots per session" — it says reduced to 2. So 2 tasks.
+
+Decision: Put #871 into issue_responses.md as a *deferred verification with the reason*, i.e. "need more time"? The harness's routing list is binary but the issue_responses section is "your planned response for each issue: implement as task, won't fix because X, already resolved, need more time, etc." — "need more time" is an allowed response there! Good. So: "- #871: need more time — this is a 25-day-old unjudged diff, and the file it changed has been rebuilt twice since; a re-check must diff Day-184's commit against the current tree rather than re-run the task. Deferring so a session with budget can do it properly; not closing on age."
+
+Hmm, but it's 25 days old and will rot more. Still, honest. Actually — better: I can fold it as step 1 of Task 2 with a hard cap! Task 2 is in counterfactual_green.py. Step 1: "Spend at most 5 minutes: `git log --oneline --all --grep='counterfactual' | head`, find Day-184's commit for #871, and `git show --stat` it. If the change it made is still present in today's file, record that in ARCHITECTURE.md's entry (one line) and close #871's receipt via session_plan/issue_responses.md; if it is gone/superseded, say so there. Do NOT re-run the task." That's cheap, bounded, and routes the receipt. But wait — the task file shouldn't edit issue_responses.md (Phase C posts it). Hmm, task files can instruct the implementer to note the finding in ARCHITECTURE.md and leave the closing to Phase C, with the planner writing the routing line. But the planner must write the routing now, and the routing depends on the implementer's finding. Ugh.
+
+Simplify: I'll keep #871 out of the tasks and route it in issue_responses.md as: "- #871: plan it next session as a small re-check task — the evaluator produced no verdict and the changed file has been rebuilt since, so this is a diff review, not a re-run. Not closing on age." Hmm, but the harness's binary wants plan-now-or-close.
+
+Hmm, you know what — including it as step 1 of Task 2 is actually *good*: the harness explicitly wants the receipt routed, and it's the same file. I'll include it as a bounded step 0 of Task 2 and instruct that the implementer write the finding as one line in ARCHITECTURE.md; then in issue_responses.md I write: "#871: routing via task 02 — step 1 re-checks Day-184's unjudged diff against the current tree (it changed this same file); Task 02's write-up records whether that change survived, and the next Phase C closes it on that evidence."
+
+Hmm, that's a bit circular but honest and actionable. Actually no — cleaner: I'll write in issue_responses.md: "#871: route to next session — Task 2 owns counterfactual_green.py and its write-up will state whether Day-184's change survived; closing or fixing on that. Not closing on age." Hmm.
+
+Eh. Let me keep it simple and safe: Task 2 gains ONE bounded step: re-check #871's Day-184 artifact in the same file, and the ARCHITECTURE entry states the outcome. And issue_responses.md records that plan. Good — the receipt gets routed, and no close happens on unverified evidence.
+
+Hmm, but that adds a conditional deliverable to Task 2 (finding may be "gone" or "present"). That's fine — both outcomes are deliverables, and I'll say so (day-203 discipline).
+
+OK, now also: what about the "1 task(s) reverted" label thing? I'll skip it (uncertain premise), maybe note it as a deferred observation in issue_responses or the plan. Skip.
+
+Also should I address the assessment's bug #3 ("CI green is not work landed")? That's a harness thing (protected evolve.sh). Skip; the trajectory already surfaces it.
+
+Now write the files. Also need the commit at the end.
+
+Let me write task_01.md, task_02.md, issue_responses.md.
+
+Note: the instructions said `mkdir -p session_plan && rm -f session_plan/task_*.md`. Also session_plan/assessment.md and issue_responses.md exist. Let me check what's in session_plan now.
+
+Let me write the files.
+
+For issue_responses.md, list:
+- Community issues: none today ("No community issues today").
+- #944: implement as task_01.
+- #870: implement as task_02.
+- #871: routed via task_02 step 0 (verify Day-184 artifact in the same file) — closes on that evidence, not on age.
+- #738: not this session (oldest backlog item, 43d) — reason: it is a durable GitHub comment home for blind-round predictions, a process convention with no code artifact; it drains only by convention, so a code-shaped session cannot land it. Hmm — actually maybe I should mention I'll handle it. Let me be honest: "defer — no code artifact; the drain is one comment per blind round, which the dream phase posts. Not closing."
+- #858: needs a human (protected skill file) — already filed; nothing new.
+- #951: needs a human (evolve.sh protected) — no replies yet.
+
+Keep it concise but in voice.
+
+Let me write now.
+
+One more check: the task sizing rule "at most 3 source files" — both tasks: 2 files each. Good.
+
+Let me write the files.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have what I need. Key confirmations: the three non-landing sessions really are reverted: false, tasks_succeeded: 0 (budget death, not reverts), #944 is still absent, and #871 is a 25-day-old unjudged diff in the same file #870 touches.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls session_plan/ 2>/dev/null; mkdi… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now write the task files.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (91 lines) ✓ (1m 9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (91 lines) ✓ (1m 9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (73 lines) ✓ (1m 9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls -la session_plan/; echo "=== ta… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now commit. Note ASSESSMENT.md etc. The command: `git add session_plan/ && git commit -m "Day 209 (07:24): session plan" || true`.
+
+Careful: `git add session_plan/` will add assessment.md too (already tracked/modified?). Let me check git status first, then commit only the plan files... The instruction says `git add session_plan/`. Fine, that's the harness's instruction.
+
+Note the run_git destructive guard is #[cfg(test)] only, we're fine.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short; git add sessio… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+session_plan is gitignored. So the plan files can't be committed normally... but the harness's instruction says to commit. Let me check: maybe session_plan is ignored but the harness reads files from disk, not git. The instruction `git add session_plan/ && git commit ... || true` — with `|| true`, it silently fails. Hmm, but previous sessions must have committed plans. Let me check .gitignore.
+
+Actually wait — the assessment commit a5e47b03 exists ("Day 209 (07:24): assessment"). Let me check whether assessment.md is tracked.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git check-ignore -v session_plan/t… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I was at the last step: the plan files are written, but `git add session_plan/` failed because `session_plan/` is ignored by .gitignore. However, `session_plan/assessment.md` is tracked (git ls-files shows it). So the directory is ignored but assessment.md is tracked (added with -f previously, likely).
+
+How did previous sessions commit task files? Let me check: the evolve.sh harness probably adds them. Let me check how the assessment got committed — commit a5e47b03 "Day 209 (07:24): assessment". Let me look at how previous sessions' task files got committed. Check git log for session_plan/task_*.md history.
+
+The instruction says commit with `git add session_plan/ && git commit -m "..." || true`. It failed, but the `|| true` means it's non-fatal. Still, I should consider whether to force-add. Let me check whether prior sessions forced-added task files.
+
+Let me check `git log --oneline -- session_plan/task_01.md`.
+────────────────────────────────────────────────────────────────────────────────
+
+The plan files are written. The commit was skipped because session_plan/ is gitignored — let me check how prior sessions handled this before deciding.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; echo "=== history of task files ==… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Prior sessions did commit task files ("Day 208 (00:13): session plan" c6682b85 touched task files presumably). Let me check how: `git show --stat c6682b85`.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git show --stat --oneline c6682b85… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So previous sessions committed task files despite the gitignore — meaning they were force-added (or the harness's `git add -A` with -f, or the files were force-added by the phase). Since `git ls-files session_plan/` only shows assessment.md now (after wrap-up the tree was reset? no...). Hmm, interesting: `git ls-files session_plan/` shows only assessment.md. But c6682b85 added task_01.md. Did a later commit delete it? Let's check `git log --oneline --diff-filter=D -- session_plan/task_01.md`.
+
+Probably the wrap-up commit removes them, or the harness cleans session_plan at session start (`rm -f session_plan/task_*.md` — I ran that, deleting the working files, but tracked files deleted from the working tree would show as deleted in git status). git status --short showed nothing earlier though... Actually `git status --short` output was empty in my last command before the add attempt? Let me re-check: the output showed the ignore hint and nothing else. If task_01.md were tracked and I deleted it, git status would show ` D session_plan/task_01.md`.
+
+So they're not tracked at HEAD — meaning a later commit removed them from tracking (the wrap-up). Let me check.
+
+Actually maybe the files were added with -f by the harness and later removed from the index by the wrap-up sweep or a cleanup. Let me just check git log for deletion.
+
+Regardless: my job is to make the plan files exist and commit them. The intended command failed. Prior sessions succeeded in committing them, so I should force-add. Let me check deletion history quickly, then force add.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git log --oneline --diff-filter=D … ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the pattern is: the session-plan phase force-adds the task files (git add -f, or the phase's own commit step uses -f). The wrap-up deletes them. So I should use `git add -f session_plan/` to commit them.
+
+That matches the instruction's intent: `git add session_plan/` — the harness presumably does `-f` in its own commit step. But to be safe and match history, force-add.
+
+Note: the assessment.md is currently tracked and unmodified (committed at a5e47b03), so adding it is a no-op.
+
+Let me commit with -f.
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: prior session-plan commits -f-added these files (the wrap-up later deletes them). Committing with force-add.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -f session_plan/task_01.md… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Plan is written and committed (d746af99). Summary of what I planned and why:
+
+Task 1 — `session_plan/task_01.md` (#944, evolve). Land the fifth usage verdict (USAGE_NO_TERMINAL_EMIT) so a killed run stops reporting as an honestly-empty one. Four sessions attempted this and landed nothing; I verified the failure mode rather than trusting the assessment — the audit-log outcome.json for day-207/208/209 all read build_ok: true, test_ok: true, reverted: false, tasks_succeeded: 0, and grep -c no_terminal_emit is 0 in both the script and ARCHITECTURE.md. The change versus last time is order of operations, not scope: the diff is Python-only, so the commit happens before any cargo invocation (day-209's log ends mid-cargo build with the edit already correct and the script's self-tests green). Design half — durable sink, watermark, social.sh instrumentation — is explicitly out of scope.
+
+Task 2 — `session_plan/task_02.md` (#870, evolve). Take the issue's own option 3: print the counterfactual's structural blind region (touches-tests/ / touches-src/ / src/-assertion-shaped, for the fix-loop population) on every run, with the heuristic's limits and the corpus size in band. Options 1 and 2 are named out of scope as real projects. Step 0 spends a bounded few minutes routing receipt #871 (which I read: the evaluator produced no verdict line, so the gap is that nobody looked) and records the finding for Phase C to close — I deliberately did not close it on age.
+
+`session_plan/issue_responses.md` records the community queue as empty (no comment is better than noise on #951/#858, both human-blocked), and the deferrals with reasons — including that #738, the oldest item, is deferred because its drain is a convention owed by the dream/blind-round phase, not a diff an evolve session can manufacture.
+
+One process note worth stating: git add session_plan/ failed silently under the instruction's || true because session_plan/ is in .gitignore. Prior session-plan commits -f-added these files and the wrap-up deletes them, so I force-added to match. If the instruction's || true is meant to guarantee a commit, that is a real gap — a session that follows the command literally would end with the plan uncommitted.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

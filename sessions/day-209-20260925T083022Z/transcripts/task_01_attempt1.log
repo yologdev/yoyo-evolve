@@ -1,0 +1,1721 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by looking at the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "USAGE_RECORDED\|USAGE_A…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (5ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read the relevant code sections.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.4s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:1855..2055 ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:2054..2154  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:2060..2110 ✓ (1ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:2153..2203  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:5870..5950 ✓ (1ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me see the rest of the tests and the render for absent with the "ran and logged NO usage line" text. Let me look at lines 5949-6110.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:5949..6119 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need to understand the design change. The task says:
+
+- Add a fifth constant `USAGE_NO_TERMINAL_EMIT`, returned when the file is readable and carries at least one record but no usage record.
+- Keep `USAGE_ABSENT` meaning (a): audit.jsonl has no records at all (or is missing).
+
+Wait — careful. The current classifier:
+- seen == 0 (empty file) → UNREADABLE currently. Hmm. "A file with no non-blank lines at all, and a file where every non-blank line fails to parse, are both UNREADABLE".
+- No usage line but records present → ABSENT.
+
+Task says: "USAGE_ABSENT absorbs two different facts: (a) the session's audit.jsonl has no records at all (or is missing); (b) the file is readable and carries records but contains no usage line."
+
+Hmm, but in current code (a) "no records at all" → UNREADABLE (empty file). And "missing file" → collect_usage_coverage skips it entirely (`if not audit.is_file(): continue`).
+
+Hmm. Let me re-read: "Add a fifth constant for (b), named USAGE_NO_TERMINAL_EMIT, and return it from classify_session_usage when the file is readable and carries at least one record but no usage record. Keep USAGE_ABSENT meaning (a)."
+
+Hmm, so (a) is "no records at all (or is missing)". But currently ABSENT is returned only when seen > 0 and parsed > 0 and no usage. That IS "carries at least one record but no usage record" — which is (b). Hmm, wait.
+
+Actually "carries records" — records meaning parsed JSON lines. So currently:
+- seen==0 or parsed==0 → UNREADABLE (nothing readable).
+- parsed>0, no usage → ABSENT.
+
+The task says (a) is "no records at all (or missing)" and (b) is "readable and carries records but no usage line".
+
+Hmm, but under current code, (a) [empty file] maps to UNREADABLE, not ABSENT. And a missing file isn't classified at all.
+
+Hmm, this is a bit contradictory. Let me re-read the task more carefully.
+
+"Today USAGE_ABSENT absorbs two different facts:
+- (a) the session's audit.jsonl has no records at all (or is missing);
+- (b) the file is readable and carries records but contains no usage line"
+
+Hmm — maybe the day-209 attempt interpreted it differently. Let me check the day-209 attempt log to see what the previous attempt did. The task says the edit WAS made. Let me look for the transcript.
+
+Actually let me check git history / reflog for the earlier attempts. The task says day-209 00:15 attempt made the edit and self-tests passed but log ended mid-line. Let me look for transcripts.
+
+Actually, let's look at `.local` or wherever transcripts are. Let me search.
+
+Actually, more important: I need to design the change correctly. Let me think about what's the honest reading.
+
+Actually wait. Let's re-read the require more carefully:
+
+"Add a fifth constant for (b), named USAGE_NO_TERMINAL_EMIT, and return it from classify_session_usage when the file is readable and carries at least one record but no usage record. Keep USAGE_ABSENT meaning (a)."
+
+Hmm, "Keep USAGE_ABSENT meaning (a)". But under current code, when the file is readable and carries records but no usage => ABSENT. So the change is: that case now returns USAGE_NO_TERMINAL_EMIT. And USAGE_ABSENT then means... (a) no records at all.
+
+But currently an empty/unreadable file returns UNREADABLE, not ABSENT. Hmm. But maybe the intent is: with the change, the "no records at all" case... hmm.
+
+Hold on. Let's look at Step 2: "Update that row to expect USAGE_NO_TERMINAL_EMIT and add a second row in the same table that still expects USAGE_ABSENT (an empty or absent audit file)."
+
+So a second row that still expects USAGE_ABSENT: "an empty or absent audit file". So under the new scheme, an empty audit file → USAGE_ABSENT?? But currently an empty file → UNREADABLE, and there's a test asserting that ("an empty file is UNREADABLE (we never managed to look), not ABSENT").
+
+Hmm, conflict. The existing test at line 5904-5908:
+```
+assert_eq(
+    "an empty file is UNREADABLE (we never managed to look), not ABSENT",
+    classify_session_usage([]),
+    USAGE_UNREADABLE,
+)
+```
+
+That's a meaningful distinction: "we never managed to look". The task's step 2 says the second row should be "an empty or absent audit file" expecting USAGE_ABSENT.
+
+Hmm, that would conflict with the existing UNREADABLE test — which we must not delete (CLAUDE.md: never delete existing tests).
+
+Hmm. Let me reconsider. Maybe the task's description of (a) is loose and the real distinction the previous attempt landed on is:
+
+Looking at the day-209 attempt: "Find the existing near-miss test that covers the records-with-no-usage case (the day-209 attempt located it: it asserted USAGE_ABSENT there)."
+
+Which test asserts USAGE_ABSENT for records-with-no-usage? Lines 5889-5893:
+```
+assert_eq(
+    "tool-call lines with no `type` key classify ABSENT, not UNREADABLE",
+    classify_session_usage([tool_call, tool_call]),
+    USAGE_ABSENT,
+)
+```
+and lines 5894-5898:
+```
+assert_eq(
+    "a line with a non-usage type is still ABSENT",
+    classify_session_usage(['{"type":"error","msg":"x"}']),
+    USAGE_ABSENT,
+)
+```
+and lines 5915-5919:
+```
+assert_eq(
+    "blank lines and a trailing newline do not change an ABSENT verdict",
+    classify_session_usage(["", tool_call, "\n"]),
+    USAGE_ABSENT,
+)
+```
+
+Hmm, "the existing near-miss test that covers the records-with-no-usage case" — that is `[tool_call, tool_call]` → ABSENT.
+
+OK so the design: classify returns USAGE_NO_TERMINAL_EMIT when there are parsed records but no usage line; USAGE_ABSENT when... hmm, what? If nothing else changes, USAGE_ABSENT becomes unreachable from classify_session_usage. That's the problem — "a definition without its consumer" is fine here since ABSENT is still produced by... hmm, nothing.
+
+Hmm, wait. Maybe there IS a legit case: what about the file that's missing? collect_usage_coverage does `if not audit.is_file(): continue` — skips it. So a missing audit file is not counted at all. Hmm.
+
+Let me look at how the previous attempts interpreted it. Let's look for the transcript logs from the day-209 attempts.
+
+Let me search the repo for transcripts.
+
+Actually, maybe there's an issue #944 text available via gh. Let me check the issue. Also let me check `.local` dir.
+
+Let me search the filesystem.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la && ls .local 2>/dev/null;…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 944 2>&1 | head -1… ✓ (796ms)
+ ✗ (2m 0s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+The absolute path search timed out. Let me focus. The issue text says "an explicit 'no usage record — the process did not reach its terminal emit' state distinct from zero."
+
+OK. Now let me settle the design. Let me check whether the previous attempt is visible anywhere — maybe in git stash or in the reflog, or maybe there's a `.local/state` dir. Let's check the harness transcript dir quickly but with a bounded find.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 2s (1 ✓, 1 ✗)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -a; echo "---"; ls -a ..; ech… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No transcripts available. So I have to design it myself.
+
+Let me settle the semantics carefully — the key design decision. The task says:
+
+- (a) audit.jsonl has no records at all (or is missing) → USAGE_ABSENT
+- (b) readable, carries records, no usage line → USAGE_NO_TERMINAL_EMIT
+
+But the existing code has (a) → UNREADABLE, and there's a test asserting that: "an empty file is UNREADABLE (we never managed to look), not ABSENT".
+
+Hmm, that's a real conflict. The task says "add a second row in the same table that still expects USAGE_ABSENT (an empty or absent audit file)". Which would conflict with the existing UNREADABLE-empty test.
+
+Hmm. Unless... hmm. Let me reconsider: maybe the intended semantics is at the *collect* level, not the classify level. Wait no, step 1 says return it from classify_session_usage.
+
+Hmm, let me reconsider the phrase "(a) the session's audit.jsonl has no records at all (or is missing)". Maybe "records" here means *usage* records? I.e., (a) = "has no records at all" — but the classifier already returns UNREADABLE for that...
+
+Hmm hold on. Actually maybe the task author (yoyo's planner, day 209 assessment) meant: USAGE_ABSENT currently covers two cases in the *reported output*: the summary says "N session(s) ran and logged NO usage line". That N includes both genuinely-empty/unreadable files... no, unreadable is separate.
+
+Hmm. Let me reconsider — maybe the planner simply got the current-code detail slightly wrong (this repo has a documented history of plans containing wrong premises). Let me re-read step 2 once more:
+
+"Find the existing near-miss test that covers the records-with-no-usage case (the day-209 attempt located it: it asserted USAGE_ABSENT there). Update that row to expect USAGE_NO_TERMINAL_EMIT and add a second row in the same table that still expects USAGE_ABSENT (an empty or absent audit file). Both rows in one table is the discriminator — a single updated row would be satisfied by a change that collapsed the old verdict entirely. Put the record-line-count / usage-line-count that each fixture supplies in a comment beside the row, so a later reader can see what makes the two rows different."
+
+"an empty or absent audit file" expecting USAGE_ABSENT. Hmm.
+
+But if empty file → ABSENT and unreadable (all unparseable) → UNREADABLE, then "we never managed to look" for the empty case is lost. That's a regression against an existing documented rule + existing test.
+
+Hmm, but the task explicitly says "Never delete existing tests". If I change empty → ABSENT, the existing test asserting UNREADABLE for `[]` would fail. I'd have to change it, which is modifying an existing test... The task says add second row expecting ABSENT.
+
+Hmm. There's tension. Let me think about which interpretation is honest and coherent.
+
+Alternative interpretation: keep USAGE_ABSENT literally meaning "the audit file is unreadable/absent — no records at all", i.e. the existing UNREADABLE... no.
+
+Hmm wait. Let me reconsider. Maybe:
+- USAGE_UNREADABLE stays for "could not open / would not parse" (the file EXISTS but we can't read it).
+- "absent" = the audit.jsonl is MISSING (no file at all) — that's the (a) "(or is missing)" half.
+
+The parenthetical "(or is missing)" is key! In `collect_usage_coverage`, a missing audit.jsonl is skipped (`continue`) — not counted. Maybe the intent: a missing file should be counted as ABSENT. Hmm, but that changes collect semantics too.
+
+Honestly, I think the cleanest reading consistent with everything:
+
+`classify_session_usage` returns:
+- USAGE_RECORDED if a usage line present
+- USAGE_NO_TERMINAL_EMIT if readable, ≥1 parsed record, no usage line
+- USAGE_UNREADABLE if we couldn't look (no lines / no parseable lines)
+
+And USAGE_ABSENT... needs a producer. Where? Hmm.
+
+Hmm, but "we must never add a definition without its consumer" — here it's the opposite: we'd leave a constant with no producer, which is dead-ish (it's still consumed in render/fold, so no lint error in Python).
+
+But then "a second row in the same table that still expects USAGE_ABSENT" is unsatisfiable from classify_session_usage, because classify can't return ABSENT anymore.
+
+Unless... hmm. What if USAGE_ABSENT is returned for a MISSING file — and we make `classify_session_usage` handle `lines=None` meaning "file absent"? Hmm, that's a reach.
+
+Let's think about it differently: what does the *render* need? Currently:
+
+```
+if cov.absent: detail.append(f"{cov.absent} session(s) ran and logged NO usage line — the #848 producer wrote nothing there")
+```
+
+The defect: a killed run reads as "ran and logged NO usage line" → and the coverage "7 of 10" makes the killed run count as an honestly-empty run. The fix: give NO_TERMINAL_EMIT its own clause:
+
+"{n} session(s) carry records but NO usage line — the process was killed before its terminal emit (timeout/SIGTERM); this is NOT 'used nothing'."
+
+And absent stays "ran and logged NO usage line — the producer wrote nothing there" (which, given the surviving producer cases, is... hmm).
+
+OK here's another thought. What are the actually-observable states at the collect layer?
+1. File exists, has usage → RECORDED
+2. File exists, has parseable records, no usage → the killed case (NO_TERMINAL_EMIT)
+3. File exists, empty / all-garbage → UNREADABLE ("never managed to look")
+4. File missing → currently skipped entirely (neither classified nor counted).
+
+So under the current code, USAGE_ABSENT is produced by exactly case 2. The task wants case 2 → NO_TERMINAL_EMIT. Then ABSENT has no producer at the classify level... unless case 4 becomes ABSENT.
+
+And the task's step 2 says the second row is "an empty or absent audit file". If missing → ABSENT, then "absent audit file" is the second row. But can classify_session_usage see a missing file? Only if we pass it something. Hmm.
+
+Hmm, but wait — maybe the intended second row is at the *collect* level (a fixture with a temp dir). The task says "Put the record-line-count / usage-line-count that each fixture supplies in a comment beside the row" — implying both rows are classify_session_usage calls with line lists, not dirs. A "record-line-count 0" fixture = empty list → currently UNREADABLE.
+
+Ugh. OK. Let me weigh: The task instruction's exact words vs. the existing documented rule + test. The task explicitly acknowledges: "the day-209 attempt located it: it asserted USAGE_ABSENT there" — referring to the records-with-no-usage case, `[tool_call, tool_call]`. So step 2's "second row ... (an empty or absent audit file)" — I think the planner means a fixture where there are no records. And claims that should still be USAGE_ABSENT.
+
+Hmm, but the existing test says empty → UNREADABLE. Two rows both from classify:
+
+Row A: `[tool_call, tool_call]` (2 records, 0 usage) → USAGE_NO_TERMINAL_EMIT
+Row B: `[]` (0 records) → USAGE_ABSENT (per task)
+
+That directly contradicts the existing test at 5904-5908 AND the docstring rule ("A file with no non-blank lines at all ... are both UNREADABLE: in neither case did we manage to look"). And CLAUDE.md forbids deleting existing tests.
+
+Hmm, hold on. Actually wait. Let me reconsider whether the planner had a different existing test in mind. "the records-with-no-usage case (the day-209 attempt located it: it asserted USAGE_ABSENT there)". Could be line 5889 or 5894 or 5915. All three assert ABSENT with records present.
+
+Hmm OK, so under the planner's model, "an empty or absent audit file" → ABSENT. That means the planner intends to change the empty-file semantics from UNREADABLE to ABSENT. Hmm, but that would be a genuine regression of a documented distinction ("we never managed to look").
+
+Hmm, wait wait. Actually — maybe not. Re-read: does an empty audit.jsonl happen for a killed run? No — a killed run leaves tool-call records. An empty file means the process opened it and wrote nothing... hmm, actually YOYO_AUDIT truncates at start? Actually the harness truncates at session end.
+
+Hmm, hmm. Honestly I think "or is missing" is the operative intent: ABSENT = the session has no audit file / no records — i.e., the session didn't even get as far as writing any. NO_TERMINAL_EMIT = records written without a usage line.
+
+But changing UNREADABLE → ABSENT for empty files loses the "could not check" distinction, which contradicts an existing test. The safety rule says never delete existing tests. But we can *change* a test's expectation? "Never delete existing tests" — changing an expectation is arguably worse.
+
+Let me look for a way to satisfy everything. 
+
+Option: Keep `[]` (empty list) → UNREADABLE (unchanged, existing test green). Add the fifth constant; classify returns NO_TERMINAL_EMIT for parsed-records-without-usage. USAGE_ABSENT... then produced where?
+
+The render has a branch for absent, so the constant is still consumed. But if nothing produces ABSENT, then... the second row can't expect ABSENT.
+
+Hmm. But hold on — what about "0 records but file exists and is non-empty"? E.g. lines that are... hmm.
+
+OK let me reconsider. Is there any classification that's "no records at all"? The current UNREADABLE. So ABSENT (meaning (a)) is currently NOT produced by anything! Look: classify returns ABSENT only when parsed > 0 and no usage. So the planner's claim "(a) the session's audit.jsonl has no records at all (or is missing)" mapping to USAGE_ABSENT is factually wrong about the current code — the planner's premise is wrong, which is exactly the kind of thing I should notice and handle honestly.
+
+Hmm, but the planner says "Today USAGE_ABSENT absorbs two different facts". Let me re-examine... is there a path where ABSENT is produced with no records? `apply_usage_boundary`: "an unparseable or missing session timestamp is NOT demoted; it stays ABSENT". That's about timestamps, not records. And rule 2 "an unknown stamp is NOT promoted into the comfortable bucket" — that presumes ABSENT reached it. So the demotion machinery treats ABSENT as "ran, logged nothing".
+
+Hmm OK so truthfully: USAGE_ABSENT == "file readable, ≥1 parsed record, no usage line". That IS exactly the killed-run case! So the planner's (b) is identical to the entirety of ABSENT.
+
+So then, what would (a) be? Files with zero parseable records → currently UNREADABLE. And missing files → skipped.
+
+So the honest realization: the planner's split is wrong at the level of the classifier as written — (a) as described ("no records at all") is currently UNREADABLE, not ABSENT.
+
+Hmm, but hold on, hold on. Let me reconsider once more: maybe the day-209 attempt's actual diff is recoverable from the issue comments (4 comments). Let me read the comments — maybe yoyo posted the plan there, or the previous attempt's findings.
+
+Let me read the issue comments.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 944 --comments 2>&… ✓ (674ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Excellent — this is incredibly informative. So the previous attempt's design is documented in the issue comments. Key facts:
+
+1. "the new state is latent" — 489 of 624 dirs are records-with-no-usage, all predating #848 → apply_usage_boundary demotes them to not_measurable.
+2. The fold in usage_coverage must get a fifth branch, else the new state lands in `unreadable`.
+3. apply_usage_boundary rule 1 demotes only ABSENT — so NO_TERMINAL_EMIT gets no boundary treatment (stated decision, probably right).
+
+Also the design says: "you do not need a new verdict state for 'no usage record.' You need either (a) those phases to create a session dir + audit file so the existing USAGE_ABSENT can fire..." — that was the reader's comment (previous day) saying what's needed. But then the task file for day 209 says add the fifth constant. Hmm, so the reader (Day 207/208 comment) said "the existing USAGE_ABSENT can fire" — meaning ABSENT is the "no usage record" state.
+
+So the intended semantics per the day-209 comments: "`classify_session_usage` (`:1890`) still returns `USAGE_ABSENT` for an audit file that is present, readable, and carries only tool-call lines. That is the state your issue says must not read as zero, and it still does."
+
+So: present + readable + only tool-call lines → currently ABSENT, should become NO_TERMINAL_EMIT.
+
+Then what remains ABSENT? Per the task: (a) no records at all (or missing).
+
+Hmm. But per the last comment, 489 of 624 have records-with-no-usage. And zero no_terminal_emit after boundary. So basically all ABSENT rows will become NO_TERMINAL_EMIT (raw) and then get demoted to NOT_MEASURABLE post-boundary.
+
+Important: if NO_TERMINAL_EMIT does NOT get boundary demotion, then post-boundary counts would be: recorded 129, not_measurable 0(?), no_terminal_emit 489. Wait — the comment says POST-BOUNDARY: recorded 129, not_measurable 489, no_terminal_emit 0. That implies the boundary DID demote NO_TERMINAL_EMIT. Hmm! But rule 1 says only ABSENT is demoted...
+
+Hmm, the comment says: "RAW (no boundary): recorded 129, no_terminal_emit 489. POST-BOUNDARY (apply_...): recorded 129, not_measurable 489 -> no_terminal_emit 0". Wait, that was measured with the landed diff (which contained no_terminal_emit, per the grep=18 claim which was later found false...). Ugh, confusing. Actually that comment (Day 208 21:06) claimed the reader had landed and measured. Day 209's comment says it did NOT land on main. So the measurement was made in the workspace with the diff present, and the diff demoted NO_TERMINAL_EMIT too (or the measurement applied apply_usage_boundary over verdicts including no_terminal_emit and found them demoted).
+
+Hmm. Actually wait — the day-208 21:06 measurement was made "with the script's own functions" against /tmp/auditlog/sessions. If the workspace version had apply_usage_boundary demoting only ABSENT, then no_terminal_emit would stay 489 post-boundary, not 0. Since the reading was not_measurable 489, the landed-workspace version must have demoted NO_TERMINAL_EMIT as well. Hmm — OR the measurement was taken with a version where classify still returned ABSENT... no, raw shows no_terminal_emit 489.
+
+Hmm, so the previous attempt widened apply_usage_boundary to demote NO_TERMINAL_EMIT too. Is that right?
+
+Think: a session dir with tool-call records and no usage line, predating #848 → it could not have logged usage → NOT_MEASURABLE. Yes! That's correct and important: without demoting NO_TERMINAL_EMIT, all 489 ancient dirs would turn into a giant false alarm "killed before terminal emit". So the boundary MUST demote NO_TERMINAL_EMIT. The Day-208 comment's "Smaller, and second" note said a new state gets no boundary treatment "by default" and "that is probably the right answer — your state is about a file that exists, so it is a post-boundary observation". But measurement says otherwise: if not demoted, 489 dirs alarm.
+
+Hmm, wait. Actually careful: In the current (HEAD) code, those 489 dirs classify as ABSENT and then get demoted to NOT_MEASURABLE. That's the current behavior at HEAD. If I introduce NO_TERMINAL_EMIT without demoting it, I'd change all 489 from not_measurable to no_terminal_emit — a massive false alarm regression. So yes, apply_usage_boundary must demote NO_TERMINAL_EMIT as well.
+
+Good — that's a real design decision I should make and state, backed by the measurement in the issue comments (which I should verify myself).
+
+Now: what about USAGE_ABSENT? If classify no longer returns it, then:
+- the render's `if cov.absent:` branch never fires.
+- the boundary demotion branch would need to handle both.
+
+Hmm. But the task explicitly says to keep ABSENT meaning (a) "no records at all (or missing)". So I need a producer for ABSENT.
+
+Option: In `collect_usage_coverage`, a session dir with NO audit.jsonl at all → currently `continue` (skipped). Hmm, that would be "(or is missing)". But that's a real case! Session dirs without audit.jsonl exist? On the audit-log branch... maybe.
+
+Hmm, but changing that would change `examined` counts and is arguably out of scope ("Sweeping the audit-log branch" is out of scope).
+
+Hmm. Let me reconsider: what distinguishes (a) from (b) at classify level with the existing inputs?
+
+- (b): readable, ≥1 parsed record, no usage → NO_TERMINAL_EMIT.
+- (a): "no records at all" → seen == 0 (empty file) or parsed == 0 (garbage).
+
+Currently (a) → UNREADABLE. The task wants (a) → ABSENT? That contradicts the existing test "an empty file is UNREADABLE (we never managed to look), not ABSENT".
+
+Hmm hold on, let me re-read the task step 2 again very carefully:
+
+"Find the existing near-miss test that covers the records-with-no-usage case (the day-209 attempt located it: it asserted USAGE_ABSENT there). Update that row to expect USAGE_NO_TERMINAL_EMIT and add a second row in the same table that still expects USAGE_ABSENT (an empty or absent audit file)."
+
+So: second row = "an empty or absent audit file" → USAGE_ABSENT.
+
+Hmm. "an empty audit file" = `[]`. Currently → UNREADABLE with a test. So this ordering would require changing that existing test.
+
+Hmm, unless... hmm. Hmm, wait. Maybe "empty" here means "empty of *usage*"... no, that's (b).
+
+Hmm, hmm. Let me think about what makes semantic sense, independent of the plan's literal words, because the plan's premise may be wrong (this repo's documented pattern).
+
+Truly, what are the distinguishable facts?
+1. File exists, we read it, ≥1 parseable record, has usage → RECORDED.
+2. File exists, we read it, ≥1 parseable record, no usage → NO_TERMINAL_EMIT. (killed run, or producer silent)
+3. File exists, we read it, but zero parseable records (empty or all garbage) → we never managed to look → UNREADABLE.
+4. File does not exist → nothing to read.
+
+Current ABSENT = case 2 exactly. So the only honest re-definition of ABSENT (a) = "no records at all" would have to take over case 3, colliding with UNREADABLE.
+
+Given that collision, maybe the right call: USAGE_ABSENT becomes *unproducible from file contents* — it means "the session left no audit file at all". Hmm.
+
+Hmm, but the task's acceptance says: "One test asserts both rows: records-with-no-usage → USAGE_NO_TERMINAL_EMIT; empty/absent → USAGE_ABSENT."
+
+So the acceptance criterion literally wants a row where an empty/absent audit file → USAGE_ABSENT.
+
+Hmm, and "empty" could be satisfied by... hmm.
+
+OK, decision time. Let me think about which is worse:
+(A) Literal compliance: change empty-file classification from UNREADABLE to ABSENT, breaking/changing an existing test. But then what is UNREADABLE for? "every non-blank line fails to parse" — still UNREADABLE (garbage). And "empty file" → ABSENT. Hmm, the existing test at 5904 and 5920 both assert empty/blank-only → UNREADABLE. I'd have to change both. That's modifying 2 existing tests — against "Never delete existing tests" (not literally deleting, but weakening). And it contradicts the docstring rule "A file with no non-blank lines at all, and a file where every non-blank line fails to parse, are both UNREADABLE: in neither case did we manage to look." That rule is principled and good.
+
+(B) Keep UNREADABLE for empty/garbage. Make ABSENT mean "no audit file at all" — produced at the collect layer, not classify. Then the "second row in the same table" would be a collect-level fixture... but the task says put record-line-count/usage-line-count in a comment, implying classify rows.
+
+Hmm, (B) requires threading a missing-file case into classify. E.g., classify_session_usage(None) → ABSENT? Hmm, that's odd.
+
+Hmm, (C): A third option. Re-read the planner's (a): "the session's `audit.jsonl` has no records at all (or is missing)". What if "records" is sloppy for "usage records"? No — then (a) == (b).
+
+Hmm.
+
+Hmm, let me look at this from yet another angle: what does the *render* need to distinguish, and what's the cheapest honest thing that satisfies the issue's requirement?
+
+Issue requirement: "'no usage record — the process did not reach its terminal emit' state distinct from zero."
+
+The reader half should print something like:
+"{n} session(s) carry records but NO usage line — the process was killed before its terminal emit (timeout/SIGTERM). A killed run's zero is not a measured zero."
+
+And the ABSENT clause stays: "{n} session(s) ran and logged NO usage line — the #848 producer wrote nothing there". Hmm — but that text is exactly what the planner says should now be NO_TERMINAL_EMIT... The distinction between "producer wrote nothing" and "killed before terminal emit" from a file alone is impossible; both look identical.
+
+OK so really: case 2 = NO_TERMINAL_EMIT. The ABSENT clause needs a different meaning. What can "absent" mean that's observable?
+
+Honestly: "the session directory exists but has no audit.jsonl" (missing) — observable at collect.
+
+Now, is that in scope? The task says out of scope: "Sweeping the audit-log branch" — hmm, that means sweeping to find audit branches. Probably not about the missing-file case.
+
+Hmm, this is getting deep. Let me take a step back and be pragmatic:
+
+The most defensible change that (i) satisfies the issue's core requirement, (ii) doesn't weaken an existing principled test, (iii) gives the new constant a producer and a consumer, and (iv) keeps ABSENT meaningful:
+
+- classify_session_usage: readable + ≥1 parsed record + no usage → USAGE_NO_TERMINAL_EMIT.
+- classify_session_usage: empty file / all-unparseable → USAGE_UNREADABLE (unchanged).
+- classify_session_usage: **a file with records but... ** hmm, still nothing produces ABSENT.
+
+Alternative: keep ABSENT for the genuinely-no-records-at-all case by making `seen == 0` → ABSENT? No, contradicts.
+
+Hmm hmm.
+
+Wait. Actually — hold on. What if I take the planner's premise at face value and check whether the *missing* case really is skipped, and treat the missing case as ABSENT at the collect layer? Let me reconsider option (B) concretely:
+
+In `collect_usage_coverage`:
+```python
+if not audit.is_file():
+    continue          # <-- session dir with no audit.jsonl: invisible
+```
+
+Change to: count it as USAGE_ABSENT (the session ran and left no audit file / no records). Hmm, but careful: session dirs on the audit-log branch might legitimately have no audit.jsonl (e.g., hand-run sessions, or the dir exists for other reasons). That could introduce false alarms. And it changes the denominator `examined`. Also the issue's own comment says these phases are invisible because "there is no file and no directory" — a *missing directory*, not a missing file. So dirs exist but no audit.jsonl? Not established.
+
+Risky. And it's explicitly labeled a different instrument.
+
+Hmm OK. Let me look at this from the "what did the day-209 attempt actually do" angle once more. The task says: "Day-209's `transcripts/task_01_attempt1.log` shows the edit WAS made, the script's own self-tests reported ALL PASSED in 956ms". And it says "the day-209 attempt located it: it asserted USAGE_ABSENT there" (the near-miss test). And step 2 tells me to add a second row expecting USAGE_ABSENT for "an empty or absent audit file".
+
+Given the day-209 attempt presumably wrote the plan (this task file), and the plan presumably was informed by... hmm, the attempt that made the edit was the *implementation* phase, and this task file is the *plan*. So the task file was written by the planner of day-209 (the very session whose transcript is this). Actually no — the task file I'm reading IS day 209's task_01. And the transcript referenced is "transcripts/task_01_attempt1.log" from "Day-209's" — meaning an earlier run today (00:15). So today's session has already run twice. The task file was re-planned.
+
+Hmm. So the "second row expecting USAGE_ABSENT (an empty or absent audit file)" was written by a planner that believed ABSENT would still be produced. Let me just check: is there ANY input to classify_session_usage that yields ABSENT under a sane implementation where records-with-no-usage → NO_TERMINAL_EMIT? Only `seen == 0 or parsed == 0`. So the planner intends empty/garbage → ABSENT.
+
+Hmm!! Unless the planner intended: keep `USAGE_ABSENT` for the case where the file is MISSING — and the "second row" is at collect level. The phrase "an empty or absent audit file" — "absent audit file" = missing file! And "empty" might be sloppy.
+
+You know what, let me just make a decision that is defensible and honest, and write it up clearly (this repo values "say plainly" and correcting wrong premises).
+
+My decision: 
+- Keep `USAGE_UNREADABLE` = "could not look" (empty / all-unparseable). Unchanged; existing tests stay green.
+- `USAGE_NO_TERMINAL_EMIT` = file readable, ≥1 parsed record, no usage line.
+- `USAGE_ABSENT` = the session left **no audit file at all** — produced in `collect_usage_coverage` where the file is missing... 
+
+Hmm, but wait. Is that safe? Let me check the audit-log branch data. /tmp/auditlog existed in previous sessions; not available now probably. Let me check if the harness fetched audit log here.
+
+Actually — hmm, but do we know session dirs without audit.jsonl exist? If none exist, ABSENT becomes latent-but-correct. And the second row in the table would then have to be a collect-level test (temp dir), which the task explicitly describes differently ("the record-line-count / usage-line-count that each fixture supplies in a comment beside the row").
+
+Ugh. OK. Alternative decision that satisfies BOTH the literal acceptance and principled semantics... 
+
+Hmm, what if the second row is: a file with **only blank lines**? No — UNREADABLE.
+
+What about: `seen == 0 or parsed == 0` → keep UNREADABLE for "we never managed to look", and ABSENT for "the file exists and is well-formed JSONL but carries no records at all"? That's impossible — zero records IS seen==0.
+
+Hmm hmm.
+
+OK, let me weigh the cost of each choice against the *acceptance criteria*:
+
+"One test asserts both rows: records-with-no-usage → USAGE_NO_TERMINAL_EMIT; empty/absent → USAGE_ABSENT."
+
+If I make ABSENT mean "no audit file at all" and test it via collect in a temp dir, I satisfy "both rows" in spirit and more honestly, but the literal "empty → ABSENT" row would be different.
+
+If instead I make empty file → ABSENT, I'd have to change 2 existing tests + the docstring rule. CLAUDE.md says never delete existing tests. Changing an existing assertion from UNREADABLE to ABSENT is a *weakening* of a documented distinction... actually is it? "we never managed to look" — an empty file: did we look? We opened it and it was empty. Hmm, that IS a look. The docstring's justification: "in neither case did we manage to look". For an empty file, you did manage to open it and it's empty. Hmm, honestly the existing rule conflated empty and unparseable. Hmm.
+
+But actually — the existing test is part of the `--test` self-test suite that the acceptance requires green. If I change it, `--test` still passes (I control both). But `scripts/check_assertion_weakening.py` might flag... that's for the evolve harness, run over diffs. Hmm! There IS a script `scripts/check_assertion_weakening.py` that scans diffs for weakened assertions. Changing `USAGE_UNREADABLE` → `USAGE_ABSENT` in an existing assert... is that weakening? It's a different verdict. Hard to say; the checker looks at contains→eq, needle shrink, deleted assertions, etc. Changing an expected constant value probably reads as UNKNOWN/skipped. Risky but probably fine.
+
+Hmm, hold on, hold on. Let me reconsider ONE more time whether the planner's (a) is actually already true at HEAD in some path I'm missing.
+
+```python
+    seen = 0
+    parsed = 0
+    for raw in lines:
+        if not str(raw).strip():
+            continue
+        seen += 1
+        try:
+            obj = json.loads(raw)
+        except (...):
+            continue
+        parsed += 1
+        if isinstance(obj, dict) and obj.get("type") == "usage":
+            return USAGE_RECORDED
+    if seen == 0 or parsed == 0:
+        return USAGE_UNREADABLE
+    return USAGE_ABSENT
+```
+
+Yes: ABSENT only when parsed ≥ 1 and no usage. Confirmed. The planner's (a) is false at HEAD. That's a premise error I should name (this repo's documented pattern: name it rather than silently re-plan).
+
+Hmm, but! Wait. Think about the *semantics the issue wants*, not the code: "a run killed by timeout never reaches the terminal emit, so the file exists with only tool-call lines and a summariser reports a confident zero". And separately, "a session that genuinely used no tokens" — does that exist? A session that ran and used nothing... For a session that ran, there will be tool calls → records. So NO usage line + records = killed. And what about a session that produced NO records at all (empty file)? That would be a session that ran and wrote nothing — also possibly killed very early, or a hand-run. Currently UNREADABLE.
+
+So under the new scheme, is there any post-#848 session that would be ABSENT? Practically no. So ABSENT becomes a residual.
+
+Hmm, hmm. OK, let me search for how the file is used elsewhere — maybe other readers of audit.jsonl. And let me check ARCHITECTURE.md's entry for extract_trajectory.py to see the documented state (maybe it already documents NO_TERMINAL_EMIT from the phantom "landed" diff!).
+
+ARCHITECTURE.md:1123 was claimed to carry the record. Let me check whether ARCHITECTURE.md at HEAD has a no_terminal_emit section. The Day-209 comment says grep -c no_terminal_emit on extract_trajectory.py = 0 at HEAD, but ARCHITECTURE.md:1123... let me look.
+
+That might contain the previous attempt's full design and rationale! Let me read it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no_terminal_emit\|NO_TE… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Not present. So ARCHITECTURE.md doesn't have it at HEAD either. Wait, the previous attempt claimed ARCHITECTURE.md:1123 carried the record — but that was in a workspace whose changes died. Confirmed: nothing at HEAD.
+
+Let me look at ARCHITECTURE.md's extract_trajectory.py section.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_trajectory" ARC… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me find the ARCHITECTURE.md section specifically about scripts/extract_trajectory.py — search for a heading.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\{1,4\} " ARCHITECTUR… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\{1,4\} " ARCHITECTUR… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, only two headings. So per-file notes are bullets. Let me search for "extract_trajectory.py" as a bullet start.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`extract_trajectory… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+ARCHITECTURE.md is one giant set of bullets. I need to find the bullet for `scripts/extract_trajectory.py`. Let me grep for "extract_trajectory.py" occurrences with line numbers.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_trajectory" ARC… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/ARCHITECTURE.md:1120..1135 ✗ (0ms)
+    │ File too large (1621709 bytes, max 1048576). Use offset/limit for partial reads.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1120,1123p' ARCHITECTURE… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The previous attempt hit max tokens. Now I need to actually make the edit. Let me be efficient and surgical.
+
+The task:
+1. Add `USAGE_NO_TERMINAL_EMIT` constant (fifth state) in scripts/extract_trajectory.py
+2. Return it from `classify_session_usage` when file is readable and carries ≥1 parsed record but no usage record
+3. Keep `USAGE_ABSENT` for no records at all / missing file... wait, careful. Existing behavior: `seen == 0 or parsed == 0` → UNREADABLE. Else (parsed >= 1 but no usage) → ABSENT. So today, actually... hmm, the existing code returns ABSENT when parsed >= 1 and no usage. And UNREADABLE when seen==0 or parsed==0.
+
+Wait, that means (a) "the session's audit.jsonl has no records at all (or is missing)" currently maps to UNREADABLE, not ABSENT (empty file). Hmm, but the task describes USAGE_ABSENT as absorbing (a) and (b). Let me re-read.
+
+Task says:
+- (a) the session's `audit.jsonl` has no records at all (or is missing);
+- (b) the file is **readable and carries records** but contains **no usage line**
+
+Add a fifth constant for (b), named `USAGE_NO_TERMINAL_EMIT`, and return it from `classify_session_usage` when the file is readable and carries at least one record but no usage record. Keep `USAGE_ABSENT` meaning (a).
+
+Hmm. But currently empty file → UNREADABLE by design (docstring says explicitly: "A file with no non-blank lines at all, and a file where every non-blank line fails to parse, are both UNREADABLE"). And (a) — file missing — is handled at collect_usage_coverage by `continue` (skipped).
+
+So the task's framing is slightly off from HEAD. The actual change that matters: (b) currently returns USAGE_ABSENT and should return USAGE_NO_TERMINAL_EMIT.
+
+For the test pinning both directions: "records-with-no-usage → USAGE_NO_TERMINAL_EMIT; empty/absent → USAGE_ABSENT". But at HEAD, empty file → UNREADABLE, not ABSENT. Hmm. Let me not break existing tests — "Never delete existing tests". The existing test asserts:
+- `tool-call lines with no type key classify ABSENT, not UNREADABLE` → expects USAGE_ABSENT. This is row (b) — must become USAGE_NO_TERMINAL_EMIT.
+- `a line with a non-usage type is still ABSENT` → `{"type":"error","msg":"x"}` — this is also a readable file with records but no usage → should become USAGE_NO_TERMINAL_EMIT too.
+- `an empty file is UNREADABLE` → USAGE_UNREADABLE. Stays.
+- blank lines + tool_call → ABSENT → becomes NO_TERMINAL_EMIT.
+
+Hmm, so where does USAGE_ABSENT survive as a classifier return? After this change, `classify_session_usage` would never return USAGE_ABSENT... which breaks the "keep USAGE_ABSENT meaning (a)" and makes the constant only reachable through apply_usage_boundary (which passes it through) and the fold.
+
+Hmm wait. Let's think about what's actually meaningful. The task says pin both rows in one fixture: "records-with-no-usage → USAGE_NO_TERMINAL_EMIT; empty/absent → USAGE_ABSENT".
+
+But empty file at HEAD → UNREADABLE. If I change empty file to ABSENT, I'd be changing an existing documented decision ("an empty file is UNREADABLE (we never managed to look), not ABSENT") and breaking an existing test — which the rules say never to weaken/delete.
+
+Hmm, but actually: is an empty audit.jsonl more like "absent"? The docstring argues: we never managed to look → UNREADABLE. That's a deliberate decision. I should not reverse it.
+
+Resolution: keep `classify_session_usage` returning UNREADABLE for empty; USAGE_ABSENT remains as a state that the *classifier* returns for... hmm, nothing. That would make USAGE_ABSENT only produced by nothing → dead constant. But clippy isn't run on Python; the test grep though. Actually USAGE_ABSENT is still referenced by apply_usage_boundary, usage_coverage, render. And there's `collect_usage_coverage`'s OSError path using UNREADABLE.
+
+Hmm, but "never add a definition without its consumer" — the new constant needs a consumer. USAGE_ABSENT keeps its consumers.
+
+But is it honest to have USAGE_ABSENT unreachable from classify_session_usage? The task says "Keep USAGE_ABSENT meaning (a) the session's audit.jsonl has no records at all (or is missing)". At HEAD that case is UNREADABLE for empty file and skipped for missing. So to honor the task, I'd have to route empty/missing to ABSENT — contradicting the file's own documented reasoning and breaking existing tests.
+
+Let me reconsider: maybe I should read what the intended design in the last attempt was. The task says "the day-209 attempt located it: it asserted USAGE_ABSENT there" — the near-miss test covering records-with-no-usage. And says add a second row in the same table that still expects USAGE_ABSENT (an empty or absent audit file).
+
+Hmm. Given the strong constraint of not breaking existing tests and the existing documented behavior for empty files (UNREADABLE), what's the best faithful implementation?
+
+Option: Keep the classifier's UNREADABLE for empty/unparseable. Add USAGE_NO_TERMINAL_EMIT for parsed>=1 with no usage. Then USAGE_ABSENT becomes... unused by the classifier. Then the "second row expecting USAGE_ABSENT" could be `classify_session_usage([])` — but that returns UNREADABLE at HEAD.
+
+Alternative reading of the intended design: the design half of #944 was that a killed run leaves records and no usage line. So classify returns NO_TERMINAL_EMIT. USAGE_ABSENT is genuinely reserved for... the day-209 attempt presumably changed empty-file to ABSENT? That seems unlikely.
+
+Hmm, wait. Let me re-read the classifier docstring more carefully. Maybe there is a different structure. Actually the current code's `parsed == 0` → UNREADABLE covers "no records at all". And `seen == 0` → UNREADABLE too. So (a) as the task describes it is not what the code does; the code calls it UNREADABLE.
+
+Given the ambiguity, the safest faithful move that satisfies the acceptance criteria:
+- New constant USAGE_NO_TERMINAL_EMIT returned when parsed >= 1 and no usage record.
+- Keep UNREADABLE for empty/unparseable (unchanged).
+- USAGE_ABSENT: what does it now mean? The task wants it to mean "no records at all (or missing)".
+
+Hmm, the acceptance says: "One test asserts both rows: records-with-no-usage → USAGE_NO_TERMINAL_EMIT; empty/absent → USAGE_ABSENT."
+
+If I can't return ABSENT for empty without breaking the existing UNREADABLE test... unless I change the existing test. But the existing test `an empty file is UNREADABLE (we never managed to look), not ABSENT` — that's an existing test asserting UNREADABLE. Changing it would be weakening. The rules say never delete existing tests. Editing an existing test's expectation to a different state is exactly what the task asks for the records-with-no-usage row. But for empty file → the task asks ABSENT, which contradicts a deliberate documented decision.
+
+Hmm. There's a real design tension. Let me think about which is more defensible and which reading of the task is right.
+
+Actually — hold on. Maybe I should reconsider: is `absent` vs `unreadable` for an empty file a *deliberate* decision or an accident? The docstring is explicit and reasons about it: "A file with no non-blank lines at all, and a file where every non-blank line fails to parse, are both UNREADABLE: in neither case did we manage to look." That's deliberate and argued. I should not reverse it, and the task didn't ask me to — the task's (a) description is a loose paraphrase by whoever wrote the task file, and it says "Keep USAGE_ABSENT meaning (a)."
+
+The tension is real, and the honest thing is: implement the substance (new state for records-with-no-usage), keep empty-file UNREADABLE (documented, tested, and it is the *right* call — we learned nothing), and make USAGE_ABSENT reachable by... let's look: is there any input shape that should return ABSENT?
+
+Think: what distinguishes ABSENT from NO_TERMINAL_EMIT? ABSENT = the producer wrote nothing at all. NO_TERMINAL_EMIT = the process died before terminal emit. Both are "readable file, records, no usage line" from the classifier's view — the classifier cannot distinguish them without more info (e.g. is there an `is_error` or a session-end marker?).
+
+Hmm! Actually here's a thought: a killed run leaves tool-call records but no terminal usage record. A run that reached the end but wrote nothing... can't happen (producer either writes or not). Actually writer writes once per process from emit_output. Any session that completes writes a usage line. So records-with-no-usage ⟹ killed before emit. That's exactly the issue's claim: USAGE_ABSENT was absorbing that fact and calling it "the producer wrote nothing there".
+
+So distinguishing: ABSENT (producer ran and wrote nothing — a real failure of the channel) vs NO_TERMINAL_EMIT (process died). Can the classifier tell? Not from file contents alone in general. But per the task, it splits by... hmm, the task explicitly says the split is: (a) no records at all/missing → ABSENT; (b) readable records, no usage → NO_TERMINAL_EMIT.
+
+OK. I think the pragmatic and faithful path:
+
+- In `classify_session_usage`: `seen == 0` (no non-blank lines at all → file empty) → hmm.
+
+Let me reconsider changing the empty-file case. Arguments for changing empty → ABSENT:
+- The task explicitly says so ("empty/absent → USAGE_ABSENT").
+- An empty audit.jsonl file that exists means the process created the file but wrote no records — arguably "no records at all" = the (a) case.
+- But the docstring argues we "never managed to look" — which is about parse failure, and for an empty file we did look and found nothing.
+
+Hmm, actually there's a nuance: an empty file means we DID look and saw zero lines. "Could not check" is really about parse failures. So arguably empty file → we looked, found no records → that IS case (a) → ABSENT. And all-lines-unparseable → UNREADABLE (we couldn't read them).
+
+That's actually a cleaner and more defensible split than HEAD's, and it matches the task. But it changes an existing test's expectation (`an empty file is UNREADABLE (we never managed to look), not ABSENT`) — I'd have to update that row, which is a behavior change beyond the task's scope and risks the "no deleted tests" rule... though updating an expectation is not deleting a test.
+
+Risk: the ARCHITECTURE.md / docstring record for that decision. Also the existing test name says "not ABSENT" explicitly — flipping it inverts a documented decision. That's exactly the kind of thing my safety rules warn about ("superseded claim, recorded rather than erased").
+
+Decision: I will NOT flip the empty-file case. It's deliberate, argued, named in a test, and the task's own paraphrase is loose. Instead:
+
+- Keep `seen == 0 or parsed == 0` → UNREADABLE (unchanged, "we never managed to look").
+- `parsed >= 1` and no usage → NEW: `USAGE_NO_TERMINAL_EMIT` (was ABSENT).
+- Then USAGE_ABSENT becomes unreachable from the classifier. That's a problem: it would be a state that nothing produces, and render still prints "ran and logged NO usage line". Hmm, but is it truly? `collect_usage_coverage` OSError → UNREADABLE. So ABSENT would only arise... nowhere.
+
+That leaves USAGE_ABSENT as a constant kept only for compatibility — which contradicts "never add a definition without its consumer" (add, not keep) but more importantly leaves `usage_coverage`'s absent branch and the render's "ran and logged NO usage line" clause permanently dead. Dead code in a meter is bad — and it's the exact defect class I keep meeting.
+
+Hmm, so which does the task really want? "Keep USAGE_ABSENT meaning (a) the session's audit.jsonl has no records at all (or is missing)". For that to be true, empty/missing → ABSENT. Missing file → skipped by collect_usage_coverage (continue). Empty file → currently UNREADABLE → would need to become ABSENT.
+
+So the task DOES intend the empty-file case to become ABSENT. And it explicitly gives me the second test row: "an empty or absent audit file" → USAGE_ABSENT.
+
+Hmm, but that means updating the existing test row `an empty file is UNREADABLE (we never managed to look), not ABSENT` → to expect USAGE_ABSENT. And the docstring's claim.
+
+Is that defensible? Let's think harder about which is right:
+- Empty file (0 bytes): the harness/session dir exists, audit.jsonl exists but empty. Did we "manage to look"? We opened it, read zero non-blank lines. So we looked and there is nothing. Is that "could not check"? For an *empty* file, there's nothing to parse — no parse failure occurred. HEAD's docstring says "in neither case did we manage to look" — that's arguably wrong for the empty case: we looked; the file is empty. But it lumps empty with all-unparseable.
+
+Hmm, but there's an argument for UNREADABLE on empty: an empty audit.jsonl could be a truncated/failed write (the file is created before the first line is flushed?). Actually if the process is killed very early, the file could be empty or missing entirely.
+
+Hmm. Now: is empty-file → ABSENT the safer direction? ABSENT is the alarming one ("ran and logged NO usage line"), NO_TERMINAL_EMIT also alarming, UNREADABLE is "could not check". For a killed process that wrote zero records, calling it UNREADABLE understates ("we couldn't check") when actually the process died immediately. Hmm, but we genuinely cannot tell whether the file was empty because the process died at once or because the file was never written by a #848 binary. Both are alarming.
+
+Well — ABSENT is more alarming/actionable than UNREADABLE in this meter. Actually no: render treats absent as "ran and logged NO usage line — the #848 producer wrote nothing there" (a producer failure) and unreadable as "could not be read". Both appear in the coverage refusal. It's a wash for the alarm, but it changes meaning.
+
+I'm now going back and forth. Let me weigh the risk: the acceptance criterion explicitly requires a test asserting empty/absent → USAGE_ABSENT. If I instead keep empty → UNREADABLE, I'd fail the stated acceptance and the evaluator would likely flag it. But if I flip empty → ABSENT, I change documented behavior beyond the minimal diff and I contradict an existing test's stated intent — but I can record that honestly ("superseded claim, recorded rather than erased"), updating the docstring and the test with an explicit rationale.
+
+Hmm, hold on. Let me re-read the acceptance criterion once more: "One test asserts both rows: records-with-no-usage → USAGE_NO_TERMINAL_EMIT; empty/absent → USAGE_ABSENT."
+
+"empty/absent" — could mean "empty-or-absent audit file". The task text in Step 2 says: "add a second row in the same table that still expects `USAGE_ABSENT` (an empty or absent audit file)".
+
+So yes, the task wants empty → ABSENT.
+
+Hmm, hmm. But wait: which existing test row currently asserts ABSENT for records-with-no-usage? `tool-call lines with no type key classify ABSENT, not UNREADABLE` — that's the row to update to NO_TERMINAL_EMIT. Then the second row: `an empty file is UNREADABLE ...` — that expects UNREADABLE at HEAD. The task says the second row "still expects USAGE_ABSENT", implying in the task author's model the empty case already returned ABSENT. It does not at HEAD. The task author (a previous session's plan) may have mis-read the code.
+
+Given this, I think the most honest implementation that satisfies the spirit and the letter as far as possible:
+
+Actually — wait. There's a third possibility that resolves everything cleanly: keep empty → UNREADABLE, and have USAGE_ABSENT be produced by the classifier for a case that currently maps to ABSENT and isn't the records-with-no-usage case... Is there such a case? `parsed >= 1, no usage` is the only ABSENT case. So no.
+
+OK, alternative: reconsider. What if the real distinction should be:
+- File is readable and has ≥1 record, no usage record → NO_TERMINAL_EMIT? That's what the task says for (b).
+
+Then ABSENT has no classifier path. Unless... the distinction is drawn on *whether the file has a terminal marker*, i.e. whether the session was killed. Hmm: a killed process (SIGTERM) never reaches emit_output → no usage line. A completed process → usage line. So *any* records-without-usage = killed. Hence ABSENT as "the producer wrote nothing there" is precisely the misreading the issue is about — there IS no such case. So ABSENT genuinely becomes vestigial after this change!
+
+Hmm, is that right though? Could a #848 binary complete a session and write no usage line? `audit_log_usage_when(enabled, ...)` — only when audit is enabled. If enabled, emit_output writes it. If the run errored... `is_error` is in the record. So it writes even on error. What about a run that dies on the very first turn (e.g., 401)? The process exits — does emit_output run? If main returns early with an error, maybe not. So "no usage line" really means "did not reach terminal emit".
+
+So ABSENT-as-producer-silence is arguably a category error, and the vestigial-constant concern is actually the *correct* outcome — but a vestigial constant that still renders a clause is dead code.
+
+Hmm. But hold on, that conflicts with the task: "Keep USAGE_ABSENT meaning (a)".
+
+Let me settle this by looking at how the render/fold would behave and choose the design that is both defensible and satisfies acceptance. I'll go with:
+
+- Empty file (seen == 0, i.e. no non-blank lines): → USAGE_ABSENT. Rationale: we DID look; the file carries no records at all. This is the (a) case and gives ABSENT a live consumer.
+
+Hmm, but that flips the existing UNREADABLE test. And the existing test's name explicitly defends "not ABSENT". And the docstring argues for it.
+
+Ugh. Risk assessment: which error is worse?
+1. Flipping empty→ABSENT: changes documented behavior, inverts an existing named test, but satisfies acceptance criteria and gives ABSENT a consumer.
+2. Keeping empty→UNREADABLE: satisfies "keep UNREADABLE for could-not-look", leaves ABSENT with no producer, and the acceptance test row "empty → ABSENT" would fail → evaluator rejects.
+
+Hmm, actually... wait. Is there a way to satisfy BOTH? What if I keep the classifier at HEAD for empty (UNREADABLE) and the "second row" test asserts that an *absent* file (missing from disk) leads to ABSENT via `collect_usage_coverage`? No — missing files are skipped (`continue`), not counted as ABSENT. The task's "Not in this task" says sweeping the audit-log branch is out of scope.
+
+Hmm, what about: the second row asserts `apply_usage_boundary(USAGE_ABSENT, ...)` — no, that's re-asserting.
+
+Hmm, let me reconsider the whole thing once more. Maybe the intended and best design is:
+
+`classify_session_usage` returns:
+- USAGE_RECORDED — has usage line
+- USAGE_NO_TERMINAL_EMIT — parsed ≥1 record, no usage line
+- USAGE_ABSENT — no records at all (seen == 0 but file readable → hmm, blank-only file) 
+- USAGE_UNREADABLE — every non-blank line fails to parse (we looked, could not read any)
+
+That's a clean 4-way split of what we can observe from content, and it maps exactly onto the task's (a)/(b) plus the existing UNREADABLE meaning. Under this:
+- empty file (`[]`) → seen == 0 → ABSENT
+- blank-only lines → seen == 0 → ABSENT
+- all unparseable → UNREADABLE
+- records, no usage → NO_TERMINAL_EMIT
+- usage → RECORDED
+
+And the docstring's "in neither case did we manage to look" needs revising: an empty file means we did look and the file holds no records; unparseable means we could not read what's there.
+
+Is ABSENT the right word for an empty file? "the session ran on a binary that COULD log usage, and did not". Hmm, for empty: the process wrote no records at all — that's consistent.
+
+But it breaks two existing tests:
+- "an empty file is UNREADABLE (we never managed to look), not ABSENT" → becomes ABSENT
+- "a file of nothing but blank lines is UNREADABLE, not ABSENT" → becomes ABSENT
+
+That's a genuine inversion of a documented decision. It IS what the task asks. And I can record it honestly in ARCHITECTURE.md as a superseded claim.
+
+Hmm, hold on, hold on. Let me reconsider whether the task really requires flipping those. The task's step 2: "Find the existing near-miss test that covers the records-with-no-usage case (the day-209 attempt located it: it asserted USAGE_ABSENT there). Update that row to expect USAGE_NO_TERMINAL_EMIT and add a second row in the same table that still expects USAGE_ABSENT (an empty or absent audit file)."
+
+If the day-209 attempt located the records-with-no-usage row as asserting USAGE_ABSENT — that's `tool-call lines with no type key classify ABSENT, not UNREADABLE`. Then "add a second row ... (an empty or absent audit file)" — add a row asserting an empty file → ABSENT. But an empty file currently → UNREADABLE, so if they added such a row it would fail... unless the day-209 implementation ALSO changed empty→ABSENT. Which the day-209 attempt presumably did (it wrote 286 lines and self-tests passed per the transcript!).
+
+Hmm, actually the transcript said: "across all 622 session dirs → 127 recorded, 489 not_measurable, and zero no_terminal_emit" — with RAW: recorded 129, no_terminal_emit 489. So their implementation classified records-with-no-usage as no_terminal_emit, and NOT_MEASURABLE demotion applied to no_terminal_emit?? "POST-BOUNDARY: recorded 129, not_measurable 489 → no_terminal_emit 0". That means apply_usage_boundary demoted NO_TERMINAL_EMIT to NOT_MEASURABLE — i.e., they widened rule 1 to demote both ABSENT and NO_TERMINAL_EMIT. Hmm, that's the day-208 comment's "should be a stated decision". Their transcript says it demoted, so they did widen it. But wait, the day-209 issue comment says the tree doesn't have it (cancelled run). So that transcript is from... day-209's earlier attempt? The task says day-209 00:15 attempt's log ends mid-cargo-build. Hmm, the transcript quoted in issue comments is from a session whose work was cancelled.
+
+Hmm, that raises a question: should apply_usage_boundary demote NO_TERMINAL_EMIT too? Per the day-208 comment: "your state is about a file that exists, so it is a post-boundary observation" — no demotion. And the measured data shows 489 pre-#848 sessions with records-but-no-usage; if we don't demote NO_TERMINAL_EMIT, those 489 all become alarming "process did not reach terminal emit" — a huge false alarm about pre-producer sessions! That's precisely the false-alarm defect the boundary exists to prevent (NOT_MEASURABLE was added on Day 181 for exactly "an alarm that decays on its own trains me to discount the line permanently").
+
+Hmm! That's a strong argument: implementers of the day-209 attempt demoted it. But is that right? Those pre-producer sessions have records and no usage line because the producer didn't exist. So yes, they must be demoted — otherwise the very first live render alarms about 489 sessions. The task says the boundary widening is... hmm, the task's Step 1 mentions only classify_session_usage and the label rendering; Step 3 mentions verify. The task doesn't mention apply_usage_boundary. But "what to do" is not exhaustive? It says "the whole code change" for Step 1. Hmm.
+
+But without widening the boundary, the change would produce a catastrophic false alarm (489 alarms) — which the file's docstring explicitly warns about as the Day-181 defect's exact shape. That's a real correctness problem. And the task's spirit is to avoid "confident zeros in the flattering direction", not to create 489 false alarms.
+
+Hmm, but careful: is it true that pre-producer sessions have records-with-no-usage? Yes — measured: 489 of 624 pre-#848 session dirs are records-with-no-usage. So without demotion, render would say "489 session(s) did not reach terminal emit" for sessions before the producer existed. That's a false alarm, and it would be *wrong* (they weren't killed; they predate the producer).
+
+So I must widen `apply_usage_boundary` rule 1 to demote both ABSENT and NO_TERMINAL_EMIT when pre-boundary. And document the decision (the day-208 comment asked for exactly that: "it should be a stated decision in the code").
+
+Hmm, but wait: then on today's corpus NO_TERMINAL_EMIT prints nothing (all demoted to not_measurable), so the "observable in rendered output" requirement — the acceptance says "The new state is observable in the rendered output, not only in a test." Hmm! If the live corpus demotes all of them, the rendered output on live data shows nothing new. But "observable in the rendered output" means the render function can render it (a clause exists + a test drives it), not that live data shows it. I'll add a render clause "N session(s) did not reach their terminal emit (killed before the usage record was written)" and test it, plus a fold field.
+
+Hmm, this is getting big. Let me scope carefully but correctly:
+
+Changes to scripts/extract_trajectory.py:
+1. New constant `USAGE_NO_TERMINAL_EMIT = "no_terminal_emit"` with a comment explaining the split.
+2. `classify_session_usage`: parsed ≥ 1 with no usage → USAGE_NO_TERMINAL_EMIT. Empty/unparseable handling: keep or change?
+3. `apply_usage_boundary`: demote NO_TERMINAL_EMIT as well as ABSENT (rule 1 widened, stated).
+4. `UsageCoverage` gains `no_terminal_emit: int = 0` field.
+5. `usage_coverage` fold: add the branch (before the else) so it doesn't land in unreadable.
+6. `render_usage_coverage`: add the clause; and update the "healthy" condition (`if cov.absent == 0 and cov.unreadable == 0` → also require `no_terminal_emit == 0`) — otherwise a fold with no_terminal_emit but absent==0/unreadable==0 renders "N of N sessions carry >=1 usage record ... (#848 channel is live)" which would be a confident-healthy reading that hides killed runs. That's important! Must fix.
+7. Tests: update the records-with-no-usage rows to NO_TERMINAL_EMIT; add a row for empty/absent → ABSENT (if I flip) or keep UNREADABLE... decide.
+8. Update ARCHITECTURE.md with a short entry.
+
+Now, decision on empty-file. Let me decide: I'll keep the existing UNREADABLE decision for a file with NO non-blank lines? But then ABSENT is unreachable from the classifier...
+
+Hmm, let me reconsider once more. Actually, maybe ABSENT should mean: file readable, has records, but the *session directory/file is not from a #848 binary*... no.
+
+Alternatively: what if the split is by whether the records suggest the process started a turn? E.g. ABSENT when the file exists and is empty; NO_TERMINAL_EMIT when there are records. That's exactly the "flip empty to ABSENT" option, and it gives ABSENT a live consumer and matches the task's (a) = "no records at all (or is missing)".
+
+Evidence in favor of flipping: the task explicitly instructs it, twice (Step 1 and Step 2). The task author had read the code (day-209 attempt located the test rows). The current UNREADABLE-for-empty decision is itself documented as grouping two different things ("in neither case did we manage to look") — which is arguably the same absence-absorbed-by-a-neighbour defect, in the *other* direction. An empty file where we successfully opened and read zero lines is *checked and empty*, not *could not check*.
+
+Yes — I'm now fairly convinced. "A file with no non-blank lines at all" is a successful look that found nothing; "every non-blank line fails to parse" is a failed look. Splitting them is strictly more honest, and it matches the task. The rule from my own archive: keep states distinct.
+
+So:
+```python
+seen = 0      # non-blank lines
+parsed = 0
+for raw in lines: ...
+if parsed == 0:
+    # We never managed to read a single record: either the file held no
+    # non-blank lines at all (seen == 0) ...
+```
+Hmm, but I want empty → ABSENT and all-unparseable → UNREADABLE. So:
+```
+if seen == 0:
+    return USAGE_ABSENT          # we looked; the file holds no records
+if parsed == 0:
+    return USAGE_UNREADABLE      # there were lines; we could not read one
+return USAGE_NO_TERMINAL_EMIT    # records, but the process never emitted usage
+```
+
+Wait, careful: with `parsed == 0` and `seen > 0` → UNREADABLE. Good. With seen==0 → ABSENT. With parsed ≥1 and no usage → NO_TERMINAL_EMIT. Usage found → RECORDED (early return).
+
+Now existing tests to update:
+- "tool-call lines with no `type` key classify ABSENT, not UNREADABLE" → NO_TERMINAL_EMIT
+- "a line with a non-usage type is still ABSENT" → NO_TERMINAL_EMIT
+- "every non-blank line unparseable classifies UNREADABLE" → unchanged
+- "an empty file is UNREADABLE (we never managed to look), not ABSENT" → ABSENT (rewrite the label)
+- "blank lines and a trailing newline do not change an ABSENT verdict" → NO_TERMINAL_EMIT
+- "a file of nothing but blank lines is UNREADABLE, not ABSENT" → ABSENT (rewrite label)
+- fold test `3/1/1/5` with [RECORDED×3, ABSENT, UNREADABLE] → still works but now need a NO_TERMINAL_EMIT in the fold; update to include it and assert 5 distinct numbers.
+- `cov4` test `1/1/1/2/5` → needs a new field → format string must include no_terminal_emit.
+
+Also render tests: healthy condition change; absent_render etc.
+
+Also there is `render_usage_coverage`'s docstring: "Five numbers that are never summed into each other" (on UsageCoverage dataclass) → becomes six.
+
+Also `USAGE_NOT_MEASURABLE` interactions: `apply_usage_boundary` demotes ABSENT-only currently; test rows assert `apply_usage_boundary(USAGE_ABSENT, before) == NOT_MEASURABLE` etc. Now I add NO_TERMINAL_EMIT demotion. Need tests: `apply_usage_boundary(USAGE_NO_TERMINAL_EMIT, before) == USAGE_NOT_MEASURABLE`, and after boundary → stays NO_TERMINAL_EMIT (near-miss).
+
+Hmm, do I really want to demote NO_TERMINAL_EMIT? Let me think about the pre-#848 corpus (489 dirs). Those sessions ran binaries with no usage producer; their audit files have tool-call records and no usage line. Under my classifier they're NO_TERMINAL_EMIT. Is that TRUE? Yes — they did not reach a terminal emit (the emit didn't exist). But the point of NOT_MEASURABLE is "the session *could not have* logged" — which is exactly these sessions. So demoting is right: the state is not attributable to a kill, it's attributable to the producer not existing. Yes, demote.
+
+But the demotion changes the meaning: rule 1's docstring "Only ABSENT is ever demoted" → becomes "only the two producer-silence states". I must state why: both are statements about a missing usage record, and both are unfalsifiable before the producer existed. And RECORDED/UNREADABLE still pass through.
+
+Hmm, one more consideration: 489 pre-boundary sessions currently classify as ABSENT → demoted to NOT_MEASURABLE. The day-208 measurement: "RAW (no boundary): recorded 129, no_terminal_emit 489" — hmm, that says raw = no_terminal_emit 489, and post-boundary = not_measurable 489. So they had ABSENT → 0 raw, meaning their classifier returned NO_TERMINAL_EMIT for those. Consistent with my plan.
+
+Wait, but their raw recorded 129 vs my expected recorded count? Not important.
+
+Now the render. Current render:
+```
+if cov.absent == 0 and cov.unreadable == 0:
+   healthy paths
+lines = [...]
+detail = []
+if cov.absent: detail.append("N session(s) ran and logged NO usage line — the #848 producer wrote nothing there")
+if cov.unreadable: ...
+if cov.not_measurable: detail.append(predate)
+```
+New: healthy condition must also require `cov.no_terminal_emit == 0`. And detail gains a clause for no_terminal_emit. Keep ≤3 lines.
+
+Clause wording: `f"{cov.no_terminal_emit} session(s) recorded no terminal emit — the process was killed before its usage record was written (this is NOT 'used nothing')"`. Keep short since line budget is 3 lines total and detail is joined with "; " on one line.
+
+Order of clauses: absent, no_terminal_emit, unreadable, predate. Hmm, that could make a long line but it's one line.
+
+Now let me also check other consumers: grep for "absent" usages across the repo (e.g., tests elsewhere, or `main` rendering?). Let me grep. Also `AUDIT_FILE_SIZE_CAP` etc.
+
+Also check: does anything else read `USAGE_ABSENT` (e.g. tests/module or the rust side)? Let me grep in the repo.
+
+Then run self-tests, commit BEFORE cargo (per the task's explicit ordering), then write ARCHITECTURE.md BEFORE committing (task says git add both then commit).
+
+Order per task: Step 1 edit, Step 2 tests, Step 3 verify+commit (python --test, git add both files, commit), Step 4 ARCHITECTURE entry. Hmm, Step 4 says write the ARCHITECTURE entry, but Step 3's git add includes ARCHITECTURE.md. So I'll write the ARCHITECTURE entry before committing (as the task's own git add line implies).
+
+Let me now look at the exact code regions and make edits. Let me be efficient: read the exact lines and use edit_file.
+
+Let me first grep for all consumers of the verdict constants and the dataclass fields.
+
+Given budget, let me do this now.
+
+Also: DAY_COUNT... not needed.
+
+Let me grep quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+The previous attempt ran out of budget mid-read. Let me pick up with the actual edit, fast.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "USAGE_ABSENT\|\.absent…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1840,1875p' scripts/extr… ✓ (3ms)
+ ✓ (72ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. Consumers are all in extract_trajectory.py. Now let me read lines 1840-1856 to see the docstring start.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1826,1855p' scripts/extr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1844,1875p' scripts/extr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The sed output is being elided with "... (N more similar lines)". Annoying. Let me use read_file with offsets to see exact text (read_file elides too... it did show content for 1855-2054 earlier, fine). Let me read 1844-1860.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:1844..1876 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now make the edits. Edit 1: the states doc + constant block.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the first edit — the state block:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (9 → 31 lines)
+  - # FOUR states, and no two of them may fold into each other:
+  - #   RECORDED       the producer wrote a usage line here
+  - #   ABSENT         the session ran on a binary that COULD log usage, and did not
+  - #   UNREADABLE     *could not check* — the file would not open or would not parse
+  - #   NOT_MEASURABLE the session predates the producer, so it *could not have*
+  + # FIVE states, and no two of them may fold into each other:
+  + #   RECORDED          the producer wrote a usage line here
+  + #   ABSENT            the file holds no records at all (or is not there)
+  + #   NO_TERMINAL_EMIT  records ARE there, and no usage line — the process was
+  + #                     killed (timeout/SIGTERM; yoyo installs no handler) before
+  + #                     it reached `emit_output`, so the record was never written
+  + #   UNREADABLE        *could not check* — the file would not open or would not parse
+  + #   NOT_MEASURABLE    the session predates the producer, so it *could not have*
+    # "the session ran and logged no usage" is an error, while "I could not read
+    # the file" is *could not check* — collapsing them rebuilds the frozen-number
+    # defect one layer down, which is the exact failure this detector exists for.
+  + #
+  + # NO_TERMINAL_EMIT is #944, and it is the SAME defect one notch finer. ABSENT
+  + # used to absorb both "the file is empty" and "the file has records and no
+  + # usage line", and those are opposite facts about a session: the first is a run
+  ... (16 more lines)
+ ✓ (1m 10s)
+  - # FOUR states, and no two of them may fold into each other:
+  - #   RECORDED       the producer wrote a usage line here
+  - #   ABSENT         the session ran on a binary that COULD log usage, and did not
+  - #   UNREADABLE     *could not check* — the file would not open or would not parse
+  - #   NOT_MEASURABLE the session predates the producer, so it *could not have*
+  + # FIVE states, and no two of them may fold into each other:
+  + #   RECORDED          the producer wrote a usage line here
+  + #   ABSENT            the file holds no records at all (or is not there)
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 5 lines)
+    USAGE_RECORDED = "recorded"
+    USAGE_ABSENT = "absent"
+  + USAGE_NO_TERMINAL_EMIT = "no_terminal_emit"
+    USAGE_UNREADABLE = "unreadable"
+    USAGE_NOT_MEASURABLE = "not_measurable"
+ ✓ (1m 9s)
+    USAGE_RECORDED = "recorded"
+    USAGE_ABSENT = "absent"
+  + USAGE_NO_TERMINAL_EMIT = "no_terminal_emit"
+    USAGE_UNREADABLE = "unreadable"
+    USAGE_NOT_MEASURABLE = "not_measurable"
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the classifier itself:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (33 → 40 lines)
+        """Pure: does this session's audit.jsonl carry at least one usage record?
+    
+        `lines` is an iterable of raw JSONL strings. Returns one of
+  -     USAGE_RECORDED / USAGE_ABSENT / USAGE_UNREADABLE.
+  +     USAGE_RECORDED / USAGE_ABSENT / USAGE_NO_TERMINAL_EMIT / USAGE_UNREADABLE.
+    
+        The predicate is `type == "usage"`, never "has a type" and never "is not
+        a tool call": #848's compatibility rule is that a line with NO `type` key
+        still means a tool call, because `write_audit_entry` deliberately emits
+  -     none. So a file of pure tool-call lines is ABSENT — the producer is silent
+  -     — and is emphatically not UNREADABLE.
+  +     none. So a file of pure tool-call lines is NO_TERMINAL_EMIT — the producer
+  +     is silent *after* the session had already done work — and is emphatically
+  +     not UNREADABLE.
+    
+        Blank lines are not corruption (a trailing newline is normal JSONL), so
+  -     they are skipped without counting toward anything. A file with no
+  -     non-blank lines at all, and a file where every non-blank line fails to
+  -     parse, are both UNREADABLE: in neither case did we manage to look.
+  +     they are skipped without counting toward anything. The remaining split is
+  ... (20 more lines)
+ ✓ (1m 9s)
+        """Pure: does this session's audit.jsonl carry at least one usage record?
+    
+        `lines` is an iterable of raw JSONL strings. Returns one of
+  -     USAGE_RECORDED / USAGE_ABSENT / USAGE_UNREADABLE.
+  +     USAGE_RECORDED / USAGE_ABSENT / USAGE_NO_TERMINAL_EMIT / USAGE_UNREADABLE.
+    
+        The predicate is `type == "usage"`, never "has a type" and never "is not
+        a tool call": #848's compatibility rule is that a line with NO `type` key
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the boundary rule and the fold:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (21 → 33 lines)
+    def apply_usage_boundary(verdict, session_ts, boundary_ts=USAGE_PRODUCER_LANDED_TS):
+  -     """Pure: demote an ABSENT verdict to NOT_MEASURABLE when the session
+  -     predates the producer. Everything else passes through unchanged.
+  +     """Pure: demote a producer-silence verdict to NOT_MEASURABLE when the
+  +     session predates the producer. Everything else passes through unchanged.
+    
+        Deliberately separate from `classify_session_usage`, which is a pure
+  -     function of file CONTENTS and knows nothing about time. Three rules, and
+  +     function of file CONTENTS and knows nothing about time. Four rules, and
+        each of them is the whole correctness of this:
+    
+  -     1. Only ABSENT is ever demoted. RECORDED passes through even if it somehow
+  +     1. Only the two producer-silence states are ever demoted — ABSENT and
+  +        NO_TERMINAL_EMIT. Both are claims about a MISSING usage record, and
+  +        neither is falsifiable about a session whose binary had no producer to
+  +        reach: a pre-#848 session holds tool-call records and no usage line for
+  +        the ordinary reason, so leaving NO_TERMINAL_EMIT undemoted would alarm
+  +        about every one of them (measured 2026-09-24 on the live corpus: 489 of
+  +        624 session dirs are records-with-no-usage and every one predates
+  +        8a633cff) — which is exactly the Day-181 false alarm the boundary was
+  ... (19 more lines)
+ ✓ (1m 9s)
+    def apply_usage_boundary(verdict, session_ts, boundary_ts=USAGE_PRODUCER_LANDED_TS):
+  -     """Pure: demote an ABSENT verdict to NOT_MEASURABLE when the session
+  -     predates the producer. Everything else passes through unchanged.
+  +     """Pure: demote a producer-silence verdict to NOT_MEASURABLE when the
+  +     session predates the producer. Everything else passes through unchanged.
+    
+        Deliberately separate from `classify_session_usage`, which is a pure
+  -     function of file CONTENTS and knows nothing about time. Three rules, and
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait, there's a problem: rule 2 says "it stays whatever it was" — fine. But also `collect_usage_coverage` calls `apply_usage_boundary(USAGE_UNREADABLE, ...)` — passes through. Fine.
+
+Now the UsageCoverage dataclass and fold.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (32 → 46 lines)
+    @dataclass
+    class UsageCoverage:
+  -     """Five numbers that are never summed into each other."""
+  +     """Six numbers that are never summed into each other."""
+    
+        recorded: int = 0
+        absent: int = 0
+  +     no_terminal_emit: int = 0
+        unreadable: int = 0
+        not_measurable: int = 0
+        examined: int = 0
+  ···
+        is the defect this whole family of checks exists to prevent. In
+        particular `not_measurable` is NEVER summed into `absent`: a session that
+        predates the producer did not fail to log, it could not have logged.
+  + 
+  +     Every state is named explicitly and the bare `else` is GONE (#944): a
+  +     fifth verdict added only to the classifier falls into an `else` and is
+  +     reported as UNREADABLE — "the process never reached its terminal emit"
+  +     rendering as "I could not read the file". A fallthrough bucket is exactly
+  ... (21 more lines)
+ ✓ (1m 9s)
+    @dataclass
+    class UsageCoverage:
+  -     """Five numbers that are never summed into each other."""
+  +     """Six numbers that are never summed into each other."""
+    
+        recorded: int = 0
+        absent: int = 0
+  +     no_terminal_emit: int = 0
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the render — the healthy path must not hide a killed run, and the new clause must print:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (9 → 18 lines)
+        that *could* have logged. A partially-measurable window is still real
+        data, so a non-zero `not_measurable` is not a refusal; a wholly
+        unmeasurable one is.
+  + 
+  +     `no_terminal_emit` (#944) is reported as its own clause too, and it is a
+  +     NAMED part of the healthy test rather than only of the alarm path: a
+  +     window of killed runs has `absent == 0` and `unreadable == 0`, so without
+  +     it the render would say *"k of N sessions carry >=1 usage record (#848
+  +     channel is live)"* about a window in which every expensive run died. A
+  +     clause that only fires once another counter is already non-zero is a
+  +     clause that goes silent exactly where it is needed — the defect one level
+  +     up from the one this state exists for.
+    
+        Held to at most 3 lines: this renders before the epistemic block, which
+        absorbs all truncation pressure and has been cut away once already.
+ ✓ (1m 9s)
+        that *could* have logged. A partially-measurable window is still real
+        data, so a non-zero `not_measurable` is not a refusal; a wholly
+        unmeasurable one is.
+  + 
+  +     `no_terminal_emit` (#944) is reported as its own clause too, and it is a
+  +     NAMED part of the healthy test rather than only of the alarm path: a
+  +     window of killed runs has `absent == 0` and `unreadable == 0`, so without
+  +     it the render would say *"k of N sessions carry >=1 usage record (#848
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 1 lines)
+  -     if cov.absent == 0 and cov.unreadable == 0:
+  +     if cov.absent == 0 and cov.unreadable == 0 and cov.no_terminal_emit == 0:
+ ✓ (1m 9s)
+  -     if cov.absent == 0 and cov.unreadable == 0:
+  +     if cov.absent == 0 and cov.unreadable == 0 and cov.no_terminal_emit == 0:
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (7 → 13 lines)
+        detail = []
+        if cov.absent:
+            detail.append(
+  -             f"{cov.absent} session(s) ran and logged NO usage line — the #848 "
+  -             f"producer wrote nothing there"
+  +             f"{cov.absent} session(s) hold no audit records at all — nothing "
+  +             f"ran, or nothing was written"
+  +         )
+  +     if cov.no_terminal_emit:
+  +         detail.append(
+  +             f"{cov.no_terminal_emit} session(s) have records and NO usage line "
+  +             f"— the process was killed before its terminal emit, so this is NOT "
+  +             f"'used nothing'"
+            )
+        if cov.unreadable:
+ ✓ (1m 9s)
+        detail = []
+        if cov.absent:
+            detail.append(
+  -             f"{cov.absent} session(s) ran and logged NO usage line — the #848 "
+  -             f"producer wrote nothing there"
+  +             f"{cov.absent} session(s) hold no audit records at all — nothing "
+  +             f"ran, or nothing was written"
+  +         )
+  ... (7 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to continue. The remaining work: the 3-line budget. Currently with no_terminal_emit there could be 3 detail clauses + header = 4 lines. Need to check the budget assertion. Let me look at the render function state and the tests, then fix.
+
+Let me be efficient: run the self-test to see failures.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (88ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (85ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (85ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (85ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Expected. Now update the tests. Let me view that test block again with the current line numbers.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Usage-record coverage (… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:5947..6007 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I'll rewrite this block. Structure per task: one table with rows for both directions. I'll write an explicit table-driven section.
+
+Let me replace lines 5948-5995 with a table.
+
+The task says: "Find the existing near-miss test that covers the records-with-no-usage case... Update that row to expect USAGE_NO_TERMINAL_EMIT and add a second row in the same table that still expects USAGE_ABSENT (an empty or absent audit file)."
+
+I'll create a table. Use a tuple list and loop with assert_eq(f"...", classify_session_usage(lines), want). Put record counts in comments beside rows.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (49 → 86 lines)
+        # --- Usage-record coverage (#848 follow-up) ---------------------------
+        # The predicate is `type == "usage"`, never "has a type": a line with NO
+        # type key is a tool call by #848's own compatibility rule, so a file of
+  -     # pure tool-call lines is ABSENT (the producer is silent) and must not be
+  -     # mistaken for UNREADABLE.
+  +     # pure tool-call lines is NO_TERMINAL_EMIT (the session did work, then died
+  +     # before `emit_output`) and must not be mistaken for UNREADABLE *or* for
+  +     # ABSENT.
+        tool_call = '{"tool":"read_file","duration_ms":12,"success":true}'
+        usage_line = '{"type":"usage","model":"claude-opus-5","input_tokens":10,"cost_usd":0.4}'
+    
+  ···
+            classify_session_usage([tool_call, usage_line, tool_call]),
+            USAGE_RECORDED,
+        )
+  -     assert_eq(
+  -         "tool-call lines with no `type` key classify ABSENT, not UNREADABLE",
+  -         classify_session_usage([tool_call, tool_call]),
+  -         USAGE_ABSENT,
+  + 
+  ... (82 more lines)
+ ✓ (1m 9s)
+        # --- Usage-record coverage (#848 follow-up) ---------------------------
+        # The predicate is `type == "usage"`, never "has a type": a line with NO
+        # type key is a tool call by #848's own compatibility rule, so a file of
+  -     # pure tool-call lines is ABSENT (the producer is silent) and must not be
+  -     # mistaken for UNREADABLE.
+  +     # pure tool-call lines is NO_TERMINAL_EMIT (the session did work, then died
+  +     # before `emit_output`) and must not be mistaken for UNREADABLE *or* for
+  +     # ABSENT.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now fix the fold assertion and the render assertions. Let me look at the remaining failing assertions.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (86ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (86ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (85ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The grep output is being truncated by the tool's summarization. Let me write to a file and read the full failure list.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (86ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '280,340p' /tmp/t.out ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I need to update the remaining failing tests. Let me find the ones that reference "ran and logged NO usage line" and "absent and unreadable are reported separately".
+
+Failures:
+1. "an absent count is named out loud as sessions that logged nothing" — line ~5962 originally, now shifted.
+2. "absent and unreadable are reported separately, never summed"
+3. "a real absent count still alarms while pre-producer sessions do not"
+4. "with not_measurable == 0 the absent line is byte-identical"
+
+I need to update them to the new wording, and add coverage for the new state's rendering. Let me be economical. Let me grep line numbers.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ran and logged NO usage… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6066,6115p' scripts/extr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Rather than keep rewriting many assertions, I could keep the old wording for `absent` and use a new wording for `no_terminal_emit`. But the half-updated state (absent = "hold no audit records") is more honest. The failures are test-side wording. There are 4-5 call sites. Let me just update them, and add the key new assertion: NO_TERMINAL_EMIT is rendered and is not absorbed into the healthy line.
+
+Let me do a careful set of edits. First 6075 and 6088.
+
+Actually simpler: make `absent`'s clause keep a phrase containing "logged NO usage line"? No — that would be dishonest since absent now means no records. Update tests.
+
+Let me batch-edit with python for line-targeted replacement... but surgical edit_file is preferred. Let me do 3 edits.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (21 → 61 lines)
+            UsageCoverage(recorded=7, absent=3, examined=10), AUDIT_DIR_OK
+        )
+        assert_true(
+  -         "an absent count is named out loud as sessions that logged nothing",
+  -         "3 session(s) ran and logged NO usage line" in absent_render,
+  +         "an absent count is named out loud as sessions holding no records",
+  +         "3 session(s) hold no audit records at all" in absent_render,
+        )
+        assert_true(
+            "coverage is reported as k of N, never as a token total or a dollar figure",
+  ···
+        )
+        assert_true(
+            "absent and unreadable are reported separately, never summed",
+  -         "3 session(s) ran and logged NO usage line" in mixed
+  +         "3 session(s) hold no audit records at all" in mixed
+            and "1 session(s) could not be read" in mixed,
+  +     )
+  + 
+  +     # --- #944 in the RENDER, not only in the classifier -------------------
+  ... (38 more lines)
+ ✓ (1m 9s)
+            UsageCoverage(recorded=7, absent=3, examined=10), AUDIT_DIR_OK
+        )
+        assert_true(
+  -         "an absent count is named out loud as sessions that logged nothing",
+  -         "3 session(s) ran and logged NO usage line" in absent_render,
+  +         "an absent count is named out loud as sessions holding no records",
+  +         "3 session(s) hold no audit records at all" in absent_render,
+        )
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6255,6300p' scripts/extr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (6 → 6 lines)
+        assert_true(
+            "a real absent count still alarms while pre-producer sessions do not",
+            "2 of 4 measurable sessions" in live
+  -         and "2 session(s) ran and logged NO usage line" in live
+  +         and "2 session(s) hold no audit records at all" in live
+            and "6 session(s) predate the #848 producer" in live,
+        )
+ ✓ (1m 9s)
+        assert_true(
+            "a real absent count still alarms while pre-producer sessions do not",
+            "2 of 4 measurable sessions" in live
+  -         and "2 session(s) ran and logged NO usage line" in live
+  +         and "2 session(s) hold no audit records at all" in live
+            and "6 session(s) predate the #848 producer" in live,
+        )
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (9 → 9 lines)
+                UsageCoverage(recorded=7, absent=3, examined=10), AUDIT_DIR_OK
+            ),
+            "## Usage records\n7 of 10 sessions carry >=1 usage record.\n"
+  -         "3 session(s) ran and logged NO usage line — the #848 producer wrote "
+  -         "nothing there.",
+  +         "3 session(s) hold no audit records at all — nothing ran, or nothing "
+  +         "was written.",
+        )
+ ✓ (1m 10s)
+                UsageCoverage(recorded=7, absent=3, examined=10), AUDIT_DIR_OK
+            ),
+            "## Usage records\n7 of 10 sessions carry >=1 usage record.\n"
+  -         "3 session(s) ran and logged NO usage line — the #848 producer wrote "
+  -         "nothing there.",
+  +         "3 session(s) hold no audit records at all — nothing ran, or nothing "
+  +         "was written.",
+        )
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (87ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,320p' /tmp/t.out ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+My fixture was wrong (I set absent=1 with recorded=3, which renders the absent clause). Fix the fixture to absent=0.
+
+Actually I intended a healthy-with-predate case. Use recorded=4, not_measurable=6, examined=10. Then measurable=4 and healthy line fires (absent=0, unreadable=0, no_terminal_emit=0).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (9 → 9 lines)
+        assert_eq(
+            "with no_terminal_emit == 0 the healthy line is byte-identical",
+            render_usage_coverage(
+  -             UsageCoverage(recorded=3, absent=1, not_measurable=6, examined=10), AUDIT_DIR_OK
+  +             UsageCoverage(recorded=4, not_measurable=6, examined=10), AUDIT_DIR_OK
+            ),
+            "## Usage records\n"
+  -         "3 of 4 measurable sessions carry >=1 usage record.\n"
+  +         "4 of 4 measurable sessions carry >=1 usage record.\n"
+            "6 session(s) predate the #848 producer (8a633cff) and cannot be measured.",
+        )
+ ✓ (1m 11s)
+        assert_eq(
+            "with no_terminal_emit == 0 the healthy line is byte-identical",
+            render_usage_coverage(
+  -             UsageCoverage(recorded=3, absent=1, not_measurable=6, examined=10), AUDIT_DIR_OK
+  +             UsageCoverage(recorded=4, not_measurable=6, examined=10), AUDIT_DIR_OK
+            ),
+            "## Usage records\n"
+  -         "3 of 4 measurable sessions carry >=1 usage record.\n"
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (87ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '305,310p' /tmp/t.out ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 3 lines)
+            "## Usage records\n"
+  -         "4 of 4 measurable sessions carry >=1 usage record.\n"
+  +         "4 of 4 measurable sessions carry >=1 usage record (#848 channel is live).\n"
+            "6 session(s) predate the #848 producer (8a633cff) and cannot be measured.",
+ ✓ (1m 9s)
+            "## Usage records\n"
+  -         "4 of 4 measurable sessions carry >=1 usage record.\n"
+  +         "4 of 4 measurable sessions carry >=1 usage record (#848 channel is live).\n"
+            "6 session(s) predate the #848 producer (8a633cff) and cannot be measured.",
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (87ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All tests pass. Now let me verify the rendered output is actually observable (Step 2/acceptance). It is — tested via `render_usage_coverage` assertions.
+
+Now check `collect_usage_coverage` — does anything need updating? It calls `apply_usage_boundary(classify_session_usage(...))`. That's fine.
+
+Also check that no other consumer of the verdict constants exists in the file (e.g. `main` rendering). Already grepped earlier: consumers are usage_coverage, render_usage_coverage, apply_usage_boundary. Let me double check that `USAGE_NO_TERMINAL_EMIT` is actually referenced outside tests — the task requires the new constant be reachable in rendered output.
+
+grep for it.
+────────────────────────────────────────────────────────────────────────────────
+
+All tests pass. Now let me verify the new state is referenced in non-test code (reachable in the rendered output):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "USAGE_NO_TERMINAL_EMIT\… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Consumers exist in non-test code: line 1952 (classifier), 2020 (boundary), 2066-2067 (fold), 2190 & 2217-2219 (render). Good.
+
+Now verify the rendered output on a realistic fixture — a quick end-to-end sanity check with `usage_coverage` + `render_usage_coverage` via an import. Actually the self-tests already do this at the emission point.
+
+Let me also quickly do a positive control: neuter the new clause and confirm the test goes red by name. Per CLAUDE.md, do mutate→run→restore atomically, serially.
+
+Actually, let me first commit — the task says commit BEFORE cargo. But I should do the ARCHITECTURE.md entry first (it's in the same commit). Let me do the positive control quickly then ARCHITECTURE then commit.
+
+Positive control: neuter `render_usage_coverage`'s no_terminal_emit change (line 2190 back to absent==0 and unreadable==0) and check red. Do it atomically.
+
+Let me use python to do mutate->run->restore in one command.
+────────────────────────────────────────────────────────────────────────────────
+
+Now an atomic positive control — mutate the new render clause, run, restore, all in one command:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (21 lines) ✓ (208ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The positive control discriminates exactly the three new render tests, and restoring returns green.
+
+Now the ARCHITECTURE.md entry. It's a huge file (1.6MB). I need to add a short entry under the `scripts/extract_trajectory.py` heading, which is at line 1120-1140ish. Let me find a good insertion point — after the day-204 doc freshness bullet, probably at the end of the extract_trajectory bullets. Let me look at the structure around 1120-1145.
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control confirms exactly the three new render tests redden, and restore returns green. Now the ARCHITECTURE.md entry:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1120 && NR<=1146 {print… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1136p' ARCHITECTURE.md |… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I'll insert a new bullet after line 1136 (the Day 207 bullet), before the blank line at 1137. Let me write the entry — short, per the task ("a few lines, not a history").
+
+I'll use python to insert to avoid huge edit_file content issues.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (53 lines) ✓ (38ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now, per the task's ordering instruction: commit BEFORE any cargo invocation. Let me re-run the python self-test once more (quick) and commit.
+
+Also check git diff sanity and that no NEUTERED markers exist.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (115ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — 246 changed lines seems large. Let me check the diff quickly to be sure I didn't accidentally rewrite more than intended. Actually 198 insertions is fine: the docstrings, the test table, the ARCHITECTURE entry (1 line but 4396 chars counted as 1 insertion... hmm the stat says ARCHITECTURE.md 1 +).
+
+Let me check the diff of extract_trajectory.py briefly for anything unintended.
+
+Actually wait — +198 lines total including a new 86-line test block and ~60 lines of render tests, plus docstring expansions. That's plausible. Let me spot-check that no unrelated code changed.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff -U0 scripts/extract_tra… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff -U0 scripts/extract_tra… ✓ (8ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the diff hunks list properly and then there's one thing I noticed: `@@ -6143,2 +6291,2 @@ src/commands_config.rs` — that's odd, a hunk context showing "src/commands_config.rs"? That's just the function-context heuristic in git diff picking up a nearby string. Fine.
+
+Let me now check the validation: the issue mentions `usage_coverage` is the landing zone. Also there are other consumers of UsageCoverage fields elsewhere? Let me check for other places that consume `.absent` etc. beyond the render, e.g. in main() or in the evolve.sh parsing. Earlier grep showed only render. But let me double-check quickly, then commit. The task says: commit before any cargo invocation.
+
+Also need to check that ARCHITECTURE.md line count / module_size gate isn't relevant (it's not a .rs file). Fine.
+
+Let me do a final grep for consumers of UsageCoverage attributes outside the module and then commit.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "UsageCoverage\|usage_c… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. The only consumer is `render_usage_coverage` at 3857, which flows into the trajectory block. Confirmed the new state is reachable in rendered output.
+
+Let me do a live sanity run: create a temp audit dir with a killed-run session and a healthy session, and run the script's render path to see it print. Actually I can just call the module functions... but importing may execute main. Let me check if there's a `__main__` guard.
+
+Simpler: construct with a quick python importlib import of the module (it's a script; check for main guard).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 scripts/extract_trajecto… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf d944 && mkdir -p d944/sessions/day-209-202… (11 lines) ✓ (83ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Live end-to-end (through the actual I/O reader `collect_usage_coverage` on a real directory) shows the new state reaching the rendered output. 
+
+Now commit before any cargo invocation, per the task's ordering requirement.
+
+Also, session_plan/task_01.md and other files are untracked/modified? git status earlier showed nothing? Let me check git status. The task says commit only the two files. Then the harness does the rest.
+
+Note: the commit message specified in the task is "Day 209 (07:24): Land #944 — a killed run must stop reading as an honestly-empty run (Task 1)".
+
+Let me commit now.
+────────────────────────────────────────────────────────────────────────────────
+
+Live end-to-end check confirms it. Committing now, before any cargo run (per the task's ordering requirement):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git add sc… ✓ (43ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Committed. Now, budget appears to remain (I'm still running), so per the task: "Only if the commit is already done and budget clearly remains: cargo build 2>&1 | tail -3."
+
+Let me run cargo build quickly, and also given the change touched ARCHITECTURE.md only (no rust), build should be fine. Let me run it but with a bounded approach. Actually the task explicitly said NOT to run the full cargo test suite. Let me just do cargo build to satisfy the general rule, with a timeout.
+
+Actually, hmm — should I run cargo build at all? The task said only if budget clearly remains. I have some. Let me run it with a timeout of ~300s. But my budget is tight (I've hit max tokens repeatedly). The commit is already in. Let me do a quick, bounded build and then report.
+
+Actually, a smarter check: the diff is Python + Markdown only. There's a test `tests/neutered_guards.rs` that scans for markers (0 markers). And there might be a test that checks ARCHITECTURE.md size or the module gate (only .rs). Risk of breaking cargo tests is essentially nil for a Python-only diff.
+
+But wait — one real risk: some Rust test might assert that `scripts/extract_trajectory.py` symbols match something (e.g., `scripts/check_doc_symbols.py` or a test verifying the script's constants). Let me grep tests/ for extract_trajectory references. That's cheap and more targeted than cargo build.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "extract_trajectory\|e… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_trajectory" tes… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Only a comment. That's the "src_modules_respect_the_size_gate" test — it's a comment, not a check of the script.
+
+Now let's do the quick cargo build with a bound, since the task permits it if budget remains. Let me run cargo build with timeout.
+
+Actually, my token budget is nearly exhausted repeatedly. The task said not to run full cargo test. Let me run `cargo build 2>&1 | tail -3` with a timeout of 300 — it's a required-ish general rule but honestly a Python-only change can't affect it. Hmm, but "Act early... Never finish with analysis only" — I'm done with the change. The commit exists. I think running cargo build is worth it for honesty, with a hard timeout so it can't hang me.
+
+Let me do it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 400 cargo build 2>&1 | t… ✓ (148ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/extr… ✓ (90ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done — and this time it's committed, which is the thing the last four sessions failed to do.
+
+## What landed (`a971bfc3`)
+
+The fifth verdict. USAGE_ABSENT was absorbing two opposite facts about a session. Split into:
+
+• `USAGE_ABSENT` — no records at all (file empty/absent): checked, holds nothing
+• `USAGE_NO_TERMINAL_EMIT — records **present**, no usage line: the process was killed before emit_output`, the one thing that writes the usage line
+
+Four sites, not one — the task named the classifier, but the landing zone is the constant, classify_session_usage, the fold usage_coverage, and render_usage_coverage. Two things had to move with it:
+
+• **The fold's bare else is gone.** A new verdict landing there renders as *"I could not read the file"*. An unrecognised verdict now raises instead of being filed under corruption — the one direction where loud beats quiet.
+• **apply_usage_boundary demotes the new state too, as a stated decision.** "A file that exists is post-boundary by construction" was the tempting reading; measured false — 489 of 624 live session dirs are records-with-no-usage and every one predates 8a633cff. Leaving it undemoted re-runs the Day-181 false alarm 489 times.
+• **In the render it's part of the healthy test, not only the alarm path.** A killed-only window has `absent == 0 and unreadable == 0`, so without adding it to that conjunction the line would say *"#848 channel is live"* over a window where every expensive run died.
+
+Both directions in one table: records-with-no-usage → NO_TERMINAL_EMIT beside empty → ABSENT, each row carrying its record/usage counts, plus an anti-vacuous assertion that the two rows really do supply different inputs.
+
+## Verification
+
+• `python3 scripts/extract_trajectory.py --test` → ALL PASSED, exit 0
+• **Reachable in rendered output**, not just tests: end-to-end through the real I/O reader on a tempdir with a killed run and a healthy run → `1 session(s) have records and NO usage line — the process was killed before its terminal emit, so this is NOT 'used nothing'.`
+• **Positive control as one atomic mutate→run→restore: reverting the render conjunction reddens exactly three** killed-run-specific tests, all near-miss guards stay green; restore → ALL PASSED, 0 markers left.
+• `cargo build` finished clean after the commit.
+
+## The limit, stated rather than implied
+
+The reading is latent on today's corpus — all 489 records-with-no-usage dirs are pre-producer, so they demote to NOT_MEASURABLE and the new state prints nothing until a post-#848 run is killed. That's the expected shape, not a surprise. And the half of #944 that matters — the durable sink and per-run watermark — is untouched; this makes a killed run legible, it does not meter one.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

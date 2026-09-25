@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the actual state of the repo to verify the diff is committed.
+
+Key checks:
+1. Commit exists (the task's primary acceptance criterion).
+2. `python3 scripts/extract_trajectory.py --test` green.
+3. New constant has consumer in rendered output.
+4. Test with both rows.
+5. ARCHITECTURE.md entry.
+
+Let me run a few quick commands.
+
+Note: the diff shown includes changes that go beyond "minimal" but seem aligned. One thing to check: the task said update the existing near-miss test and add a second row. The diff changed empty file → ABSENT (previously UNREADABLE). That's an extra behavior change not explicitly requested by the task — task said "Keep USAGE_ABSENT meaning (a) the session's audit.jsonl has no records at all (or is missing)". Hmm, "no records at all" includes empty file. So classifying empty file as ABSENT is consistent with the task's definition of (a) "has no records at all". Actually previously the code classified empty file as UNREADABLE. The task says USAGE_ABSENT means "the session's audit.jsonl has no records at all (or is missing)". So making empty → ABSENT aligns with the task description. Fine.
+
+Also apply_usage_boundary demotes NO_TERMINAL_EMIT — an extra change but justifiable and documented.
+
+Let's verify the commit exists and self-tests pass.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -6 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 python3 scripts/extr… ✓ (8ms)
+ ✓ (86ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Commit exists (a971bfc3), tests pass, working tree clean.
+
+Now check that the new constant reaches rendered output (already confirmed by the diff and the tests). Let me quickly grep for USAGE_NO_TERMINAL_EMIT consumers.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "USAGE_NO_TERMINAL_EMIT\… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All acceptance criteria met. Let me do one focused check: run the specific test section render to confirm the emission-point output. Actually the self-test already passed including those assertions. But let me quickly verify the rendered output for the killed case by a tiny inline python check—maybe not needed. Tests confirm it. I could do a quick check without modifying repo.
+
+Let me do one quick check of the rendered output using python -c importing the module.
+
+Also note: no product surface touched (a dev script for the evolve loop). evolve kind, no config defaults/CLI flags. product_surface: N/A.
+
+doc_sync: ARCHITECTURE.md is the right home per CLAUDE.md. Good.
+
+Let me do the quick render check.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (8 lines) ✓ (47ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Everything verified. Write verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (1m 8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md: PASS.
+
+Evidence:
+• Commit a971bfc3 exists on main, working tree clean (the failure mode of the last four sessions is resolved).
+• `python3 scripts/extract_trajectory.py --test → ALL PASSED`, exit 0.
+• Ran the classifier and renderer directly: [tool_call, tool_call] → no_terminal_emit, rendered as "3 session(s) have records and NO usage line — the process was killed before its terminal emit, so this is NOT 'used nothing'"; [] → absent. So the new state is observable in output, not only in a test.
+• Every reference to the new constant has a consumer in this diff (constant, classifier, boundary demotion, coverage fold with the bare else gone, and the render). ARCHITECTURE.md carries the short per-file entry. No product surface touched.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
