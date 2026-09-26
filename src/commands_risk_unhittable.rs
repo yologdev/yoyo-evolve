@@ -322,9 +322,21 @@ pub(crate) fn count_unhittable_surprises_at(
     snapshot_ts: &str,
     ledger_path: &std::path::Path,
 ) -> UnhittableCount {
-    let (map, _dropped) = read_first_scored(ledger_path);
+    let (map, dropped) = read_first_scored(ledger_path);
     let founding = founding_ts(&map);
-    count_unhittable_surprises(surprises, snapshot_ts, &map, founding)
+    let mut count = count_unhittable_surprises(surprises, snapshot_ts, &map, founding);
+    // The first-scored ledger's own integrity, carried on the reading rather
+    // than thrown away on the binding that receives it (Day 210). The pure join
+    // above cannot see it — a malformed line is not a row — so it is set here,
+    // at the one composition every live call site routes through
+    // (`count_unhittable_surprises_with_git`, which calls *this* function, and
+    // so do the two direct sites in `commands_risk_snapshots.rs` and
+    // `commands_risk.rs`). A path named only by a dropped line lands in
+    // `unmeasurable`, which alone is indistinguishable from a path the scorer
+    // has never seen; `unhittable_note` prints this field to break that tie, and
+    // it would be dead code without this assignment.
+    count.dropped = dropped;
+    count
 }
 
 /// The same join, with the git instrument run beside it — the composition the
@@ -366,10 +378,12 @@ pub(crate) fn count_unhittable_surprises_with_git(
 /// never seen (a founding-batch member, or a file it has never scored). A
 /// corrupted ledger and a clean ledger therefore print *identical* output, and
 /// this count is the only leg that can break the tie. It was already computed,
-/// already returned to both callers, and thrown away on the `_dropped` binding
-/// (Day 210); the sibling *validation* ledger has carried the same quantity as
-/// a first-class field since #764, filed because "silently dropped all produced
-/// the same `/risk accuracy` output".
+/// already returned to both callers, and **was** thrown away on the `_dropped`
+/// binding (Day 210) until [`count_unhittable_surprises_at`] and
+/// [`retrospective_unhittable_at`] both stopped discarding it; the sibling
+/// *validation* ledger has carried the same quantity as a first-class field
+/// since #764, filed because "silently dropped all produced the same `/risk
+/// accuracy` output".
 ///
 /// Glyph-free: an ASCII hyphen, matching the `-` the retrospective note already
 /// uses, so the clause survives `plain` mode's `is_ascii` assertion and the
@@ -395,8 +409,18 @@ pub(crate) fn dropped_ledger_clause(dropped: usize) -> Option<String> {
 /// number to keep in sync.
 pub(crate) fn unhittable_note(count: UnhittableCount, plain: bool) -> Option<String> {
     // The git leg joins the existence test so the day-205 shape is *visible*
-    // (`git_unmeasured` names a check that did not run) rather than silent.
-    if count.unhittable == 0 && count.unmeasurable == 0 && count.git_unmeasured == 0 {
+    // (`git_unmeasured` names a check that did not run) rather than silent —
+    // and the ledger's own integrity joins it for the same reason, one
+    // instrument over: a malformed first-scored line that affects no surprise
+    // in *this* reading is still a ledger the reader is not entitled to call
+    // clean, and leaving it out of this guard is exactly how the clause becomes
+    // unreachable. `dropped == 0` keeps every existing caller byte-identical,
+    // which is the whole regression surface.
+    if count.unhittable == 0
+        && count.unmeasurable == 0
+        && count.git_unmeasured == 0
+        && count.dropped == 0
+    {
         return None;
     }
     let total = count.measured + count.unmeasurable;
@@ -1507,6 +1531,39 @@ mod unhittable_tests {
         assert!(note.is_ascii(), "{note}");
     }
 
+    /// Same rule as the git check above, one instrument over: a corrupt
+    /// first-scored ledger is spoken even when it is the only thing to say.
+    /// Without the `dropped` leg in `unhittable_note`'s guard this reading — a
+    /// malformed line that affects no surprise in *this* snapshot — printed
+    /// nothing at all, which is the "certifies nothing by its silence" shape the
+    /// task exists to remove.
+    #[test]
+    fn the_note_speaks_when_only_the_first_scored_ledger_is_malformed() {
+        let count = UnhittableCount {
+            dropped: 1,
+            ..Default::default()
+        };
+        let note = unhittable_note(count, true).expect("a corrupt ledger is not silence");
+        assert_eq!(
+            note,
+            "0 of 0 surprises were unhittable (first scored after this snapshot); \
+             1 malformed line in the first-scored ledger - those paths read as \
+             unmeasured, not as having no record"
+        );
+        // The control: the same all-zero reading on a ledger that parses prints
+        // nothing, so the clause above is the dropped count's doing.
+        assert_eq!(
+            unhittable_note(
+                UnhittableCount {
+                    dropped: 0,
+                    ..count
+                },
+                true
+            ),
+            None
+        );
+    }
+
     /// Agreement is silence: the git number is printed only where the two
     /// instruments part company, so an ordinary session's stderr does not grow
     /// a redundant clause.
@@ -1530,67 +1587,92 @@ mod unhittable_tests {
     }
 
     /// Day 210, the live seam. `count_unhittable_surprises_at` used to bind the
-    /// first-scored ledger's dropped-line count to `_dropped`; it now carries it
-    /// on the count, and the note prints it. A malformed line names no path, so
-    /// the path it would have dated lands in `unmeasurable` — indistinguishable,
-    /// in that field alone, from a path the scorer has never seen.
+    /// first-scored ledger's dropped-line count to `_dropped`, so it never
+    /// reached `UnhittableCount::dropped` and the clause `unhittable_note`
+    /// appends for it was unreachable — the deaf second door this task warns
+    /// against. It now carries the count, and the note prints it.
+    ///
+    /// **Reader-driven on purpose (Day 201).** The count asserted here is
+    /// *built* by writing a ledger file and letting `read_first_scored` parse
+    /// it — never assigned onto the struct by hand. The earlier version of this
+    /// test set `dropped: 2` directly and passed vacuously while the live
+    /// producer still discarded the reader's number; a fixture that sets the
+    /// field proves only that the field exists, never that anything fills it.
     #[test]
     fn a_dirty_first_scored_ledger_is_visible_on_the_live_seam_too() {
-        // The pinned clean reading, whole-string: the clause is absent, not
-        // merely unasserted. This is the whole regression surface — every
-        // project whose ledger parses.
-        let clean = UnhittableCount {
-            unhittable: 1,
-            measured: 1,
-            unmeasurable: 2,
-            ledger_unmeasured: 2,
-            git_born_after: 1,
-            git_unmeasured: 0,
-            ..Default::default()
-        };
-        let note = unhittable_note(clean, true).expect("note");
-        assert_eq!(
-            note,
-            "1 of 3 surprises was unhittable (first scored after this snapshot); \
-             2 undecidable"
-        );
+        let dir = tempfile::tempdir().expect("temp dir");
+        let ledger = dir.path().join("risk_first_scored.jsonl");
+        let snapshot_ts = "2026-09-03T17:23:00Z";
+        let surprises = paths(&["src/ghost.rs"]);
 
-        // The same reading off a ledger with a malformed line: one appended
-        // clause, on the note's own separator, and the read-out half untouched.
-        let dirty = UnhittableCount {
-            dropped: 2,
-            ..clean
-        };
-        let note = unhittable_note(dirty, true).expect("note");
+        // The clean control: one written line, nothing malformed. `src/ghost.rs`
+        // has no record at all, so it is undecidable — and that is exactly why
+        // the dirty reading below cannot be told from it in `unmeasurable`
+        // alone. This whole-string pin is the regression surface: every clean
+        // project and this whole repo, and the note prints on every `/risk`.
+        let clean_content = "{\"path\":\"src/seed.rs\",\"ts\":\"2026-08-22T15:40:00Z\"}\n";
+        std::fs::write(&ledger, clean_content).expect("seed clean ledger");
+        let clean = count_unhittable_surprises_at(&surprises, snapshot_ts, &ledger);
         assert_eq!(
-            note,
-            "1 of 3 surprises was unhittable (first scored after this snapshot); \
-             2 undecidable; 2 malformed lines in the first-scored ledger - those paths \
-             read as unmeasured, not as having no record"
+            clean.dropped, 0,
+            "a parsing ledger drops nothing: {clean:?}"
         );
-        assert!(note.is_ascii(), "plain mode stays glyph-free: {note}");
+        assert_eq!(clean.unmeasurable, 1, "ghost has no record: {clean:?}");
+        let clean_note = unhittable_note(clean, true).expect("note");
+        assert_eq!(
+            clean_note,
+            "0 of 1 surprises were unhittable (first scored after this snapshot); \
+             1 undecidable"
+        );
+        assert!(!clean_note.contains("malformed"), "{clean_note}");
+
+        // The dirty twin: the same one readable line plus **two** non-JSON
+        // lines, each asserted to really fail parsing, so a transcription slip
+        // cannot make the count agree with itself.
+        let malformed = ["not-json", "{\"path\":\"src/ghost.rs\",\"ts\""];
+        for line in malformed {
+            assert!(
+                serde_json::from_str::<serde_json::Value>(line).is_err(),
+                "anti-vacuous: {line:?} must really fail to parse"
+            );
+        }
+        let dirty_content = format!("{clean_content}{}\n{}\n", malformed[0], malformed[1]);
+        std::fs::write(&ledger, &dirty_content).expect("seed dirty ledger");
+        let dirty = count_unhittable_surprises_at(&surprises, snapshot_ts, &ledger);
+        assert_eq!(
+            dirty.dropped, 2,
+            "the reader's malformed-line count reaches the count struct: {dirty:?}"
+        );
+        // The reason it has to be said: a malformed line moves no count — it
+        // turns a record that existed into a path that reads as never seen.
+        assert_eq!(
+            dirty.unmeasurable, clean.unmeasurable,
+            "the corrupt ledger and the clean one share every other field"
+        );
+        let dirty_note = unhittable_note(dirty, true).expect("note");
+        assert_eq!(
+            dirty_note,
+            format!(
+                "{clean_note}; 2 malformed lines in the first-scored ledger - those paths \
+                 read as unmeasured, not as having no record"
+            ),
+            "the dropped count is the only thing that separates them"
+        );
+        assert!(
+            dirty_note.is_ascii(),
+            "plain mode stays glyph-free: {dirty_note}"
+        );
         // And it survives the mark mode as one leading glyph, never two.
         let rich = unhittable_note(dirty, false).expect("note");
         assert!(rich.starts_with("📊 "), "{rich}");
-        assert_eq!(rich.trim_start_matches("📊 "), note);
+        assert_eq!(rich.trim_start_matches("📊 "), dirty_note);
 
-        // The reason it has to be said: `unmeasurable` is the same number on
-        // both ledgers, because a malformed line does not move a count — it
-        // turns a row that existed into a path that reads as never seen. Before
-        // this field, the two ledgers printed one string.
-        let same_shape = UnhittableCount {
-            dropped: 0,
-            ..dirty
-        };
-        assert_eq!(
-            same_shape.unmeasurable, dirty.unmeasurable,
-            "the corrupt ledger and the clean one share every other field"
-        );
-        assert_ne!(
-            unhittable_note(same_shape, true).expect("note"),
-            note,
-            "the dropped count is the only thing that separates them"
-        );
+        // The composition the live call sites actually route through calls this
+        // same reader wrapper, so the second door cannot go deaf on its own.
+        // `"unknown"` is a sentinel hash and short-circuits without shelling out.
+        let with_git =
+            count_unhittable_surprises_with_git(&surprises, snapshot_ts, "unknown", &ledger);
+        assert_eq!(with_git.dropped, 2, "{with_git:?}");
     }
 }
 
