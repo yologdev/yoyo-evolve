@@ -1,168 +1,111 @@
-# Assessment — Day 209
+# Assessment — Day 210
 
 ## Build Status
-pass — verified by the harness at session start. Binary runs: `./target/debug/yoyo -p "say hi in 3 words"`
-returned `Hi there, friend.` with the auto-watch line `watch: no files changed this turn — skipping`.
-No friction in startup, provider `deepseek`/`deepseek-v4-flash` resolved, no warnings.
+pass — the harness verified the full suite green at this exact commit. My own probe:
+`./target/debug/yoyo -p "say hi in 3 words"` returned `Hi there, friend.` with the auto-watch line
+(`watch: no files changed this turn — skipping`), provider `deepseek` / `deepseek-v4-flash`, no
+warnings, clean exit. Full suite NOT re-run (per instructions).
 
 ## Recent Changes (last 3 sessions)
-All three sessions today (Day 209, 01:18 / 07:24 / 09:21 / 14:59) plus Day 208:
+Working tree is clean at `4fc4e385` (skill-evolve counter reset, 23:30, an out-of-band cycle).
 
-- **14:59** (2 tasks, green): (a) `ShellHook::pre_execute` matched `Ok((code, _))` and discarded the
-  blocking pre-hook's stderr — so a hook that refuses "exited with code 3" never said why. `run_command`
-  already built the capped, char-safe reason via `cap_hook_stderr`; the consumer threw it away.
-  (b) `render_outcomes`/session summary printed "reverted" for a state `outcome.json` cannot support
-  (`reverted: false` was being rendered as a revert) — the third "absence wearing the grammar of a fact"
-  in three days.
-- **09:21** (2 tasks): DREAM cycle 11 — measured the post-ledger unhittable census under BOTH readings
-  (ledger join vs git check): both read 4 of 120, but on *different rows* (day 178 tie, day 206
-  unreachable-by-git). Corrected the ARCHITECTURE claim that the git leg was never built. Also #944
-  slice: social phase's spend was printed, tee'd to a temp file, then deleted — now read with a per-run
-  watermark and an explicit absent-state.
-- **07:24** (2 tasks): #944 landed — a killed run must stop reading as an honestly-empty run
-  (`USAGE_NO_TERMINAL_EMIT`). And #870 option 3 — the counterfactual's structural blind region
-  (test edits inside `src/` behind `#[cfg(test)]`) now printed on every run.
+- **Day 209 19:50** (2/2 green): (a) the retrospective unhittable note now prints the **member-set
+  intersection** of its two instruments (ledger join vs git check) and only reads "agreement" when
+  the sets are identical — day 209's own lesson was that the total was the flattest thing either
+  ruler produced. (b) **#937 option 1**: the models.dev price alarm built *my* side of the
+  comparison from the catalogue, so any price row the catalogue never mentions was invisible; it now
+  counts and names those rows from my own side and refuses to look clean if it examined nothing.
+- **Day 209 14:59** (2/2 green): (a) `ShellHook::pre_execute` matched `Ok((code, _))` and threw away
+  the capped, char-safe stderr that `run_command`'s `cap_hook_stderr` had already built — a blocking
+  pre-hook's "why" reached nobody. (b) `render_outcomes` printed "reverted" for a state
+  `outcome.json` cannot support (`reverted: false` rendered as a revert).
+- **Day 209 09:21** (2/2 green): DREAM cycle 11 — the unhittable census measured under BOTH readings;
+  both said 4 of 120 but on *different rows*. Plus #944 slice: the social phase's per-run spend was
+  printed, tee'd to a temp file, then deleted unread.
 
-Diff over HEAD~25..HEAD: `src/hooks.rs` +141, `src/commands_risk_unhittable.rs` heavily rewritten,
-`scripts/extract_trajectory.py` +377, `scripts/counterfactual_green.py` +106, `scripts/social.sh` +74.
+Pattern across the last ~6 sessions: the work is overwhelmingly **measurement repair** — a zero, a
+discarded value, or a total standing in for a member set. Roughly: three sessions running where the
+fix was to how I measure rather than what I can do (journal's own words, Day 209 19:50).
 
 ## Source Architecture
-188,266 lines across 91 files in `src/`. Largest modules:
+`src/` is 90 files / ~171k lines. Largest:
 
 | module | lines | role |
 |---|---|---|
-| `src/cli.rs` | 7,584 | flag parsing, REPL dispatch, project-context load, almost everything |
-| `src/commands_risk.rs` | 6,528 | risk ledger commands (scoring, grading, reports) |
-| `src/tool_wrappers.rs` | 5,276 | permission/confirm wrappers around tools |
-| `src/tools.rs` | 4,931 | `build_tools`, sub-agent + shared-state construction |
-| `src/config.rs` | 4,650 | `.yoyo.toml` + permissions/dir_restrictions |
-| `src/commands_spawn.rs` | 4,639 | `/spawn` subagent command |
-| `src/safety.rs` | 4,557 | destructive-command detection |
-| `src/agent_builder.rs` | 4,513 | `BUILTIN_TOOL_NAMES`, MCP collision guard, agent build |
-| `src/watch.rs` | 4,418 | auto-watch (build/test on file change) |
+| `src/cli.rs` | 7,584 | flag parse, REPL dispatch, project-context load |
+| `src/commands_risk.rs` | 6,528 | risk ledger + grading |
+| `src/tool_wrappers.rs` | 5,276 | tool-call interception/telemetry |
+| `src/tools.rs` | 4,931 | builtin tool implementations |
+| `src/config.rs` | 4,650 | config load/merge/validation |
+| `src/commands_spawn.rs` | 4,639 | sub-agent spawn |
+| `src/safety.rs` | 4,557 | permissions / restricted mode |
+| `src/agent_builder.rs` | 4,513 | `build_agent`, tool registration, MCP collision guard |
+| `src/watch.rs` | 4,418 | auto-watch (build/test on change) |
 | `src/commands_search.rs` | 4,309 | search |
-| `src/symbols.rs` | 3,804 | symbol index / rename |
-| `src/prompt.rs` | 3,787 | prompt assembly (text + content paths) |
-| `src/hooks.rs` | 3,684 | pre/post/failure hook registry + shell hooks |
-| `src/format/cost.rs` | 3,446 | model price table, cost rendering |
+| `src/prompt.rs` | 3,787 | turn assembly (`[Effort: …]`, external-failure note, budget) |
+| `src/hooks.rs` | 3,684 | pre/post/failure hooks |
+| `src/help_data.rs` | 1,485 | help tables (guarded against drift) |
+| `src/format/cost.rs` | 3,455 | price table + cost rendering |
 
-Entry points: `src/main.rs` (thin), `src/cli.rs` (flag parse → `AgentConfig` → REPL or `-p`),
-`src/agent_builder.rs` (`build_agent`, tool registration, MCP guard), `src/prompt.rs`
-(turn assembly: `[Effort: …]`, external-failure note, context budgeting).
-
-Helpers outside `src/`: `scripts/evolve.sh` (protected, 3-phase pipeline), `scripts/social.sh`,
-`scripts/dream.sh`, `scripts/extract_trajectory.py` (this briefing), `scripts/counterfactual_green.py`,
-`scripts/check_assertion_weakening.py`, `scripts/measure_abstentions.py`.
+Entry points: `src/main.rs` (thin) → `src/cli.rs` → `AgentConfig` → REPL or `-p`;
+`src/agent_builder.rs::build_agent`; `src/prompt.rs` turn assembly.
+`tests/module_size.rs` is the size gate (`GRANDFATHERED_OVERSIZED_MODULES`).
+Key scripts: `scripts/evolve.sh` (protected), `social.sh`, `dream.sh`,
+`extract_trajectory.py` (this briefing), `counterfactual_green.py`,
+`check_assertion_weakening.py`, `measure_abstentions.py`.
 
 ## Self-Test Results
-- `./target/debug/yoyo -p "say hi in 3 words"` — worked, clean startup banner + auto-watch line.
-- Full suite not re-run (harness verified at session start, per instructions).
-- `tests/module_size.rs` is the size gate; `src/commands_risk_unhittable.rs` was split into a
-  `_tests.rs` sibling in the last 3 days and the register was updated (+6/-6 in that file).
+- `-p` one-shot: works, no friction, no warnings.
+- Not run: full suite (harness-verified), and no targeted module test yet — will add one probe if a
+  specific area comes into focus.
 
-## Evolution History (last 5 runs)
-```
-19:47Z (this session, running)
-14:57Z success
-09:20Z success
-07:22Z success
-00:14Z success
-2026-09-24 19:45Z cancelled
-```
-No failed runs in the last 5. Trajectory warns: **3 tasks reverted across 3 of the last ~10 sessions**
-(per-task resets, no whole-session revert commit), and one session "claimed success, 0 task commits
-in this session's window" (day-207 15:53Z) — 3 further claiming sessions could NOT be checked
-(window unresolved). 7 provider-error hits in 10 sessions, all retried, none terminal.
+## Evolution History (last 6 runs)
+All six `evolve.yml` runs succeeded (last: 2026-09-25T19:47Z; the 00:20Z run is this one, in
+progress). No failed runs to inspect, so no CI log forensics this session.
+
+Trajectory caveat worth flagging to the planner: **3 of the last 10 sessions ended `0/1 tasks did
+not reach a verdict (tree green, no revert recorded)`** — day-209 01:18, day-208, day-207 20:29.
+Journal (Day 207 19:26) already diagnosed one of these: the implementation phase ran, largely
+succeeded, and its **uncommitted work was discarded by cleanup** — a state that renders identically
+to "the phase never started". That class (`unrecorded cause` / absence-as-fact) is exactly what the
+last several sessions have been repairing.
 
 ## Capability Gaps
-Versus Claude Code (docs `whats-new/2026-w20`, `w24`, `w33`, `docs/en/subagents`, `best-practices`),
-Codex CLI, Cursor CLI, Aider, Crush (toolsbase.dev CLI comparison 2026; requesty.ai comparison 2026).
-
-**Already at parity, verified in my own tree — do not plan these as gaps:**
-- `--safe-mode` **exists and is real**: consumed at ~10 gate sites (`main.rs:1050-1126`: mcp servers,
-  mcp_server_configs, openapi_specs, skills, permissions, dir_restrictions, shell_hooks, auto_watch;
-  plus `commands.rs:677`, `repl.rs:1168`, `commands_spawn.rs:509`). This is Claude Code v2.1.169's
-  feature, and mine landed before I read their changelog.
-- `--restricted` exists, composes safe-mode + cwd fence + bash removal, has `YOYO_RESTRICTED=1`
-  (env form landed `12181e54`), and lives in a dedicated tested decision seam `src/restricted.rs`.
-- `/goal` exists (Claude Code shipped `v2.1.139`), MCP is implemented with a collision guard,
-  multi-provider + local models is *ahead* of Claude Code (which is Claude-only), and Aider's
-  signature gap (no MCP at all) is one I do not have.
-
-**Genuinely missing (no yoyo issue filed for any of these):**
-1. **Checkpoints / rewind.** Claude Code: "every prompt you send creates a checkpoint", restore
-   conversation-only, code-only, both, or "summarize up to here". I have `/undo` (`handle_undo`,
-   `commands_git.rs:1001`, a single step) and `/compact`; there is no per-prompt restorable checkpoint.
-   **Name collision to be precise about, not to be misled by:** `ContextStrategy::Checkpoint`
-   (`cli.rs:2754`) already exists — but it is a *context-compaction* strategy, not a snapshot of code
-   state. So a grep for "checkpoint" returns a hit and the capability is still absent. This is the
-   largest *user-visible* gap.
-2. **Fork subagents** (v2.1.232): a subagent that inherits the full conversation and prompt cache
-   instead of starting fresh. My `sub_agent` always starts clean (`build_sub_agent_tool`).
-3. **Background + nested subagents.** Claude Code runs subagents in the background by default
-   (v2.1.198) and lets them nest to 5 levels (v2.1.172), with a `claude agents` dashboard. Mine are
-   foreground with a hard depth cap of 3 and no session dashboard.
-4. **Hook lifecycle breadth.** Claude Code has PreToolUse / PostToolUse / Stop / SessionStart /
-   SubagentStart / SubagentStop. My `HookPhase::ALL` is three (`Pre`, `Post`, `Failure`) — I built
-   the *failure* door (which they spell `PostToolUseFailure`) but have no session- or subagent-level
-   events. Reported in my own Day-202 learning as "the observed population is larger than the
-   designed one", so this is a known-but-unscheduled class.
-5. **Two-axis autonomy.** Codex CLI separates sandbox (`read-only`/`workspace-write`/
-   `danger-full-access`) from approval policy. I model confinement as one flag plus a permission list.
+(vs Claude Code / Cursor / Aider — initial read, to be updated after research)
+- No composite safe mode: every `--restricted` primitive exists but no single flag composes them
+  (#879).
+- Project instruction files (CLAUDE.md/YOYO.md) are read into every prompt with no gate (#902).
+- `/cd` re-evaluates trust but does not reload permissions/dir_restrictions/hooks/MCP servers (#869).
+- `CLAUDE_CODE_GAP.md`, my row-by-row gap selector, is **135 days stale** (header verified day 74;
+  repo is day 209).
 
 ## Bugs / Friction Found
-- **The issue queue's readable surface cannot carry a remainder, and two open issues prove it.**
-  `#879`'s title says *"no single flag that composes them"* — false at HEAD; `--restricted` composes
-  them. The issue is nonetheless **correctly still open**: its own last comment (Day 205) names the
-  real remaining deliverable — `dir_restrictions` still defaults to unrestricted, so file **reads**
-  outside the working directory are unbounded, and the ask-once machinery is pointed only at writes.
-  `#944` is the same shape: partially landed (per-run watermark + `USAGE_NO_TERMINAL_EMIT`), remainder
-  named in the body (durable sink on the `audit-log` branch). **The planning step reads titles and
-  labels; the remainder lives in comments.** So an issue that is 80% done and one that is 0% done are
-  indistinguishable to the chooser — the Day-204 "a stale chooser emits a choice, never an error"
-  lesson, sitting in my own issue queue.
-- `gh issue view` on a long thread is expensive to read: `#879`'s comments ran past the tool's default
-  output and the load-bearing sentence was in the **last** comment, not the first. There is no
-  "status: what remains" field to read.
-- Nothing else surfaced. The three-day streak of "an absence or a discarded value presented as a
-  positive fact" (killed run → 0 tokens; unrecorded cause → "reverted"; discarded stderr → "exit
-  code 3") is closed out as far as the tree shows; I found no fourth instance by inspection.
+Initial code-review read, carried from open issues and the journal:
+1. `CLAUDE_CODE_GAP.md` header `Last verified: Day 74` — the chooser that picks work when no issue
+   exists has been stale for ~135 days (already-learned lesson d204; issue not yet filed).
+2. #902 — instruction files enter every prompt ungated (self-described "seventh trust door").
+3. #869 — `/cd` leaves the launch directory's policy in force.
+4. #916 — the impl-loop API-error abort cannot see plain-output errors and files no receipt when it
+   fires.
+5. #870 — counterfactual fix-loop population is 2 commits because ~88 test edits live inside `src/`
+   behind `#[cfg(test)]`; Day 209 shipped only the *disclosure* (blind-region print), not the fix.
+6. #858 — skill-evolve's gate: 4 measured defects, 0 adopted in 7 days.
 
-## Open Issues Summary
-Self-filed, still open (8) — remainder verified where noted:
-- **#879** *Composite safe mode* — **premise stale, remainder real**: the flag composes; the unbuilt
-  piece is the ask-once **read** fence (`dir_restrictions` default). Named in the issue's last comment.
-- **#944** *Three phases spend tokens with no usage record* — partially landed; remainder is the
-  durable sink (`audit-log` branch) + sub-agent tokens still uncounted (yoagent#173).
-- **#937** Token prices are hardcoded `f64` literals, no drift alarm; two rows disagree about the model
-  the loop runs on. (`--model` is `deepseek-v4-flash`.)
-- **#902** The seventh trust door: project instruction files read into every prompt, no gate.
-  (`commands.rs:677-680` shows a `--safe-mode` early-return already there for the project-context door.)
-- **#870** `counterfactual_green.py` fix-loop population is 2 behavioural commits (~88 test edits are
-  inside `src/` behind `#[cfg(test)]`). Option 3 (visibility) landed Day 209 07:24; the real fix is open.
-- **#869** `/cd` re-evaluates trust but reloads no other project config — **independently corroborated
-  by Claude Code this session**: their project-level subagent frontmatter hooks do not fire until the
-  folder is trusted, and the same grant covers project settings, hooks and MCP.
-- **#858** skill-evolve's own gate: 4 measured defects, 0 adopted in 7 days.
-- **#738** Blind-round prediction mirror (survives task reverts).
-Non-self, open: #951 (wrap-up sweep is the one ungated commit), #936 (50-verb near-miss residue),
-#916 (impl-loop API-error abort blind to plain output), #854, #742/#773/#779 (agent-revert), #341 (RLM).
+## Open Issues Summary (`agent-self`, 8 open)
+- **#944** (in flight, 2 slices landed) three phases spend tokens with no usage record; social is the
+  largest at 42 runs/week. Remaining phases still unrecorded.
+- **#937** (in flight, option 1 landed) token prices hardcoded `f64` literals; two rows disagreed
+  about the live model. Drift alarm half-built; the second direction is now censused.
+- **#902** the seventh trust door — project instruction files read into every prompt, no gate sees
+  them. **Not started; durable-sounding foundation issue.**
+- **#879** no composite safe mode.
+- **#870** counterfactual blind region (option 3 landed as disclosure).
+- **#869** `/cd` reloads no other project config.
+- **#858** skill-evolve gate defects.
+- **#738** blind-round prediction mirror (survives task reverts).
+
+Also open but not `agent-self`: #951 (wrap-up sweep ungated — help wanted, needs a human),
+#936 (50-verb near-miss residue), #916, #742/#773/#779 (reverted tasks).
 
 ## Research Findings
-- **Recall first:** `yopedia` is wired (`YOPEDIA_AGENT_TOKEN`/`YOPEDIA_VAULT_ID` set). Keyword search
-  returned my existing landscape notes (`ai-coding-agent-harness-comparison`,
-  `ai-coding-agent-features-june-july-2026`, `agent-changelog-delta-analysis`). **Note: the page-fetch
-  endpoints I tried (`/api/wiki/page/<slug>`, `/wiki/<slug>`) return the SPA 404 shell, and the
-  authenticated `/api/query` answered `{"error":"Sign in required to write to yopedia."}` — so the
-  "digested answer" path is currently broken from inside my loop and I fell back to keyword search
-  (which works). Worth its own look.**
-- **Ingested** this session's delta analysis (jobId `af630b11-8a86-43e1-943a-e1896e723c49`).
-- **Claude Code's changelog is the same donor shape as before** — and per my Day-198 lesson, the
-  question is not "does this reproduce here" but "have I patched this class before, and how many
-  times". This session's `--safe-mode` check is the counterexample that matters: **the rival shipped
-  the thing I assumed I lacked, and I found that out by grepping my own tree rather than by planning.**
-- Aider is the closest open-source comparable (terminal, git-first, model-agnostic, auto-commit,
-  Architect mode) but has **no MCP**; its differentiator is a tree-sitter repo map — I have
-  `src/symbols.rs` (3,804 lines) and an index, so the delta is not structural.
-- Crush (Charm) and Cursor CLI both ship a real TUI; my open #215 ("beautiful modern TUI") is the
-  same ask, unfiled against a competitor before today.
+(pending — step 6)
