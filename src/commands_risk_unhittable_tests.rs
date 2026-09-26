@@ -252,6 +252,7 @@ mod retrospective_tests {
             // The ledger-only shape: no git reading at all, which is what this
             // fixture has always been about.
             git: None,
+            dropped: 0,
         });
         let rich = retrospective_note(&reading, false).expect("note");
         assert!(rich.starts_with("📊"), "{rich}");
@@ -340,6 +341,7 @@ mod retrospective_tests {
                 // every ledger written before Day 165, pinned here as still
                 // reading as `None` rather than as an empty census.
                 git: None,
+                dropped: 0,
             })
         );
 
@@ -645,6 +647,7 @@ mod retrospective_tests {
             undated: 0,
             tied_rows: ts_set(&[]),
             git: None,
+            dropped: 0,
         };
         let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
         assert_eq!(
@@ -672,6 +675,7 @@ mod retrospective_tests {
                 uncheckable_rows: ts_set(&["2026-09-03T17:23:00Z"]),
                 skipped_surprises: 2,
             }),
+            dropped: 0,
         };
         let note =
             retrospective_note(&RetrospectiveReading::Counted(with_skip), true).expect("note");
@@ -719,6 +723,7 @@ mod retrospective_tests {
                 uncheckable_rows: ts_set(&["2026-09-26T07:34:00Z"]),
                 skipped_surprises: 1,
             }),
+            dropped: 0,
         };
         // Anti-vacuous, and it has to be here rather than assumed: the fixture
         // only means anything if the two member sets really do diverge in both
@@ -843,6 +848,7 @@ mod retrospective_tests {
                 uncheckable_rows: ts_set(&[]),
                 skipped_surprises: 0,
             }),
+            dropped: 0,
         };
         let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
         assert!(
@@ -885,6 +891,7 @@ mod retrospective_tests {
                 uncheckable_rows: ts_set(&[unchecked_row]),
                 skipped_surprises: 1,
             }),
+            dropped: 0,
         };
         let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
         let tie_line = format!("\n  row {tie_row}: only the git check");
@@ -941,6 +948,7 @@ mod retrospective_tests {
                 uncheckable_rows: ts_set(&[]),
                 skipped_surprises: 0,
             }),
+            dropped: 0,
         };
         let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
         assert!(
@@ -980,6 +988,7 @@ mod retrospective_tests {
                 uncheckable_rows: ts_set(&[]),
                 skipped_surprises: 0,
             }),
+            dropped: 0,
         };
         let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
         assert_eq!(
@@ -1016,6 +1025,7 @@ mod retrospective_tests {
                 uncheckable_rows: ts_set(&[]),
                 skipped_surprises: 0,
             }),
+            dropped: 0,
         };
         let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
         assert_eq!(
@@ -1023,5 +1033,210 @@ mod retrospective_tests {
             "unhittable: 0 of 3 post-ledger grading events carried a file first scored \
              after the event; the git check reads 0 of 3 rows with a snapshot hash"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Day 210: the first-scored ledger's own dropped-line count.
+    //
+    // `read_first_scored` has always returned `(map, dropped)` and both call
+    // sites in this module bound that second element to `_dropped`. A malformed
+    // line names no path, so the path it would have dated reads exactly like a
+    // path the scorer has never seen — a corrupted ledger and a clean one
+    // printed identical output, and the count that breaks the tie was already
+    // in the caller's hand. Same defect class as #764, one ledger over.
+    // -----------------------------------------------------------------------
+
+    /// The whole-string regression: `dropped == 0` is every clean project and
+    /// this whole repo, and the note prints on every `/risk`. `assert_eq!`, not
+    /// `contains` — the clause must be *absent*, not merely unasserted.
+    #[test]
+    fn a_clean_first_scored_ledger_is_byte_identical_and_a_dirty_one_says_so() {
+        let clean = RetrospectiveCount {
+            population: 3,
+            with_unhittable: 1,
+            unhittable_rows: ts_set(&["2026-09-03T17:23:00Z"]),
+            with_unmeasurable: 1,
+            tied_rows: ts_set(&[]),
+            undated: 1,
+            git: None,
+            dropped: 0,
+        };
+        let zero =
+            retrospective_note(&RetrospectiveReading::Counted(clean.clone()), true).expect("note");
+        // The pinned pre-Day-210 output, whole-string. Nothing about this
+        // session's change may move a byte of it.
+        assert_eq!(
+            zero,
+            "unhittable: 1 of 3 post-ledger grading events carried a file first scored after \
+             the event; 1 carried at least one undecidable surprise; 1 undated row(s)"
+        );
+
+        let mut dirty = clean.clone();
+        dirty.dropped = 3;
+        let note = retrospective_note(&RetrospectiveReading::Counted(dirty), true).expect("note");
+        // The clause is APPENDED, on the note's own `"; "` separator: every
+        // existing clause keeps its place and its bytes.
+        assert_eq!(
+            note,
+            format!(
+                "{zero}; 3 malformed lines in the first-scored ledger - those paths read as \
+                 unmeasured, not as having no record"
+            )
+        );
+        assert!(
+            note.contains("read as unmeasured, not as having no record"),
+            "the clause must separate a corrupted ledger from an unmeasured path: {note}"
+        );
+        assert!(note.is_ascii(), "plain mode stays glyph-free: {note}");
+        assert!(!note.as_bytes().contains(&0x1b), "no ANSI: {note}");
+        // Not decorative: the rich form carries the same clause behind exactly
+        // one leading glyph, so the two modes cannot disagree about the fact.
+        let rich =
+            retrospective_note(&RetrospectiveReading::Counted(clean.clone()), false).unwrap();
+        assert_eq!(rich, format!("📊 {zero}"));
+
+        // Singular agreement, the same rule the sibling clauses follow.
+        let mut one = clean.clone();
+        one.dropped = 1;
+        let note = retrospective_note(&RetrospectiveReading::Counted(one), true).expect("note");
+        assert!(
+            note.contains("; 1 malformed line in the first-scored ledger"),
+            "{note}"
+        );
+        assert!(!note.contains("1 malformed lines"), "{note}");
+    }
+
+    /// The count is a **reader**'s reading, so the fixture has to be a ledger
+    /// file: setting `count.dropped = 1` by hand would prove only that the
+    /// struct has a field (Day 201).
+    #[test]
+    fn a_malformed_first_scored_line_reaches_the_note_through_the_real_reader() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let val = dir.path().join("risk_validations.jsonl");
+        let led = dir.path().join("risk_first_scored.jsonl");
+        let content = concat!(
+            "{\"path\":\"src/seed.rs\",\"ts\":\"2026-08-22T15:40:00Z\"}\n",
+            "not-json\n",
+        );
+        // Anti-vacuous: the hostile row is really in the bytes this test hands
+        // the reader, so a transcription slip cannot make the test agree with
+        // itself.
+        assert!(
+            content.contains("not-json"),
+            "the fixture must contain the malformed line"
+        );
+        std::fs::write(&led, content).expect("seed ledger");
+        std::fs::write(
+            &val,
+            "{\"ts\":\"2026-09-03T17:23:00Z\",\"hits\":[],\"surprises\":[\"src/born.rs\"],\
+             \"accuracy_pct\":0.0}\n",
+        )
+        .expect("seed validations");
+
+        let reading = retrospective_unhittable_at(&val, &led);
+        let RetrospectiveReading::Counted(count) = &reading else {
+            panic!("expected a counted reading, got {reading:?}")
+        };
+        assert_eq!(
+            count.dropped, 1,
+            "the malformed line is counted, not swallowed: {count:?}"
+        );
+        let note = retrospective_note(&reading, true).expect("note");
+        assert!(
+            note.contains("; 1 malformed line in the first-scored ledger"),
+            "{note}"
+        );
+    }
+
+    /// The tie this whole field exists to break: a malformed line is the ONLY
+    /// reason a surprise is undecidable, and the clean-ledger control beside it
+    /// proves the fixture's other member is decidable. A later change that
+    /// drops the count again reddens here by name.
+    #[test]
+    fn a_malformed_line_can_be_the_only_reason_a_surprise_is_undecidable() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let val = dir.path().join("risk_validations.jsonl");
+        std::fs::write(
+            &val,
+            "{\"ts\":\"2026-09-03T17:23:00Z\",\"hits\":[],\"surprises\":[\"src/ghost.rs\"],\
+             \"accuracy_pct\":0.0}\n",
+        )
+        .expect("seed validations");
+
+        // The truncated JSON is the line that *would* have dated `src/ghost.rs`
+        // before the event — the readable form of a corrupted record.
+        let hostile = "{\"path\":\"src/ghost.rs\",\"ts\":\"2026-09-03T18:03:00Z\"\n";
+        assert!(
+            serde_json::from_str::<serde_json::Value>(hostile).is_err(),
+            "anti-vacuous: the fixture line must really fail to parse"
+        );
+        let dirty = dir.path().join("dirty.jsonl");
+        std::fs::write(
+            &dirty,
+            format!("{{\"path\":\"src/seed.rs\",\"ts\":\"2026-08-22T15:40:00Z\"}}\n{hostile}"),
+        )
+        .expect("seed dirty ledger");
+
+        let reading = retrospective_unhittable_at(&val, &dirty);
+        let RetrospectiveReading::Counted(count) = &reading else {
+            panic!("expected a counted reading, got {reading:?}")
+        };
+        assert!(
+            count.with_unmeasurable > 0,
+            "the ghost path has no record at all, so it is undecidable: {count:?}"
+        );
+        assert!(
+            count.dropped > 0,
+            "the reason it has no record is the malformed line, and that must be \
+             visible rather than folded into the undecidable count: {count:?}"
+        );
+        let note = retrospective_note(&reading, true).expect("note");
+        assert!(
+            note.contains("malformed line") && note.contains("unmeasured"),
+            "the note must distinguish corrupt from unseen: {note}"
+        );
+
+        // The control: the same event and the same path, on a ledger whose
+        // record for it parses. The path is then decidable and the dropped
+        // clause is gone — so the dirty arm's reading is the malformed line's
+        // doing and not the fixture's shape.
+        let clean = dir.path().join("clean.jsonl");
+        std::fs::write(
+            &clean,
+            concat!(
+                "{\"path\":\"src/seed.rs\",\"ts\":\"2026-08-22T15:40:00Z\"}\n",
+                "{\"path\":\"src/ghost.rs\",\"ts\":\"2026-09-03T18:03:00Z\"}\n",
+            ),
+        )
+        .expect("seed clean ledger");
+        let reading = retrospective_unhittable_at(&val, &clean);
+        let RetrospectiveReading::Counted(count) = &reading else {
+            panic!("expected a counted reading, got {reading:?}")
+        };
+        assert_eq!(
+            count.dropped, 0,
+            "a parsing ledger drops nothing: {count:?}"
+        );
+        assert_eq!(
+            count.with_unmeasurable, 0,
+            "the same surprise is decidable once its record parses: {count:?}"
+        );
+        assert_eq!(count.with_unhittable, 1, "born after the event: {count:?}");
+        let note = retrospective_note(&reading, true).expect("note");
+        assert!(!note.contains("malformed"), "{note}");
+    }
+
+    /// One ledger, two seams: the live/watch line must carry the identical
+    /// clause, because a reader who sees different numbers from `/risk` and
+    /// from the watch event has no way to tell which one to believe.
+    #[test]
+    fn both_seams_speak_one_clause_about_one_ledger() {
+        let dropped = dropped_ledger_clause(2).expect("2 malformed lines is not clean");
+        assert_eq!(
+            dropped,
+            "; 2 malformed lines in the first-scored ledger - those paths read as \
+             unmeasured, not as having no record"
+        );
+        assert_eq!(dropped_ledger_clause(0), None, "a clean ledger is silence");
     }
 }
