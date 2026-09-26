@@ -24,7 +24,8 @@ use crate::tool_wrappers::{
     maybe_confirm, maybe_guard, maybe_guard_arc, sub_agent_model_label, with_auto_check,
     with_lite_description, with_read_guard, with_read_guard_arc, with_read_guard_bash,
     with_read_guard_bash_arc, with_recovery_hints, with_session_cap, with_truncation,
-    DiagnosticSubAgentTool, FallbackSubAgentTool, ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+    DiagnosticSubAgentTool, FallbackSubAgentTool, SubAgentOutputMarkerTool, ToolFailureTracker,
+    SESSION_TOOL_CALL_CAP,
 };
 use crate::AgentConfig;
 use crate::DirectoryRestrictions;
@@ -1808,16 +1809,24 @@ fn dispatch_tool_with_fallback(
         }
     };
 
-    Box::new(DiagnosticSubAgentTool::new(
-        inner,
-        // The label names the model the child is ACTUALLY built with — the
-        // resolved child model, never `config.model` unconditionally. A report
-        // that named the parent's model while the child ran on the configured
-        // cheap one would be the confident-wrong-diagnosis defect this wrapper
-        // exists to refuse. `sub_agent_model_label`'s signature is unchanged;
-        // only its `primary` argument moved.
-        sub_agent_model_label(&child_model, fallback.as_ref().map(|(_, m, _)| m.as_str())),
-    ))
+    // The OUTERMOST yoyo-owned seam, so the marker is applied exactly once
+    // whatever the inner wrappers do — including on `FallbackSubAgentTool`'s
+    // retry path, whose secondary result never passes through this site again.
+    // See `SubAgentOutputMarkerTool`: a sub-agent's text reaches the parent as
+    // an ordinary tool result, so nothing else separates it from the session's
+    // own words.
+    Box::new(SubAgentOutputMarkerTool::new(Box::new(
+        DiagnosticSubAgentTool::new(
+            inner,
+            // The label names the model the child is ACTUALLY built with — the
+            // resolved child model, never `config.model` unconditionally. A report
+            // that named the parent's model while the child ran on the configured
+            // cheap one would be the confident-wrong-diagnosis defect this wrapper
+            // exists to refuse. `sub_agent_model_label`'s signature is unchanged;
+            // only its `primary` argument moved.
+            sub_agent_model_label(&child_model, fallback.as_ref().map(|(_, m, _)| m.as_str())),
+        ),
+    )))
 }
 
 fn sub_agent_tool_for(

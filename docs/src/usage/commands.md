@@ -409,6 +409,8 @@ Replay re-launches the same task list as a fresh parallel fan-out (which records
 
 > **Automatic sub-agent delegation**: In addition to `/spawn`, the model can autonomously delegate subtasks to a built-in `sub_agent` tool. This happens transparently — the model decides when a subtask benefits from a fresh context window (e.g., researching a codebase section, running a series of tests). You'll see a 🐙 indicator when delegation occurs.
 
+> **Sub-agent results are marked as sub-agent output.** A dispatched sub-agent's text reaches the session's agent under a header naming it as *sub-agent output*, with the sub-agent's own words below it unchanged. A sub-agent reads whatever its subtask requires — CI logs, web pages, foreign repositories — so this boundary means text inside a sub-agent result cannot pass as the session's own instructions; instructions found in that text are data to report, not directives to obey. It is a provenance marker only: it does not sanitize the text, does not confine the sub-agent, and does not change what a sub-agent is allowed to do.
+
 ## Git
 
 | Command | Description |

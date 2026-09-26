@@ -539,7 +539,14 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 183. The drift was surfaced by scripts/extract_trajectory.py's
     // module-size section, which exists precisely so this is acted on rather
     // than accumulating a third time (Day 183: the recurrence is the finding).
-    ("src/tool_wrappers.rs", 5276),
+    // Day 210 (Task 2): 5276 -> 5574 (+298) — `SubAgentOutputMarkerTool` and
+    // `mark_subagent_output`, the provenance header that keeps a sub-agent's
+    // text from passing as the session's own instructions, plus its tests
+    // (emission point, single marker on the fallback path, error pass-through,
+    // no-text-block pass-through). Registered rather than split: the wrapper
+    // belongs beside the two sub-agent decorators it sits outside of, and a
+    // split would scatter one seam's three layers across two files.
+    ("src/tool_wrappers.rs", 5574),
     // Day 162 (#709): raised 3245 -> 3264 to wrap the sub-agent tool list in
     // the mode guard, plus the comment stating what is enforced and what is not.
     // Day 163 (#714): raised 3264 -> 3290 — RenameSymbolTool now carries the
@@ -565,7 +572,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // pin the two child sets, the refusal stem, the parent-facing description
     // and the fold. Number pasted from what the gate itself printed (line
     // count after `cargo fmt`; the gate ran on 4655 pre-fmt).
-    ("src/tools.rs", 4931), // Day 205: +32 for the single child-model resolution that both dispatch doors read, and the label that must name it.
+    ("src/tools.rs", 4940), // Day 210 (Task 2): 4931 -> 4940 (+9) — the outermost `SubAgentOutputMarkerTool` wrap at `dispatch_tool_with_fallback`, plus the import; the marker must be applied at the seam both dispatch doors leave through, not inside a decorator only one of them reaches. Day 205: +32 for the single child-model resolution that both dispatch doors read, and the label that must name it.
     // Day 163 (#726): -58 lines — emerging-risk annotation removed from
     // build_watch_fix_prompt, with its own test; see #724.
     ("src/watch.rs", 4418),
