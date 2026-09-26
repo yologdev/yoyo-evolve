@@ -36,6 +36,22 @@ mod retrospective_tests {
             // No snapshot hash: the shape every event written before Day 165
             // has, and the regression surface of the git pass.
             git_hash: String::new(),
+            // And no recorded pair: the shape every event written before
+            // Day 210 has, and the regression surface of the recorded clause.
+            recorded_unhittable: None,
+            recorded_unmeasurable: None,
+        }
+    }
+
+    /// The same row, carrying the recorded `unhittable`/`unmeasurable` pair a
+    /// Day-210 live seam writes. Used only where a test needs the record
+    /// *without* a ledger join; the clause's own tests drive the real tempdir
+    /// path, because a hand-set field is an answer key rather than an input.
+    fn row_rec(ts: &str, surprises: &[&str], u: u32, m: u32) -> SurpriseRow {
+        SurpriseRow {
+            recorded_unhittable: Some(u),
+            recorded_unmeasurable: Some(m),
+            ..row(ts, surprises)
         }
     }
 
@@ -253,6 +269,8 @@ mod retrospective_tests {
             // fixture has always been about.
             git: None,
             dropped: 0,
+
+            ..RetrospectiveCount::default()
         });
         let rich = retrospective_note(&reading, false).expect("note");
         assert!(rich.starts_with("📊"), "{rich}");
@@ -342,6 +360,8 @@ mod retrospective_tests {
                 // reading as `None` rather than as an empty census.
                 git: None,
                 dropped: 0,
+
+                ..RetrospectiveCount::default()
             })
         );
 
@@ -648,6 +668,8 @@ mod retrospective_tests {
             tied_rows: ts_set(&[]),
             git: None,
             dropped: 0,
+
+            ..RetrospectiveCount::default()
         };
         let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
         assert_eq!(
@@ -676,6 +698,8 @@ mod retrospective_tests {
                 skipped_surprises: 2,
             }),
             dropped: 0,
+
+            ..RetrospectiveCount::default()
         };
         let note =
             retrospective_note(&RetrospectiveReading::Counted(with_skip), true).expect("note");
@@ -724,6 +748,8 @@ mod retrospective_tests {
                 skipped_surprises: 1,
             }),
             dropped: 0,
+
+            ..RetrospectiveCount::default()
         };
         // Anti-vacuous, and it has to be here rather than assumed: the fixture
         // only means anything if the two member sets really do diverge in both
@@ -849,6 +875,9 @@ mod retrospective_tests {
                 skipped_surprises: 0,
             }),
             dropped: 0,
+            // Day 210 fields: none of these fixtures records a pair, so a
+            // default here is the same absence the parser yields on a legacy line.
+            ..RetrospectiveCount::default()
         };
         let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
         assert!(
@@ -892,6 +921,9 @@ mod retrospective_tests {
                 skipped_surprises: 1,
             }),
             dropped: 0,
+            // Day 210 fields: none of these fixtures records a pair, so a
+            // default here is the same absence the parser yields on a legacy line.
+            ..RetrospectiveCount::default()
         };
         let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
         let tie_line = format!("\n  row {tie_row}: only the git check");
@@ -949,6 +981,9 @@ mod retrospective_tests {
                 skipped_surprises: 0,
             }),
             dropped: 0,
+            // Day 210 fields: none of these fixtures records a pair, so a
+            // default here is the same absence the parser yields on a legacy line.
+            ..RetrospectiveCount::default()
         };
         let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
         assert!(
@@ -989,6 +1024,9 @@ mod retrospective_tests {
                 skipped_surprises: 0,
             }),
             dropped: 0,
+            // Day 210 fields: none of these fixtures records a pair, so a
+            // default here is the same absence the parser yields on a legacy line.
+            ..RetrospectiveCount::default()
         };
         let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
         assert_eq!(
@@ -1026,6 +1064,9 @@ mod retrospective_tests {
                 skipped_surprises: 0,
             }),
             dropped: 0,
+            // Day 210 fields: none of these fixtures records a pair, so a
+            // default here is the same absence the parser yields on a legacy line.
+            ..RetrospectiveCount::default()
         };
         let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
         assert_eq!(
@@ -1060,6 +1101,9 @@ mod retrospective_tests {
             undated: 1,
             git: None,
             dropped: 0,
+            // Day 210 fields: none of these fixtures records a pair, so a
+            // default here is the same absence the parser yields on a legacy line.
+            ..RetrospectiveCount::default()
         };
         let zero =
             retrospective_note(&RetrospectiveReading::Counted(clean.clone()), true).expect("note");
@@ -1238,5 +1282,206 @@ mod retrospective_tests {
              unmeasured, not as having no record"
         );
         assert_eq!(dropped_ledger_clause(0), None, "a clean ledger is silence");
+    }
+
+    // --- Day 210: the recorded pair, driven through the real tempdir path ---
+
+    /// Drive `retrospective_unhittable_at` over a real ledger on disk. Nothing
+    /// here is hand-set: the task was written because a live-seam fixture that
+    /// typed the production value made a dead field look wired, so the fixture
+    /// is the ledger text and the reading comes out of the parser.
+    fn reading_for(rows: &[&str]) -> RetrospectiveReading {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let val = dir.path().join("risk_validations.jsonl");
+        let scored = dir.path().join("risk_first_scored.jsonl");
+        std::fs::write(&val, rows.join("\n") + "\n").expect("write validation ledger");
+        std::fs::write(
+            &scored,
+            concat!(
+                "{\"path\":\"src/old.rs\",\"ts\":\"2026-08-25T10:00:00Z\"}\n",
+                "{\"path\":\"src/born.rs\",\"ts\":\"2026-09-03T18:03:00Z\"}\n",
+            ),
+        )
+        .expect("seed first-scored ledger");
+        retrospective_unhittable_at(&val, &scored)
+    }
+
+    #[test]
+    fn a_recorded_pair_is_read_from_a_real_ledger_and_states_both_halves() {
+        // The event's own record: 4 unhittable of 144 surprises. Anti-vacuous
+        // first — the ledger text really does carry both numbers, so a
+        // transcription slip cannot make the assertions below agree with
+        // themselves.
+        let line = r#"{"ts":"2026-09-04T10:00:00Z","day":200,"trigger":"watch_failure","hits":[],"surprises":["src/born.rs"],"accuracy_pct":0.0,"unhittable_surprises":4,"unmeasurable_surprises":144}"#;
+        assert!(
+            line.contains(r#""unhittable_surprises":4"#)
+                && line.contains(r#""unmeasurable_surprises":144"#),
+            "anti-vacuous: the fixture must really carry the pair"
+        );
+        let reading = reading_for(&[line]);
+        let RetrospectiveReading::Counted(c) = &reading else {
+            panic!("expected a counted reading, got {reading:?}")
+        };
+        assert_eq!(c.recorded_pairs, 1, "one row states a pair: {c:?}");
+        assert_eq!(c.recorded_unhittable, 4, "the numerator as recorded: {c:?}");
+        assert_eq!(
+            c.recorded_unmeasurable, 144,
+            "the denominator as recorded: {c:?}"
+        );
+        // The join's own reading is untouched by the record — the two numbers
+        // are printed side by side and never reconciled.
+        assert_eq!(c.population, 1, "the row is still graded by the join");
+
+        let note = retrospective_note(&reading, true).expect("note");
+        assert!(
+            note.contains(
+                "; 1 recorded row state 4 unhittable and 144 undecidable \
+                 (the record's own numbers, not this join's)"
+            ),
+            "{note}"
+        );
+        assert!(!note.contains('\u{1b}'), "glyph-free: {note:?}");
+    }
+
+    #[test]
+    fn a_legacy_ledger_with_no_recorded_pair_is_byte_identical() {
+        // The whole regression surface: an event written before Day 210 — or a
+        // green event, which deliberately records neither — must produce the
+        // note it produced before this clause existed, byte for byte.
+        // `src/born.rs` is first scored 2026-09-03T18:03Z, so the event must
+        // precede it for the member to be a real unhittable one — otherwise
+        // this fixture reads "0 of 1" and the byte-identity below would be
+        // pinned against the wrong pre-task sentence.
+        let line = r#"{"ts":"2026-09-03T17:23:00Z","day":200,"trigger":"watch_failure","hits":[],"surprises":["src/born.rs"],"accuracy_pct":0.0}"#;
+        assert!(
+            !line.contains("unhittable_surprises") && !line.contains("unmeasurable_surprises"),
+            "anti-vacuous: the fixture really carries no recorded pair"
+        );
+        let reading = reading_for(&[line]);
+        let RetrospectiveReading::Counted(c) = &reading else {
+            panic!("expected a counted reading, got {reading:?}")
+        };
+        assert_eq!(c.recorded_pairs, 0, "nothing recorded: {c:?}");
+        assert_eq!(c.recorded_unhittable, 0);
+        assert_eq!(c.recorded_unmeasurable, 0);
+
+        // The pre-task sentence for one row, one unhittable member, no
+        // undecidable ones — asserted whole, never by `contains`.
+        let got = retrospective_note(&reading, true).expect("note");
+        let mut expected = String::from(
+            "unhittable: 1 of 1 post-ledger grading events carried a file first scored \
+             after the event",
+        );
+        if c.git.is_some() {
+            expected.push_str("; the git check reads 0 of 0 rows with a snapshot hash");
+        }
+        assert_eq!(got, expected, "byte-identical without a recorded pair");
+
+        // And a clean zero stays silence's neighbour: no ledger at all.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = retrospective_unhittable_at(
+            &dir.path().join("nope.jsonl"),
+            &dir.path().join("also-nope.jsonl"),
+        );
+        assert!(
+            retrospective_note(&missing, true).is_none(),
+            "no ledger, no note"
+        );
+    }
+
+    #[test]
+    fn a_half_recorded_pair_is_not_a_ratio_and_is_not_counted() {
+        // Half a ratio is the exact silence this task removes, so a row that
+        // states only the numerator must NOT be summed as if it stated both.
+        let line = r#"{"ts":"2026-09-04T10:00:00Z","day":200,"trigger":"watch_failure","hits":[],"surprises":["src/old.rs"],"accuracy_pct":100.0,"unhittable_surprises":4}"#;
+        assert!(
+            line.contains("unhittable_surprises") && !line.contains("unmeasurable_surprises"),
+            "anti-vacuous: exactly one half is present"
+        );
+        let reading = reading_for(&[line]);
+        let RetrospectiveReading::Counted(c) = &reading else {
+            panic!("expected a counted reading, got {reading:?}")
+        };
+        assert_eq!(
+            c.recorded_pairs, 0,
+            "half a pair is not a recorded pair: {c:?}"
+        );
+        assert_eq!(c.recorded_unhittable, 0);
+        assert!(!retrospective_note(&reading, true)
+            .unwrap_or_default()
+            .contains("recorded"));
+    }
+
+    #[test]
+    fn the_recorded_clause_speaks_for_whole_rows_and_invented_zeros_do_not_parse() {
+        // Singular/plural agreement and the summed figures, driven through a
+        // REAL ledger: `recorded_pairs` is only ever incremented for rows the
+        // join counted into its population, so a hand-set `recorded_pairs: 1`
+        // with `population: 0` is a state production cannot produce and would
+        // be an answer key rather than an input (Day 210's own lesson, one
+        // module over).
+        let one = r#"{"ts":"2026-09-03T17:23:00Z","day":200,"trigger":"watch_failure","hits":[],"surprises":["src/born.rs"],"accuracy_pct":0.0,"unhittable_surprises":1,"unmeasurable_surprises":3}"#;
+        let reading = reading_for(&[one]);
+        let RetrospectiveReading::Counted(c) = &reading else {
+            panic!("expected a counted reading, got {reading:?}")
+        };
+        assert_eq!(c.recorded_pairs, 1, "one row recorded a pair: {c:?}");
+        let note = retrospective_note(&reading, true).expect("note");
+        assert!(
+            note.contains("; 1 recorded row state 1 unhittable and 3 undecidable"),
+            "{note}"
+        );
+
+        let two = r#"{"ts":"2026-09-03T17:23:00Z","day":200,"trigger":"watch_failure","hits":[],"surprises":["src/born.rs"],"accuracy_pct":0.0,"unhittable_surprises":2,"unmeasurable_surprises":100}"#;
+        let three = r#"{"ts":"2026-09-03T17:24:00Z","day":200,"trigger":"watch_failure","hits":[],"surprises":["src/born.rs"],"accuracy_pct":0.0,"unhittable_surprises":3,"unmeasurable_surprises":100}"#;
+        let reading = reading_for(&[two, three]);
+        let RetrospectiveReading::Counted(c) = &reading else {
+            panic!("expected a counted reading, got {reading:?}")
+        };
+        assert_eq!(c.recorded_pairs, 2, "two rows recorded pairs: {c:?}");
+        assert_eq!(
+            c.recorded_unhittable, 5,
+            "the recorded numerators sum: {c:?}"
+        );
+        assert_eq!(
+            c.recorded_unmeasurable, 200,
+            "and so do the recorded denominators: {c:?}"
+        );
+        let note = retrospective_note(&reading, true).expect("note");
+        assert!(
+            note.contains("; 2 recorded rows state 5 unhittable and 200 undecidable"),
+            "{note}"
+        );
+
+        // A malformed row does not parse its way into a pair: the value must
+        // really be the wrong type, so the non-firing below is a reading and
+        // not a transcription slip.
+        let bad = r#"{"ts":"2026-09-03T17:23:00Z","day":200,"trigger":"watch_failure","hits":[],"surprises":["src/born.rs"],"accuracy_pct":0.0,"unhittable_surprises":"4","unmeasurable_surprises":null}"#;
+        assert!(
+            bad.contains(r#""unhittable_surprises":"4""#),
+            "anti-vacuous: the numerator really is a string here"
+        );
+        let reading = reading_for(&[bad]);
+        let RetrospectiveReading::Counted(c) = &reading else {
+            panic!("expected a counted reading, got {reading:?}")
+        };
+        assert_eq!(c.recorded_pairs, 0, "a string is not a count: {c:?}");
+        assert_eq!(c.recorded_unhittable, 0);
+        assert_eq!(c.recorded_unmeasurable, 0);
+    }
+
+    #[test]
+    fn the_helper_row_rec_is_the_shape_the_parser_produces() {
+        // The struct-literal helper exists for tests that do not need a join;
+        // this pins it against what the real parser yields, so it cannot drift
+        // into asserting a shape production never makes.
+        let line = r#"{"ts":"2026-09-04T10:00:00Z","day":200,"hits":[],"surprises":["src/born.rs"],"unhittable_surprises":4,"unmeasurable_surprises":144}"#;
+        let parsed = parse_surprise_rows(line);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].recorded_unhittable, Some(4));
+        assert_eq!(parsed[0].recorded_unmeasurable, Some(144));
+        let hand = row_rec("2026-09-04T10:00:00Z", &["src/born.rs"], 4, 144);
+        assert_eq!(parsed[0].recorded_unhittable, hand.recorded_unhittable);
+        assert_eq!(parsed[0].recorded_unmeasurable, hand.recorded_unmeasurable);
     }
 }

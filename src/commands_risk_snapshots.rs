@@ -477,6 +477,12 @@ pub(crate) const RISK_VALIDATION_PATH: &str = ".yoyo/risk_validations.jsonl";
 /// real ones (see [`count_unhittable_surprises`]). `None` omits the key, which
 /// means *not measured* and must never be read as `Some(0)`; only the two call
 /// sites that hold a snapshot timestamp pass `Some`.
+///
+/// `unmeasurable_surprises` is that count's **denominator**: how many of the
+/// same `surprises` the join could not decide at all. Recorded with it so a
+/// later reader can tell a clean `4` from an absorbed `4` of 144 without
+/// re-running the join. Optional exactly like the fields above — `None`
+/// omits the key, so every legacy line and legacy reader stays valid.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_validation_event(
     validation_path: &std::path::Path,
@@ -490,6 +496,7 @@ pub(crate) fn write_validation_event(
     snapshot_git_hash: Option<&str>,
     ci_run_id: Option<u64>,
     unhittable_surprises: Option<u32>,
+    unmeasurable_surprises: Option<u32>,
 ) -> std::io::Result<()> {
     let ts = utc_timestamp();
 
@@ -545,6 +552,17 @@ pub(crate) fn write_validation_event(
     if let Some(n) = unhittable_surprises {
         if let Some(obj) = event.as_object_mut() {
             obj.insert("unhittable_surprises".to_string(), serde_json::json!(n));
+        }
+    }
+
+    // Day 210: the numerator above is meaningless without the surprises it was
+    // divided out of, so the *undecidable* half of the same reading is recorded
+    // beside it — a later reader can then tell "4 of 5" from "4 of 144" without
+    // re-running the join. Optional and omitted when absent, exactly like the
+    // fields above: every legacy line and legacy reader stays valid.
+    if let Some(n) = unmeasurable_surprises {
+        if let Some(obj) = event.as_object_mut() {
+            obj.insert("unmeasurable_surprises".to_string(), serde_json::json!(n));
         }
     }
 
@@ -730,6 +748,9 @@ pub(crate) fn record_green_validation_to(
         // guessing. Named limit, not an oversight: green events carry no 0%
         // recall figure, so no unhittable zero can hide inside one.
         None,
+        // Same absence, same reason: no reading was made, so there is no
+        // denominator to record either. Omitted, not zero.
+        None,
     )?;
 
     Ok(GreenGrade::Recorded {
@@ -856,6 +877,7 @@ pub(crate) fn auto_validate_after_failure_to(
         Some(&last.git_hash), // the snapshot this event graded — auditability, not a dedup key
         None,                 // not a CI-harvested event — no run id
         Some(unhittable.unhittable), // measured here: a real 0 is a reading, not an absence
+        Some(unhittable.unmeasurable), // and the denominator it was divided out of
     ) {
         eprintln!("  {DIM}(warning: could not write risk validation entry: {e}){RESET}");
     }
@@ -1461,7 +1483,7 @@ mod tests {
         let hits = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
         let surprises = vec!["src/prompt.rs".to_string()];
         write_validation_event(
-            &path, 129, "cli", &hits, &surprises, 66.7, None, None, None, None, None,
+            &path, 129, "cli", &hits, &surprises, 66.7, None, None, None, None, None, None,
         )
         .expect("write validation event");
 
@@ -1500,6 +1522,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .expect("write validation event");
 
@@ -1526,11 +1549,11 @@ mod tests {
         let hits = vec!["src/main.rs".to_string()];
         let surprises: Vec<String> = vec![];
         write_validation_event(
-            &path, 1, "cli", &hits, &surprises, 100.0, None, None, None, None, None,
+            &path, 1, "cli", &hits, &surprises, 100.0, None, None, None, None, None, None,
         )
         .expect("first write");
         write_validation_event(
-            &path, 2, "cli", &hits, &surprises, 100.0, None, None, None, None, None,
+            &path, 2, "cli", &hits, &surprises, 100.0, None, None, None, None, None, None,
         )
         .expect("second write");
 
@@ -1626,6 +1649,7 @@ mod tests {
             50.0,
             Some(75.0),
             Some("watch_failure"),
+            None,
             None,
             None,
             None,
@@ -1821,6 +1845,7 @@ mod tests {
             Some("ci_failure"),
             None,
             Some(30051449447),
+            None,
             None,
         )
         .expect("write ci_failure event");

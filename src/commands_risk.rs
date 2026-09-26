@@ -2750,6 +2750,7 @@ fn handle_risk_harvest() {
             Some(&snapshot.git_hash), // the snapshot this event graded — auditability (#723), not a dedup key
             Some(run.run_id),
             Some(unhittable.unhittable), // measured from this snapshot's own ts, not guessed
+            Some(unhittable.unmeasurable), // its denominator, recorded beside it
         ) {
             skipped += 1;
             eprintln!(
@@ -2931,6 +2932,7 @@ fn handle_risk_validate() {
             (git_hash != "unknown").then_some(git_hash.as_str()), // graded snapshot — auditability (#723); sentinel stays absent
             None,                                                 // not a CI-harvest event
             Some(unhittable.unhittable), // measured against this snapshot's own ts
+            Some(unhittable.unmeasurable), // its denominator, recorded beside it
         ) {
             eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
         }
@@ -5991,6 +5993,8 @@ src/commands_bg.rs
             None,
             // Test fixture: no snapshot line, so no timestamp to join against.
             // Absent (not Some(0)) — exactly what a legacy line looks like.
+            None,
+            // Same reason for the denominator: absent, like every legacy line.
             None,
         )
         .expect("write validation event");

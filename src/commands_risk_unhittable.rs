@@ -489,6 +489,13 @@ pub(crate) struct SurpriseRow {
     /// `snapshot_git_hash` was recorded (Day 165, #723, forward-only and
     /// deliberately un-back-filled) must read exactly as it did before.
     pub(crate) git_hash: String,
+    /// This event's own recorded `unhittable_surprises` (Day 210); `None` on
+    /// every line written before it and on every green event.
+    pub(crate) recorded_unhittable: Option<u32>,
+    /// The denominator recorded beside it — read as a pair with the field
+    /// above and only as a pair, because half a ratio is the silence this task
+    /// exists to remove.
+    pub(crate) recorded_unmeasurable: Option<u32>,
 }
 
 /// Parse the validation ledger's text into rows carrying `ts` + `surprises`.
@@ -516,6 +523,10 @@ pub(crate) fn parse_surprise_rows(content: &str) -> Vec<SurpriseRow> {
         // `snapshot_git_hash` is the validation ledger's own key name (the
         // snapshot ledger's is `git_hash`); absent is `""`, never `"unknown"`.
         let git_hash = val["snapshot_git_hash"].as_str().unwrap_or("").to_string();
+        // Absent is `None`, never 0: "not recorded" and "recorded as zero"
+        // are different states, and only the second is a denominator.
+        let recorded_unhittable = val["unhittable_surprises"].as_u64().map(|n| n as u32);
+        let recorded_unmeasurable = val["unmeasurable_surprises"].as_u64().map(|n| n as u32);
         let surprises = val["surprises"]
             .as_array()
             .map(|a| {
@@ -528,6 +539,8 @@ pub(crate) fn parse_surprise_rows(content: &str) -> Vec<SurpriseRow> {
             ts,
             surprises,
             git_hash,
+            recorded_unhittable,
+            recorded_unmeasurable,
         });
     }
     rows
@@ -602,6 +615,16 @@ pub(crate) struct RetrospectiveCount {
     pub(crate) tied_rows: BTreeSet<String>,
     /// How many carried ≥1 member the join could **not** decide.
     pub(crate) with_unmeasurable: u32,
+    /// Post-ledger rows that **state** an `unhittable`/`unmeasurable` pair
+    /// (Day 210). Every other field here is this join's own reading; this one
+    /// reads a *record* left by the live seam, which is why it is counted
+    /// separately and never reconciled with the aggregate above.
+    pub(crate) recorded_pairs: u32,
+    /// The summed `unhittable_surprises` those rows state.
+    pub(crate) recorded_unhittable: u32,
+    /// The summed `unmeasurable_surprises` beside them — the denominator that
+    /// turns a numerator into a legible reading.
+    pub(crate) recorded_unmeasurable: u32,
     /// Gradable rows with no placeable `ts` (absent, empty, or not
     /// [`is_placeable_ledger_ts`]) — out of the population because there is no
     /// moment to compare a birthday against.
@@ -787,6 +810,13 @@ pub(crate) fn retrospective_unhittable(
             }
         }
         out.population += 1;
+        // The record, not a reading: kept out of the join's own counters so a
+        // disagreement stays printable instead of being smoothed away.
+        if let (Some(u), Some(m)) = (row.recorded_unhittable, row.recorded_unmeasurable) {
+            out.recorded_pairs += 1;
+            out.recorded_unhittable += u;
+            out.recorded_unmeasurable += m;
+        }
         let mut unhittable = false;
         let mut unmeasurable = false;
         let mut tied = false;
@@ -960,6 +990,19 @@ pub(crate) fn retrospective_note(reading: &RetrospectiveReading, plain: bool) ->
             }
             if c.undated > 0 {
                 note.push_str(&format!("; {} undated row(s)", c.undated));
+            }
+            // Day 210: what the EVENTS recorded, printed beside the join's own
+            // aggregate and never reconciled with it — a numerator without its
+            // denominator is the silence this module exists to remove. Appended
+            // only when a row really carries the pair, so a legacy ledger is
+            // byte-identical.
+            if c.recorded_pairs > 0 {
+                let noun = if c.recorded_pairs == 1 { "row" } else { "rows" };
+                note.push_str(&format!(
+                    "; {} recorded {noun} state {} unhittable and {} undecidable \
+                     (the record's own numbers, not this join's)",
+                    c.recorded_pairs, c.recorded_unhittable, c.recorded_unmeasurable
+                ));
             }
             // The instrument's own integrity, beside the population it
             // measured: a malformed line makes a surprise read as
