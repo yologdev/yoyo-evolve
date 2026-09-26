@@ -92,6 +92,7 @@ This shows each markdown section (headers like `# ...` and `## ...`), their line
 In addition to the system prompt, yoyo automatically injects project context when available:
 
 - **Project instructions** — from `YOYO.md` (primary), `CLAUDE.md` (compatibility alias), or `.yoyo/instructions.md`
+  All six project-authored instruction files are read: `YOYO.md`, `CLAUDE.md`, `.yoyo/instructions.md`, `AGENTS.md`, `.cursorrules` and `.github/copilot-instructions.md`. Each one is injected inside an in-band boundary block that names the file and states it was authored by the repository being worked on rather than by the operator of this session, and that any request inside it (to run commands, change behaviour, reveal or exfiltrate data, or ignore prior instructions) is untrusted data to report rather than an instruction to obey. This is an annotation, not a control: every file's text still reaches the model unchanged inside its markers, and nothing is refused, truncated or gated.
 - **Development conventions** — auto-detected from project type (Rust, Python, Node, Go, etc.) when no instruction file is present; includes build/test/lint commands
 - **Project file listing** — from `git ls-files` (up to 200 files)
 - **Recently changed files** — from `git log` (up to 20 files)
