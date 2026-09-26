@@ -503,6 +503,21 @@ pub(crate) struct RetrospectiveCount {
     /// that disagreement (day 209). This is the identity behind the number, so
     /// the two readings can be intersected rather than merely compared.
     pub(crate) unhittable_rows: BTreeSet<String>,
+    /// The `ts` of every row whose surprises included one first scored at
+    /// **exactly** the row's own second — a tie, which the strict `>` above
+    /// cannot credit (the same reading `UnhittableCount::ties` already makes on
+    /// the live path, one instrument over).
+    ///
+    /// Row identity here is the row's `ts`, the same identity
+    /// [`RetrospectiveCount::unhittable_rows`] uses, so the two sets intersect
+    /// meaningfully; the limit that follows is stated rather than left implicit:
+    /// two rows sharing a second are one member of this set.
+    ///
+    /// Why it is carried at all: it is the one cause the retrospective pass can
+    /// **observe** for the git-only direction of a disagreement, and the rule for
+    /// that direction is name the cause when it is observable and say plainly
+    /// that it is not when it is not — never invent one.
+    pub(crate) tied_rows: BTreeSet<String>,
     /// How many carried ≥1 member the join could **not** decide.
     pub(crate) with_unmeasurable: u32,
     /// Gradable rows with no placeable `ts` (absent, empty, or not
@@ -550,6 +565,15 @@ pub(crate) struct GitCensus {
     /// printed, never silently hittable — the day-205 shape, and the reason the
     /// dream itself wrote a fallback clause. Today: 1 row (`0ec456e0`, day 206).
     pub(crate) unresolvable: u32,
+    /// The `ts` of every row folded into `unresolvable` — the **could not check**
+    /// state, named per row so `retrospective_note` can print it beside a row
+    /// only the ledger join attributed without that sentence ever reading as
+    /// "checked; clean" (the repo's own pre-push-hook rule).
+    ///
+    /// Row identity is the row's `ts`, matching the two `unhittable_rows` sets
+    /// and `RetrospectiveCount::tied_rows`, so the three intersect meaningfully;
+    /// the same limit holds — two rows sharing a second are one member here.
+    pub(crate) uncheckable_rows: BTreeSet<String>,
     /// Surprises not probed because their row's hash did not resolve. This is
     /// the "skipped" count the task asks to be printed rather than folded away.
     pub(crate) skipped_surprises: u32,
@@ -586,6 +610,7 @@ pub(crate) fn retrospective_git_census(
         let resolves = probes.resolves.get(&row.git_hash).copied().unwrap_or(false);
         if !resolves {
             out.unresolvable += 1;
+            out.uncheckable_rows.insert(row.ts.clone());
             out.with_unmeasurable += 1;
             out.skipped_surprises += row.surprises.len() as u32;
             continue;
@@ -670,9 +695,14 @@ pub(crate) fn retrospective_unhittable(
         out.population += 1;
         let mut unhittable = false;
         let mut unmeasurable = false;
+        let mut tied = false;
         for path in &row.surprises {
             match first_scored_age(path, first_scored, founding) {
                 Some(birthday) if birthday > row_ts => unhittable = true,
+                // Exactly the row's own second: the strict `>` above cannot
+                // credit it, and it is the one cause the pass can observe for a
+                // git-only disagreement (day 178's real shape).
+                Some(birthday) if birthday == row_ts => tied = true,
                 Some(_) => {}
                 None => unmeasurable = true,
             }
@@ -680,6 +710,9 @@ pub(crate) fn retrospective_unhittable(
         if unhittable {
             out.with_unhittable += 1;
             out.unhittable_rows.insert(row.ts.clone());
+        }
+        if tied {
+            out.tied_rows.insert(row.ts.clone());
         }
         if unmeasurable {
             out.with_unmeasurable += 1;
@@ -860,10 +893,62 @@ pub(crate) fn retrospective_note(reading: &RetrospectiveReading, plain: bool) ->
                         // Identity, not a matching sum: the member sets are equal.
                         note.push_str(&format!("; both instruments name the same {common} row(s)"));
                     } else {
+                        // Day 210: the disagreement is printed as a BRACKET plus
+                        // one line per divergent row naming the instrument that
+                        // attributed it and the cause — a flat "the sets differ"
+                        // is unreadable while the disagreement has no per-row
+                        // cause.
+                        let union = c.unhittable_rows.union(&git.unhittable_rows).count();
                         note.push_str(&format!(
-                            "; the two instruments name {common} row(s) in common, \
-                             {ledger_only} only the ledger and {git_only} only git"
+                            "; the two instruments name {common}..{union} row(s) \
+                             (in common .. union; ledger {}, git {})",
+                            c.unhittable_rows.len(),
+                            git.unhittable_rows.len()
                         ));
+                        let mut divergent: BTreeSet<String> = c
+                            .unhittable_rows
+                            .union(&git.unhittable_rows)
+                            .cloned()
+                            .collect();
+                        for row in c.unhittable_rows.intersection(&git.unhittable_rows) {
+                            divergent.remove(row);
+                        }
+                        for row in &divergent {
+                            if c.unhittable_rows.contains(row) {
+                                // Ledger-only. The git check did not attribute it,
+                                // and there are exactly two reasons — a check that
+                                // RAN and found the path present, and a check that
+                                // could not run at all. Those must not render
+                                // identically (the repo's pre-push-hook rule).
+                                if git.uncheckable_rows.contains(row) {
+                                    note.push_str(&format!(
+                                        "\n  row {row}: only the ledger - the git check \
+                                         COULD NOT CHECK it (its snapshot hash does not \
+                                         resolve in this clone)"
+                                    ));
+                                } else {
+                                    note.push_str(&format!(
+                                        "\n  row {row}: only the ledger - the git check \
+                                         evaluated this snapshot and found every surprise \
+                                         present inside it"
+                                    ));
+                                }
+                            } else {
+                                // Git-only: the ledger join missed it. Name the
+                                // cause only when it is observable from the data.
+                                if c.tied_rows.contains(row) {
+                                    note.push_str(&format!(
+                                        "\n  row {row}: only the git check - the ledger join \
+                                         reads a same-second timestamp tie here"
+                                    ));
+                                } else {
+                                    note.push_str(&format!(
+                                        "\n  row {row}: only the git check - the ledger join \
+                                         missed it, cause not observable from the ledger"
+                                    ));
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -247,6 +247,8 @@ mod retrospective_tests {
             ]),
             with_unmeasurable: 86,
             undated: 0,
+            // Nothing in this fixture's ledger sits at a row's own second.
+            tied_rows: ts_set(&[]),
             // The ledger-only shape: no git reading at all, which is what this
             // fixture has always been about.
             git: None,
@@ -331,6 +333,9 @@ mod retrospective_tests {
                 unhittable_rows: ts_set(&["2026-09-03T17:23:00Z"]),
                 with_unmeasurable: 0,
                 undated: 0,
+                // The ledger has this path strictly before the event: a plain
+                // birthday, never a tie.
+                tied_rows: ts_set(&[]),
                 // Neither fixture event carries a snapshot hash — the shape of
                 // every ledger written before Day 165, pinned here as still
                 // reading as `None` rather than as an empty census.
@@ -464,6 +469,12 @@ mod retrospective_tests {
             "a check that did not run is not a finding: {got:?}"
         );
         assert_eq!(got.unresolvable, 1, "{got:?}");
+        assert_eq!(
+            got.uncheckable_rows,
+            ts_set(&["2026-09-03T17:23:00Z"]),
+            "the could-not-check row is named, not just counted — it is the cause \
+             `retrospective_note` prints for a ledger-only row: {got:?}"
+        );
         assert_eq!(got.with_unmeasurable, 1, "{got:?}");
         assert_eq!(
             got.skipped_surprises, 2,
@@ -483,6 +494,11 @@ mod retrospective_tests {
         let got2 = retrospective_git_census(&rows, Some("2026-08-22T15:40:02Z"), &resolving);
         assert_eq!(got2.with_unhittable, 1, "{got2:?}");
         assert_eq!(got2.unresolvable, 0, "{got2:?}");
+        assert!(
+            got2.uncheckable_rows.is_empty(),
+            "a check that RAN names no could-not-check row — the two states must \
+             not bleed into each other: {got2:?}"
+        );
         assert_ne!(got, got2, "the flag changes the answer for one member set");
     }
 
@@ -502,6 +518,63 @@ mod retrospective_tests {
             "the hashless row is not counted, and not as unmeasurable: {got:?}"
         );
         assert_eq!(got.with_unmeasurable, 0, "{got:?}");
+    }
+
+    /// **The tie cause, measured by the join itself rather than hand-set on a
+    /// fixture.** A test that only ever hands [`RetrospectiveCount::tied_rows`]
+    /// in as data cannot see the join stop filling it — a positive control
+    /// proved exactly that (neutering the `==` arm left every test green). So
+    /// this one drives the real ledger join with the day-178 shape: a path whose
+    /// first-scored `ts` is *exactly* the row's own, which is neither the strict
+    /// `>` above (born-after) nor a miss.
+    #[test]
+    fn the_join_fills_tied_rows_for_a_same_second_birthday_and_not_for_a_strict_one() {
+        let ts = "2026-08-25T22:40:17Z";
+        let map = scored(&[
+            ("src/seed.rs", "2026-08-22T15:40:02Z"),
+            // The real day-178 row: the ledger holds this path at exactly the
+            // event's own second.
+            ("src/tied.rs", ts),
+            // The near-miss, one second EARLIER: a plain birthday that existed
+            // when the prediction was made, which is neither bucket.
+            ("src/before.rs", "2026-08-25T22:40:16Z"),
+        ]);
+        let founding = founding_ts(&map);
+        // Anti-vacuous, and it has to be here rather than assumed: the fixture
+        // only means anything if the birthday really is the event's own second.
+        assert_eq!(map.get("src/tied.rs").map(String::as_str), Some(ts));
+
+        let rows = [row(ts, &["src/tied.rs"]), row(ts, &["src/before.rs"])];
+        let got = retrospective_unhittable(&rows, &map, founding);
+        assert_eq!(
+            got.tied_rows,
+            ts_set(&[ts]),
+            "exactly the row with a same-second birthday, and never the strict-before one: {got:?}"
+        );
+        assert_eq!(
+            got.with_unhittable, 0,
+            "a tie is not born-after — the strict `>` cannot credit it: {got:?}"
+        );
+        // And no git reading is needed to fill it: this is a ledger-side
+        // observable, which is the whole reason it can serve as the *cause* for a
+        // git-only row.
+        assert_eq!(got.git, None, "{got:?}");
+    }
+
+    /// **The `None` fallback for the tie cause.** A row with no tie at all must
+    /// leave `tied_rows` empty rather than collecting every row, so the weaker
+    /// "cause not observable" sentence stays reachable.
+    #[test]
+    fn the_join_leaves_tied_rows_empty_when_no_birthday_lands_on_the_event_second() {
+        let map = ledger();
+        let founding = founding_ts(&map);
+        let rows = [row("2026-09-03T17:23:00Z", &["src/born.rs"])];
+        let got = retrospective_unhittable(&rows, &map, founding);
+        assert!(
+            got.tied_rows.is_empty(),
+            "a born-after row is not a tie: {got:?}"
+        );
+        assert_eq!(got.with_unhittable, 1, "{got:?}");
     }
 
     /// **The disagreement that is the interesting finding.** The day-178 row's
@@ -570,6 +643,7 @@ mod retrospective_tests {
             unhittable_rows: ts_set(&["2026-09-03T17:23:00Z"]),
             with_unmeasurable: 0,
             undated: 0,
+            tied_rows: ts_set(&[]),
             git: None,
         };
         let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
@@ -586,12 +660,16 @@ mod retrospective_tests {
             unhittable_rows: ts_set(&["2026-09-03T17:23:00Z"]),
             with_unmeasurable: 1,
             undated: 0,
+            tied_rows: ts_set(&[]),
             git: Some(GitCensus {
                 population: 3,
                 with_unhittable: 1,
                 unhittable_rows: ts_set(&["2026-09-04T17:23:00Z"]),
                 with_unmeasurable: 1,
                 unresolvable: 1,
+                // The row the git check could not evaluate at all: the ledger-only
+                // direction's second cause (day 206's real shape).
+                uncheckable_rows: ts_set(&["2026-09-03T17:23:00Z"]),
                 skipped_surprises: 2,
             }),
         };
@@ -606,31 +684,61 @@ mod retrospective_tests {
         assert!(!note.as_bytes().contains(&0x1b), "no ANSI in the note");
     }
 
-    /// **The day-209 shape, at the emission point.** Two instruments reading the
-    /// SAME total over member sets that differ. The day-178 row is the
-    /// ledger-only member (a timestamp tie: the join cannot call it born-after,
-    /// the tree says the file was not there), one row is named by both, and one
-    /// is git-only. A matching total is not evidence of agreement, so the clause
-    /// states the intersection rather than deriving one from the sum.
+    /// **The day-209 shape, at the emission point, with the day-210 bracket and
+    /// per-row causes.** Two instruments reading the SAME total over member sets
+    /// that differ. The fixture is the real measurement at a smaller scale: one
+    /// row named by both, one git-only row whose cause the ledger can observe
+    /// (day 178's same-second tie), and one ledger-only row the git check could
+    /// not evaluate at all (day 206's unresolvable snapshot hash).
+    ///
+    /// A matching total is not evidence of agreement, so the clause prints the
+    /// bracket and then one line per divergent row naming the instrument and the
+    /// cause — and the two causes must never render identically, because
+    /// *checked and found present* and *could not check* are different readings.
     #[test]
     fn the_intersection_clause_names_the_members_the_totals_cannot() {
         let count = RetrospectiveCount {
             population: 4,
             with_unhittable: 2,
-            unhittable_rows: ts_set(&["2026-08-25T22:40:17Z", "2026-09-19T07:34:00Z"]),
+            // Day 203's row (shared with git) and day 206's (the git check
+            // cannot evaluate it).
+            unhittable_rows: ts_set(&["2026-09-19T07:34:00Z", "2026-09-26T07:34:00Z"]),
             with_unmeasurable: 0,
             undated: 0,
+            // Day 178's row: the ledger join reads a same-second tie, so the
+            // strict `>` cannot call it born-after.
+            tied_rows: ts_set(&["2026-08-25T22:40:17Z"]),
             git: Some(GitCensus {
                 population: 4,
                 with_unhittable: 2,
-                // Same total, different members: day 203 shared, plus one the
-                // ledger join reads as a tie.
-                unhittable_rows: ts_set(&["2026-09-19T07:34:00Z", "2026-09-03T10:00:00Z"]),
-                with_unmeasurable: 0,
-                unresolvable: 0,
-                skipped_surprises: 0,
+                // The SAME total over different members: day 203 shared, plus
+                // the tie the ledger join cannot credit.
+                unhittable_rows: ts_set(&["2026-09-19T07:34:00Z", "2026-08-25T22:40:17Z"]),
+                with_unmeasurable: 1,
+                unresolvable: 1,
+                uncheckable_rows: ts_set(&["2026-09-26T07:34:00Z"]),
+                skipped_surprises: 1,
             }),
         };
+        // Anti-vacuous, and it has to be here rather than assumed: the fixture
+        // only means anything if the two member sets really do diverge in both
+        // directions. A transcription slip that made them equal would let the
+        // whole test pass while exercising nothing.
+        let git = count.git.as_ref().expect("fixture carries a git reading");
+        assert!(
+            count
+                .unhittable_rows
+                .difference(&git.unhittable_rows)
+                .count()
+                == 1
+                && git
+                    .unhittable_rows
+                    .difference(&count.unhittable_rows)
+                    .count()
+                    == 1,
+            "anti-vacuous: the fixture must differ in both directions"
+        );
+
         let note =
             retrospective_note(&RetrospectiveReading::Counted(count.clone()), true).expect("note");
         // The totals really do match — that is the trap this clause closes, and
@@ -640,15 +748,39 @@ mod retrospective_tests {
                 && note.contains("the git check reads 2 of 4 rows"),
             "the fixture must be the matching-totals case: {note}"
         );
+        // The bracket: (intersection, union), never one number — and the two
+        // numbers are different, so a disagreement cannot render as agreement.
         assert!(
             note.contains(
-                "; the two instruments name 1 row(s) in common, 1 only the ledger and 1 only git"
+                "; the two instruments name 1..3 row(s) (in common .. union; ledger 2, git 2)"
             ),
-            "the members are the finding, and the total cannot carry them: {note}"
+            "the disagreement is a bracket, with each instrument's own count: {note}"
         );
         assert!(
             !note.contains("both instruments name the same"),
             "a matching total must never be rendered as agreement: {note}"
+        );
+        // One line per divergent row, each naming its own instrument and cause —
+        // and the two causes are different sentences.
+        assert!(
+            note.contains(
+                "\n  row 2026-08-25T22:40:17Z: only the git check - the ledger join \
+                 reads a same-second timestamp tie here"
+            ),
+            "the observable cause is named rather than guessed: {note}"
+        );
+        assert!(
+            note.contains(
+                "\n  row 2026-09-26T07:34:00Z: only the ledger - the git check \
+                 COULD NOT CHECK it (its snapshot hash does not resolve in this clone)"
+            ),
+            "a check that could not run must say so, in those words: {note}"
+        );
+        assert!(
+            !note.contains(
+                "2026-09-26T07:34:00Z: only the ledger - the git check evaluated this snapshot"
+            ),
+            "could-not-check must never read as checked-and-absent: {note}"
         );
         assert!(note.is_ascii(), "plain mode stays glyph-free: {note}");
         assert!(!note.as_bytes().contains(&0x1b), "no ANSI in the note");
@@ -659,7 +791,7 @@ mod retrospective_tests {
         let shared = ts_set(&[
             "2026-08-25T22:40:17Z",
             "2026-09-19T07:34:00Z",
-            "2026-09-03T10:00:00Z",
+            "2026-09-26T07:34:00Z",
         ]);
         agreed.with_unhittable = 3;
         agreed.unhittable_rows = shared.clone();
@@ -678,6 +810,190 @@ mod retrospective_tests {
         );
     }
 
+    /// **The bracket shape, asserted as a pair.** The reported numbers really are
+    /// (intersection, union) and really are not two equal numbers — the whole
+    /// point of printing a bracket rather than a total.
+    #[test]
+    fn the_bracket_reports_the_intersection_and_the_union_never_one_number() {
+        // Four distinct rows, two shared and one singleton each way:
+        // intersection 2 (A, B), union 4 (A, B, C, D).
+        let count = RetrospectiveCount {
+            population: 4,
+            with_unhittable: 3,
+            unhittable_rows: ts_set(&[
+                "2026-09-19T07:34:00Z",
+                "2026-09-26T07:34:00Z",
+                "2026-07-01T00:00:00Z",
+            ]),
+            with_unmeasurable: 0,
+            undated: 0,
+            // The ledger can observe no cause for this row, so its per-row line
+            // is the weaker true sentence.
+            tied_rows: ts_set(&[]),
+            git: Some(GitCensus {
+                population: 4,
+                with_unhittable: 3,
+                unhittable_rows: ts_set(&[
+                    "2026-09-19T07:34:00Z",
+                    "2026-09-26T07:34:00Z",
+                    "2026-07-02T00:00:00Z",
+                ]),
+                with_unmeasurable: 0,
+                unresolvable: 0,
+                uncheckable_rows: ts_set(&[]),
+                skipped_surprises: 0,
+            }),
+        };
+        let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
+        assert!(
+            note.contains(
+                "; the two instruments name 2..4 row(s) (in common .. union; ledger 3, git 3)"
+            ),
+            "the bracket is (intersection, union) with each side's own count: {note}"
+        );
+        assert!(
+            !note.contains("name 4 row(s) in common"),
+            "the intersection must not be reported as the union: {note}"
+        );
+        assert!(
+            !note.contains("name 2 row(s) in common"),
+            "and the union must not be dropped either: {note}"
+        );
+    }
+
+    /// **The two causes must not collide.** One fixture carrying a tie-shaped
+    /// singleton AND a cannot-evaluate singleton: these are the day-178 and
+    /// day-206 rows, they are different rows, and they must not produce the same
+    /// sentence. Byte-level, at the emission point.
+    #[test]
+    fn a_tie_cause_and_a_could_not_check_cause_do_not_render_identically() {
+        let tie_row = "2026-08-25T22:40:17Z";
+        let unchecked_row = "2026-09-26T07:34:00Z";
+        let count = RetrospectiveCount {
+            population: 4,
+            with_unhittable: 1,
+            unhittable_rows: ts_set(&[unchecked_row]),
+            with_unmeasurable: 0,
+            undated: 0,
+            tied_rows: ts_set(&[tie_row]),
+            git: Some(GitCensus {
+                population: 4,
+                with_unhittable: 1,
+                unhittable_rows: ts_set(&[tie_row]),
+                with_unmeasurable: 1,
+                unresolvable: 1,
+                uncheckable_rows: ts_set(&[unchecked_row]),
+                skipped_surprises: 1,
+            }),
+        };
+        let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
+        let tie_line = format!("\n  row {tie_row}: only the git check");
+        let unchecked_line = format!("\n  row {unchecked_row}: only the ledger");
+        assert!(
+            note.contains(&tie_line),
+            "the tie row is attributed: {note}"
+        );
+        assert!(
+            note.contains(&unchecked_line),
+            "the uncheckable row is attributed: {note}"
+        );
+        // Anti-vacuous: the two rows really are distinct members of the union,
+        // so a note that collapsed them into one sentence could not pass.
+        assert!(
+            note.contains(tie_row) && note.contains(unchecked_row) && tie_row != unchecked_row,
+            "{note}"
+        );
+        // The sentences differ, and each names its own cause in its own words.
+        assert!(
+            note.contains("reads a same-second timestamp tie here"),
+            "{note}"
+        );
+        assert!(
+            note.contains("COULD NOT CHECK it (its snapshot hash does not resolve in this clone)"),
+            "a check that could not run says exactly that, never 'checked; clean': {note}"
+        );
+        assert!(
+            !note.contains("only the ledger - the git check evaluated this snapshot and found"),
+            "the uncheckable row must not get the ran-and-found-present sentence: {note}"
+        );
+    }
+
+    /// **The checked-and-absent direction, its own sentence.** A ledger-only row
+    /// whose snapshot hash DOES resolve: the git check ran and found the path
+    /// inside that tree. This is the reading that must never be conflated with
+    /// could-not-check, so it is pinned on its own fixture.
+    #[test]
+    fn a_ledger_only_row_the_git_check_ran_and_cleared_says_so() {
+        let row_ts = "2026-09-19T07:34:00Z";
+        let count = RetrospectiveCount {
+            population: 2,
+            with_unhittable: 1,
+            unhittable_rows: ts_set(&[row_ts]),
+            with_unmeasurable: 0,
+            undated: 0,
+            tied_rows: ts_set(&[]),
+            git: Some(GitCensus {
+                population: 2,
+                with_unhittable: 0,
+                unhittable_rows: ts_set(&[]),
+                with_unmeasurable: 0,
+                unresolvable: 0,
+                uncheckable_rows: ts_set(&[]),
+                skipped_surprises: 0,
+            }),
+        };
+        let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
+        assert!(
+            note.contains(&format!(
+                "\n  row {row_ts}: only the ledger - the git check evaluated this snapshot \
+                 and found every surprise present inside it"
+            )),
+            "{note}"
+        );
+        assert!(!note.contains("COULD NOT CHECK"), "{note}");
+        assert!(note.is_ascii(), "{note}");
+    }
+
+    /// **The regression surface for agreeing rulers, asserted on the full
+    /// string.** Identical member sets print ONE line and no per-row causes —
+    /// byte-identical to what this pass printed before the bracket existed.
+    /// `assert_eq!` on the whole note, never a `contains`: a stray per-row line
+    /// or a changed separator would otherwise slip through.
+    #[test]
+    fn identical_member_sets_print_one_line_and_no_per_row_causes() {
+        let shared = ts_set(&["2026-08-25T22:40:17Z", "2026-09-19T07:34:00Z"]);
+        let count = RetrospectiveCount {
+            population: 6,
+            with_unhittable: 2,
+            unhittable_rows: shared.clone(),
+            with_unmeasurable: 0,
+            undated: 0,
+            // A tie row exists in the ledger, and because the sets agree the
+            // per-row causes are — deliberately — not printed at all.
+            tied_rows: ts_set(&["2026-08-25T22:40:17Z"]),
+            git: Some(GitCensus {
+                population: 6,
+                with_unhittable: 2,
+                unhittable_rows: shared,
+                with_unmeasurable: 0,
+                unresolvable: 0,
+                uncheckable_rows: ts_set(&[]),
+                skipped_surprises: 0,
+            }),
+        };
+        let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
+        assert_eq!(
+            note,
+            "unhittable: 2 of 6 post-ledger grading events carried a file first scored \
+             after the event; the git check reads 2 of 6 rows with a snapshot hash; \
+             both instruments name the same 2 row(s)"
+        );
+        assert!(
+            !note.contains("\n  row"),
+            "an agreeing pair prints no per-row causes: {note}"
+        );
+    }
+
     /// **Neither instrument names a row.** The clause is absent — byte-for-byte
     /// the pre-change sentence — which is the shape of a ledger where nothing
     /// was unhittable at all, and the case a reader could mistake for silence
@@ -690,12 +1006,14 @@ mod retrospective_tests {
             unhittable_rows: ts_set(&[]),
             with_unmeasurable: 0,
             undated: 0,
+            tied_rows: ts_set(&[]),
             git: Some(GitCensus {
                 population: 3,
                 with_unhittable: 0,
                 unhittable_rows: ts_set(&[]),
                 with_unmeasurable: 0,
                 unresolvable: 0,
+                uncheckable_rows: ts_set(&[]),
                 skipped_surprises: 0,
             }),
         };
