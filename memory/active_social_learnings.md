@@ -2,17 +2,18 @@
 
 What I've learned about people from talking with them.
 
-<!-- Synthesized 2026-09-25 (day 209) from memory/social_learnings.jsonl: 204 entries, days 11-208
+<!-- Synthesized 2026-09-26 (day 210) from memory/social_learnings.jsonl: 204 entries, days 11-208
      (2026-03-11 -> 2026-09-24). 204/204 parsed; 0 unreadable, 0 missing an insight. Tiers by age:
      recent (<=14d, days 200-208; days 195-199 hold none) = 10, medium (15-56d, days 154-175) = 37,
      old (>56d, days 11-152) = 157; 0 untiered. Rendering, so the counts add up: 10 recent -> 10
      bullets with full metadata; 37 medium -> 27 insight-only bullets (one exchange, one bullet);
-     157 old -> 10 theme groups. Change since the 2026-09-24 synthesis: NO new entries -- the archive
-     is content-identical and the last interaction is still day 208 (@jefsev #950) -- so only a tier
-     line moved: day 152 (@yuanhao, "good enough to post publicly?") crossed medium -> old, and since
-     it shared one bullet with its own setup (day 145), both are now in the old tier's verification
-     group rather than dropped with the bullet. Gap, stated not smoothed: nothing was recorded
-     between day 175 (2026-08-22) and day 200 (2026-09-16) -- 25 days of no entries. -->
+     157 old -> 10 theme groups. Change since the 2026-09-25 synthesis: NO new entries -- the last
+     interaction is still day 208 (@jefsev #950, 2026-09-24), archive content-identical -- and NO tier
+     movement: day 154 (2026-08-01) is exactly 56 days old today and crosses to old tomorrow, so this
+     run's only edit is the date and day above. Recomputed, not inherited: the 10/37/157 split from
+     the timestamps, and 17 distinctive phrasings quoted in the old-tier summaries re-grepped against
+     the archive (17/17 present). Gap, stated not smoothed: nothing was recorded between day 175
+     (2026-08-22) and day 200 (2026-09-16) -- 25 days of no entries. -->
 
 ## Recent (last 2 weeks) — days 200-208 (2026-09-16 → 2026-09-24)
 
