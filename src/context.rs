@@ -1495,4 +1495,257 @@ mod tests {
              the file's own prose rather than from a block the loader emitted."
         );
     }
+
+    // ---- #902 step 1, the CALLER half: two deliberately weak source-level
+    // guards (Day 210) ----
+    //
+    // The detector above answers "does the loader RETURN the file's content".
+    // It cannot answer "is the loader CONSULTED at all" — it calls the
+    // dir-taking seam directly, which is the same bypass a naive trust gate
+    // would sit on while leaving that detector green. These two guards cover the
+    // branches that decide whether the load happens. They are the deliberately
+    // WEAK kind this repo already uses for `connect_external_servers` and the
+    // MCP pre-flight retry: they read the SOURCE TEXT of the call sites, so they
+    // prove a call is still written down and prove nothing about whether it runs.
+
+    /// Read a source file from this crate and return its production half.
+    ///
+    /// Split at the LAST `mod tests {` rather than at the first `#[cfg(test)]`,
+    /// and that is a correction rather than a style choice:
+    /// `src/commands_spawn.rs` carries three `#[cfg(test)]` markers, two of them
+    /// on production functions, so splitting at the first would cut off the very
+    /// call site the guard below reads. (The MCP/`restricted.rs` guards can use
+    /// the first marker because `src/cli.rs` has exactly one.)
+    fn production_source(file: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join(file);
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{} is unreadable: {e}", path.display()));
+        let at = src.rfind("\nmod tests {").unwrap_or_else(|| {
+            panic!("{file} must keep its test module at the end; no `mod tests {{` found")
+        });
+        let production = src[..at].to_string();
+        // Anti-vacuous, FIRST: an empty slice satisfies every count below.
+        assert!(
+            !production.is_empty(),
+            "the production slice of {file} must not be empty"
+        );
+        production
+    }
+
+    /// Assemble a needle at runtime, so no guard below can be satisfied by its
+    /// own source text.
+    fn runtime_needle(parts: &[&str]) -> String {
+        parts.concat()
+    }
+
+    /// The body of the block whose header is `header` (the header's own `{` is
+    /// located, so pass the header without it), by brace counting. `None` if the
+    /// braces never balance — a guard that cannot read its input must not read
+    /// as clean.
+    fn block_after<'a>(src: &'a str, header: &str) -> Option<&'a str> {
+        let after_header = src.find(header)? + header.len();
+        let open = src[after_header..].find('{')? + after_header;
+        let start = open + 1;
+        let mut depth = 1usize;
+        for (i, ch) in src[start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(&src[start..start + i]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// GUARD (weak by construction, which is its point): the `!safe_mode` branch
+    /// in `src/cli.rs` still calls `load_project_context()`, and still pushes
+    /// what it returns into the system prompt, inside the non-safe-mode side.
+    ///
+    /// WHAT IT PROVES: the call is textually present inside the non-safe-mode
+    /// branch, it is the ONLY call to the loader in `src/cli.rs`, the loaded
+    /// value is still *consumed* rather than computed and dropped, and both
+    /// hatches (`--safe-mode`, and the `restricted` resolution that
+    /// `--restricted`/`YOYO_RESTRICTED` feed) still reach the flag that guards
+    /// it — that coupling is why `--restricted` silently implies safe mode.
+    ///
+    /// WHAT IT DOES NOT PROVE: that the call RUNS, that the branch is taken,
+    /// that the returned string reaches a prompt, or that `--safe-mode`'s
+    /// behaviour is right. It is a change detector over a call site, not a
+    /// behavioural test; the loader's return value is covered by
+    /// `the_evolve_loop_still_receives_its_own_project_context` above. It says
+    /// nothing at all about the spawn-side road (see its sibling guard below).
+    ///
+    /// It deliberately couples to three spellings so a rename is VISIBLE rather
+    /// than silent: the local `safe_mode`, the binding `project_context`, and
+    /// the receiver `system_prompt`. None of those is a claim that the name is
+    /// right — only that the guard cannot follow a rename it was never told
+    /// about.
+    #[test]
+    fn the_safe_mode_branch_still_consults_the_project_context_loader() {
+        let production = production_source("cli.rs");
+
+        let guard_needle = runtime_needle(&["let ", "safe", "_mode", " = "]);
+        // The header WITHOUT its brace: `block_after` locates the brace itself,
+        // and handing it a header that already ends in `{` silently slices the
+        // first INNER block instead of the branch.
+        let branch_header = runtime_needle(&["if !", "safe", "_mode"]);
+        let branch_needle = format!("{branch_header} {{");
+        let safe_mode_flag = runtime_needle(&["\"", "--safe", "-mode", "\""]);
+        let restricted_local = runtime_needle(&["rest", "ricted", " ||"]);
+        let call_needle = runtime_needle(&["load_project", "_context", "()"]);
+        let consumed_needle = runtime_needle(&["push_str(&", "project", "_context", ")"]);
+
+        // Anti-vacuous, FIRST: if one of these spellings moved, say so here
+        // rather than letting the assertions below pass over an input the guard
+        // never actually read.
+        for (label, needle) in [
+            ("the safe-mode guard line", &guard_needle),
+            ("the non-safe-mode branch", &branch_needle),
+            ("the --safe-mode flag spelling", &safe_mode_flag),
+            (
+                "the restricted source ORed into the flag",
+                &restricted_local,
+            ),
+            ("the project-context call", &call_needle),
+            ("the push of the loaded context", &consumed_needle),
+        ] {
+            assert!(
+                production.contains(needle.as_str()),
+                "ANTI-VACUOUS CHECK FAILED: {label} ({needle:?}) is not in cli.rs's \
+                 production half, so this guard would pass by never reading it. Find the \
+                 new spelling and correct this guard; do not delete the assertion."
+            );
+        }
+
+        // The guard line must still consult BOTH hatches, or one of them stops
+        // turning safe mode on and the whole road is skipped for that flag.
+        let guard_at = production
+            .find(&guard_needle)
+            .expect("the guard line was asserted present above");
+        let guard_line = production[guard_at..]
+            .lines()
+            .next()
+            .expect("a found position always has a first line");
+        for (label, needle) in [
+            ("--safe-mode", &safe_mode_flag),
+            ("the restricted source", &restricted_local),
+        ] {
+            assert!(
+                guard_line.contains(needle.as_str()),
+                "the safe-mode guard no longer consults {label}: {guard_line:?}"
+            );
+        }
+
+        // One road in this file, so a second one would be visible here.
+        let call_sites = production.matches(&call_needle).count();
+        assert_eq!(
+            call_sites, 1,
+            "src/cli.rs must reach the project-context loader exactly once; found \
+             {call_sites}. A second call site is the two-doors shape: decide which road \
+             is right before relaxing this count."
+        );
+
+        // ...and that one road is INSIDE the non-safe-mode side.
+        let branch_body = block_after(&production, &branch_header).unwrap_or_else(|| {
+            panic!(
+                "could not read the body of `{branch_header}` in src/cli.rs — its braces do \
+                 not balance, so this guard cannot tell whether the call is inside the \
+                 branch. Fix the guard, do not assume it is fine."
+            )
+        });
+        assert!(
+            branch_body.contains(&call_needle),
+            "the project-context call is no longer inside the `{branch_needle}` branch"
+        );
+        assert!(
+            branch_body.contains(&consumed_needle),
+            "the loaded context is no longer pushed into the system prompt inside the \
+             `{branch_needle}` branch — it may now be computed and dropped"
+        );
+    }
+
+    /// GUARD (weak by construction): the spawn path's OWN road to the project
+    /// context is pinned and NOT judged.
+    ///
+    /// #902's body records that `src/commands_spawn.rs` reads this context
+    /// through a second road, outside `cli.rs`'s argv branch. Read at HEAD that
+    /// is accurate: `fn spawn_project_context()` calls
+    /// `crate::cli::load_project_context()` through the pure
+    /// `spawn_project_context_with(is_safe_mode(), load)` seam, so the spawn
+    /// road honours the safe-mode GLOBAL rather than re-reading argv.
+    ///
+    /// THIS TEST TAKES NO POSITION on which road is right — whether instruction
+    /// files should be gated at all, and by which predicate, is one of the
+    /// design questions #902 holds open, and a guard that picked a side here
+    /// would foreclose it. It pins what exists so a later change to the spawn
+    /// path is VISIBLE rather than silent: the call is the only one in the file,
+    /// it lives in the wrapper function it is documented to live in, and that
+    /// wrapper is still built on the safe-mode-aware seam. It proves the same
+    /// small thing as its sibling and no more — the call is still written down.
+    #[test]
+    fn the_spawn_paths_own_context_call_is_pinned_without_a_verdict() {
+        let production = production_source("commands_spawn.rs");
+
+        let fn_needle = runtime_needle(&["fn spawn_project", "_context() -> Option<String>"]);
+        let call_needle = runtime_needle(&["crate::cli::load_project", "_context()"]);
+        let seam_needle = runtime_needle(&["spawn_project", "_context_with("]);
+        let global_needle = runtime_needle(&["crate::cli_config::is_", "safe_mode()"]);
+
+        for (label, needle) in [
+            ("the spawn-context wrapper", &fn_needle),
+            ("the loader call", &call_needle),
+            ("the pure seam", &seam_needle),
+            ("the safe-mode global", &global_needle),
+        ] {
+            assert!(
+                production.contains(needle.as_str()),
+                "ANTI-VACUOUS CHECK FAILED: {label} ({needle:?}) is not in \
+                 src/commands_spawn.rs's production half, so this guard would pass by \
+                 never reading it. Find the new spelling and correct this guard; do not \
+                 delete the assertion."
+            );
+        }
+
+        assert_eq!(
+            production.matches(&fn_needle).count(),
+            1,
+            "the spawn-context wrapper must be defined exactly once"
+        );
+        let call_sites = production.matches(&call_needle).count();
+        assert_eq!(
+            call_sites, 1,
+            "src/commands_spawn.rs must reach the project-context loader exactly once; \
+             found {call_sites}. A second road is a change to the spawn path's access to \
+             instruction files — decide it on purpose rather than by drift."
+        );
+
+        let body = block_after(&production, &fn_needle).unwrap_or_else(|| {
+            panic!(
+                "could not read the body of the spawn-context wrapper — its braces do not \
+                 balance, so this guard cannot tell how the call is wired. Fix the guard, \
+                 do not assume it is fine."
+            )
+        });
+        assert!(
+            body.contains(&call_needle),
+            "the loader is no longer called from inside the spawn-context wrapper"
+        );
+        assert!(
+            body.contains(&seam_needle),
+            "the spawn-context wrapper no longer goes through the pure seam — the \
+             safe-mode gating may have been dropped from this road"
+        );
+        assert!(
+            body.contains(&global_needle),
+            "the spawn-context wrapper no longer reads the safe-mode global, so the \
+             worker's road may no longer honour --safe-mode / --restricted"
+        );
+    }
 }
