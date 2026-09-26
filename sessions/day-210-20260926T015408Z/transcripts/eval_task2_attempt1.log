@@ -1,0 +1,194 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the diff against the task. Key claims to check:
+
+1. Tests added in src/context.rs only, plus ARCHITECTURE.md entry.
+2. STEP 1: a test `the_evolve_loop_still_receives_its_own_project_context` — the task said this was already added on Day 196 per ARCHITECTURE. The diff shows only the two new guards. So STEP 1 exists already at HEAD (verify).
+3. STEP 2: two source-level guards with runtime-assembled needles.
+4. Verify the guards actually pass — the build says tests pass. But I should verify the guard functions work correctly (e.g., `block_after` finds the right branch). Let me run just the two new tests to confirm they pass and are not vacuous.
+
+Let me check key claims:
+- Does `src/cli.rs` really have the `if !safe_mode {` branch calling load_project_context and push_str(&project_context)?
+- Does commands_spawn.rs have `fn spawn_project_context() -> Option<String>`?
+
+Let me do focused checks quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe_mode\|load_project… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The cli.rs branch: `if !safe_mode {` — and the guard's branch_header is `if !safe_mode`. Good.
+
+But wait — one thing: the guard's `branch_needle` produced from runtime parts `if !safe_mode {`. But line 2658 is `if !safe_mode {`. Good.
+
+Also `guard_needle` = "let safe_mode = " → line 2657: `let safe_mode = restricted || args...`. Contains "restricted ||"? Line 2657 has `restricted ||`. Good.
+
+Wait, but `guard_line` is the first line of production from `guard_at`, which is `let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");`. Contains both. Good.
+
+Now the empty `mod tests {` file: src/commands_spawn.rs has three `#[cfg(test)]` markers, two on production functions. Let's verify.
+
+Also STEP 1 existed already (Day 196). Let me verify it exists and passes.
+
+Also verify `production_source` splits at last "\nmod tests {" — for cli.rs, `mod tests {` — the find uses rfind("\nmod tests {"). Hmm, in cli.rs the test module is declared as `mod tests {`? Let's check. Test line 5556 is inside mod tests. Let me check the declaration formatting.
+
+Concern: `#[cfg(test)]\nmod tests {` — the rfind needle "\nmod tests {" requires the line to start exactly at column 0 with `mod tests {`. If it's indented, the needle should be "\n    mod tests {" for a nested module. Let's check.
+
+Tests pass per harness, so presumably fine.
+
+Also potential issue: the guard's `block_after` for branch_header "if !safe_mode" finds brace — the code at 2658-2662 likely:
+```
+    if !safe_mode {
+        if let Some(project_context) = load_project_context() {
+            ...
+            system_prompt.push_str(&project_context);
+```
+Wait, does `push_str(&project_context)` appear inside the branch? Line 2661: `system_prompt.push_str(&project_context);` yes.
+
+Let me just run the two new tests to confirm they pass, and check the counts. Actually the harness said tests pass. But I want to confirm the new tests aren't vacuous — e.g., the anti-vacuous check runs first. Let me run the two tests specifically (fast, targeted).
+
+Also verify STEP 1 test exists (Day 196). And verify no production lines changed in cli.rs/commands_spawn.rs (diff shown touches only ARCHITECTURE.md and src/context.rs). Confirmed from the diff.
+
+Let me run the targeted tests.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.0s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/context.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2650,2670p src/cli.rs ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait: `production_source` splits at rfind("\nmod tests {"). For cli.rs the module is at line 2954 `mod tests {` at column 0. So production = src[..at] which is lines 1..2953. But the guard asserts `call_sites == 1` for "load_project_context()" in production. Line 588 is `pub use crate::context::{list_project_context_files, load_project_context};` — that doesn't contain "load_project_context()". Line 2659 `load_project_context()`. Good, count 1.
+
+Now run the two new tests to confirm they pass and are non-vacuous. Actually let me run with a quick targeted test to see they pass. The harness says tests PASS. Let me still run to confirm the specific test names pass (fast). Build might take a while though. Let me try running the binary test filter.
+
+Actually running `cargo test context::tests::the_safe_mode` requires compilation which may be cached. Let's try with a timeout.
+
+Also I should do the claimed positive control check? The task instructs the implementer to run one; the ARCHITECTURE entry says it was run. As evaluator, I could verify at least that the guard isn't vacuous — but I shouldn't modify code. I can do a read-only sanity check: verify that the guard's assertions actually hold on real source (which running the test does).
+
+Let me run the tests.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 550 cargo test --lib con… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 550 cargo test --lib -- … ✓ (149ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 550 cargo test --bin yoy… ✓ (165ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All three pass. Now the diff adds tests only — no production change. Task asked for:
+- STEP 1: test that loads repo root's context. Already existed (Day 196) — verify it's there and does what's described. It's at line 1433, and ARCHITECTURE says it was added Day 196. The task says "verify those claims by reading, then add only what is missing". The diff's implementer did not re-add it; correct.
+
+Wait — but the task said STEP 1 is "the load-bearing half" and to add a test with the four assertions. If it already exists at HEAD, that's fine — the task said verify then add only what's missing. But let me confirm the existing test matches the task spec: uses CARGO_MANIFEST_DIR, asserts CLAUDE.md label + stable substring + anti-vacuous. The ARCHITECTURE entry describes it. Let me quickly read it.
+
+- STEP 2: two source-level guards. Done (context.rs) with runtime needles, block_after brace counting, doc comments stating limits, pins spawn path without verdict.
+
+Task said "Max 3 source files; this task should touch one (src/context.rs), plus ARCHITECTURE.md." Diff touches exactly src/context.rs + ARCHITECTURE.md. Good.
+
+Now check for the two guards' correctness — is `the_spawn_paths_own_context_call_is_pinned_without_a_verdict` asserting fn signature `fn spawn_project_context() -> Option<String>`? Let me look at commands_spawn.rs around 488-520 to confirm the guard reads the right body (block_after with header "fn spawn_project_context() -> Option<String>"). Wait: block_after finds the header then the next `{`. For `fn spawn_project_context() -> Option<String> {` the next `{` is the function body open. Good.
+
+But hold on — the guard's `fn_needle` is `fn spawn_project_context() -> Option<String>`. And there's also `spawn_project_context_with`. The count assertion: `production.matches(&fn_needle).count() == 1`. Fine since "_with" doesn't match.
+
+Let me quickly read the existing STEP-1 test to confirm it satisfies the task's STEP 1 spec.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:1390..1500 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+STEP 1 existing test satisfies the spec. The diff adds STEP 2 guards.
+
+Now, evaluator concerns: the task said STEP 1 tests should assert the returned string contains "both the file label `CLAUDE.md` and a stable substring of CLAUDE.md's real text". The existing test asserts provenance `-BEGIN CLAUDE.md]` (file label) and markers (stable substrings). Good.
+
+Now one thing: the task also said the guard should assert the call is still inside the non-safe-mode side and the needles assembled at runtime. Done.
+
+Potential issue: `production_source` reads with CARGO_MANIFEST_DIR, uses rfind("\nmod tests {"). For cli.rs, the test module line is `mod tests {` at column 0? Let me verify - grep showed `src/cli.rs:2954:mod tests {` — the grep output shows no leading whitespace, and the grep pattern was `mod tests` so line starts with "mod tests {". Good.
+
+But wait — for context.rs itself, `mod tests {` at 444 col 0. But context.rs isn't read by production_source. Fine.
+
+Hmm, but there's a subtlety: in cli.rs, is there any other occurrence of "\nmod tests {" after 2954? rfind gives the last. Fine.
+
+Another subtlety: in cli.rs, the string "mod tests {" might appear inside a string literal or doc comment after 2954? Unlikely.
+
+Also potential problem: `block_after(&production, &branch_header)` where branch_header = "if !safe_mode". It finds the FIRST occurrence in production. Is there any earlier occurrence of "if !safe_mode" in cli.rs? Line 2658 is likely the only one. If there were an earlier occurrence (e.g., in a comment), the guard could read the wrong block. Let me check.
+
+Also `guard_needle` = "let safe_mode = " — find first occurrence. Check for earlier occurrences.
+
+Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "if !safe_mode\|let safe…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 260,280p src/commands_spa… ✓ (6ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirms: only one occurrence each of the cli.rs needles. The spawn module has `#[cfg(test)]` at 270, 463, 2434 — and `#[cfg(test)]` at 2434 followed by `mod tests {` at 2435. production_source splits at rfind("\nmod tests {") → at 2435, so production includes the spawn_project_context at 508. Good — the described correction is accurate.
+
+Wait, but the guard for commands_spawn asserts needle `crate::cli_config::is_safe_mode()` — present at line 512? It reads `spawn_project_context_with(crate::cli_config::is_safe_mode(), &|| {`. Yes.
+
+And seam needle "spawn_project_context_with(" — appears twice in production? Once at definition (line 488 `pub(crate) fn spawn_project_context_with(`) and once at the call at 509. The guard asserts `body.contains(&seam_needle)` within the fn body — body is spawn_project_context's body which contains the call. Fine. Also `fn_needle` count == 1: "fn spawn_project_context() -> Option<String>" appears once. Good.
+
+But hold on: does the guard assert seam count? No, only fn count and call count. Fine.
+
+Now everything checks out. Tests pass. No production change. Docs: ARCHITECTURE.md updated in same commit. No user-facing behavior change → doc_sync N/A.
+
+forgotten_touchpoints: no new definitions in production; the new test helpers (production_source, runtime_needle, block_after) are all consumed by the two tests. `block_after` used twice, `runtime_needle` used, `production_source` used twice. No dead code (tests compile green anyway).
+
+Product surface: no production change; task kind product but no product surface touched. N/A? The diff touches no product surface → N/A legal.
+
+Hmm, "product_surface: PASS or FAIL or N/A: N/A only if the diff touches no product surface". Correct — N/A.
+
+intent_alignment: PASS.
+
+One thing to double-check: task said "Do not re-add the name-list guard" — done. And "assert nothing about which is right" for spawn — done.
+
+Also the task asked the implementer to verify #902's line numbers claim; the ARCHITECTURE entry says verified. Fine.
+
+Potential nitpick: the task said STEP 2 guard should locate the safe-mode guard and assert the call is inside the non-safe-mode side — done, plus consumption and both hatches. Also mentions `src/cli.rs` ~:2659 which matches.
+
+I'm confident: PASS.
+
+Write the verdict.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.1s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 28s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS
+
+• **intent_alignment: PASS** — STEP 1's loader detector already existed at HEAD and was correctly not duplicated; the diff delivers STEP 2's two weak, runtime-needle source guards exactly as specified (brace-counted block_after that returns None on unbalanced braces, anti-vacuous assertions first, doc comments stating the limits, spawn road pinned without a verdict).
+• **forgotten_touchpoints: PASS** — all three new test helpers have consumers in this diff; the two new tests pass by name (`3 passed; 5799 filtered out`); no production definitions added.
+• **doc_sync: N/A** — tests only; ARCHITECTURE.md register entry was updated in the same commit.
+• **product_surface: N/A** — no production line moved; --safe-mode, the cli.rs argv branch, and both spawn call sites are untouched.
+
+I verified the needles against real source: cli.rs:2657-2662 has exactly one load_project_context() call inside if !safe_mode { with system_prompt.push_str(&project_context), and commands_spawn.rs:488-514 has the single spawn_project_context() call routed through the spawn_project_context_with(crate::cli_config::is_safe_mode(), …) seam.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

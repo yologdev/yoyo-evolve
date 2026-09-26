@@ -1,0 +1,1931 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the task-scope files and the ARCHITECTURE.md entry.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_unhittab… ✓ (2ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read the source file, especially the relevant functions.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn \|const \|struct \|e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "retrospective\|Union\|u… ✓ (5ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs:380..800 ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs:480..570  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs:615..745 ✓ (1ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me read the retrospective_note function and surrounding (lines 792-890).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs:784..904 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I understand the current state. The note prints:
+- counts for ledger, git
+- "N row(s) in common, X only the ledger and Y only git" or "both instruments name the same N row(s)"
+
+Missing per the task:
+1. The count as a **bracket**: intersection .. union, plus each set's own count. Currently only "common / ledger_only / git_only" is printed; union is not.
+2. One line per row in the union but not the intersection, naming the instrument(s) that attributed it AND the cause:
+   - git-only row: ledger missed it; if the same-second tie can be observed, name it; if not, print the weaker true sentence.
+   - ledger-only row: distinguish "git evaluated it and found it present before the snapshot" from "git could not check it" (no resolvable hash in a shallow clone).
+
+So we need per-row causes. To render per-row causes, we need to know for each row in the union-not-intersection:
+- which instrument(s) attributed it (by construction: the set it's in)
+- the cause.
+
+For a git-only row (in git.unhittable_rows, not in ledger.unhittable_rows):
+- The ledger join missed it. Potentially a same-second timestamp tie: the ledger join test is `birthday > row_ts` (strict), while the git check found the path absent at the snapshot. If the birthday equals row_ts exactly, that's a same-second tie — the ledger missed it. But we can't observe that from RetrospectiveCount alone (we'd need the birthday data). The task says: "If you can observe the same-second timestamp tie from the data, name it. If you cannot observe the cause, do not invent one — print the weaker true sentence ('attributed by the git check only; the ledger join missed it') and leave it."
+
+Can we observe it? The ledger row's `unhittable_rows` is just a set of ts. We'd need per-row data: for the git-only row ts, which of its surprises has first_scored == row ts exactly. Hmm, that's plausible to compute. But that requires adding a data field. Let me think about scope — could be a lot.
+
+Actually, we could compute this in the census: for each row in the git set that isn't in the ledger set, we need to know the cause. The cause "same-second tie" would be: some surprise in that row has first_scored == row.ts exactly (so ledger's strict `>` failed while git found it absent). Hmm, but the git-only condition is that the ledger join found no member with birthday > row_ts, but git found a member absent at the snapshot hash. If gift finds absent, then the path existed after the snapshot. So the row joined: birthday > row_ts should hold...unless the timestamps tie.
+
+To observe it we'd need the ledger's per-row detail. Adding this to the pure struct is feasible: e.g. add to RetrospectiveCount a `ledger_tie_rows: BTreeSet<String>` for rows where some surprise's birthday == row.ts exactly. That's an extra field, computed in retrospective_unhittable — we have the data there.
+
+For the git-only rows that don't have a tie, the cause can't be named → print the weaker sentence.
+
+For a ledger-only row (in ledger set, not in git set): causes:
+- git check evaluated the row and found the path present before the snapshot (i.e., its hash resolved and no surprise was absent) → "checked and found hittable" or similar... Hmm. Actually if git evaluated and found nothing absent, then git says all surprises existed at the snapshot, so the path was not new. That is a genuine disagreement between instruments (different boundaries: row.ts vs snapshot hash).
+- git could not check it (hash doesn't resolve) → "could not check".
+
+So we need per-row resolvability. GitCensus has `unresolvable: u32` count but not the identities. To name per-row causes for ledger-only rows, we need a set of row identities whose hash didn't resolve.
+
+Hmm. This is a fair amount of new data. Let's design carefully but minimally.
+
+Approach: keep the two readers as the only instruments. Add:
+
+To `RetrospectiveCount`:
+- `ledger_tie_rows: BTreeSet<String>` — rows (ts) where at least one surprise's first-scored birthday equals the row's ts exactly (the same-second tie the strict `>` misses). Wait, careful: the ledger join's unhittable test is `birthday > row_ts`; a tie means `birthday == row_ts`. Under a tie, first_scored_age returns Some(birthday) equal to row_ts. So yes observable.
+
+Hmm, but actually there's another subtlety: is the tie the actual cause? The git check says the path did not exist at the snapshot hash, i.e. the path was created after the snapshot. If the path's first-scored birthday == row.ts, then the ledger join says "not after" — the tie. That's coherent. But careful: the row's snapshots were graded... whatever. We name it as the observable cause; if a member exists with birthday == row_ts, we can say "a first-scored stamp equal to the row's own ts". That's honest — we observed it.
+
+To `GitCensus`:
+- `unresolvable_rows: BTreeSet<String>` — the ts of rows whose snapshot hash doesn't resolve. Then to name rows.
+
+Hmm, wait. But which population? `retrospective_git_census` iterates rows in the same population (post-founding, placeable). Let me read it fully.
+
+Let me read lines 567-616.
+
+Also we need to double-check: for a ledger-only row, is the row necessarily in git population? If the row has no git_hash at all, then the git instrument never saw it. Then ledger-only would be due to "the row carries no snapshot hash" — the git check could not check it (nothing to ask). That's a third cause candidate. Actually `git.population` counts rows with a hash; a row with no hash is excluded entirely. So a ledger-only row may be:
+(a) no git_hash → the git check has nothing to ask (could not check)
+(b) git_hash unresolvable → could not check
+(c) git_hash resolves, and the path was present → checked and found present
+
+All three are "could not check" vs "checked". Let's implement carefully: for ledger-only row ts, look up whether it's in git's unresolvable/no-hash set vs evaluated.
+
+We could store in GitCensus:
+- `unchecked_rows: BTreeSet<String>` — rows the git check could not evaluate at all (no hash, or hash unresolvable). Hmm, no-hash rows aren't in the git population, so we'd need to include them. But the task says for a row only the ledger attributes: distinguish "the git check evaluated it and found it present before the snapshot" from "the git check could not check it (no resolvable snapshot hash in a shallow clone)". So we can just define a set of row-ts that git could not check, including no-hash rows. Since the ledger-only rows are identified from the ledger set, we can check membership in a git `could_not_check_rows` set.
+
+Simplest: add to GitCensus a `could_not_check_rows: BTreeSet<String>` containing ts of every row in the ledger population-ish that the git instrument could not evaluate (no hash, or unresolvable hash). Hmm, but "no hash" rows are excluded from git population deliberately. Adding them to a set is fine and cheap; it's data, not a reading.
+
+Actually careful with attribute: what if the same ts appears twice (two rows with same ts, one with hash and one without)? Sets of ts are already used for identity (unhittable_rows is a BTreeSet<String> of ts). So identity is the ts; collision risk pre-exists. Keep the same convention, and note it.
+
+Hmm, wait. Actually let me reconsider: is the ts a good identity? Day 209's code uses ts as row identity, so I'll follow. I should note the limit.
+
+Now the output format. Requirements:
+
+1. The count as a bracket: intersection..union, plus each set's own count.
+2. One line per row that is in the union but not intersection, naming instrument(s) + cause.
+
+Current output (single line, semicolons). The task says "one line per row". The note is returned as a single String; can contain \n. But byte-identity requirement: "identical sets -> one line, no per-row causes, byte-identical to today's output, asserted with assert_eq! on the full string". So today's output string must be preserved exactly for the identical-sets case. Today's identical-sets output: "...; both instruments name the same N row(s)". Hmm — but requirement 1 says the count should be a bracket intersection..union plus each set's own count. If we change the string in the identical case, then "byte-identical to today's output" fails.
+
+Hmm. Let me re-read:
+
+"**Near-miss / byte-identity**: identical sets -> one line, no per-row causes, byte-identical to today's output, asserted with `assert_eq!` on the full string (not `contains`). This is the regression surface for every run whose rulers agree."
+
+Hmm, "byte-identical to today's output" conflicts with adding a bracket. Unless... the bracket is printed in the disagreement case only? But requirement 1 says "the count as a bracket, not a single number: intersection .. union ... plus each set's own count" — and the Day-209 lesson is "an agreeing total is the flattest thing two rulers produce", so printing intersection..union for agreement is also fine (3..3) but changes bytes.
+
+Hmm. This is a conflict in the task spec. Which to honor? The current code already prints "both instruments name the same N row(s)" for identical sets — that's already a member-set equality claim, so the current behavior isn't "flattened". The bracket is interesting when they differ.
+
+Option: print the bracket always (changing the identical case bytes) and treat "byte-identical to today's output" as applying to the case where the git census is absent (no hashes at all) — the regression surface mentioned earlier in the code ("a ledger whose events carry no snapshot hash reads exactly as it did before this pass"). Hmm, but the task's test says "identical sets -> one line, no per-row causes, byte-identical to today's output".
+
+Hmm. But careful: "today's output" — today being Day 210, before my change. The identical-sets case for a ledger with hashes currently prints "...the two totals... both instruments name the same N row(s)". If I add a bracket, that string changes.
+
+Let me think about which is the true regression surface. The tests in the repo (table tests) pin exact strings. Let me look at the test file to see what's pinned. Line 1339: `the_note_stays_quiet_when_both_instruments_agree`. Let me read the tests.
+
+Actually, I think a defensible resolution: keep the identical-sets branch byte-identical (as the task explicitly demands, with assert_eq!), and add the bracket in the differing case. But requirement 1 says the count should be a bracket... Hmm, "the count as a bracket, not a single number: intersection .. union (so a disagreement can never render as agreement...)".
+
+Alternative resolution: print the bracket in BOTH cases but preserve byte-identity by... no.
+
+Hmm, hold on. Let's reconsider: maybe "byte-identical to today's output" refers to today's *internal* output for the identical case being the "same N row(s)" sentence. If I add the bracket, the identical case becomes e.g. "; both instruments name the same 4 row(s); 4..4". That would break the task's own test requirement.
+
+Let me consider: maybe the bracket is defined as intersection..union where union is over the *union minus intersection* — for identical sets, intersection == union, so the bracket is degenerate "4..4" — printing it always is redundant for agreement.
+
+I think the cleanest reading honoring both: print the bracket only when the sets differ (which is exactly when a disagreement could render as agreement — the failure mode named). In the agreement case the existing sentence ("both instruments name the same N row(s)") is already a member-set equality claim and stays byte-identical. And I'll write that decision explicitly in the code comment + ARCHITECTURE entry, naming the conflict with the literal "bracket" reading and why I chose byte-identity.
+
+Hmm, but the task explicitly says requirement 1: "the count as a bracket, not a single number: intersection .. union (so a disagreement can never render as agreement — the Day-209 lesson, printed), plus each set's own count." And test requirement "Bracket shape: when the sets differ, assert the reported pair is (intersection, union) and is not two equal numbers." — that test only requires the bracket when the sets differ! Good. So the test spec itself scopes the bracket to the differing case. And the byte-identity test is for identical sets. So my reading resolves the conflict consistently: bracket printed in the disagreement branch.
+
+Wait, but requirement 1 says the bracket ensures "a disagreement can never render as agreement". In the agreement case, we print "both instruments name the same N row(s)" which is a genuine identity claim. Fine.
+
+Hmm, but should I also include each set's own count in the disagreement branch? "plus each set's own count" — the sets' own counts are already printed earlier in the line ("{} of {} post-ledger grading events..." and "the git check reads {} of {} rows with a snapshot hash"). Yes, both sets' counts are already in the line. So the bracket adds intersection..union. Good, note that in the comment.
+
+Now the per-row lines. Format: currently the note is one line; adding per-row lines means newlines in the returned string. Requirement: "identical sets -> one line". So in disagreement, multiple lines are acceptable. But is newline OK for the caller? Let's check the call site: `src/commands_risk.rs:718-721` prints it. Let me check how it's printed (eprintln vs print). The task says do not touch commands_risk.rs. If it uses `eprintln!("{}", note)`, a multi-line note works fine. Let me check.
+
+Actually wait — maybe safer to keep it one line with semicolon-separated per-row clauses: "attributed by the git check only (…); attributed by the ledger only (…)". The task says "one line per row", which suggests newline-separated. Multi-line could be awkward if the caller prefixes. Let me check the call site.
+
+Let me read commands_risk.rs:700-740 and the test file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,740p' src/commands_r…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable_tests.rs ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note: the note is printed via `println!("  {note}")` — a multi-line note would only be indented on the first line. Hmm. That's a cosmetic concern. The task says "one line per row". Options: multi-line with "\n  " separators would look better, but the note doesn't know the indent.
+
+Hmm. Given the caller prints "  {note}", a newline inside the note renders without indentation for subsequent lines. That's acceptable but slightly ugly. Alternatively keep everything on one line, semicolon-separated per-row clauses ("; row <ts>: ..."), which preserves the single-line note convention ("one line" from the identical-sets test requirement... well, that requirement is about the identical case).
+
+The task: "one line per row that is in the union but not the intersection, naming the instrument(s) that attributed it AND the cause". "one line per row" strongly implies separate lines. I'll use newline separators. But then the caller's `println!("  {note}")` gives inconsistent indentation. I could use "\n  " (two-space) inside the note to match the caller's indent — but that hardcodes the caller's presentation into the composer. Hmm, does any other composer in this repo emit multi-line notes? Let me check how other notes handle it. E.g., `collision_guard_skipped_message`... it returns a single message.
+
+Let me check whether the repo has a precedent of multi-line note composer. Search for `push_str("\\n` in src.
+
+Actually, let me keep it simple and defensible: emit newline-separated per-row clauses with a two-space indent on continuation lines matching the `/risk` call site's `"  {note}"`. Hmm, but that couples. Alternatively no indent: "\n" plain. The caller prints "  " + first line; subsequent lines flush left. Actually many CLIs do that. Hmm.
+
+Let me look for precedent: does any function return a multi-line note printed by commands_risk.rs? Let me grep for `\n` inside format! in commands_risk*.rs.
+
+Let me check quickly.
+
+Actually, time budget. Let me decide: use "\n  " — wait, safer: let me check the plain-output convention. is_plain_output strips glyphs/em dashes. Indentation is fine in plain.
+
+Hmm, I want to minimize risk of a reviewer objection. I think the cleanest is: keep the summary line as-is (single line up to the bracket), then append per-row lines separated by "\n" with a two-space indent, matching the call site. I'll document that the composer emits the continuation indent matching its one call site... Actually no: better, `println!("  {note}")` — I can't change the caller ("Do not touch src/commands_risk.rs"). So I'll indent continuation lines by two spaces inside the composer and say so explicitly in a comment: the note's one call site prints `"  {note}"`, so continuation lines carry the same two spaces to stay aligned; if that call site changes its indent the note is still readable, just unaligned.
+
+Hmm, actually maybe simpler and less coupled: use "\n" alone and accept flush-left continuation. I think alignment matters for readability of a per-row list. I'll go with two-space indent and document it.
+
+Hmm, wait. Let me reconsider one more time whether to put per-row causes on separate lines at all vs. semicolon-joined on the same line. The task's test spec: "identical sets -> one line, no per-row causes, byte-identical" implies non-identical sets → more than one line ("one line" as the distinguishing feature of the agreeing case). Yes → newlines.
+
+Now, what data do I need?
+
+For per-row cause classification of rows in union \ intersection:
+
+Case A: row only the git check attributes (git.unhittable_rows - ledger.unhittable_rows).
+  Cause candidates:
+  - "same-second timestamp tie": observable if the row has a surprise whose first-scored birthday == row.ts exactly (the ledger's strict `>` misses it). We can compute this in `retrospective_unhittable` → add `tie_rows: BTreeSet<String>`.
+  - otherwise: unobservable → weaker true sentence "attributed by the git check only; the ledger join missed it".
+
+Hmm, wait. Is a tie really the only observable cause? Another cause: the ledger join's `first_scored_age` returned None (unmeasurable) for the path — e.g., no ledger entry for that surprise at all. Then the row wouldn't fire in the ledger join even though the file is genuinely new. That IS observable: if the git-only row had at least one member that was unmeasurable in the ledger join... Hmm, but `with_unmeasurable` is a row-level count already; we know the row-level `unmeasurable` flag. Should we name that cause? The task says: "a row only git attributes: the ledger join missed it. If you can observe the same-second timestamp tie from the data, name it. If you cannot observe the cause, do not invent one".
+
+Note: if the ledger join had an unmeasurable member, would with_unhittable fire? Unmeasurable means first_scored_age = None → the member is not counted as unhittable. If also no member is strictly later, the row doesn't fire → git might attribute it → git-only. So a second observable cause is "the join found no ledger record for a member" (unmeasurable). Hmm, but does the row that has both an unmeasurable member and git-unhittable mean the unmeasurable explains it? Not necessarily — the unmeasurable member may not be the one git found absent. But we can't connect per-member here. Actually we could: for the git-only row, we know its surprises; we know which are absent at the hash (git probes) but git census only returns sets. Hmm.
+
+Keep scope tight: the task names exactly one observable cause for the git-only direction (the same-second tie), and explicitly says name it if observable else print the weaker sentence. I'll implement the tie. But hmm — "if you can observe the same-second timestamp tie from the data". Do we have the data? Yes: in `retrospective_unhittable` we have `first_scored` map and the row. So add `tie_rows`.
+
+But hold on — is the tie actually the cause of the disagreement on that row? If a row has one member with birthday > row_ts and one member with birthday == row_ts... then the ledger join WOULD fire (first member), so the row wouldn't be git-only. For the row to be git-only, NO member has birthday > row_ts, but at least one member has birthday == row_ts (tie) — that's exactly the observable. Good, so the tie is sufficient as an observable: "every member's first-scored stamp is at or before the row's own ts; at least one is exactly equal". I can name "a same-second tie" honestly.
+
+Wait, actually the day-178 case per the task: "Day 178 is a same-second timestamp tie the ledger join loses". So yes, this is the intended observable.
+
+Case B: row only the ledger attributes (ledger.unhittable_rows - git.unhittable_rows).
+  - if the git check could not check it (no hash, or hash unresolvable) → "could not check".
+  - else → git evaluated it and found the members present at the snapshot → "the git check checked it and found the surprise(s) present at the snapshot hash" (checked-and-different-boundary). Hmm — careful. If the git check evaluated the row and found some members absent it would be in git's set. So being ledger-only and checked means all members were present at the snapshot hash, yet the ledger join says the file was first scored after the event. That's a genuine cross-instrument disagreement (different boundary: row ts vs snapshot hash), and content-wise: the file existed at the snapshot but was first scored later (the scoring ledger is younger than the file). Wait no: git's `present` = the path existed at the snapshot hash. If present, then the file existed at snapshot time; but the ledger says first scored after the row's ts (event time). So the file existed before it was first scored by the risk scorer — consistent, not contradictory. It just means the git instrument says "hittable" (existed) and ledger says "unhittable in the scoring sense". Hmm, semantic subtlety. The honest sentence: "attributed by the ledger join only; the git check evaluated it and found the surprise(s) present at the snapshot hash" — i.e., checked and found present-before-the-snapshot (not could-not-check).
+
+  The task explicitly says: distinguish "the git check evaluated it and found it present before the snapshot" from "the git check could not check it". Good.
+
+So I need to know for a given row-ts whether git could check it. Data: the set of row-ts where the git instrument could not check (no hash, or unresolvable). Let me define in GitCensus: `unchecked_rows: BTreeSet<String>` — "ts of every row the git check could not evaluate at all: no snapshot hash, or a hash that does not resolve". Hmm but rows with no hash are not in git.population; adding them is fine — it's a data fact, not a population count.
+
+Hmm — careful with a subtlety: git.population counts rows with hash and placeable ts; rows with no hash but placeable ts and post-founding. For those, unchecked_rows gets the ts. Good.
+
+Careful second subtlety: `unchecked_rows` could contain a ts that also appears as a checked row if two rows share a ts. Pre-existing identity collision limit; note it.
+
+Now, what about a ledger-only row that the git check DID evaluate but the row's members weren't probed because... `present` map is keyed by hash:path; probe_git_for only probes rows with placeable ts post-founding and non-empty hash. retrospective_git_census — let me read it to see how it uses `present`.
+
+Let me read lines 567-615 fully.
+
+Also need to check: does GitCensus's checked-row determination include rows where hash resolves but a member's `present` entry is missing (defaulting)? Let me read.
+
+Then implement:
+
+Struct changes:
+```rust
+pub(crate) struct RetrospectiveCount {
+    ...
+    /// Row `ts` values where the ledger join saw a member first scored at EXACTLY the row's own ts (a same-second tie, which the strict `>` cannot credit) and no member strictly later...
+    pub(crate) tied_rows: BTreeSet<String>,
+}
+```
+Hmm — do I want "tie rows" restricted to rows where no member is strictly later? For attribution purposes, git-only rows are those not in unhittable_rows; if a row has a tie and is not in unhittable_rows then it's git-only possibly. Just collect ties for any row that has a member whose birthday == row_ts. Since if the row is in unhittable_rows it won't be a git-only row, the extra data is harmless.
+
+```rust
+pub(crate) struct GitCensus {
+    ...
+    /// Row `ts` values the git check could not evaluate at all — no snapshot hash, or a hash that does not resolve in this clone.
+    pub(crate) unchecked_rows: BTreeSet<String>,
+}
+```
+
+Hmm: also for the git-only rows, do we need to know whether the git check could name the members? No.
+
+Now formatting. In `retrospective_note`, the Counted branch with c.git == Some(git):
+
+```rust
+let ledger_only = c.unhittable_rows.difference(&git.unhittable_rows).cloned().collect::<BTreeSet<_>>();
+let git_only = git.unhittable_rows.difference(&c.unhittable_rows).cloned().collect::<BTreeSet<_>>();
+let common = c.unhittable_rows.intersection(&git.unhittable_rows).count();
+```
+if both empty → "both instruments name the same {common} row(s)" (byte-identical).
+else → bracket + per-row lines:
+
+```rust
+let union = common + ledger_only.len() + git_only.len();
+note.push_str(&format!("; the two instruments name {common} row(s) in common, {ledger_only} only the ledger and {git_only} only git"));
+note.push_str(&format!("; together they bracket {common}..{union} row(s)"));
+```
+Hmm. "the count as a bracket, not a single number: intersection .. union, plus each set's own count". Let me craft: 
+
+"; the two instruments bracket 3..5 row(s) (3 in common, 1 only the ledger, 1 only git)"
+
+That contains intersection..union AND each side count. Nice and compact. But careful about the "each set's own count" — each set's own count is printed earlier in the note (ledger: "N of M post-ledger grading events", git: "the git check reads N of M"). Hmm, actually "each set's own count" might mean the size of each instrument's own unhittable set. The ledger's own count is `with_unhittable` printed earlier, git's is `git.with_unhittable` printed earlier. So they are printed. I'll mention in a comment that the two sets' own counts are already on the line above.
+
+So the disagreement branch replaces the current "the two instruments name {common} row(s) in common, {ledger_only} only the ledger and {git_only} only git" sentence with the bracket version? Careful — there might be existing tests pinning that exact sentence. Let me check the test file for "in common". Let me grep tests.
+
+Then per-row lines:
+
+```rust
+for ts in &git_only {
+    let cause = if c.tied_rows.contains(ts) {
+        "a first-scored stamp equal to its own timestamp (a same-second tie the strict 'after' test cannot credit)"
+    } else {
+        "the ledger join missed it"
+    };
+    note.push_str(&format!("\n  row {ts}: attributed by the git check only; {cause}"));
+}
+```
+Hmm wording. Task's weaker true sentence: "attributed by the git check only; the ledger join missed it". And for tie: name the tie. Let me write:
+
+- tie: "attributed by the git check only; the ledger join missed it (a member's first-scored stamp ties the row's own timestamp second for second, which the strict after-test cannot credit)"
+- no tie: "attributed by the git check only; the ledger join missed it; cause unknown from the ledger data, not guessed"
+
+Hmm, "cause unknown ... not guessed" — maybe simpler: "attributed by the git check only; the ledger join missed it (cause not observable from the ledger data; not guessed)". That's honest and matches "do not invent one".
+
+For ledger_only:
+```rust
+for ts in &ledger_only {
+    let cause = if git.unchecked_rows.contains(ts) {
+        "the git check could not check it (its snapshot hash does not resolve in this clone, or the row carries none)"
+    } else {
+        "the git check evaluated it and found the surprise(s) present in the snapshot tree"
+    };
+    note.push_str(&format!("\n  row {ts}: attributed by the ledger join only; {cause}"));
+}
+```
+
+Careful: "could not check" must never read as "checked; clean". The wording "could not check it" is explicit.
+
+Hmm, but the two sub-causes within unchecked (no hash vs unresolvable hash) are distinguishable in data; should I split? The task says name "the git check could not check it (no resolvable snapshot hash in a shallow clone)". A row with no hash at all is a different fact (pre-Day-165 row). Being precise is cheap and honest:
+
+if the row has no hash at all → "the git check could not check it at all (the row carries no snapshot hash)". Hmm, but the set only holds ts values; can't distinguish. I could keep two sets: `no_hash_rows` and `unresolvable_rows`. Hmm, but that's more fields. Since git.unresolvable counts only hash-carrying rows, I could add a separate set. Let me think about scope/budget: it's cheap. But is it worth it? The precision is good: "could not check" with the reason. I'll add one set `unchecked_rows` with reason baked? Can't bake reasons into a BTreeSet<String>. 
+
+Alternative: store `unchecked_rows: BTreeMap<String, GitUnchecked>` where GitUnchecked is an enum { NoHash, Unresolvable }. That's fine and pure. Hmm, but then PartialEq/Eq derive fine.
+
+Simpler: two sets. `unchecked_no_hash_rows`, `unchecked_unresolvable_rows`. Hmm, naming. I'll do a single enum-keyed map? Let me keep it minimal: one field `unchecked_rows: BTreeSet<String>` and, for the message, name both possibilities: "the git check could not check it (no resolvable snapshot hash for the row in this clone)". Is that accurate for a no-hash row? "no resolvable snapshot hash for the row" — true (it has none, so none resolves). It's a bit loose. Hmm, "could not check" honesty is about not reading as clean; either phrasing keeps that.
+
+Honestly, distinguishing is better and cheap: I'll use a map from ts to a small reason enum. Let me decide: `pub(crate) struct GitCensus { ..., unchecked_rows: BTreeMap<String, UncheckedReason> }` with
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UncheckedReason { NoSnapshotHash, HashDoesNotResolve }
+```
+
+Then message: match reason → "the row carries no snapshot hash" / "its snapshot hash does not resolve in this clone". Preceded by "could not check". 
+
+Now also requirement: "Do not hardcode this plan's day numbers as a fixture expectation... If the re-measured sets are identical, the singleton rows disappear and the honest output is one line — report that, do not manufacture a disagreement."
+
+So I should re-measure at HEAD with the real ledgers. Let me try running the actual `/risk` retrospective against the repo's real data — is there a binary? `cargo run` would be heavy. Maybe there's a test or I can write a quick check. Actually the DREAM's claim: git check names days 177,178,202,203; ledger names 177,202,203,206. Let me verify by running the actual code. I could add a temporary test that prints... but tests can't easily read repo files? They can via std::fs with paths relative to CARGO_MANIFEST_DIR. Actually `retrospective_unhittable_at` takes paths; I can write a quick throwaway test that prints the note, run `cargo test -- --nocapture`, then delete it. That's a legit measurement. Or build the binary and run `yoyo risk --retrospective`? The /risk command is REPL. Hmm. Simplest: a temporary #[test] that calls retrospective_unhittable_at with the repo's ledger paths and prints the note + sets. Let me do it in a scratch test file? "No new files" — but temporary measurement files must be deleted before commit. Risky. Better: add the test into `_tests.rs` temporarily and remove it after? Hmm, but then re-measure needs `git_hash` probing = real git subprocess calls. That's fine.
+
+Actually, maybe simpler: I can compute the ledger-join sets from the ledger files directly with a small Rust test... still needs to run Rust. Let me just add a temporary test in the existing tests file, run it with --nocapture, note the output, then remove it. That's within the rules if I remove before commit. Let me plan to do that after implementing, since the note itself will print rows.
+
+Actually — an even better approach: my new note prints the bracket and per-row causes. So I can just write the temp test to print the note, and that *is* the re-measurement. Good — one step.
+
+Now: does the union/intersection data suffice for the per-row cause at the real data? For day 206 (git cannot evaluate — hash unresolvable) → ledger-only with "could not check". For day 178 (git-only, tie) → tie cause. 
+
+Now implementation details in retrospective_git_census. Let me read it.
+
+Also check `retrospective_unhittable` needs the tie set: for each row (post-founding, placeable), for each path, `first_scored_age(path, first_scored, founding)` → Some(birthday). If birthday == row_ts → tie. Record `out.tied_rows.insert(row.ts.clone())`.
+
+Hmm wait: is `first_scored_age` returning Some for paths in the founding batch? Let me check its signature/behavior: "founding-batch exclusion (a founding-batch path is unknown, never unhittable)" → returns None for founding batch. Fine.
+
+Now let me read the remaining relevant code: retrospective_git_census body (567-615), first_scored_age, and the tests in the 500-709 region for exact pinned strings.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 22.6s (2 ✓)
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs:567..617  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "first_scored_age" -A 25… ✓ (1ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Excellent — the file already has a `ties` field in `UnhittableCount` (the live path) and a comment naming the day-178 row: `src/gasp_cli.rs`, event ts `2026-08-25T22:40:17Z`. Great — the tie is observable and the repo already knows how to detect it (in the live path). Let me look at how the live `ties` is computed in `count_unhittable_surprises`.
+
+Let me read lines 108-200 and 190-245.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs:106..226  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs:192..262 ✓ (1ms)
+ ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I have a solid picture. Let me look at the existing pinned note tests (lines 1293-1370) to see what strings are asserted, and the rest of the tests file (500-709).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs:1285..1405  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable_tests.rs:500.. ✓ (1ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Important: the test `the_intersection_clause_names_the_members_the_totals_cannot` pins the exact sentence:
+"; the two instruments name 1 row(s) in common, 1 only the ledger and 1 only git"
+
+I must not delete existing tests. I can update this test (adding assertions is fine; changing an assertion for a legitimately changed output... the rule says "Never delete existing tests"). Hmm — the repo's assertion-weakening checker penalizes deletion/shrinking. Changing `contains` to a new `contains` might register as WEAKENED? Let me be careful: the check_assertion_weakening script checks for removed assertions. If I change the asserted substring, it may see a removed assertion (contains needle shrank?) — needle changed, likely classified as... risky.
+
+Better: keep the existing assertions passing by keeping the pre-existing sentence intact, and ADD the bracket + per-row lines. That way the existing test stays untouched and green — a real near-miss guard for my change. Excellent: the existing assertion `"; the two instruments name 1 row(s) in common, 1 only the ledger and 1 only git"` requires that sentence to stay exactly. So I append the bracket after it, e.g.:
+
+"...; the two instruments name 1 row(s) in common, 1 only the ledger and 1 only git; together they bracket 1..3 row(s)" then "\n  row ..." lines.
+
+Happy. Also `!note.contains("both instruments name the same")` must hold in the differing branch — fine. And `!note.contains("only git")` in the agreed branch — so my bracket sentence must not contain "only git" in the agreeing branch (it won't, since bracket only in differing branch). Also careful: in the agreeing branch the byte-identity requirement.
+
+Now, for the fixture in that test: ledger-only row = 2026-08-25T22:40:17Z, git-only = 2026-09-03T10:00:00Z. With my change, per-row lines will appear. Neither row is in `tied_rows` (default empty) nor in `unchecked_rows` → causes: git-only row → "the ledger join missed it (cause not observable...)". ledger-only row → checked-and-present. Note the test asserts `note.is_ascii()` (I must keep ASCII in plain mode) and no ANSI. Good.
+
+Also the test `the_two_instruments_can_disagree_and_both_readings_are_printed` uses ts "2026-08-25T22:40:17Z" as ledger... it asserts contains only. Fine.
+
+Now: this test is the day-178 case with a tie — but in that test the ledger census is constructed manually (not via retrospective_unhittable), so tied_rows is empty → my cause would be the weaker sentence. That's fine but I want new tests that build the tie through the pure join (`retrospective_unhittable`), which will fill tied_rows. My new tests will do that: run retrospective_unhittable + retrospective_git_census on rows and check `tied_rows`/`unchecked_rows` and the rendered note.
+
+Now naming: is there a `ties` field already on `RetrospectiveCount`? No. I'll add `tied_rows: BTreeSet<String>` to RetrospectiveCount and `unchecked_rows: BTreeMap<String, UncheckedReason>` to GitCensus. Hmm — wait. Careful about "Never add a definition without its consumer" — both will have consumers.
+
+Hmm, but hold on: maybe I can avoid adding to GitCensus by deriving "could not check" from existing data? GitCensus has `unresolvable` count only. No identity. So yes, need the new field.
+
+Now the "no hash" case: rows with no hash are skipped before `out.population += 1`. I'll record them in `unchecked_rows` with reason NoSnapshotHash. But careful: this makes `unchecked_rows` non-empty for a pre-Day-165 ledger even when `c.git` is None (never consulted → clause absent, fine). And when git is Some (some rows have hashes) but others don't, ledger-only rows with no hash get the "no snapshot hash" cause. 
+
+Now, one more consideration: does adding entries to `unchecked_rows` for hashless rows break existing test `a_row_without_a_snapshot_hash_is_out_of_the_git_population`? It asserts population and with_unmeasurable — no equality on the whole struct, so adding a field is fine as long as no test does `assert_eq!(got, GitCensus{...})` full-struct. Let me grep for full-struct comparisons of GitCensus/RetrospectiveCount.
+
+Let me grep the tests file for `RetrospectiveCount {` and `GitCensus {`.
+
+Also the module-size gate: commands_risk_unhittable.rs is 1634 lines, cap 2000. My additions to production code maybe +60 lines → fine. Tests file 709 lines — additions there maybe +150 → fine (but check whether the tests file has a cap; module_size gate applies to src/*.rs presumably with MAX_MODULE_LINES 2000).
+
+Let me check the gate config quickly and grep for full-struct equality tests.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.8s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GitCensus {\|Retrospect…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' tests/module_size… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Struct literals in tests use `RetrospectiveCount { ... }` without `..Default::default()` — adding a field will break compilation of those tests. I'll need to update them (add `tied_rows: ts_set(&[])` and `unchecked_rows: ...`). That's fine — adding a field to existing fixtures isn't weakening an assertion. But the `check_assertion_weakening.py` script may flag... no, it's not assertions.
+
+Hmm, careful: it might be cheaper to use `..Default::default()`? But the existing literals are full. I'd have to edit each. 4 spots for RetrospectiveCount (237, 327, 563, 617, 687) plus 4 GitCensus (589, 623, 693). Let me check 237 and 327 context — those are in commands_risk_unhittable_tests.rs? Lines 237, 327 are within the tests file (709 lines). Yes.
+
+Alternatively, I could give the structs a `Default` impl and existing code... no, the literals are exhaustive so any new field must be listed. Editing them is fine — I'll add the new field with the empty/expected value.
+
+Hmm, but wait: minimizing footprint in existing tests is important for the "near-miss" story. Adding a field line is neutral.
+
+Let me now check lines 230-340 of the tests file to see those literals' context.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable_tests.rs:225..355 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The test at line 325 does a full-struct equality with RetrospectiveCount — new field must be included (and its value must match what the code produces). In that fixture, src/born.rs is first scored 2026-09-03T18:03:00Z which is > row ts 2026-09-03T17:23:00Z — no tie. So `tied_rows` = empty set. Good — add `tied_rows: ts_set(&[])`.
+
+Now, hmm — wait. Should tied_rows instead be a field on RetrospectiveCount, or should I compute per-row causes differently? Let's go with tied_rows.
+
+But hold on: is `ties` computed with the same strict/founding rules? In `retrospective_unhittable` I'll add:
+
+```rust
+Some(birthday) if birthday > row_ts => unhittable = true,
+Some(birthday) if birthday == row_ts => tied = true,
+Some(_) => {}
+None => unmeasurable = true,
+```
+
+then `if tied { out.tied_rows.insert(row.ts.clone()); }`.
+
+Now the note rendering. Let me write the new code:
+
+```rust
+                // Day 210: the two instruments' own counts are on the line
+                // above; what a total cannot carry is the member sets, and a
+                // pair of totals can match over sets that differ (day 209). So
+                // the differing case states the intersection and the union as a
+                // BRACKET -- intersection..union -- plus one line per
+                // unattributed member and its cause. Equal sets keep the
+                // sentence they have always printed, byte for byte.
+                let ledger_only: BTreeSet<&String> = c.unhittable_rows.difference(&git.unhittable_rows).collect();
+                ...
+```
+
+Wait: the existing code computes common/ledger_only/git_only counts. I'll restructure minimally:
+
+```rust
+                if !c.unhittable_rows.is_empty() || !git.unhittable_rows.is_empty() {
+                    let common = c.unhittable_rows.intersection(&git.unhittable_rows).count();
+                    let ledger_only: Vec<&String> = c.unhittable_rows.difference(&git.unhittable_rows).collect();
+                    let git_only: Vec<&String> = git.unhittable_rows.difference(&c.unhittable_rows).collect();
+                    if ledger_only.is_empty() && git_only.is_empty() {
+                        note.push_str(&format!("; both instruments name the same {common} row(s)"));
+                    } else {
+                        note.push_str(&format!(
+                            "; the two instruments name {common} row(s) in common, \
+                             {} only the ledger and {} only git",
+                            ledger_only.len(), git_only.len()
+                        ));
+                        // bracket: intersection..union
+                        let union = common + ledger_only.len() + git_only.len();
+                        note.push_str(&format!(
+                            "; the count they bracket is {common}..{union} row(s)"
+                        ));
+                        for ts in &git_only { ... }
+                        for ts in &ledger_only { ... }
+                    }
+                }
+```
+
+Then per-row lines. Wording:
+
+git_only:
+- tie: `\n  row {ts}: attributed by the git check only; the ledger join missed it - a member's first-scored stamp ties the row's own second, which the strict after-test cannot credit`
+- else: `\n  row {ts}: attributed by the git check only; the ledger join missed it; the cause is not observable from the ledger data, and is not guessed`
+
+Hmm, that's long. Let me tighten:
+
+- tie: `attributed by the git check only; the ledger join missed it (a first-scored stamp equal to the row's own second: a tie the strict after-test cannot credit)`
+- else: `attributed by the git check only; the ledger join missed it (no tie or other cause is observable in the ledger, so none is named)`
+
+Hmm "mis-attribute risk": the "no cause observable" variant. Let me phrase: `(cause not observable from the ledger data; not guessed)`.
+
+ledger_only:
+- unchecked: `attributed by the ledger join only; the git check could not check it (the row carries no snapshot hash)` or `(its snapshot hash does not resolve in this clone)`
+- checked: `attributed by the ledger join only; the git check checked it and found the surprise(s) present in the snapshot tree`
+
+Hmm — careful, "the git check checked it": awkward. Maybe "the git check ran and found every surprise present in that snapshot's tree". Good.
+
+Important nuance: if git checked the row and found every surprise present → hittable, and the ledger join says a member was first scored after the event. Different question boundaries. The honest phrasing: "the git check looked and found every surprise present in the snapshot's own tree, so the two instruments disagree about which moment counts as the prediction". Hmm, maybe keep it factual without a claim about why: "the git check ran and found every surprise present in that snapshot's tree (checked, not skipped)".
+
+Prefix "attributed by the ledger join only;" — the task says to name "the instrument(s) that attributed it". Fine.
+
+Now the indentation: caller is `println!("  {note}")`. Continuation lines: I'll use `"\n  "` to align. Let me add a comment noting the composer emits the same two-space continuation indent its one call site uses.
+
+Hmm, actually — wait. Is that really right? If someone later calls retrospective_note elsewhere, the indent is embedded. Alternatively use a single space? Let me check whether there's precedent anywhere: search for `push_str("\\n` in src.
+
+Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'push_str("\\n' src/ | … ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Precedent exists for multi-line messages with "\n  " indentation (cli.rs:1388, 2114). I'll use "\n  " and document it.
+
+Now let me write the code. First, modify production code in commands_risk_unhittable.rs.
+
+1. Add `tied_rows` to RetrospectiveCount (with doc comment).
+2. Update `retrospective_unhittable` to fill it.
+3. Add `UncheckedReason` enum + `unchecked_rows` to GitCensus.
+4. Update `retrospective_git_census` to fill it.
+5. Update `retrospective_note` rendering.
+
+Where to put the enum? Near GitCensus.
+
+Let me write the edits.
+
+Edit 1: RetrospectiveCount — add field after unhittable_rows.
+
+```rust
+    /// The `ts` of every row whose members included one first scored at
+    /// **exactly** the row's own second — a tie, which the strict `>` above
+    /// cannot credit (the same rule `UnhittableCount::ties` already applies to
+    /// the live path, one instrument over).
+    ///
+    /// Row identity here is the row's `ts`, matching [`unhittable_rows`]; two
+    /// rows sharing a second are one member of this set, which is the same
+    /// limit the two instruments already carry.
+    ///
+    /// Why it is carried rather than left to the note: it is the one cause the
+    /// retrospective pass can *observe* for a disagreement in which the git
+    /// check named a row the ledger join did not, and the rule for that
+    /// direction is name the cause if it is observable and say so plainly if it
+    /// is not — never invent one.
+    pub(crate) tied_rows: BTreeSet<String>,
+```
+
+Edit 2: in retrospective_unhittable loop:
+
+```rust
+        let mut unhittable = false;
+        let mut tied = false;
+        let mut unmeasurable = false;
+        for path in &row.surprises {
+            match first_scored_age(path, first_scored, founding) {
+                Some(birthday) if birthday > row_ts => unhittable = true,
+                // A stamp equal to the row's own second: not "after", so the
+                // join cannot credit it — but it is the observable explanation
+                // for a row the git check names and this join does not.
+                Some(birthday) if birthday == row_ts => tied = true,
+                Some(_) => {}
+                None => unmeasurable = true,
+            }
+        }
+        if unhittable { ... }
+        if tied {
+            out.tied_rows.insert(row.ts.clone());
+        }
+```
+
+Edit 3: GitCensus add field + enum:
+
+```rust
+/// Why the git check could not evaluate a row at all. Two structurally
+/// different states, kept apart because the honest sentence names which one:
+/// a row that carries no `snapshot_git_hash` (every event written before Day
+/// 165) has nothing to ask, and a row whose hash does not resolve in this
+/// clone was asked and could not answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UncheckedReason {
+    /// The row carries no `snapshot_git_hash` at all.
+    NoSnapshotHash,
+    /// The row carries a hash that `git cat-file -t` does not resolve here.
+    HashDoesNotResolve,
+}
+```
+and in GitCensus:
+```rust
+    /// Every post-founding, placeable row the git check could **not** evaluate,
+    /// by row `ts`, with the reason. Rows that are merely absent from
+    /// [`GitCensus::unhittable_rows`] because the check RAN and found the
+    /// surprises present are deliberately not here: "could not check" and
+    /// "checked, found hittable" must not render identically (the pre-push
+    /// hook's rule: "could not check" must never read as "checked; clean").
+    ///
+    /// Hashless rows are included even though they are outside
+    /// [`GitCensus::population`] — they are exactly the rows a ledger-only
+    /// reading has to be able to explain.
+    pub(crate) unchecked_rows: BTreeMap<String, UncheckedReason>,
+```
+
+Edit 4: in retrospective_git_census:
+```rust
+        if row.git_hash.is_empty() {
+            out.unchecked_rows
+                .insert(row.ts.clone(), UncheckedReason::NoSnapshotHash);
+            continue;
+        }
+        out.population += 1;
+        let resolves = ...;
+        if !resolves {
+            out.unchecked_rows
+                .insert(row.ts.clone(), UncheckedReason::HashDoesNotResolve);
+            out.unresolvable += 1;
+            ...
+```
+
+Edit 5: the note.
+
+Note the current sentence logic uses `.count()`. I'll switch to Vec<&String>.
+
+Let me write:
+
+```rust
+                // Day 209: the two totals above can MATCH over member sets that
+                // differ, and a total is a projection — the one part of a result
+                // that cannot carry a disagreement about members. So print the
+                // intersection, never a claim of agreement derived from the sum.
+                // Absent when neither instrument named a row, which is every
+                // project whose ledger carries no hash at all.
+                if !c.unhittable_rows.is_empty() || !git.unhittable_rows.is_empty() {
+                    let common = c.unhittable_rows.intersection(&git.unhittable_rows).count();
+                    let ledger_only: Vec<&String> =
+                        c.unhittable_rows.difference(&git.unhittable_rows).collect();
+                    let git_only: Vec<&String> =
+                        git.unhittable_rows.difference(&c.unhittable_rows).collect();
+                    if ledger_only.is_empty() && git_only.is_empty() {
+                        // Identity, not a matching sum: the member sets are equal.
+                        note.push_str(&format!("; both instruments name the same {common} row(s)"));
+                    } else {
+                        note.push_str(&format!(
+                            "; the two instruments name {common} row(s) in common, \
+                             {} only the ledger and {} only git",
+                            ledger_only.len(),
+                            git_only.len()
+                        ));
+                        // Day 210: the disagreeing count as a BRACKET, so a
+                        // disagreement can never render as a single number. Each
+                        // instrument's own count is already on this line ("N of M
+                        // post-ledger grading events", "the git check reads N of
+                        // M rows"), so the bracket adds exactly the two
+                        // quantities a total cannot: the intersection and the
+                        // union. Printed only where the sets differ -- the
+                        // sentence above is byte-identical to the pre-Day-210
+                        // output for every run whose rulers agree.
+                        let union = common + ledger_only.len() + git_only.len();
+                        note.push_str(&format!(
+                            "; the count they bracket is {common}..{union} row(s)"
+                        ));
+                        // One line per unattributed row, naming which instrument
+                        // attributed it and what the other one did. The
+                        // continuation indent matches the note's one call site
+                        // (`println!("  {note}")` in `commands_risk`), so a
+                        // reader sees a list rather than a flushed-left block.
+                        for ts in &git_only {
+                            let cause = if c.tied_rows.contains(*ts) {
+                                "a member's first-scored stamp ties the row's own second, \
+                                 which the strict after-test cannot credit"
+                            } else {
+                                "the ledger join missed it; the cause is not observable in \
+                                 the ledger data, so none is named"
+                            };
+                            note.push_str(&format!(
+                                "\n  row {ts}: attributed by the git check only; {cause}"
+                            ));
+                        }
+                        for ts in &ledger_only {
+                            let cause = match git.unchecked_rows.get(*ts) {
+                                Some(UncheckedReason::NoSnapshotHash) => {
+                                    "the git check could not check it: the row carries no \
+                                     snapshot hash"
+                                }
+                                Some(UncheckedReason::HashDoesNotResolve) => {
+                                    "the git check could not check it: its snapshot hash \
+                                     does not resolve in this clone"
+                                }
+                                None => {
+                                    "the git check ran and found every surprise present in \
+                                     that snapshot's tree"
+                                }
+                            };
+                            note.push_str(&format!(
+                                "\n  row {ts}: attributed by the ledger join only; {cause}"
+                            ));
+                        }
+                    }
+                }
+```
+
+Careful with `git.unchecked_rows.get(*ts)` — `ts` is `&&String`, `*ts` is `&String`; get takes `&Q` where String: Borrow<Q>... `BTreeMap<String, _>::get(&self, key: &Q) where String: Borrow<Q>, Q: Ord`. With `*ts: &String`, Q = String. Good.
+
+`c.tied_rows.contains(*ts)` — BTreeSet<String>::contains(&Q), *ts is &String → Q=String. Good.
+
+Now plain mode: the note is ASCII already (no em dashes, no glyphs) — check my strings: they're ASCII. Good. But note the em dash check: "the count they bracket is" fine.
+
+Also: format string continuation lines with backslash `\` in Rust string literals — indentation inside the literal is stripped only for the part following the backslash-newline (leading whitespace of the next line is removed). Careful: `"... ties the row's own second, \` newline `                                 which the strict after-test..."` — with `\` at the end of the line, Rust strips the newline and leading whitespace of the next line. Yes, that's the standard behavior (skip_whitespace after a backslash-newline). Good.
+
+But careful with the `format!` in the note: the test asserts `note.is_ascii()` — fine.
+
+One more requirement: "the count as a bracket ... plus each set's own count". The set counts (ledger_only.len(), git_only.len()) are in the first sentence; intersection in bracket. The sets' own total counts are earlier. OK.
+
+Now `UnhittableCount`/`LedgerBornAfter` etc unchanged.
+
+Now, about `git_only` ordering: `difference` on BTreeSet yields sorted order → deterministic (chronological, since ts). Good.
+
+Now, "Anti-vacuous: each disagreement fixture must be asserted to actually contain the differing member". I'll write tests.
+
+Also required test: "The two causes must not collide: a fixture carrying a tie-shaped singleton AND a cannot-evaluate singleton asserts the two rows render differently". So: a fixture where ledger set = {A} (git cannot check A → unchecked) and git set = {B} where B is git-only with a tie. Then the two rows render differently, and I assert both lines exist and differ.
+
+Implementation: build via the pure functions:
+rows: 
+- row A: ts T1, surprise path pA with first_scored > T1 so the ledger join fires → ledger-only (git can't check: hash unresolvable) 
+- row B: ts T2, surprise path pB with first_scored == T2 (tie) so the ledger join doesn't fire; git says pB absent at hash → git-only with tie.
+- git: A's hash unresolvable; B's hash resolves with pB absent.
+
+That gives ledger_only = {T1}, git_only = {T2}, common = 0. Bracket 0..2. Rows render: T2 with tie cause, T1 with could-not-check cause. Different sentences.
+
+Now let me also double check the near-miss byte-identity requirement: "identical sets -> one line, no per-row causes, byte-identical to today's output". The existing test pins `"; both instruments name the same 3 row(s)"`. I'll add a new test asserting full-string `assert_eq!` for the identical-sets case (my new test) — task requires assert_eq! on the full string. I'll add that in the new tests (in the new test region of _tests.rs). Actually better placed in _tests.rs per the task ("keep the additions in _tests.rs where possible").
+
+Wait, task STEP 2 says tests go in `src/commands_risk_unhittable_tests.rs`. But note that the tests file has `mod retrospective_tests` — I'll add my new tests inside that module (it has access to `super::*`? It uses `use crate::commands_risk_unhittable::*;` and helpers). Let me check whether the tests file is `#[path]`-included from the main file. Let me check how commands_risk_unhittable.rs includes it.
+
+Let me grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_unhittabl… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The tests file is a separate module `commands_risk_unhittable_tests` in main.rs, with `mod retrospective_tests` inside. Fine — I can add tests there.
+
+Now let me start editing. First production code.
+
+Let me make the edits.
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the full picture. Let me make the production edits.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (2 → 17 lines)
+  +     /// The `ts` of every row whose surprises included one first scored at
+  +     /// **exactly** the row's own second — a tie, which the strict `>` above
+  +     /// cannot credit (the same reading `UnhittableCount::ties` already makes on
+  +     /// the live path, one instrument over).
+  +     ///
+  +     /// Row identity here is the row's `ts`, the same identity
+  +     /// [`RetrospectiveCount::unhittable_rows`] uses, so the two sets intersect
+  +     /// meaningfully; the limit that follows is stated rather than left implicit:
+  +     /// two rows sharing a second are one member of this set.
+  +     ///
+  +     /// Why it is carried at all: it is the one cause the retrospective pass can
+  +     /// **observe** for the git-only direction of a disagreement, and the rule for
+  +     /// that direction is name the cause when it is observable and say plainly
+  +     /// that it is not when it is not — never invent one.
+  +     pub(crate) tied_rows: BTreeSet<String>,
+        /// How many carried ≥1 member the join could **not** decide.
+        pub(crate) with_unmeasurable: u32,
+ ✓ (14.2s)
+  +     /// The `ts` of every row whose surprises included one first scored at
+  +     /// **exactly** the row's own second — a tie, which the strict `>` above
+  +     /// cannot credit (the same reading `UnhittableCount::ties` already makes on
+  +     /// the live path, one instrument over).
+  +     ///
+  +     /// Row identity here is the row's `ts`, the same identity
+  +     /// [`RetrospectiveCount::unhittable_rows`] uses, so the two sets intersect
+  +     /// meaningfully; the limit that follows is stated rather than left implicit:
+  ... (9 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, the auto-check is running. Let me continue with the rest of the production edits, then fix the fixture literals.
+
+Next: the enum + GitCensus field.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (3 → 3 lines)
+  - /// The git instrument's retrospective count — the same four quantities the
+  - /// ledger join reports, plus the one the ledger join structurally cannot state:
+  - /// how many rows the check could not run for at all.
+  + /// Why the git check could **not** evaluate a row at all — two structurally
+  + /// different states, kept apart because the honest sentence names which one.
+  +  ///
+ ✓ (14.3s)
+  - /// The git instrument's retrospective count — the same four quantities the
+  - /// ledger join reports, plus the one the ledger join structurally cannot state:
+  - /// how many rows the check could not run for at all.
+  + /// Why the git check could **not** evaluate a row at all — two structurally
+  + /// different states, kept apart because the honest sentence names which one.
+  +  ///
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I accidentally replaced the GitCensus doc comment with a wrong text. Let me check what happened and restore it properly.
+
+The edit I made replaced:
+```
+/// The git instrument's retrospective count — the same four quantities the
+/// ledger join reports, plus the one the ledger join structurally cannot state:
+/// how many rows the check could not run for at all.
+```
+with a placeholder text that doesn't belong there. I need to restore it.
+
+Let me look at the current state of that area.
+────────────────────────────────────────────────────────────────────────────────
+
+I need to check the damage from my last edit and restore the doc comment.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "=== are… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Yes, I damaged the GitCensus doc comment. Let me restore it properly and add the per-row cause data.
+
+Let me restore the doc comment and add an `uncheckable_rows` field to GitCensus.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (5 → 4 lines)
+  - /// Why the git check could **not** evaluate a row at all — two structurally
+  - /// different states, kept apart because the honest sentence names which one.
+  -  ///
+  - 
+  + /// The git instrument's retrospective count — the same four quantities the
+  + /// ledger join reports, plus the one the ledger join structurally cannot state:
+  + /// how many rows the check could not run for at all.
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+ ✓ (14.3s)
+  - /// Why the git check could **not** evaluate a row at all — two structurally
+  - /// different states, kept apart because the honest sentence names which one.
+  -  ///
+  - 
+  + /// The git instrument's retrospective count — the same four quantities the
+  + /// ledger join reports, plus the one the ledger join structurally cannot state:
+  + /// how many rows the check could not run for at all.
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good, the doc comment is restored. Now the file is back to the state I intended (with the `tied_rows` field added to `RetrospectiveCount`).
+
+Now I need to:
+1. Add `tied_rows` population in `retrospective_unhittable`.
+2. Add `uncheckable_rows` to `GitCensus` + populate in `retrospective_git_census`.
+3. Write the bracket + per-row attribution in `retrospective_note`.
+4. Update tests.
+
+Let me do these edits now.
+
+First, the `retrospective_unhittable` loop — add tie tracking.
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me populate tied_rows in the ledger join:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (14 → 22 lines)
+            out.population += 1;
+            let mut unhittable = false;
+            let mut unmeasurable = false;
+  +         let mut tied = false;
+            for path in &row.surprises {
+                match first_scored_age(path, first_scored, founding) {
+                    Some(birthday) if birthday > row_ts => unhittable = true,
+  +                 // Exactly the row's own second: the strict `>` above cannot
+  +                 // credit it, and it is the one cause the pass can observe for a
+  +                 // git-only disagreement (day 178's real shape).
+  +                 Some(birthday) if birthday == row_ts => tied = true,
+                    Some(_) => {}
+                    None => unmeasurable = true,
+                }
+  ···
+            if unhittable {
+                out.with_unhittable += 1;
+                out.unhittable_rows.insert(row.ts.clone());
+  +         }
+  +         if tied {
+  ... (2 more lines)
+ ✓ (14.0s)
+            out.population += 1;
+            let mut unhittable = false;
+            let mut unmeasurable = false;
+  +         let mut tied = false;
+            for path in &row.surprises {
+                match first_scored_age(path, first_scored, founding) {
+                    Some(birthday) if birthday > row_ts => unhittable = true,
+  +                 // Exactly the row's own second: the strict `>` above cannot
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now add `uncheckable_rows` to GitCensus and populate it in `retrospective_git_census`. Let me look at GitCensus fields again.
+────────────────────────────────────────────────────────────────────────────────
+
+Now add uncheckable_rows to GitCensus:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (4 → 13 lines)
+        /// printed, never silently hittable — the day-205 shape, and the reason the
+        /// dream itself wrote a fallback clause. Today: 1 row (`0ec456e0`, day 206).
+        pub(crate) unresolvable: u32,
+  +     /// The `ts` of every row folded into `unresolvable` — the **could not check**
+  +     /// state, named per row so `retrospective_note` can print it beside a row
+  +     /// only the ledger join attributed without that sentence ever reading as
+  +     /// "checked; clean" (the repo's own pre-push-hook rule).
+  +     ///
+  +     /// Row identity is the row's `ts`, matching the two `unhittable_rows` sets
+  +     /// and `RetrospectiveCount::tied_rows`, so the three intersect meaningfully;
+  +     /// the same limit holds — two rows sharing a second are one member here.
+  +     pub(crate) uncheckable_rows: BTreeSet<String>,
+ ✓ (14.0s)
+        /// printed, never silently hittable — the day-205 shape, and the reason the
+        /// dream itself wrote a fallback clause. Today: 1 row (`0ec456e0`, day 206).
+        pub(crate) unresolvable: u32,
+  +     /// The `ts` of every row folded into `unresolvable` — the **could not check**
+  +     /// state, named per row so `retrospective_note` can print it beside a row
+  +     /// only the ledger join attributed without that sentence ever reading as
+  +     /// "checked; clean" (the repo's own pre-push-hook rule).
+  +     ///
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now populate it in retrospective_git_census:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (3 → 4 lines)
+            if !resolves {
+                out.unresolvable += 1;
+  +             out.uncheckable_rows.insert(row.ts.clone());
+                out.with_unmeasurable += 1;
+ ✓ (14.1s)
+            if !resolves {
+                out.unresolvable += 1;
+  +             out.uncheckable_rows.insert(row.ts.clone());
+                out.with_unmeasurable += 1;
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the note logic: bracket + per-row causes. Let me rewrite the divergence block.
+
+Current block:
+```rust
+                // Day 209: the two totals above can MATCH over member sets that
+                // differ, and a total is a projection — the one part of a result
+                // that cannot carry a disagreement about members. So print the
+                // intersection, never a claim of agreement derived from the sum.
+                // Absent when neither instrument named a row, which is every
+                // project whose ledger carries no hash at all.
+                if !c.unhittable_rows.is_empty() || !git.unhittable_rows.is_empty() {
+                    let common = c.unhittable_rows.intersection(&git.unhittable_rows).count();
+                    let ledger_only = c.unhittable_rows.difference(&git.unhittable_rows).count();
+                    let git_only = git.unhittable_rows.difference(&c.unhittable_rows).count();
+                    if ledger_only == 0 && git_only == 0 {
+                        // Identity, not a matching sum: the member sets are equal.
+                        note.push_str(&format!("; both instruments name the same {common} row(s)"));
+                    } else {
+                        note.push_str(&format!(
+                            "; the two instruments name {common} row(s) in common, \
+                             {ledger_only} only the ledger and {git_only} only git"
+                        ));
+                    }
+                }
+```
+
+New logic:
+- if sets equal → unchanged sentence.
+- else:
+  - compute intersection count (common), union count (common + ledger_only + git_only).
+  - push `; the two instruments name {common}..{union} row(s) in common (ledger {ledger_total}, git {git_total})`
+  - then per-row lines.
+
+Wait — should union be counted as `c.unhittable_rows.union(&git.unhittable_rows).count()`? Yes, cleaner.
+
+Per-row cause lines: iterate over union minus intersection, sorted. BTreeSet union minus intersection gives sorted iterator. Let me build:
+
+```rust
+let mut rows: Vec<(&str, &str)> = ...  // (row, cause)
+```
+Simpler: build the union difference set, then for each row determine which instrument attributed it and the cause.
+
+```rust
+let mut divergent: BTreeSet<&String> = c.unhittable_rows.union(&git.unhittable_rows).collect();
+// remove common
+for r in c.unhittable_rows.intersection(&git.unhittable_rows) { divergent.remove(r); }
+```
+
+Hmm, `.remove(r)` where r: &String and set holds &String — BTreeSet<&String>::remove takes &String... Actually `remove` takes `&Q where &String: Borrow<Q>`. With `Borrow<Q>` for `&String`... `&String: Borrow<String>`? Yes, `impl Borrow<T> for &T`. So `divergent.remove(r)` where r: &String works if Q = String. Let me just use `BTreeSet<String>` clones for clarity — small sets, and clarity wins.
+
+Then for each row in divergent (sorted):
+- ledger_only = c.unhittable_rows.contains(row)
+- git_only = git.unhittable_rows.contains(row)
+
+If ledger_only:
+  - if git.uncheckable_rows.contains(row) → "row {row}: only the ledger; the git check could not check it (its snapshot hash does not resolve in this clone)"
+  - else → "row {row}: only the ledger; the git check evaluated its snapshot and found every surprise present"
+If git_only:
+  - if c.tied_rows.contains(row) → "row {row}: only the git check; the ledger join reads a same-second timestamp tie"
+  - else → "row {row}: only the git check; the ledger join missed it (cause not observable from the ledger)"
+
+Hmm, the task says for a row only git attributes: "the ledger join missed it. If you can observe the same-second timestamp tie from the data, name it. If you cannot observe the cause, do not invent one — print the weaker true sentence ('attributed by the git check only; the ledger join missed it') and leave it."
+
+So the weaker sentence is: "only the git check; the ledger join missed it". Good.
+
+Let me phrase lines in the repo's voice. Let me write the code with the em-dash-free plain style. Should I use a check to keep it glyph-free? The existing note has no em dash in the plain path; I'll avoid em dashes entirely in these lines.
+
+Separator: The note so far is one line (println with "  {note}"). Multi-line: I'll append "\n  " plus the row line. Hmm, but `note` is returned and printed with `println!("  {note}")` — so embedded newlines will produce continuation lines without leading indentation. Let me check the call site: `println!("  {note}")`. So if note has "\n  row ...", the output is:
+```
+  unhittable: ...
+    row ...
+```
+Hmm, actually it will be `  ` + `unhittable...\n  row...` = line1 "  unhittable…", line2 "  row…" (two spaces from the embedded, since println only prefixes the first line). That's acceptable — two-space indent matches.
+
+But the plain/glyph test asserts `plain.is_ascii()` — fine.
+
+Now, should the per-row lines be part of the same string? Yes.
+
+Let me write it.
+
+Also need to be careful: the bracket sentence "the two instruments name {common}..{union} row(s) in common (ledger {ledger_n}, git {git_n})". The task says: "the count as a bracket, not a single number: intersection .. union (so a disagreement can never render as agreement — the Day-209 lesson, printed), plus each set's own count."
+
+Good.
+
+Now, the existing test `the_intersection_clause_names_the_members_the_totals_cannot` asserts:
+```
+"; the two instruments name 1 row(s) in common, 1 only the ledger and 1 only git"
+```
+That will change. I must update that test (task says tests are part of the work; and it says the bracket replaces the flat sentence). But also "Do not delete existing tests". I'll update the assertion to the new shape (not delete the test). Hmm — safety rule "Never delete existing tests". Modifying an assertion is allowed if behavior intentionally changed; but the repo also has an assertion-weakening checker. I'm strengthening/changing the assertion to match the new output; I should keep asserting the full sentence via `assert_eq!`-ish. Let me keep that test but update its expectation, and add a stronger full-string assertion. Actually the task's near-miss requirement is a full-string `assert_eq!` for the identical-sets case; for the differing case I should assert the whole rendered string too if feasible.
+
+Let me be careful to keep the same test names where possible to avoid looking like deletion.
+
+Let me now write the note code.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the note logic — the bracket plus per-row causes:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs (20 → 69 lines)
+                            // Identity, not a matching sum: the member sets are equal.
+                            note.push_str(&format!("; both instruments name the same {common} row(s)"));
+                        } else {
+  +                         // Day 210: the disagreement is printed as a BRACKET plus
+  +                         // one line per divergent row naming the instrument that
+  +                         // attributed it and the cause — a flat "the sets differ"
+  +                         // is unreadable while the disagreement has no per-row
+  +                         // cause.
+  +                         let union = c.unhittable_rows.union(&git.unhittable_rows).count();
+                            note.push_str(&format!(
+  -                             "; the two instruments name {common} row(s) in common, \
+  -                              {ledger_only} only the ledger and {git_only} only git"
+  +                             "; the two instruments name {common}..{union} row(s) \
+  +                              (in common .. union; ledger {}, git {})",
+  +                             c.unhittable_rows.len(),
+  +                             git.unhittable_rows.len()
+                            ));
+  +                         let mut divergent: BTreeSet<String> =
+  +                             c.unhittable_rows.union(&git.unhittable_rows).cloned().collect();
+  +                         for row in c.unhittable_rows.intersection(&git.unhittable_rows) {
+  ... (40 more lines)
+ ✓ (13.8s)
+                            // Identity, not a matching sum: the member sets are equal.
+                            note.push_str(&format!("; both instruments name the same {common} row(s)"));
+                        } else {
+  +                         // Day 210: the disagreement is printed as a BRACKET plus
+  +                         // one line per divergent row naming the instrument that
+  +                         // attributed it and the cause — a flat "the sets differ"
+  +                         // is unreadable while the disagreement has no per-row
+  +                         // cause.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now update the tests. There are several `RetrospectiveCount {` and `GitCensus {` initializers to update. Most should use `..Default::default()`? The structs derive Default. But existing style spells all fields explicitly. To keep it explicit and safe, I'll add the new field to each initializer.
+
+Actually, using `..Default::default()` would be a reasonable simplification but changes existing test style. Let me just add the fields, since each has meaning.
+
+Let me list the initializer sites:
+- 237: `RetrospectiveCount {` in `the_retrospective_note_is_glyph_free_and_mark_rich_in_the_two_modes` — add `tied_rows: BTreeSet::new()`.
+- 327: in `the_io_wrapper_reads_both_ledgers_and_keeps_the_three_states_apart` — add `tied_rows: ts_set(&[])`. Actually `ts_set` exists.
+- 563: `the_note_is_byte_identical_when_the_git_leg_was_not_consulted` — add tied_rows.
+- 583: `with_skip`.
+- 589: GitCensus in with_skip — add `uncheckable_rows`.
+- 617: in intersection clause test.
+- 623: GitCensus.
+- 687: another RetrospectiveCount.
+- 693: GitCensus.
+
+Also non-test production code may construct GitCensus with `GitCensus::default()` in retrospective_unhittable_at — fine since Default derives.
+
+Let me find all GitCensus { in src (including tests inside commands_risk_unhittable.rs).
+
+Let me use sed-like edits. Let me first view lines 555-710 area again and apply targeted edits.
+
+Let me do a careful approach: use python to add fields? Risky. Let me do explicit edit_file calls.
+
+Actually, an easier approach that is also clean: change those test initializers to use `..Default::default()` for the new field by appending `..Default::default()`? That would require the other fields be spelled — no, `..Default::default()` fills remaining fields. So I can add `..Default::default(),` at the end of each initializer. But that's an odd mix.
+
+Hmm, actually for tests updated on a field addition, `..Default::default()` is arguably the cleanest and least noisy. But it weakens explicitness (a future field addition silently defaults, which for tests could hide things). The repo values explicitness. Let me add explicit fields.
+
+Let me do it one at a time with edit_file, using unique context.
+
+Test at 237:
+```rust
+        let reading = RetrospectiveReading::Counted(RetrospectiveCount {
+            population: 116,
+            with_unhittable: 3,
+            // Present for consistency with the count, never read: with
+            // `git: None` the intersection clause has no second instrument and
+            // stays unreachable.
+            unhittable_rows: ts_set(&[
+                "2026-09-03T17:23:00Z",
+                "2026-09-04T17:23:00Z",
+                "2026-09-05T17:23:00Z",
+            ]),
+            with_unmeasurable: 86,
+```
+Add after unhittable_rows: `tied_rows: ts_set(&[]),`. Hmm, `ts_set(&[])` — type inference: `&[&str; 0]` → ok, `.iter()` yields `&&str`, `(*s).to_string()` works.
+
+Wait `ts_set(rows: &[&str])`, `rows.iter().map(|s| (*s).to_string())`. With `&[]` the element type is inferred as `&str`. Fine.
+
+Let me add explicit fields.
+────────────────────────────────────────────────────────────────────────────────
+
+Now update the test initializers. Let me handle each site:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RetrospectiveCount {\|G… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I'll write a small python script to insert the needed fields after specific lines. Actually, careful: I want explicit new fields.
+
+Plan:
+- RetrospectiveCount initializers: add `tied_rows: ts_set(&[...])` after the `with_unmeasurable:` line of each? Field order doesn't matter. Easiest: insert after the `undated: N,` line for RetrospectiveCount, and after `unresolvable: N,` for GitCensus.
+
+But line numbers shift as I edit. Use a python script that processes by pattern with anchors.
+
+Approach: rather than inserting into each, I could add the new fields with explicit values where meaningful. Let me think about what each test should have:
+
+1. Line 237 (glyph test): `tied_rows: ts_set(&[])` — git: None, never read. Fine.
+2. Line 327 (io wrapper): `tied_rows: ts_set(&[])` — no ties in fixture.
+3. Line 563 (byte-identical, no git): `tied_rows: ts_set(&[])`.
+4. Line 583 (with_skip): ledger row 2026-09-03 has no tie → `tied_rows: ts_set(&[])`. GitCensus at 589: `uncheckable_rows: ts_set(&["2026-09-04T17:23:00Z"])` — hmm, with_skip has unresolvable: 1; the git-unhittable row is 09-04. This fixture: git population 3, with_unhittable 1, unresolved 1, skipped 2. The uncheckable row ts should be some row not in git's unhittable_rows. Let me set it to a distinct ts, e.g. `ts_set(&["2026-09-05T17:23:00Z"])`. It doesn't matter functionally for that test's assertions (which check the skip text). But for correctness of the fixture, the uncheckable row should not be in the ledger-only divergent set — since the ledger set is {09-03} and git set is {09-04}, divergent rows are 09-03 (ledger-only) and 09-04 (git-only). If uncheckable_rows = {09-05}, then row 09-03 renders as "the git check evaluated this snapshot and found every surprise present inside it". That's a fine rendering. Alternatively set uncheckable_rows to {"2026-09-03T17:23:00Z"} to exercise the could-not-check branch. Hmm, but semantically: a row that's in the ledger's unhittable set AND unresolvable by git — that's exactly day 206's shape! Yes, that's the real one: day 206 row is ledger-unhittable and git-uncheckable. So set `uncheckable_rows: ts_set(&["2026-09-03T17:23:00Z"])`. That exercises could-not-check in the existing regression test and matches reality.
+
+5. Line 617 (intersection clause test): this one must be updated substantially. The fixture: ledger rows {08-25 (day178 tie), 09-19}, git rows {09-19, 09-03}. Divergent: 08-25 ledger-only, 09-03 git-only. For the cause demonstration: 08-25 should be a tie in `tied_rows`? No — 08-25 is ledger-only, so the ledger attributes it; git didn't. Git check for 08-25: evaluated and found present, or uncheckable? In the real repo day 178: git says the file was ABSENT at that tree (git attributes it). Hmm wait — in the real measurement, day 178 is git-only (git names it, ledger misses it). So the tie direction is git-only.
+
+Let me set the fixture to mirror the real thing:
+- ledger unhittable rows: {09-19, 09-03(drift)...} hmm.
+
+Actually the task's real claim: git names 177,178,202,203; ledger names 177,202,203,206. Divergent: git-only = 178 (tie, ledger missed); ledger-only = 206 (git could not check).
+
+So a fixture mirroring reality:
+- ledger.unhittable_rows = {177, 202, 203, 206ts}
+- ledger.tied_rows = {178ts}
+- git.unhittable_rows = {177, 202, 203, 178ts}
+- git.uncheckable_rows = {206ts}
+
+But the existing test's fixture is 2+2 with names. The task says don't hardcode the day numbers as fixture expectations, but the test is a unit test of rendering — using plausible ts values is fine and I should keep the existing fixture's ts values where possible.
+
+Existing fixture (test at 616):
+- ledger unhittable_rows: 2026-08-25T22:40:17Z (day178 ts!), 2026-09-19T07:34:00Z (day 203)
+- git unhittable_rows: 2026-09-19T07:34:00Z, 2026-09-03T10:00:00Z
+
+Hmm in the existing fixture, 08-25 is ledger-only and 09-03 is git-only. That's the reverse of reality but it's a rendering test. I'll keep it and set:
+- ledger.tied_rows = {} (nothing tied; the ledger attributed 08-25 via born-after, cause is a plain birthday)
+- git.uncheckable_rows = {} for 09-03 → so 08-25 renders "the git check evaluated this snapshot and found every surprise present inside it", and 09-03 renders "the ledger join missed it, cause not observable from the ledger".
+
+But then the two causes (tie vs could-not-check) aren't both exercised in this test. The task requires a test where "a fixture carrying a tie-shaped singleton AND a cannot-evaluate singleton asserts the two rows render differently". I'll add a NEW test for that (the day-178 vs day-206 pair), which is exactly the task's requirement. And update the existing test to the new bracket sentence.
+
+Actually, better: make the existing intersection test the tie+cannot-evaluate fixture, and add a separate bracket test. Hmm, the existing test name is `the_intersection_clause_names_the_members_the_totals_cannot`. I'll keep the name and upgrade it, and add `the_bracket_is_printed_and_the_two_causes_do_not_collide` as a new test.
+
+Simplest: keep existing test's fixture mostly, update expectations for the new sentence, and add new tests in `_tests.rs`.
+
+6. Line 687 (neither instrument names a row): add `tied_rows: ts_set(&[])` and GitCensus `uncheckable_rows: ts_set(&[])`.
+
+Let me now use a python script to add the fields precisely by line content, then verify by reading.
+
+Actually explicit edit_file calls with unique anchors are safer. Let me do them.
+
+For RetrospectiveCount at 237: anchor on the unique comment text.
+
+Let me just do the edits.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (79 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now the remaining sites: the intersection test at ~617/623+ (now shifted). Let me look at that test now.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable_tests.rs:625..700 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I'll update this test to the new bracket + per-row cause output, and add the tie to make it mirror reality. In this fixture:
+- ledger unhittable: {08-25 tie-row, 09-19}
+- git unhittable: {09-19, 09-03}
+
+Divergent: 08-25 (ledger-only), 09-03 (git-only).
+
+To exercise both causes in the main fixture would be nice, but let me keep this test focused on the bracket, and add a new dedicated test for the two causes not colliding. Actually the task's "two causes must not collide" test requires a tie-shaped singleton AND a cannot-evaluate singleton. Let me build that as a new test with its own fixture.
+
+For this existing test, I'll set:
+- tied_rows: ts_set(&["2026-08-25T22:40:17Z"])? But 08-25 is ledger-only here. A tie row in tied_rows means the ledger join saw a tie there — and the git instrument names it. That's the reverse of reality again.
+
+Hmm, I'm making a mess. Let me reconsider: in the fixture, which row does the ledger join miss?
+
+The ledger join reports unhittable when a birthday is strictly > row ts. It misses a row when (a) the birthday == row ts (tie) or (b) the birthday < row ts (checked and present) or (c) unmeasurable.
+
+The git instrument reports unhittable when the path is absent at the tree.
+
+So "git-only" rows: rows where git says absent but the ledger's strict comparison didn't fire. Cause: tie (observable via tied_rows) or "not observable" (the ledger has no born-after and no tie).
+
+Let me restructure this test's fixture to be honest and clean:
+
+- ledger.unhittable_rows = {"2026-09-19T07:34:00Z"} (day 203)
+- ledger.tied_rows = {"2026-08-25T22:40:17Z"} (day 178 — tie, ledger join cannot call it born-after)
+- git.unhittable_rows = {"2026-09-19T07:34:00Z", "2026-08-25T22:40:17Z"} (git names 178 too)
+- git.uncheckable_rows = {}
+
+Then divergent = {08-25} → git-only, tie observable → renders "only the git check - the ledger join reads a same-second timestamp tie here". That's exactly day 178. 
+
+And the totals match (1 vs... hmm ledger with_unhittable 1, git with_unhittable 2 — not matching). To keep the matching-totals trap, I need to add a ledger-only row.
+
+Let me include both extra rows:
+- ledger.unhittable_rows = {09-19 (203), 09-26 (206)}
+- ledger.tied_rows = {08-25 (178)}
+- git.unhittable_rows = {09-19 (203), 08-25 (178)}
+- git.uncheckable_rows = {09-26 (206)}
+
+Totals: ledger 2, git 2 → matching totals, divergent members 08-25 (git-only, tie) and 09-26 (ledger-only, could-not-check). That's EXACTLY the day-209 measurement shape (4 vs 4 with the day-178 and day-206 causes) at a smaller scale, and it exercises both causes in one fixture — which also satisfies the "two causes must not collide" requirement.
+
+But the task also asks for those as separate tests. I can have this test cover the bracket + both causes, and add a dedicated test for cause-collision using byte assertions on the two row lines. Let me make this test the comprehensive one and add two more tests:
+1. `the_bracket_is_printed_not_a_single_number` — sets differ, assert "(in common .. union" present, assert two different numbers, and assert the union count equals set union.
+2. `the_two_causes_do_not_collide` — dedicated fixture with a tie singleton and an uncheckable singleton; assert the two rows' sentences differ and each names its own cause.
+3. `identical_sets_print_one_line_byte_identical` — full-string assert_eq! of the identical case AND the near-miss that today's output is unchanged.
+4. anti-vacuous: assert the fixture really contains the differing members.
+
+Let me update the existing test with the day-178/day-206 fixture (matching totals, two causes), keeping the existing name so it isn't deleted.
+
+Expected note string for that fixture:
+
+Base: population 4, with_unhittable 2, with_unmeasurable 0, undated 0, git Some(population 4, with_unhittable 2, unresolvable 1, skipped 2?).
+
+Let me set git unresolvable 1 and skipped_surprises 1 for the 206 row (one surprise). And git.with_unmeasurable = 1 (the uncheckable row).
+
+Note assembly:
+1. "unhittable: 2 of 4 post-ledger grading events carried a file first scored after the event"
+2. with_unmeasurable == 0 → skip
+3. undated 0 → skip
+4. git: "; the git check reads 2 of 4 rows with a snapshot hash"
+5. git.unresolvable > 0 → " (1 row(s) skip: their snapshot hash does not resolve in this clone, 1 surprise(s) unprobed)"
+6. git.with_unmeasurable (1) > git.unresolvable (1)? No → skip
+7. sets: common = 1 ({09-19}), ledger_only = 1 (09-26), git_only = 1 (08-25), union = 3.
+   → "; the two instruments name 1..3 row(s) (in common .. union; ledger 2, git 2)"
+8. divergent sorted: {"2026-08-25T22:40:17Z", "2026-09-26T07:34:00Z"}
+   - 08-25: not in ledger.unhittable_rows → git-only; c.tied_rows contains it → "\n  row 2026-08-25T22:40:17Z: only the git check - the ledger join reads a same-second timestamp tie here"
+   - 09-26: in ledger.unhittable_rows → ledger-only; git.uncheckable_rows contains it → "\n  row 2026-09-26T07:34:00Z: only the ledger - the git check COULD NOT CHECK it (its snapshot hash does not resolve in this clone)"
+
+Wait: git.uncheckable_rows is populated in the real path only for unresolvable rows. In this fixture, 09-26 is uncheckable, so it should have a git_hash that doesn't resolve → hence unresolvable 1, skipped 1. Consistent. 
+
+Let me now write the full expected string and assert_eq! on it. That's the strongest form and matches the repo's discipline.
+
+Full expected:
+```
+unhittable: 2 of 4 post-ledger grading events carried a file first scored after the event; the git check reads 2 of 4 rows with a snapshot hash (1 row(s) skip: their snapshot hash does not resolve in this clone, 1 surprise(s) unprobed); the two instruments name 1..3 row(s) (in common .. union; ledger 2, git 2)
+  row 2026-08-25T22:40:17Z: only the git check - the ledger join reads a same-second timestamp tie here
+  row 2026-09-26T07:34:00Z: only the ledger - the git check COULD NOT CHECK it (its snapshot hash does not resolve in this clone)
+```
+
+Hmm wait, the format! strings in the code: I wrote them with `\` continuations so the resulting string is single-spaced appropriately. Let me double check each:
+
+```rust
+"; the two instruments name {common}..{union} row(s) \
+ (in common .. union; ledger {}, git {})"
+```
+The `\` + newline + leading spaces: Rust's `\` at end of line strips the newline AND leading whitespace of the next line. So `"; the two instruments name {common}..{union} row(s) (in common .. union; ledger {}, git {})"`. Good.
+
+```rust
+"\n  row {row}: only the ledger - the git check \
+ COULD NOT CHECK it (its snapshot hash does not \
+ resolve in this clone)"
+```
+→ `"\n  row {row}: only the ledger - the git check COULD NOT CHECK it (its snapshot hash does not resolve in this clone)"`. Good.
+
+Now write the test. Also note the existing test asserts `!note.contains("both instruments name the same")` — keep.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable_tests.rs (71 → 310 lines)
+  -     /// **The day-209 shape, at the emission point.** Two instruments reading the
+  -     /// SAME total over member sets that differ. The day-178 row is the
+  -     /// ledger-only member (a timestamp tie: the join cannot call it born-after,
+  -     /// the tree says the file was not there), one row is named by both, and one
+  -     /// is git-only. A matching total is not evidence of agreement, so the clause
+  -     /// states the intersection rather than deriving one from the sum.
+  +     /// **The day-209 shape, at the emission point, with the day-210 bracket and
+  +     /// per-row causes.** Two instruments reading the SAME total over member sets
+  +     /// that differ. The fixture is the real measurement at a smaller scale: one
+  +     /// row named by both, one git-only row whose cause the ledger can observe
+  +     /// (day 178's same-second tie), and one ledger-only row the git check could
+  +     /// not evaluate at all (day 206's unresolvable snapshot hash).
+  +     ///
+  +     /// A matching total is not evidence of agreement, so the clause prints the
+  +     /// bracket and then one line per divergent row naming the instrument and the
+  +     /// cause — and the two causes must never render identically, because
+  +     /// *checked and found present* and *could not check* are different readings.
+        #[test]
+        fn the_intersection_clause_names_the_members_the_totals_cannot() {
+            let count = RetrospectiveCount {
+  ... (295 more lines)
+ ✓ (1m 59s)
+  -     /// **The day-209 shape, at the emission point.** Two instruments reading the
+  -     /// SAME total over member sets that differ. The day-178 row is the
+  -     /// ledger-only member (a timestamp tie: the join cannot call it born-after,
+  -     /// the tree says the file was not there), one row is named by both, and one
+  -     /// is git-only. A matching total is not evidence of agreement, so the clause
+  -     /// states the intersection rather than deriving one from the sum.
+  +     /// **The day-209 shape, at the emission point, with the day-210 bracket and
+  +     /// per-row causes.** Two instruments reading the SAME total over member sets
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me run the targeted tests. Also need to check for other `GitCensus {` initializers elsewhere (e.g. in commands_risk_unhittable.rs tests) and `RetrospectiveCount {`.
+
+Wait — earlier the compiler complained about tests file only, plus maybe in-file tests. Let me just build and see.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -30 ✓ (163ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | tail … ✓ (142ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me continue - the build succeeded. Now I need to run the targeted tests. Also I need to check my earlier note: in `the_bracket_reports_the_intersection_and_the_union_never_one_number`, I insert into `count.unhittable_rows` ... wait, let me re-check that test - I wrote `let mut git_sets = count.git.clone()` and then `let mut ledger = count.clone(); ledger.unhittable_rows.insert(...)`. That gives ledger set = 4 members, git set = 4 members. Intersection = 2 (09-19, 09-26). Union = 4 (09-19, 09-26, 2026-07-01, 2026-07-02). Wait: ledger rows = {08-25, 09-19, 09-26, 07-01}, git = {09-19, 09-26, 08-25, 07-02}. Intersection = {09-19, 09-26} = 2. Union = {08-25, 09-19, 09-26, 07-01, 07-02} = 5! Not 4. Hmm, I set "2..4" — that's wrong. Union is 5.
+
+Let me fix that test to be simpler and correct. Actually simpler: just use the day-210 fixture with a different pair. Let me rewrite that test with computed expectations rather than hand-written ones... but the test must assert the literal string. Let me pick a fixture where union=4: members: common = {A, B}, ledger-only = {C}, git-only = {D}. Union = 4, intersection = 2. So don't add extras to existing rows; just build directly.
+
+Let me rewrite that test cleanly.
+
+Also, in `identical_member_sets_print_one_line_and_no_per_row_causes`, I need to check the exact output string format. The note is:
+"unhittable: 2 of 6 post-ledger grading events carried a file first scored after the event; the git check reads 2 of 6 rows with a snapshot hash; both instruments name the same 2 row(s)"
+
+Let me verify the exact concatenation in code:
+
+```
+let mut note = format!(
+    "unhittable: {} of {} post-ledger grading events carried a file first scored \
+     after the event",
+    c.with_unhittable, c.population
+);
+if c.with_unmeasurable > 0 {...}
+if c.undated > 0 {...}
+if let Some(git) = &c.git {
+    note.push_str(&format!(
+        "; the git check reads {} of {} rows with a snapshot hash",
+        git.with_unhittable, git.population
+    ));
+    if git.unresolvable > 0 {...}
+    if git.with_unmeasurable > git.unresolvable {...}
+    if !c.unhittable_rows.is_empty() || !git.unhittable_rows.is_empty() {
+        ...
+        note.push_str(&format!("; both instruments name the same {common} row(s)"));
+    }
+}
+```
+
+The `\` line continuation in Rust strings strips the newline AND leading whitespace. So "after the event" then "; the git check reads". Good.
+
+Now run tests.
+────────────────────────────────────────────────────────────────────────────────
+
+Build passed. Let me fix the bracket test whose union math was wrong, then run tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "the_bracket_reports_the… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (54 lines) ✓ (26.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk_unhitta… ✓ (229ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib commands_risk_u… ✓ (113ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_r… ✓ (228ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+52 passing (was 46 + 6 new = 52). All pass. Now let me run clippy and fmt.
+
+Wait — but I should double check the tests actually assert what I think. Let me verify a couple of the new tests exist and pass by name.
+────────────────────────────────────────────────────────────────────────────────
+
+All 52 pass (46 + 6 new). Let me verify the new tests by name and run the full gates:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_r… ✓ (202ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Clippy clean. Wait — but cargo fmt may have reformatted my long string assertion lines. Let me check the diff and rerun tests after fmt.
+
+Also I noticed my clippy passed without warning about `git_only`/`ledger_only` being unused — did I remove them? Let me check: in the new code I removed `ledger_only` and `git_only` counts usage (they were used in the format). I replaced with union computation. Let me verify there are no unused variables... clippy with -D warnings passed, so fine.
+
+Let's run fmt check and full test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (27.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me run the FULL test suite and check the module size gate (my file grew).
+
+Let me check line counts.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the full suite and the module-size gate:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_unhittab… ✓ (1m 39s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All tests pass. Note the ARCHITECTURE.md record earlier said "cargo test commands_risk_unhittable -> 46 passed" — now 52.
+
+Now I want to do a real positive control — verify that the could-not-check vs checked-and-absent sentences differ by construction (I already have tests). But per the safety rules: a positive control means break the guard and watch it fail BY NAME, then restore. Let me do it atomically for the key claim: that "could not check" and "checked and found present" are different sentences.
+
+I'll neuter the `if git.uncheckable_rows.contains(row)` branch to always take the else path, run the test, confirm it fails by name, and restore — all in one atomic command.
+
+Also: verify the bracket never renders as agreement — neutering? The bracket test covers it.
+
+Let me do the atomic positive control.
+
+Also, before that: the task says "Do not hardcode this plan's day numbers as a fixture expectation" and "If the re-measured sets are identical, the singleton rows disappear and the honest output is one line — report that, do not manufacture a disagreement." I should measure at HEAD to report the actual bracket. Let me check if I can run `yoyo risk` on this repo... Actually, I can compute it directly from the ledgers. Let me see if there's a way to run the retrospective pass. The `/risk` command. Maybe I can write a small test that reads the real ledgers. Or use the built binary.
+
+Let me try: build the binary and check if there's a CLI path. `yoyo risk` is a REPL command. Hmm. Let me check whether there's a non-interactive way: `yoyo --prompt "/risk"` would cost API. Let me instead write a quick temporary test that reads the real files and prints the note. Actually I could add a #[test] temporarily... but that's file mutation. Better: use `cargo test` with a temporary test? That requires editing files.
+
+Alternative: write a tiny standalone script that mimics? No — I want the real measurement.
+
+Simplest: temporarily add a test that reads `.yoyo/risk_validations.jsonl` and `.yoyo/risk_first_scored.jsonl` and prints the note, run it with --nocapture, then restore atomically. That's a legitimate measurement (reading real ledgers). Let me do that as one atomic command with python inserting and removing.
+
+Actually — cleaner: I can check whether `cargo run -- risk` works? Let me check main.rs CLI for a risk subcommand.
+
+Let me check quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+All 5795 tests pass. Now let me run the positive control (atomic) and re-measure the real bracket at HEAD:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk" src/main.rs | gre… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No direct CLI. Let me do the atomic temporary measurement test: add a test that reads the real ledgers and prints the note, run it with --nocapture, then remove it — all in one atomic command so restore cannot be forgotten (per CLAUDE.md best practice).
+
+I'll append a test to src/commands_risk_unhittable_tests.rs before the final `}`... actually the module ends with `}`. I can insert before the last line. Let me use python to insert, run, then restore from a backup in the same shell command via git checkout of... no, that would blow away my other changes. Use a cp backup and restore.
+
+Careful: the file is only mutated in this test file. I'll cp to /tmp, append the test, run, then mv back.
+
+But the test must be inside a `mod` that has access to the crate. `retrospective_unhittable_at` is pub(crate). A test appended at the end of the file outside any mod won't compile. I need to put it inside `mod retrospective_tests`. So I'll insert before its closing brace... The last line of file is `}` closing the mod. Let me insert just before the last `}`.
+
+Actually the file ends with:
+```
+        assert_eq!(count.git.unhittable_rows, ...);
+    }
+}
+```
+Let me just append an inner test by replacing the final `}\n` with the test + `}\n`. Risky. Better approach: insert after the last `    }\n}` pattern at end of file.
+
+Let me do it in python: content.rsplit("}\n", 1)? Hmm.
+
+Simplest robust approach: write a temporary separate test file that is a new #[cfg(test)] module declared... no, that requires modifying main.rs.
+
+OK: python — read file, find last occurrence of "\n}\n" at end, insert test code before it.
+
+Let's do:
+```
+s = open(p).read()
+idx = s.rstrip().rfind("\n}")
+new = s[:idx] + TESTCODE + s[idx:]
+```
+That inserts before the final closing brace of the mod. Then run `cargo test --bin yoyo the_real_ledgers -- --nocapture`, then restore from backup.
+
+Let me write the test code using RISK paths — check what constants exist: `RISK_VALIDATION_PATH` in commands_risk? Let me check.
+
+I'll just use relative "./.yoyo/risk_validations.jsonl" and "./.yoyo/risk_first_scored.jsonl" since cargo test runs with CWD = package root.
+
+Let me do it.
+────────────────────────────────────────────────────────────────────────────────
+
+No CLI door. Let me measure the real bracket with a temporary (atomically restored) test:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (28 lines) ✓ (27.3s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+Excellent — the real measurement is much richer than the plan predicted, and it's the honest re-derivation the task demanded. At HEAD:
+
+- Ledger join: 5 rows, git check: 6 rows, intersection 5, union 6.
+- The one git-only row is **2026-08-25T22:40:17Z** — day 178, and it IS a same-second tie, so the observable cause fires: "only the git check - the ledger join reads a same-second timestamp tie here".
+- `unresolvable=0` at HEAD — day 206's `0ec456e0` now RESOLVES in this clone (deeper clone / different fetch), so the ledger-only/could-not-check direction has **no instance today**. That's an honest zero, and my code prints nothing for it — correct.
+
+So the plan's expectation (git 177/178/202/203, ledger 177/202/203/206) is stale at HEAD; the real bracket is 5..6 with one git-only row (day 178, tie). The plan explicitly said: re-derive, don't paste, and report if it differs. Good.
+
+Note the could-not-check branch has no live instance at HEAD — but it is still the right branch to have (the plan asked for it), and it's pinned by tests. I should state that honestly.
+
+Now:
+1. Verify the tree is restored (tests passed earlier with 52).
+2. Run clippy/fmt/test again on the restored tree.
+3. Add the ARCHITECTURE.md entry.
+4. Commit.
+
+Let me re-run the gates.
+────────────────────────────────────────────────────────────────────────────────
+
+The real bracket at HEAD is 5..6 — richer than the plan predicted, and the one git-only row is day 178's same-second tie (observable cause fires). Day 206's hash now resolves here, so unresolvable=0. Let me re-verify the restored tree and run all gates:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "zz_measure_the_real_bra… ✓ (19.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Good. `grep -c` = 0 confirms the temporary test is gone. Now run the full test suite again to confirm green, then write the ARCHITECTURE entry, then commit.
+
+Also run the neutered_guards test (it's part of the suite). Let me run the whole suite.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build && cargo test 2>&1 |… ✓ (1m 53s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All green. Now let me run the positive control — I should do this per the safety rules (mutate→run→restore as one atomic command). Let me neuter the bracket to always return the agreement branch and watch the new tests fail by name.
+
+Actually, let me do it atomically with sed and restore from a saved copy.
+
+Positive control: force `ledger_only` and `git_only` to 0 (i.e., always render the "same rows" branch), and watch the bracket tests fail by name.
+
+Let me do it as one atomic command.
+
+Then also a second control: neuter `tied_rows` (never insert) so the cause branch falls to the weaker sentence → test fails.
+
+Let me do both serially in one command each with restore.
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now the positive controls (mutate → run → restore, atomic):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (4 lines) ✓ (26.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The first control fires on `a_ledger_only_row_the_git_check_ran_and_cleared_says_so`. Hmm, but the bracket test should also have failed... it asserts `not(note.contains("name 4 row(s) in common"))` — with ledger_only=0 and git_only=1, `common`=2, ledger 3, git 3... wait with ledger_only forced to 0: `if ledger_only == 0 && git_only == 0` → git_only is 1, so still the else branch. Bracket printed as 2..4. The bracket test passes. Only the "ran and cleared" test fails because its ledger-only row now renders as git-only. Fine — the control fires by name, which is what matters.
+
+Now the second control: neuter `tied_rows` insertion so the tie cause never fires.
+
+Let me do it atomically.
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 fires. Now control 2 (the tie-cause branch):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (4 lines) ✓ (27.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm — the second control **did not fire**. Because my tests construct `RetrospectiveCount` fixtures directly (hand-built `tied_rows`), not through `retrospective_unhittable`. So the "tie detection in the join" is not covered by a test that goes through the join!
+
+That's exactly the Day-200 lesson: a missing test leaves the tree as green as a written one. I have a coverage hole: `retrospective_unhittable`'s new `tied_rows` field is not asserted anywhere.
+
+I must add a test that drives the join with a same-second tie and asserts `tied_rows` contains the row. Let me add it — this is a real gap the positive control found.
+
+Let me write that test.
+────────────────────────────────────────────────────────────────────────────────
+
+The second control did not fire — a real coverage hole. My fixtures hand-build tied_rows; nothing drives the join's tie detection. Let me add that test:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn the_two_instruments_… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable_tests.rs (1 → 61 lines)
+  +     /// **The tie cause, measured by the join itself rather than hand-set on a
+  +     /// fixture.** A test that only ever hands [`RetrospectiveCount::tied_rows`]
+  +     /// in as data cannot see the join stop filling it — a positive control
+  +     /// proved exactly that (neutering the `==` arm left every test green). So
+  +     /// this one drives the real ledger join with the day-178 shape: a path whose
+  +     /// first-scored `ts` is *exactly* the row's own, which is neither the strict
+  +     /// `>` above (born-after) nor a miss.
+  +     #[test]
+  +     fn the_join_fills_tied_rows_for_a_same_second_birthday_and_not_for_a_strict_one() {
+  +         let ts = "2026-08-25T22:40:17Z";
+  +         let map = scored(&[
+  +             ("src/seed.rs", "2026-08-22T15:40:02Z"),
+  +             // The real day-178 row: the ledger holds this path at exactly the
+  +             // event's own second.
+  +             ("src/tied.rs", ts),
+  +             // The near-miss, one second EARLIER: a plain birthday that existed
+  +             // when the prediction was made, which is neither bucket.
+  +             ("src/before.rs", "2026-08-25T22:40:16Z"),
+  +         ]);
+  +         let founding = founding_ts(&map);
+  ... (41 more lines)
+ ✓ (2m 16s)
+  +     /// **The tie cause, measured by the join itself rather than hand-set on a
+  +     /// fixture.** A test that only ever hands [`RetrospectiveCount::tied_rows`]
+  +     /// in as data cannot see the join stop filling it — a positive control
+  +     /// proved exactly that (neutering the `==` arm left every test green). So
+  +     /// this one drives the real ledger join with the day-178 shape: a path whose
+  +     /// first-scored `ts` is *exactly* the row's own, which is neither the strict
+  +     /// `>` above (born-after) nor a miss.
+  +     #[test]
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (28.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now re-run the second positive control — it should fire:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (4 lines) ✓ (27.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now control 2 fires by name. 
+
+Let me also run a third control: neuter the `uncheckable_rows` insertion (the could-not-check state) to see if a test catches it. My `the_two_instruments_can_disagree_and_both_readings_are_printed` test uses hand-set GitCensus... Let me check: is `retrospective_git_census`'s `uncheckable_rows.insert` covered by a test?
+
+`an_unresolvable_hash_is_unresolvable_and_never_unhittable` asserts `got.unresolvable == 1` but doesn't assert `uncheckable_rows`. Let me add an assertion there (to the existing test — adding, not weakening).
+
+Actually let me run the control first to confirm.
+────────────────────────────────────────────────────────────────────────────────
+
+Control 2 now fires. Let me check the third field (uncheckable_rows filled by the git census):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (4 lines) ✓ (1m 58s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Control 3 did NOT fire — so `retrospective_git_census`'s `uncheckable_rows` insertion is also uncovered. I need to add an assertion to the existing test `an_unresolvable_hash_is_unresolvable_and_never_unhittable` (adding, not weakening).
+
+Let me look at that test and add the assertion.
+
+Line ~451 in the original; it's now shifted. Let me find it.
+────────────────────────────────────────────────────────────────────────────────
+
+Control 3 also silent — another hole. Let me pin it in the existing test (adding an assertion, not weakening):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn an_unresolvable_hash… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable_tests.rs (1 → 7 lines)
+            assert_eq!(got.unresolvable, 1, "{got:?}");
+  +         assert_eq!(
+  +             got.uncheckable_rows,
+  +             ts_set(&["2026-09-03T17:23:00Z"]),
+  +             "the could-not-check row is named, not just counted — it is the cause \
+  +              `retrospective_note` prints for a ledger-only row: {got:?}"
+  +         );
+ ✓ (2m 12s)
+            assert_eq!(got.unresolvable, 1, "{got:?}");
+  +         assert_eq!(
+  +             got.uncheckable_rows,
+  +             ts_set(&["2026-09-03T17:23:00Z"]),
+  +             "the could-not-check row is named, not just counted — it is the cause \
+  +              `retrospective_note` prints for a ledger-only row: {got:?}"
+  +         );
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to continue. Let me add a negative assertion too (that a resolving hash leaves it empty), then re-run control 3.
+
+Let me look at the rest of that test to add the near-miss.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable_tests.rs:483..513 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable_tests.rs (4 → 9 lines)
+            let got2 = retrospective_git_census(&rows, Some("2026-08-22T15:40:02Z"), &resolving);
+            assert_eq!(got2.with_unhittable, 1, "{got2:?}");
+            assert_eq!(got2.unresolvable, 0, "{got2:?}");
+  +         assert!(
+  +             got2.uncheckable_rows.is_empty(),
+  +             "a check that RAN names no could-not-check row — the two states must \
+  +              not bleed into each other: {got2:?}"
+  +         );
+            assert_ne!(got, got2, "the flag changes the answer for one member set");
+ ✓ (2m 12s)
+            let got2 = retrospective_git_census(&rows, Some("2026-08-22T15:40:02Z"), &resolving);
+            assert_eq!(got2.with_unhittable, 1, "{got2:?}");
+            assert_eq!(got2.unresolvable, 0, "{got2:?}");
+  +         assert!(
+  +             got2.uncheckable_rows.is_empty(),
+  +             "a check that RAN names no could-not-check row — the two states must \
+  +              not bleed into each other: {got2:?}"
+  +         );
+            assert_ne!(got, got2, "the flag changes the answer for one member set");
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (1.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now re-run control 3 — it should fire:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (4 lines) ✓ (26.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All three controls now fire and are restored. Let me run one more control on the "could not check" sentence branch of the note (to confirm the could-not-check vs checked-and-absent distinction is witnessed).
+────────────────────────────────────────────────────────────────────────────────
+
+All three controls fire and restore. One more on the could-not-check sentence branch:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (4 lines) ✓ (26.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four controls fire by name and are restored cleanly. Full gate run:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TEMPORARILY DISABLED\|… ✓ (18.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build && cargo test 2>&1 |… ✓ (2m 8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All 5797 pass. Now update ARCHITECTURE.md. Let me find the right place — the Day 209 entry in the commands_risk_unhittable.rs bullet.
+
+The instruction says "Never delete existing tests" — I replaced one test's body (the_intersection_clause...) but kept the name and strengthened it. That's fine.
+
+Let me look at the ARCHITECTURE.md Day 209 entry for commands_risk_unhittable.rs to append the Day 210 entry.
+────────────────────────────────────────────────────────────────────────────────
+
+All green (5797 pass, up from 5795). Now the ARCHITECTURE.md entry:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Day 209" ARCHITECTURE.m… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ARCHITECTURE.md entry for commands_risk_unhittable.rs — let me find the specific entry for that file (around line 462 as found earlier). Let me search for the Day 209 entry within the commands_risk_unhittable.rs bullet.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_unhittabl… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_unhittabl… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ARCHITECTURE.md entry for commands_risk_unhittable lives in the `commands_risk_snapshots.rs` bullet area (line 462, and the timeline continues). Let me find where the `commands_risk_unhittable.rs` bullet starts — likely a line beginning `- \`commands_risk_unhittable.rs\`` or the Day 209 entry inside the snapshots bullet. Let me search for the Day 206/207/209 entries.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Day 209 (DREAM\|Day 207… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `commands_risk_unhittable.rs` entry — I need to find where its bullet/section starts. Let me search for the DAY 209 entry related to the member-set intersection (from the plan's description) and where "Day 206 (DREAM.md cycle 9" text is.
+
+That text I saw is inside the `commands_risk_snapshots.rs` bullet (line 559). The `commands_risk_unhittable.rs` bullet must be elsewhere. Let me search for line starting with "- `commands_risk_unhittable".
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`commands_risk" ARC… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ARCHITECTURE entry for `commands_risk_unhittable.rs` — the plan said "Also read ARCHITECTURE.md's entry for `src/commands_risk_unhittable.rs` before editing it." Let me search near line 556-560 for where the Day 206/207/209 entries live. The Day 206 entry I saw was inside the `commands_risk_snapshots.rs` bullet (line 559). Let me look for the `commands_risk_unhittable.rs` bullet heading right after.
+
+Actually earlier grep showed line 462 has the "Pre-existing breakage" paragraph, which is inside a bullet. And line 556 `commands_risk.rs`, 559 `commands_risk_snapshots.rs`. So the `commands_risk_unhittable.rs` bullet likely comes right after 559's bullet, around line 560+. Let me check lines 560-575.
+
+I have limited budget. Let me just find the right insertion point: search for text unique to the Day 209 Day-209 entry in the unhittable file's ARCHITECTURE entry.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=559 && NR<=572 {printf … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line 562 and 563 are the two Day-209 entries for this file. Let me read those lines fully and append a Day-210 entry after them (or after 563 if 563 is the last entry of this bullet — but 564 begins the next bullet `commands_risk_parse.rs`). Wait, line 563 is indented as a paragraph belonging to bullet 560? Actually 562 begins with `**Day 209 (19:50, ...` at column 0, and 563 is indented by 2 spaces. Hmm, line 562 seems to be at column 0 while 563 has 2-space indent. That's odd. Let me read them.
+
+Given budget constraints, I'll append my Day 210 entry right after line 563 (before line 564's new bullet). Let me read lines 562-563 to see the exact end.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=562 && NR<=563 {print "… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll append the Day 210 entry:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (34ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+I wrote "Six positive controls, four of them run" — that's confused. Let me fix: I ran 4 controls (3 initially, one of which — the `out.uncheckable_rows.insert` one — I ran first with no match then re-ran; plus the join tie arm; plus the could-not-check branch; plus ledger_only). Let me count what I actually ran:
+1. `let ledger_only = 0;` → fired (a_ledger_only_row...) ✓
+2. join's `Some(birthday) if birthday == row_ts => tied = false` → NO match (silent) then after adding test → fired ✓
+3. `out.uncheckable_rows.insert(...)` removal → NO match (silent) then after adding assertion → fired ✓
+4. `if git.uncheckable_rows.contains(row)` → `if false` → fired (2 tests) ✓
+
+So four controls run, two of which were initially silent. Let me correct the wording. Also fix typo "retrospactive".
+
+Also I should double check the exact wording of the note bracket: I claimed `N..M row(s) (in common .. union; ledger X, git Y)`. That matches.
+
+Also "six tests added and none removed" — 5795 → 5797 = 2 net. Wait! The count went 5795 → 5797, a net of +2, but I added 6 tests. Hmm. Let me recount.
+
+Initially after my first additions, the full test run showed 5795. Let me recall: first full `cargo test` after my test edits showed "5795 passed". Then after adding the 2 tie tests + 1 assertion... the last full run showed "5797 passed". So the baseline before my task was 5795 - 6 = 5789? Let me verify by checking git stash / the baseline count.
+
+Actually: Day 209's entry says `cargo test commands_risk_unhittable` → 46 passed. My targeted run showed 52 passed after adding 6 tests. So +6 in that module. The global count: first full run (after I added 6 tests) = 5795. Then final full run (after adding 2 more tests + 1 assertion) = 5797. So 5795 + 2 = 5797 ✓. So the baseline (before my changes) globals were 5795 - 6 = 5789, and now 5789 + 8 = 5797. 
+
+I added: 4 new tests in the big edit (intersection-rewritten counts as existing; bracket, causes-collide, ledger-only-ran, identical-sets) — that's 4 new; plus 2 tie tests = 6 new. Hmm, that's 6 new, but the arithmetic says 8.
+
+Let me recount. Before my task, the module had 46 tests (Day 209 entry). After my first big appendix, targeted showed 52. Hmm, that's +6 from a single edit? The first big edit replaced 1 test with 5 tests (intersection rewritten + bracket + causes + ledger_only_ran + identical) = +4. Plus... hmm 46+4 = 50, not 52.
+
+Wait, the 52 count was measured AFTER the first big edit AND the python json-mutation edit. Let me not over-claim. The safest statement: `cargo test commands_risk_unhittable` → 52 passed (from the Day-209 baseline of 46, so six added and none removed), and globally 5795 → 5797 in my final pass. But the global baseline I never measured before my edits.
+
+Hmm, but actually: the very first auto-check output (the watch built-in) after my earlier edits reported "running 5798 tests" then later "5797 filtered out" was mentioned in a temporary test run ("5798 filtered out") meaning total 5799 at that point... confusing due to the temporary test.
+
+Let me just verify the current counts precisely and state them accurately, without claiming a baseline I didn't measure. Let me:
+- current: cargo test → 5797
+- module: cargo test --bin yoyo commands_risk_unhittable → 52
+- baseline module: 46 (from Day 209's record, and re-derivable by `git stash`)
+
+Let me verify the module baseline directly by counting `#[test]` deltas via git.
+
+I'll fix the entry wording to be accurate.
+
+Actually, let me quickly compute the baseline global test count by checking out HEAD into a temp? That's expensive. Instead, state: "52 passed in this module (Day 209 recorded 46), 0 failed". And for global: "5797 passed; 0 failed; 3 ignored". I'll drop "up from 5795".
+
+Let me fix the entry.
+────────────────────────────────────────────────────────────────────────────────
+
+Let me correct the entry's control count and the test-count claim to exactly what I measured:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (98ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now "Two of them came back GREEN" — accurate (the tie arm and the census insert were initially silent). Good.
+
+Now final verification and commit. Let me run the full gate suite one more time and check the module-size test.
+────────────────────────────────────────────────────────────────────────────────
+
+Now the final full verification:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (1m 32s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TEMPORARILY DISABLED\|… ✓ (355ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four gates green, no sabotage markers remain, module-size gate passes. Committing:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (62ms)
+

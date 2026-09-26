@@ -1,0 +1,132 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me judge the diff. I should examine the actual code to verify claims. Let me be focused.
+
+Key checks:
+1. Does the diff implement bracket + per-row causes? Yes, seems so.
+2. New fields `tied_rows` and `uncheckable_rows` — consumer in this diff: yes, used in retrospective_note and in retrospective_git_census/retrospective_unhittable.
+3. Tests: table tests added.
+4. Doc sync: ARCHITECTURE.md entry added.
+5. Product surface: this is a printed note in `/risk` — user-facing output but evolve-kind... it changes output text of a feature. Is that "product surface"? The task is evolve-kind; the change is to the risk command output which is product-facing. But it doesn't touch config defaults/CLI flags/wizard/startup. The task says kind: evolve. The bracket changes output formatting of an existing line. Hmm, is that a product-surface change? It's user-visible output. But #448 concerns defaults breaking non-Rust users. This change is not opt-in but it's an improvement to a diagnostic output. Run-frequency... I'd say N/A-ish, but it does touch user-visible output. Let me consider: the red flag says "if this is an evolve-kind task whose diff changes product surface (config defaults, CLI flags, setup wizard, startup behavior), reject unless the change is explicitly opt-in". The output of `/risk` retrospective note isn't config defaults, CLI flags, wizard, or startup behavior. So PASS on product_surface (or N/A).
+
+Let me verify a couple of concrete things in the code: check the union/intersection logic correctness, and whether the note's clause is still gated by the `c.git` Some and non-empty sets. Also check for a subtle bug: the loop `for row in &divergent` — divergent computed from union minus intersection. Then inside, `if c.unhittable_rows.contains(row)` → ledger-only; else git-only. That's fine.
+
+Potential bug: what if a row is in both c.unhittable_rows and git.unhittable_rows... then it's removed from divergent. Fine.
+
+Also the intersection branch: if sets are equal, prints "both instruments name the same N row(s)". Good.
+
+Concern: the bracket formatting when the sets differ but there's a row only git — the ledger-only count from `c.unhittable_rows.len()` might differ from `with_unhittable` (a count field)? Actually with_unhittable is incremented alongside inserting into unhittable_rows, so they match.
+
+Hmm, one thing: `unhittable_rows` is populated with `row.ts.clone()` for each row where unhittable true. Could two rows with same ts collapse? Noted as stated limit.
+
+Let me also verify no test deletion. The diff modifies `the_intersection_clause_names_the_members_the_totals_cannot` (rewrites it) — that's editing an existing test but not deleting, and it's an edit to reflect new behavior. The check_assertion_weakening script might flag it. Hmm. The diff changed an existing assertion from `"; the two instruments name 1 row(s) in common, 1 only the ledger and 1 only git"` to the new bracket. That's a necessary change since output format changed. But is it a weakening? The old test also had assertions. The new one adds many. Probably fine.
+
+Let me actually run the targeted test and maybe run the binary to see output? The task says tests pass. Let me do a quick focused check: run `cargo test --bin yoyo commands_risk_unhittable` maybe too slow. Let me check git log / diff state.
+
+Actually, let me verify the code compiles as claimed and check a few things quickly. Build already PASS per harness. Let me do a quick check of the file content around the note to confirm the diff is actually applied and there's no leftover issue (e.g., the `plain` param unused).
+
+Let me look at the code.
+
+Also important: does the note get printed with a leading newline in the middle of a line? The note already contains `; the two instruments ...` appended after the git clause. Then `\n  row ...`. The note is printed via eprintln presumably. Fine.
+
+One potential issue: in non-plain mode, is there glyph handling? The note text uses `-` not em dashes. Good, held glyph-free.
+
+Let me quickly verify the real output by running the binary as a user-facing feature check. The task said the note is printed from `/risk`. Running the interactive `/risk` may be hard. But I could check `.yoyo/risk_validations.jsonl` exists and run `./target/debug/yoyo risk | grep unhittable`. That's a good focused check (<30s). Let's do it.
+
+Let me run.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 880,960p src/commands_ris… ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The read tool truncated. Let me read the actual region with read_file.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.8s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=885 && NR<=955' src/com…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 ./target/debug/yoyo … ✓ (7ms)
+ ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The live output confirms the bracket. But wait — the live output shows the bracket but NO per-row line? Ledger 5, git 6, intersection 5, union 6. So there is one git-only row (day 178 tie). The note should print one line for that row. Let me check — grep -i unhittable only shows the first line; the per-row line says "row ...: only the git check ..." which doesn't contain "unhittable". Let me grep differently.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.2s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 ./target/debug/yoyo …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '925,950p' src/commands_r… ✓ (3ms)
+ ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Live feature works: bracket plus per-row cause line naming the day-178 tie with the observed cause.
+
+Now check forgotten touchpoints: new fields have consumers. `tied_rows` set in retrospective_unhittable and read in retrospective_note. `uncheckable_rows` set in retrospective_git_census and read in retrospective_note. Both have consumers in the diff. Are there other constructors of RetrospectiveCount / GitCensus elsewhere in the repo (non-test) that would need updating? Build passes, so no.
+
+Check whether `RetrospectiveCount` / `GitCensus` are constructed in commands_risk.rs or snapshots... build passes so fine.
+
+Doc sync: ARCHITECTURE.md entry added. This is the project convention ("New history goes in ARCHITECTURE.md"). CLAUDE.md/README don't need updating for an internal diagnostic line. N/A? Well, behavior of user-facing output changed, but project convention places history in ARCHITECTURE.md, which was done. I'll say PASS.
+
+product_surface: evolve-kind, changes the printed note of `/risk` output format (user-visible). Not config defaults/CLI flags/wizard/startup. The bracket replaces "N row(s) in common, X only the ledger and Y only git" wording. This is arguably product surface (user-facing output) but not in the listed categories. Note that the diff was described kind: evolve and doesn't add opt-in. Hmm. Should I fail? The #448 rule: "evolve-kind changes to product surface that aren't opt-in". Product surface defined as "defaults, CLI flags, setup wizard, startup behavior". This is a diagnostic output line from a risk command — not in that list. I'll mark product_surface: PASS with reasoning that it modifies an existing diagnostic line only.
+
+Actually, let me consider more carefully: does the new per-row line risk breaking something? The output is longer, potentially multi-line, which could break parsers. Let me check if anything parses the retrospective note. e.g. scripts/extract_trajectory.py or tests. Search for "in common" or "post-ledger grading events" in scripts.
+
+Let me grep quickly.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.7s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "in common\|post-ledger…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (98ms)
+ ✓ (240ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+54 passed vs 46 recorded Day 209 — 8 added (task said four positive controls; the diff shows 4 new tests + 2 join tests + edits). Fine.
+
+No external parser depends on the note wording (only JOURNAL mentions it, which is prose).
+
+Now check whether a doc file (docs/src) mentions the retrospective note output — probably not. The ARCHITECTURE.md entry was added, which satisfies project convention. So doc_sync: PASS.
+
+One more: the task says "Do not change accuracy_pct or the validation-event write path (commands_risk_snapshots.rs)" and "Do not touch src/commands_risk.rs". The diff only touches commands_risk_unhittable.rs, _tests.rs, ARCHITECTURE.md. Good. Let me verify with git show --stat.
+
+Also check the tests file line count / module size gate was reported fine (build/tests pass).
+
+Let me confirm the commit's changed files.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -20 ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Everything checks. Verdict PASS.
+
+One thing about "2 rows" in the title vs live 1 divergence — but the task explicitly said re-derive; the title is the plan's claim. The live reading shows 1 divergent row (the day-178 tie), and the code + ARCHITECTURE entry state that honestly. Fine.
+
+Write the verdict file.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 29s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md.
+
+PASS — the diff implements the missing half of the task (bracket + per-row cause attribution), verified live with the real binary:
+
+• `./target/debug/yoyo risk now prints ...the two instruments name 5..6 row(s) (in common .. union; ledger 5, git 6) followed by row 2026-08-25T22:40:17Z: only the git check - the ledger join reads a same-second timestamp tie here` — the bracket is intersection..union by construction and the cause is the observed day-178 tie, not an invented one.
+• `cargo test --bin yoyo commands_risk_unhittable` → 54 passed / 0 failed.
+• Both new fields (tied_rows, uncheckable_rows) have their producer and consumer in this same diff; only commands_risk_unhittable.rs, its _tests.rs, and an ARCHITECTURE.md entry changed — commands_risk.rs and commands_risk_snapshots.rs are untouched.
+• Non-product-surface: wording of an existing diagnostic line only; no defaults/flags/wizard/startup change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,1532 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me start by reading the relevant files. Let me plan: STEP 0 read src/context.rs, src/cli.rs caller branch, ARCHITECTURE.md entries.
+
+Let me look at the files.
+────────────────────────────────────────────────────────────────────────────────
+
+I'll start by reading the task-scope files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/context.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "load_project_context\|s… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read the caller branch in cli.rs around 2650-2680.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2640,2690p' src/cli.rs &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/context.… ✓ (6ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now let me look at the existing test that pins the enumerator, and also the per-file content tests, and the end of the tests module (line 1440-1498).
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.5s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1150,1300p' src/context.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1400,1498p' src/context.… ✓ (6ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Interesting — there's already a test `the_evolve_loop_still_receives_its_own_project_context` in the file. Let me check git log to see if this was already added. The task says tests only plus one weak source-level guard. Let me check what exists now — maybe a previous session already added STEP 1. Let me see the full region from ~1380 onward and check git log for this test.
+
+Also check whether the source-level guard for the caller branch exists.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "==…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1370,1420p' src/context.… ✓ (3ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, it looks like STEP 1 test already exists in the tree. Let me check git history: when was `the_evolve_loop_still_receives_its_own_project_context` added? Is it committed or uncommitted? git status said branch main; let me check `git status --short`.
+
+Also the presence of CONTEXT_LOSS_REMEDY and the Day-193 #902 tests suggests this file has already been worked on. Wait — maybe a previous session in this same day already did task 1? Let me check git log for context.rs and git status.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — `git status --short` shows nothing? That means the tree is clean. And the test was added in commit 7009bffd "Day 208 (00:13): assessment". Hmm, that commit message says assessment but contains the test? Let me look at what that commit did.
+
+Actually, hold on. The Step 1 test exists already. So a prior session (Day 208?) added the STEP-1 detector. Let's inspect commit 7009bffd.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 7009bffd | head … ✓ (89ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Ah — 7009bffd is the initial commit in this shallow clone (everything added). So the repo is a shallow clone and the history is grafted. So the test exists at HEAD already. Interesting.
+
+Wait, but that means the STEP-1 detector already exists in HEAD. Let me check the ARCHITECTURE.md entry for context.rs to see whether this was already noted. And check whether the weak source-level caller guard exists.
+
+Let me search for a test that reads cli.rs source text in context.rs — grep showed no `include_str!("cli.rs")` in context.rs. Let me search whole repo for that pattern to see where such guards live.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "include_str!(\"cli.rs\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "context.rs" ARCHITECTUR… ✓ (10ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The ARCHITECTURE.md entry for context.rs — let's search for a bullet starting with `- \`context.rs\``.
+
+Also key finding: the STEP-1 test already exists at HEAD (`the_evolve_loop_still_receives_its_own_project_context`, line 1433), plus a `CONTEXT_LOSS_REMEDY` const. So STEP 1 is done. Hmm, was it done by a previous session that already committed? The commit log for context.rs shows only 7009bffd (the graft/initial commit), so the shallow clone makes history unhelpful. The test is at HEAD.
+
+Wait — but the task says this is step 1, build the missing detector. If the detector exists, then... maybe a previous session already landed step 1? Let me check the git log for the message "the_evolve_loop" across all commits, and check ARCHITECTURE for #902.
+
+Let me grep ARCHITECTURE for "#902".
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "" ARCHITECTURE.md && gr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`context.rs\`" ARCH… ✓ (5ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So the ARCHITECTURE.md entry confirms `the_evolve_loop_still_receives_its_own_project_context` already exists (Day 196). So STEP 1's live detector already exists at HEAD — added Day 196, per ARCHITECTURE's "SUPERSEDED Day 196" notes.
+
+Hmm. But the task file says "STEP 1 — the live detector (this is the load-bearing half)" and "What already exists at HEAD (verify before adding anything — do not duplicate)". The task plan was written believing the detector does NOT exist. It explicitly says "that guard now EXISTS"? No — the task file says the enumerator is pinned and per-file content tests exist, so don't re-add the name-list guard. It claims the gap is the loop's own file and the caller path.
+
+But reading HEAD shows the loop's-own-file detector exists as of Day 196. So STEP 1 is already satisfied. What about STEP 2 — the caller reachability guard? Let me check if a weak source-level guard exists for the `!safe_mode` branch calling `load_project_context()`.
+
+Grep found `include_str!("cli.rs")` at src/cli.rs:6056 and src/restricted.rs:259. Let me check what cli.rs:6056 is — maybe that IS the caller guard (added Day 196?). Let me read it. Also `src/restricted.rs:259` reads cli.rs source.
+
+Let me check.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6020,6100p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '240,300p' src/restricted… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So neither the STEP-2 caller guard exists. Let me check if any test in the repo asserts the `!safe_mode` branch calls `load_project_context()`. Grep for "load_project_context()" in tests or for "safe_mode" in contexts.
+
+grep -rn "load_project_context()" showed cli.rs:2659 and context.rs:163. Let me grep tests directory.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "load_project_context\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "safe_mode" src/ --incl… ✓ (6ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me check commands_spawn.rs around 489-520 — it mentions `spawn_project_context_with` and a call-counting stub test. That's the spawn-side variant which takes safe_mode as parameter. But the task says pin the caller branch in cli.rs.
+
+Let's see if there's already a test in commands_spawn.rs that pins the parent's `!safe_mode` branch. Read around 2400-2500 and the spawn_project_context wrapper.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '495,530p' src/commands_s… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me read the test at commands_spawn.rs:2625 onwards ("outlived them") — that may be the source-level guard pinning that cli.rs's `!safe_mode` branch calls load_project_context.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2620,2720p' src/commands… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+That test is about the spawn seam, not the cli.rs caller branch. So STEP 2's caller guard doesn't exist yet.
+
+So the actual gap at HEAD:
+- STEP 1: exists already (`the_evolve_loop_still_receives_its_own_project_context`).
+- STEP 2: the weak source-level caller guard asserting the `!safe_mode` branch in cli.rs still calls `load_project_context()` — does NOT exist.
+
+Hmm. But the task file explicitly forbids... no, it says add STEP 1 and STEP 2. If STEP 1 already exists, the honest move is to verify it and not duplicate; add STEP 2 as the real deliverable. But wait — maybe the task file was written by an assessment phase before this session (Day 210 assessment). The archive says the guard exists since Day 196. The task file's "What already exists at HEAD" section even says: "Reading src/context.rs at HEAD shows the enumerator is already pinned... So do NOT re-add the name-list guard." It doesn't mention the loop's-own-file detector existing. So the plan has a stale claim — #902's assessment claims the loop detector is missing when it exists (the ARCHITECTURE entry says it was added Day 196 as `the_evolve_loop_still_receives_its_own_project_context`).
+
+Hold on. Let me double check — is the test at line 1433 actually reachable/compiled? It's in `mod tests` which is inside `#[cfg(test)]`. Yes. Let me verify it actually passes and that CONTEXT_LOSS_REMEDY is used. Let me run the test.
+
+Actually before that, let me check whether there's maybe something in the file that's dead — e.g., an unused const would fail clippy. Let me just run the test to confirm it's live.
+
+Plan:
+1. Verify STEP 1 test exists and passes at HEAD (targeted cargo test).
+2. Add STEP 2: the weak source-level caller guard in src/context.rs, asserting the `!safe_mode` branch in cli.rs still calls `load_project_context()`, needles assembled at runtime, plus pinning the spawn-side direct call site visibility (assert what exists, nothing about correctness).
+3. Optionally strengthen STEP 1? The task says don't duplicate. But maybe additional value: the STEP 1 test asserts markers. Fine.
+
+Hmm, but the task asks for a "live detector" — exists. And "caller reachability guard". So the honest diff = STEP 2 + doc comment + ARCHITECTURE entry + notes.
+
+Also the task says "#902 records that src/commands_spawn.rs also calls load_project_context() directly, outside that branch. Verify the true locations by reading; assert nothing about which is right — just pin what exists so a later change to the spawn path is visible rather than silent."
+
+So the guard should pin: (a) exactly one production call in cli.rs, inside the `!safe_mode` branch; (b) the spawn-side call site exists (commands_spawn.rs:509 uses `crate::cli::load_project_context()` inside its own safe-mode seam).
+
+Let me write the guard carefully. Reading cli.rs source via include_str!("cli.rs") — but from src/context.rs, `include_str!("cli.rs")` resolves relative to the including file's directory, i.e. src/cli.rs. Good.
+
+Needles at runtime: build strings from parts so the guard can't match its own source. E.g.
+
+let fn_needle = format!("{}load_project_context{}", "pub ", "()"); — hmm, careful; simpler: use format! with concat of pieces.
+
+The guard should:
+- split production vs tests at "#[cfg(test)]" (like restricted.rs guard).
+- find safe mode guard: `let safe_mode = ` ... Actually the production text is:
+
+```
+    let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");
+    if !safe_mode {
+        if let Some(project_context) = load_project_context() {
+```
+
+Assemble needle "if !" + "safe_mode" and "load_project_context(" ... Let me write:
+
+let guard_needle = format!("if !{}", SAFE_MODE_IDENT); where SAFE_MODE_IDENT = "safe_mode"... but "safe_mode" appears elsewhere in cli.rs? grep showed lines 5556+ in tests (split off) and 2657-2659, 2892. So in production: 2657, 2658, 2659, 2892. Also 1765/1844/1950 are `set_safe_mode` field names in a struct — those are "set_safe_mode:" which contains "safe_mode" as substring. So asserting a count of "safe_mode" occurrences is fragile. Better: assert the position of the call is inside the `if !safe_mode {` block.
+
+Approach:
+- Find `let safe_mode_hdr = format!("let {} = ", "safe_mode")` — appears once in production? Let me check: grep gave "let safe_mode = restricted..." at 2657. Only one occurrence of "let safe_mode ="? Let's check.
+
+Then find "if !safe_mode {" after it, then find the call needle "load_project_context" after that, and assert the call comes before the closing of the block. How to determine block end robustly? A simple approach: assert that between "if !safe_mode {" and the call there is no other "}" — i.e., the call is in the first statement of the block.
+
+Simplest robust: take the substring after "if !safe_mode {" and assert `trim_start().starts_with(call_needle_or "if let Some(project_context) = ...")`. Something like:
+
+let after = &tail[block_start..]; // tail is after "if !safe_mode {"
+let after_trimmed = after.trim_start();
+assert!(after_trimmed.starts_with("if let Some(project_context) = "), ...)
+and then assert after_trimmed starts contains call needle within first N bytes.
+
+Hmm, but robustness: an added comment inside the block would break it. Use: find the closing of the if-block by scanning? Simpler: assert the call appears within the same block by checking that the first `}` after block_start comes after the call index. Let me do:
+
+let block_start = prod.find(&if_needle).expect(...) ; // index of "if !safe_mode {"
+let call_at = prod[block_start..].find(&call_needle).expect(...) + block_start;
+let close_at = prod[block_start..].find('}').map(|i| i + block_start).unwrap_or(prod.len());
+assert!(call_at < close_at, "...");
+
+That asserts the call is inside the first brace-group. Good and simple. But wait: the call line is `if let Some(project_context) = load_project_context() {` — there's no `}` before it, so close_at (first `}` after block start) will be after call_at. Good.
+
+Also assert exactly one production occurrence of the call — "two doors" discipline: the only production caller of `load_project_context()` in cli.rs is that branch. Hmm, but is `load_project_context` also used elsewhere in cli.rs production? grep: cli.rs:588 is `pub use crate::context::{list_project_context_files, load_project_context};` — a re-export. That's production text and contains "load_project_context". So count of the bare name would be 2. Use the call needle with parens: `load_project_context()`. 588 has `load_project_context};` — no parens. So `load_project_context()` count in production should be 1. Also `list_project_context_files` — does it contain "load_project_context"? "list_project_context_files" — contains "project_context_files", not "load_project_context". Fine.
+
+Let me assemble needles at runtime: e.g.
+
+let call_needle = format!("{}_project_context{}", "load", "()");  → "load_project_context()"
+
+Hmm, but the guard source itself will contain the literal `format!("{}_project_context{}", "load", "()")` — the assembled string doesn't appear literally in the source, so a match against context.rs isn't relevant anyway; the guard reads cli.rs, not itself. The repo discipline "assemble every needle at runtime so the guard cannot match its own source text" applies when the guard reads its own file. Here it reads cli.rs, so matching itself is impossible... unless the needle could appear. Actually the reason for runtime assembly here: the guard test source lives in context.rs; it doesn't read context.rs. So assembly is less critical, but the task explicitly demands it. I'll do it anyway (cheap, and follows the discipline).
+
+Also STEP 2 second half: pin the spawn-side call without judging it. Assert that commands_spawn.rs source contains a call to `crate::cli::load_project_context()` inside `spawn_project_context()` — assemble needles at runtime. Should I? The task says "just pin what exists so a later change to the spawn path is visible rather than silent." Yes, add an assertion that the spawn-side caller still reads the same loader. Keep it weak and documented.
+
+Careful: reading commands_spawn.rs via include_str!("commands_spawn.rs") from context.rs — fine.
+
+Now also consider: should I strengthen STEP 1? The task's STEP 1 asks for asserting "the returned string contains both the file label `CLAUDE.md` and a stable substring of CLAUDE.md's real text" — the existing test does exactly that (markers `## Build & Test Commands`, `## Safety Rules`, plus the BEGIN CLAUDE.md marker). So done. I'll verify it passes.
+
+But wait: is there something the existing STEP-1 test lacks that the task's brief emphasizes? "call load_project_context_from(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))" — existing test uses `env!("CARGO_MANIFEST_DIR")`. ✔ "assert the result is Some" ✔ "assert contains file label CLAUDE.md" — via `-BEGIN CLAUDE.md]` ✔ "and a stable substring" ✔ "anti-vacuous" ✔ "name that in the test's doc comment: it is the loop's own context check" — the doc comment says "GUARD: this repository's own CLAUDE.md still reaches the caller" and CONTEXT_LOSS_REMEDY mentions evolve.sh. Let me read the full doc comment of the existing test to see whether it says CI/--trust-project. Lines 1427-1433. Earlier output was truncated: "GUARD: this repository's own `CLAUDE.md` still reaches the caller of the ..." with 23 more similar lines. Let me read 1385-1435.
+
+Actually I need to see lines 1385-1435 fully.
+
+Let me also verify the test passes.
+
+Then the ARCHITECTURE entry: add a note to the context.rs bullet about Day 210 adding the caller-guard, and record the plan's stale claim (that the loop detector didn't exist — it landed Day 196). Also update #902 issue? The task says "its own body should be updated only if the implementer finds a claim in it that reading falsifies." Let me read issue #902 to see if it claims the detector is missing. That could be worth a comment. But maybe not necessary. Let's check the issue quickly with gh (may not have network/auth). Let me try later.
+
+Let me read the test region first.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1385,1440p' src/context.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let safe_mode\|if !safe… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Note: the sed output shows "... (23 more similar lines)" — the tool truncates repeated lines? Actually those ellipsis lines are the read tool's own compression of "similar lines"? Weird — it seems the harness compresses comment blocks. Let me use a different approach to read the exact lines 1397-1432 (the doc comment). Use `awk` printing with line numbers, or `cat -A`? Let me try `sed -n '1397,1432p' | cat -n` — probably same truncation. Let me try `python3 -c` to print lines.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (5 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: STEP 1's live detector exists at HEAD, added earlier (the doc comment says "#902's gate half was blocked on, twice" — Day 196). So the existing test is exactly what STEP 1 asks for. Its doc comment does not mention CI/--trust-project explicitly, but the task says "Name that in the test's doc comment". Since the existing test's comment covers most of it, I could add a short sentence about the CI environment. Actually the CONTEXT_LOSS_REMEDY names evolve.sh and the untrusted path. I could add a line to the doc comment: "This is the exact test that would go red if a naive trust gate landed: CI is precisely where nothing is trusted (ephemeral runner, no --trust-project, this repo's .yoyo.toml grants nothing)." That's an improvement within scope (STEP 1's own requirement) and doesn't duplicate.
+
+So the diff:
+1. STEP 1: exists; add the naming sentence to the doc comment (per the brief's explicit requirement to name that in the test's doc comment). No duplication.
+2. STEP 2: new test `the_client_still_loads_project_context_outside_safe_mode` — weak source-level guard with runtime-assembled needles, doc comment stating what it does NOT prove.
+3. STEP 3: positive control serially + atomic: neuter the content read in load_project_context_from's instruction loop (skip push_str of wrap), run the STEP-1 test, see fail by name, restore.
+4. ARCHITECTURE.md entry, commit.
+
+Also record in ARCHITECTURE that the plan's premise (detector missing) was stale — a superseded claim recorded rather than erased: the detector landed Day 196.
+
+Now, before writing tests, let me verify the existing test passes (it should).
+
+Let me now design STEP 2 carefully and write it.
+
+Guard content (in src/context.rs tests module, placed right after the STEP-1 test, before closing brace of mod tests):
+
+```rust
+    /// Deliberately WEAK source-level guard, and its own doc comment says so:
+    /// it proves the call site is still TEXTUALLY there, never that it RUNS.
+    ///
+    /// #902's second half is a reachability question...
+    #[test]
+    fn the_caller_still_reaches_the_loader_outside_safe_mode() {
+        // Needles assembled at runtime so this guard cannot match its own text.
+        let loader = format!("{}_project_context{}", "load", "()");
+        let field = format!("{}_mode", "safe");
+        let if_needle = format!("if !{field} {{");
+
+        let source = include_str!("cli.rs");
+        let (production, _tests) = source
+            .split_once("#[cfg(test)]")
+            .expect("src/cli.rs must keep its test module at the end");
+
+        // (1) Exactly one production call site in the system-prompt builder.
+        assert_eq!(production.matches(&loader).count(), 1, ...);
+
+        // (2) It sits inside the `!safe_mode` branch, i.e. before the branch's
+        // first closing brace.
+        let branch_at = production.find(&if_needle).expect(...);
+        let call_at = production.find(&loader).expect(...);
+        let close_at = production[branch_at..].find('}').map(|i| i + branch_at).unwrap_or(production.len());
+        assert!(call_at > branch_at, "...");
+        assert!(call_at < close_at, "...");
+```
+
+Wait, `if !safe_mode {` — production also has `if crate::cli_config::is_safe_mode()` — but that's in main.rs, not cli.rs. Inside cli.rs production, is there another `if !safe_mode`? grep showed only 2658. But needles at runtime: `if !` + `safe_mode` + ` {`. Good.
+
+Hmm, careful: does production contain `if !safe_mode {` exactly with that spacing? Yes line 2658: `    if !safe_mode {`.
+
+Also assert the "safe-mode flag" text: which flags set safe_mode? The line 2657 `let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");`. Could assert the branch is driven by `--safe-mode` and `restricted`. That's good extra: it pins the *predicate* too? The task says don't pin design questions. But asserting the branch still exists and is keyed on --safe-mode/restricted documents what exists. `restricted` could be renamed... it's a local variable. Hmm, keep it simple: assert that within the branch-defining statement's own line, `"--safe-mode"` appears. Actually the task says "locate the safe-mode guard, and assert the call is still inside the non-safe-mode side." Just that.
+
+(3) The spawn-side direct caller: pin it exists, assert nothing about correctness.
+
+```rust
+        let spawn_source = include_str!("commands_spawn.rs");
+        let spawn_call = format!("crate::cli::{}", loader);
+        assert_eq!(spawn_source.matches(&spawn_call).count(), 1, ...);
+```
+
+Check: commands_spawn.rs:509-510 is `crate::cli::load_project_context()` — on one line? Line 509: `spawn_project_context_with(crate::cli_config::is_safe_mode(), &|| {` and line 510: `crate::cli::load_project_context()`. So the literal `crate::cli::load_project_context()` exists once. Let me verify with grep count.
+
+Also the task says assert nothing about which is right. And note that commands_spawn's call is behind its own safe-mode seam (spawn_project_context_with). I'll state that in the doc comment as an observation with the code reference, not as a verdict.
+
+Hmm, but careful about "every needle at runtime so the guard cannot match its own source text": since I read cli.rs/commands_spawn.rs, self-match is impossible. But also there's a subtlety: `include_str!("commands_spawn.rs")` — the file is huge (~2800 lines?) and has its test module. Counting matches over the whole file including tests: `crate::cli::load_project_context()` — in commands_spawn tests, is there another occurrence? Lines 2667/2695 use `spawn_project_context_with(...)` with `&load` closures; grep for "crate::cli::load_project_context" in commands_spawn.rs.
+
+Let me check counts now.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "crate::cli::load_projec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 900 cargo test --lib con… ✓ (10ms)
+ ✓ (143ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No lib target; it's a bin. Run `cargo test --bin yoyo ...`? Let me check Cargo.toml name. Package is yoyo-agent; binary maybe `yoyo`. Use `cargo test context::the_evolve_loop` which runs all test targets filtered... that compiles everything. Let's check the bin name.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A5 "\[\[bin\]\]\|^\[pac… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+I need to continue. Let me summarize where I am:
+
+I've verified:
+1. `src/context.rs` already has `the_evolve_loop_still_receives_its_own_project_context` (STEP 1's live detector) at line ~1433, committed in 7009bffd (Day 208).
+2. STEP 2's caller reachability guard does NOT exist — nothing in `src/context.rs` or elsewhere asserts the `!safe_mode` branch in `src/cli.rs` still calls `load_project_context()`.
+3. Verified: `src/cli.rs:2657-2659` has `let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode"); if !safe_mode { if let Some(project_context) = load_project_context() {`.
+4. Verified: `src/commands_spawn.rs:510` has `crate::cli::load_project_context()` — exactly one occurrence of that string.
+5. `src/context.rs` has one occurrence of `load_project_context()` as a call — wait, `grep -c "load_project_context()" src/cli.rs` returned 1. In cli.rs, the definition is `pub use crate::context::{list_project_context_files, load_project_context};` (that's line 588, no parens), and line 2659 `load_project_context()`. So exactly 1 call site in cli.rs.
+
+So the missing half is STEP 2: the weak source-level guard. Let me write it now in `src/context.rs`'s test module, plus the ARCHITECTURE.md entry.
+
+Then run the positive control, tests, clippy, fmt, and commit.
+
+Let me be efficient now. Let me first write the test.
+
+Design of the STEP 2 guard test (in `src/context.rs` tests):
+
+```rust
+    /// Deliberately WEAK source-level guard: the `!safe_mode` branch in
+    /// `src/cli.rs` still *calls* the project-context loader.
+    ///
+    /// STATED LIMIT, and it is the whole point of calling this guard weak: it
+    /// proves the call site is still textually present inside the non-safe-mode
+    /// side. It proves nothing about whether the call RUNS, nothing about
+    /// whether the loaded string reaches the prompt, and nothing about the
+    /// spawn-side call site. `the_evolve_loop_still_receives_its_own_project_context`
+    /// above covers the loader's return value; this covers only the branch that
+    /// decides whether the loader is consulted at all.
+    #[test]
+    fn cli_safe_mode_branch_still_consults_the_project_context_loader() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli.rs");
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{} is unreadable: {e}", path.display()));
+        // Every needle assembled at runtime so this guard cannot match its own
+        // source text — a guard that matches itself proves nothing.
+        let guard_needle = format!("let {}{}", "safe_mode", " =");
+        let call_needle = format!("{}{}", "load_project_context", "()");
+        ...
+    }
+```
+
+Hmm, careful: `format!("let safe_mode =")` — assembling at runtime. But `"safe_mode"` is a literal in my test source; if I write `let guard_needle = format!("let {}{}", "safe_mode", " =");` then the literal `"safe_mode"` appears... that's fine, the concern is about the *guard needle* matching itself, i.e. the test's own source containing the exact string `let safe_mode =` or `load_project_context()`. By splitting the concatenation, no single literal in the test source equals the needle. But wait — the test source is in `src/context.rs`, and I'm reading `src/cli.rs`, so self-matching isn't even possible... unless someone inlines it. Actually the repo discipline says assemble needles at runtime so the guard cannot match its own source text. Since we read a *different* file (cli.rs), self-matching is less of an issue, but let's follow the discipline anyway.
+
+Actually there's a subtlety: the task says "Read the file as text (`include_str!("cli.rs")` or a `CARGO_MANIFEST_DIR`-relative read)". Both are fine. I'll do the manifest-relative read to avoid embedding cli.rs as a string in the binary (include_str! would inflate the binary). Actually `src/cli.rs` already does `include_str!("cli.rs")` in a test. Hmm, for context.rs, reading relative is cleaner.
+
+Now what exactly to assert:
+1. Slice the test module off (split at `#[cfg(test)]`) — production only.
+2. Find the safe-mode guard: the last occurrence? Let's find the position of the guard needle `let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");` — but needles assembled at runtime. Let's do component needles:
+   - `guard = format!("let {}{} {}{}", "safe_mode", " ", "=", "")` too convoluted.
+
+Let me simplify with a helper `fn runtime_needle(parts: &[&str]) -> String { parts.concat() }`. Then:
+- `let guard_needle = runtime_needle(&["let ", "safe", "_mode", " = "]);`
+- `let branch_needle = runtime_needle(&["if !", "safe", "_mode", " {"]);`
+- `let call_needle = runtime_needle(&["load_project", "_context", "()"]);`
+- `let flag_needle = runtime_needle(&["\"", "--safe", "-mode", "\""]);`
+
+Assertions:
+- Anti-vacuous first: slice non-empty; each needle found at least once (else the guard is testing a vanished spelling — assert with a clear message).
+- The call site index is within the `!safe_mode` branch body: find `branch_needle` position, then find the call position after it, and assert that the enclosing body... Determining "inside the branch" textually requires brace matching. Simpler robust approach: take the slice of production source starting at the `if !safe_mode {` needle and ending at the matching close brace via a brace counter. Then assert exactly one occurrence of the call needle inside that slice, and that the whole-file production count of the call needle is exactly 1 (so the call is in that branch and nowhere else — i.e. the branch is the only road).
+
+Wait — is `load_project_context()` present only once in cli.rs production? Yes, confirmed: 1 occurrence. But careful: `load_project_context()` also matches the substring of... no. `pub use crate::context::{list_project_context_files, load_project_context};` has no `()`. Good. But the test module in cli.rs might contain `load_project_context` occurrences — I split at `#[cfg(test)]` so those are excluded. Let me check whether cli.rs tests mention it... Let me just count in production slice at runtime and assert exactly 1 — and if it's not 1, the guard reddens with a clear message; that's the honest behavior.
+
+Actually, hmm: asserting "exactly 1" is a stronger claim that includes the spawn-side check? No — spawn side is in a different file. The task says: "#902 records that `src/commands_spawn.rs` also calls `load_project_context()` **directly**, outside that branch. Verify the true locations by reading; assert **nothing** about which is right — just pin what exists so a later change to the spawn path is visible rather than silent."
+
+So I should pin the spawn-side call too — but assert nothing about correctness. I.e. assert that `src/commands_spawn.rs` contains exactly one occurrence of `crate::cli::load_project_context()` (the spawn path's road), documented as a pin, not a verdict. That makes a change to the spawn path visible.
+
+So two guards? Or one test with two parts. Let me write two tests for clarity:
+
+1. `cli_safe_mode_branch_still_consults_the_project_context_loader` — the `!safe_mode` branch guard.
+2. `the_spawn_paths_context_call_is_pinned_without_a_verdict` — pins `src/commands_spawn.rs`'s one `crate::cli::load_project_context()` call and that it goes through the seam `spawn_project_context_with` (well, it's inside `spawn_project_context`, guarded by `crate::cli_config::is_safe_mode()`). Just pin existence + count.
+
+Hmm, but "Max 3 source files; this task should touch one (`src/context.rs`)". Reading other files as text is fine.
+
+Let me also verify #902's claim vs reading: task says "Verify the true locations by reading". Let me check the issue #902's exact claim about commands_spawn.rs. Actually the task file says "#902 records that src/commands_spawn.rs also calls load_project_context() directly, outside that branch." I verified: `src/commands_spawn.rs:510: crate::cli::load_project_context()` — it is inside `fn spawn_project_context()` which calls `spawn_project_context_with(is_safe_mode(), &|| ...)`, so it *is* guarded by safe mode — but by a different mechanism (the global flag), and it IS outside the cli.rs branch. So the claim is accurate as stated. Good — no falsification to report.
+
+Let me now write the code. First, let me look at how the existing brace-matching / slice helpers are done elsewhere for consistency, and check if there's a helper. Let me just write it.
+
+Implementation of finding the enclosing branch:
+
+```rust
+fn branch_body<'a>(src: &'a str, header: &str) -> Option<&'a str> {
+    let start = src.find(header)? + header.len();
+    let mut depth = 1usize;
+    for (i, ch) in src[start..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&src[start..start + i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+```
+
+Caveat: braces inside string literals would break it — but the branch body contains `system_prompt.push_str("\n\n# Project Instructions\n\n");` which has no braces. Fine, and if it broke, the guard goes red loudly rather than silently passing. Actually, a broken brace match could return None → I'd panic with a message. It's a weak guard; fine. But better to state the limit.
+
+Now, should I put this helper inside the test module (only used by tests)? Yes, `#[cfg(test)] mod tests` — helper defined in tests module.
+
+Now the tests:
+
+```rust
+    // ---- #902 step 1: the CALLER reachability guard (Day 210) ----
+    //
+    // The delimiter the two guards below share: every needle is assembled at
+    // runtime from fragments, so no assertion can be satisfied by this test's
+    // own source text.
+    fn runtime_needle(parts: &[&str]) -> String {
+        parts.concat()
+    }
+```
+
+Then:
+
+```rust
+    #[test]
+    fn cli_safe_mode_branch_still_consults_the_project_context_loader() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli.rs");
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{} is unreadable: {e}", path.display()));
+        let (production, _tests) = src
+            .split_once("#[cfg(test)]")
+            .unwrap_or_else(|| panic!("src/cli.rs must keep its test module at the end"));
+
+        let guard_needle = runtime_needle(&["let ", "safe", "_mode", " = "]);
+        let branch_needle = runtime_needle(&["if !", "safe", "_mode", " {"]);
+        let call_needle = runtime_needle(&["load_project", "_context", "()"]);
+        let flag_needle = runtime_needle(&["\"", "--safe", "-mode", "\""]);
+
+        // Anti-vacuous, FIRST: ... 
+        assert!(!production.is_empty(), ...);
+        for (label, needle) in [...] {
+            assert!(production.contains(needle), "...");
+        }
+```
+
+Hmm, the anti-vacuous check form: if `guard_needle` is missing, `branch_body` returns None and we panic anyway. But the discipline is to assert anti-vacuity *first and explicitly*. Let me write it as an explicit loop over needles with a message saying the spelling moved.
+
+Then:
+- the branch body, and assert the call is in it.
+- assert whole-production count of call_needle == 1 → the branch is the only road in this file.
+- assert the branch header consults the flag (so a rename to `safe_mode` staying true isn't enough — the flag needle must be inside the guard line). Actually: `let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");` — I can assert the guard line contains both `restricted` and `--safe-mode`. That pins the `--restricted ⟹ safe_mode` coupling that the ARCHITECTURE entry names as a second hatch. Good, and relevant.
+- assert load's return is actually used in the branch: i.e. the branch body contains the call, and the `if let Some(project_context) = ...` binding, and `system_prompt.push_str`. Hmm — maybe assert `push_str` follows so the value is consumed rather than computed and dropped. Let me keep it to: call present, bound via `if let Some(` and pushed with `push_str(`. That's stronger but still textual. Since the branch body is available as text, asserting the call is *consumed* is cheap. But careful about over-claiming: doc comment must say it proves only textual presence. I'll assert the three: `if let Some(`, the call, and `push_str(`.
+
+Hmm, `if let Some(project_context) = load_project_context() {` — one line. I could assemble `let some_needle = runtime_needle(&["if let ", "Some(", "project", "_context", ") = "])` and assert the branch body contains the call and that... simpler: assert the branch body contains the call_needle AND that the call appears on a line that also binds it. Overkill. Let me do: assert `branch.contains(&runtime_needle(&["system_", "prompt.push_str("]))` so the loaded string is still pushed into the prompt. Hmm, `system_prompt` is a variable name in cli.rs — that's a factual coupling that could break for unrelated reasons (rename of system_prompt). But that's arguably a good thing: it would be visible. Hmm, but "weak guard" should be minimal to avoid false reds. The task says: "assert the `!safe_mode` branch in `src/cli.rs` still calls `load_project_context()`."
+
+I'll do: call present inside branch body + exactly one occurrence in production + flag coupling on the guard line. That's precise and matches the task. I'll also assert `--restricted` coupling? The guard line is `let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");` — `restricted` there is a variable. Asserting the literal `--restricted` isn't in the guard line. I could assert the guard line contains `restricted` (the variable). Let me assert both: guard line contains `restricted` and `--safe-mode`. This pins that both hatches still set the flag. The message would explain.
+
+Wait — I need to locate the guard *line* — from guard_needle to the end of line. Fine.
+
+Now the spawn pin test:
+
+```rust
+    #[test]
+    fn the_spawn_paths_own_context_call_is_pinned_without_a_verdict() {
+        // #902's body records that `src/commands_spawn.rs` reads project context
+        // through a SECOND road, outside cli.rs's `!safe_mode` branch. Reading
+        // HEAD confirms it: `fn spawn_project_context()` calls
+        // `crate::cli::load_project_context()` through the pure
+        // `spawn_project_context_with(is_safe_mode(), load)` seam.
+        //
+        // THIS TEST TAKES NO POSITION on which road is right — that is one of the
+        // gate's design questions and #902 keeps it open. It pins what exists so
+        // a change to the spawn path is VISIBLE rather than silent: the count is
+        // exact, so a second call, a removed one, or a moved one reddens here.
+        ...
+    }
+```
+
+Assertions: production slice of commands_spawn.rs (split at `#[cfg(test)]`) contains exactly one `crate::cli::load_project_context()` needle; and that the seam function `spawn_project_context_with` exists and is consulted with `is_safe_mode()`. The needles assembled at runtime.
+
+Careful: `spawn_project_context_with` appears in commands_spawn.rs tests too — but I split off tests. Let me check production occurrences of `spawn_project_context_with(` in commands_spawn.rs: line 488 (definition) and 509 (call). So exactly 2 in production. And `crate::cli_config::is_safe_mode()` appears at line 509 only? grep showed `src/commands_spawn.rs:489: safe_mode: bool,` and 508-510. Let me count precisely.
+
+Let me be careful not to over-assert (fragile). I'll assert:
+- exactly 1 occurrence of the spawn call needle `crate::cli::load_project_context()`.
+- the seam's name is called with the safe-mode global: i.e. the text `spawn_project_context_with(crate::cli_config::is_safe_mode()` appears — that's the wiring that makes the spawn road honour safe mode. Count == 1 in production.
+
+Hmm, that's a fairly long needle. Assemble at runtime in fragments.
+
+Actually, to keep this tractable and honest, maybe both tests read the same way. Let me now also consider: does `tests/module_size.rs` have a register requiring updates if context.rs grows? context.rs is 1498 lines, under 2000 cap, and previously noted "un-listed and far under MAX_MODULE_LINES = 2000". Adding ~120 lines → 1620. Fine.
+
+Also `tests/neutered_guards.rs` scans for markers — fine as long as I remove the NEUTERED marker.
+
+Now, before writing, let me re-check: does grep for a source-level guard already exist that reads cli.rs for the safe_mode branch? `src/restricted.rs:259` uses `include_str!("cli.rs")` for `only_one_place_decides_whether_the_run_is_restricted`. Let me read that to match style — I already read lines 250-300. Good, it uses `split_once("#[cfg(test)]")` and `production.matches(...)`.
+
+Let me write the tests now.
+
+One important thing: the test module in context.rs — do the tests currently need `#[serial]`? The new tests don't touch env or CWD, so no.
+
+Also: `std::path::Path::new(env!("CARGO_MANIFEST_DIR"))` — in a test module inside src/context.rs, `env!("CARGO_MANIFEST_DIR")` works.
+
+Let me write the edit.
+
+I need to append to the end of the tests module in context.rs (line 1498 is the closing `}` of mod tests). The file ends with the `the_evolve_loop_still_receives_its_own_project_context` test then `}`. Let me read the last lines exactly.
+
+Let me do that and then edit.
+────────────────────────────────────────────────────────────────────────────────
+
+I have the key facts verified. Continuing with STEP 2 (the caller reachability guard), which does not exist yet.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1480… (12 lines) ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The commands_spawn.rs production slice is 0 because... `#[cfg(test)]` appears early in that file (the `#[cfg(test)]` marker appears before the production code, e.g. `#[cfg(test)] pub fn parse_spawn_task`). Right — commands_spawn.rs has a `#[cfg(test)]` attribute at line ~466, before `spawn_project_context_with`. So splitting at the first `#[cfg(test)]` truncates. I need a different approach for commands_spawn.rs: use the LAST occurrence of `#[cfg(test)]` — i.e. `rsplit_once` — since the test module is at the end. Let me check.
+
+For cli.rs, split_once is what restricted.rs uses; also need to confirm `#[cfg(test)]` count in cli.rs. Let's compute both with rsplit_once and check.
+
+Actually better: for the spawn pin, split at `\nmod tests` or use rsplit_once("#[cfg(test)]"). Let me check that commands_spawn.rs's test module is the last `#[cfg(test)]`.
+
+Let me verify counts with rsplit_once.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (105ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Python version issue (rsplit_once is Python 3.9+? Actually `str.rsplit`... `rsplit_once` was added in 3.9? No — `str.rsplit_once` doesn't exist; it's `str.rsplit(sep, 1)`). Let me use a different approach.
+
+Important: cli.rs has only ONE `#[cfg(test)]` at 2953 — so `split_once` works there. Wait, but cli.rs is ~6000+ lines and its tests are at 2953+? The test module `mod tests` at cli.rs... earlier grep showed test functions at 5556 etc. Hmm, `#[cfg(test)]` at 2953 — that might be `#[cfg(test)]` on a function, not the test module. So splitting cli.rs at the first `#[cfg(test)]` would truncate production code! But `restricted.rs:259` does exactly `split_once("#[cfg(test)]")` on cli.rs and asserts counts of `restricted_from_sources(` == 1 — and that passed, since the consumer call site is at ~2643, i.e. AFTER 2953? Wait, line 2657 is `let safe_mode = ...` — that's BEFORE 2953. Hmm, so if `restricted_from_sources(` call site is at 2643, and cli.rs's only `#[cfg(test)]` is at 2953, then the "production" slice `[..2953]` includes 2643 but excludes anything after 2953.
+
+Hmm wait, but the test module in cli.rs: where is `mod tests`? Let me check. Tests at 5556 are in a module declared... there might be `mod tests` without `#[cfg(test)]`? No. Let me look at line 2953 context and find `mod tests` in cli.rs.
+
+Let me redo this properly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2945,2960p' src/cli.rs &… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+So cli.rs's test module starts at 2953, and everything before is production. The `let safe_mode = ...` at 2657 is before that. Good — `split_once("#[cfg(test)]")` works for cli.rs.
+
+For commands_spawn.rs there are three `#[cfg(test)]` markers (270, 463, 2434) — the first two are on functions (`#[cfg(test)] pub fn parse_spawn_task` at 466ish and another). The production code I need (`spawn_project_context_with` at 488-510, i.e. between 463-... wait 488 > 463) sits after the `#[cfg(test)]` at 463. So splitting at the first `#[cfg(test)]` would exclude it. I need the last: `#[cfg(test)]\nmod tests` at 2434.
+
+Simplest robust approach for both: split at the *test module* declaration, i.e. find the last occurrence of "\nmod tests {" or the `#[cfg(test)]\nmod tests {` pair. Let me use: `let (production, _) = src.rsplit_once("\n#[cfg(test)]\nmod tests {")` — hmm, for cli.rs the text is "#[cfg(test)]\nmod tests {" preceded by a newline. Using rsplit_once on "\nmod tests {" is simpler and works for both if both files declare `mod tests {` at the end (commands_spawn.rs: does it have `mod tests`? let me check).
+
+Let me check: grep showed `src/commands_spawn.rs:2434:#[cfg(test)]`. Let me see what follows.
+
+I'll write the helper to find the last `\nmod tests {` occurrence in each file. Let me verify both files have exactly one `mod tests {` and it's at the end.
+
+Actually for the guard, I can simply do what restricted.rs does for cli.rs (split_once("#[cfg(test)]") — verified fine) and for commands_spawn.rs use rsplit. But better: use a shared helper `production_source(file) -> &str` that splits at the last `"\n#[cfg(test)]\nmod tests {"`. Hmm, but the fragment `mod tests` inside my test source would... the needle is about a different file, no self-match concern (I read files, not my own source).
+
+Let me check what's after line 2434 in commands_spawn.rs.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2430… (10 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The `\nmod tests {` split works for both files. Interesting: cli.rs production is 128594 chars, and the test module is ~180K chars. Good.
+
+Wait — cli.rs: `load_project_context()` count in production = 1. And `--safe-mode` count: I didn't print for the mod-tests split. Let me just write the test with clear assertions and let the test output tell me. Actually better to know now.
+
+Let me now write the test code. I'll add:
+
+```rust
+    // ---- #902 step 1, second half: the CALLER reachability guard (Day 210) ----
+```
+
+with:
+
+1. `fn production_source(file: &str) -> String` helper: read `<manifest>/src/<file>`, split at the test module.
+2. `fn runtime_needle(parts: &[&str]) -> String`.
+3. `fn enclosing_block(src: &str, header: &str) -> Option<&str>` — brace counting.
+4. test 1: `the_safe_mode_branch_is_still_the_road_project_context_arrives_by`
+5. test 2: `the_spawn_roads_context_call_is_pinned_without_a_verdict`
+
+For test 1 assertions:
+- production non-empty (anti-vacuous).
+- all needles present (anti-vacuous): guard, branch, call, flag. If a needle is absent → panic explaining the spelling moved.
+- guard line contains `restricted` (the variable) and `"--safe-mode"` → both hatches still set the flag.
+- branch body: exactly one `load_project_context()`, and total in production == 1 → the branch is the ONLY road in cli.rs.
+- the call is *consumed*: branch body contains `push_str(` and `if let Some(`? Let me check the exact text: 
+```
+    if !safe_mode {
+        if let Some(project_context) = load_project_context() {
+            system_prompt.push_str("\n\n# Project Instructions\n\n");
+            system_prompt.push_str(&project_context);
+        }
+    }
+```
+So assert branch body contains the call needle and `&project_context` push. I'll assert `push_str(&project_context)` — assemble at runtime: `runtime_needle(&["push_str(&", "project", "_context", ")"])`. That asserts the loaded value is actually used rather than computed and dropped. Good — that's a real (if textual) strengthening, and worth stating precisely. Risk: a rename of the local binding `project_context` reddens the guard — acceptable, and it's visible rather than silent; I'll note it in the doc comment as one of the things the guard couples to.
+
+Hmm — keep it simpler and less coupled? The task says only "assert the call is still inside the non-safe-mode side". I'll include the consumption assertion but state it. I think it's valuable: "the call site is textually there" + "its value is pushed" is closer to the property that matters (the context arrives). But the doc comment must be honest that it proves nothing about running. I'll include it.
+
+For test 2 (spawn pin):
+- production non-empty.
+- exactly one `crate::cli::load_project_context()`.
+- exactly two `spawn_project_context_with(` (definition + the one call site) with a message naming the definition — hmm, asserting exactly 2 couples to the definition being in the same file. That's true and visible. Even better: assert that the single context call is inside the same function as the `spawn_project_context_with(` call — i.e. they're adjacent. Let me use the enclosing_block approach on `fn spawn_project_context(`.
+
+Simpler: find the body of `fn spawn_project_context()` and assert it contains both the seam call with `is_safe_mode()` and the `crate::cli::load_project_context()` needle. That pins: the spawn road reads the global safe-mode flag and is the only place the loader is called in that file.
+
+Since `fn spawn_project_context()` appears... careful: `spawn_project_context_with` also contains the prefix `spawn_project_context_`. Use needle `fn spawn_project_context() -> Option<String>` — assemble: `runtime_needle(&["fn spawn_project", "_context()", " -> Option<String>"])`. Let me get the exact signature: line 508: `fn spawn_project_context() -> Option<String> {`. Good.
+
+And `enclosing_block` on that header.
+
+Also assert exactly one occurrence of the context call in commands_spawn production → the spawn road is one road.
+
+And assert nothing about correctness — the doc comment says so.
+
+Now: what about `--safe-mode` string count in cli production = 2 (one in `--safe-mode` flag check, one elsewhere, maybe in help text or in known flags list). I'll assert the guard line specifically contains it.
+
+Let me write the code now.
+
+The guard line extraction: from `guard_needle` position to the next '\n'.
+
+```rust
+let guard_at = production.find(&guard_needle).expect(...);
+let guard_line = production[guard_at..].lines().next().unwrap_or("");
+```
+`production[guard_at..]` — is guard_at a char boundary? `find` returns a byte index at a char boundary, yes.
+
+Now writing the actual test code. Careful with clippy: `-D warnings`. Avoid needless borrows etc.
+
+Let me draft:
+
+```rust
+    // ---- #902 step 1, the caller half: a WEAK source-level guard ----
+    //
+    // STEP 1's live detector above answers "does the loader RETURN the file's
+    // content". It cannot answer "is the loader CONSULTED at all", because it
+    // calls the dir-taking seam directly — the same bypass a naive trust gate
+    // would exploit while leaving that detector green. These two guards cover
+    // the branch that decides whether the load happens.
+    //
+    // They are the deliberately WEAK kind this repo already uses for
+    // `connect_external_servers` and the MCP pre-flight retry: they read the
+    // SOURCE TEXT of the call sites, so they prove the call is still written
+    // down and prove nothing about whether it runs.
+
+    /// Read a source file from this crate and return its production half.
+    ///
+    /// Split at the LAST `mod tests {` rather than the first `#[cfg(test)]`:
+    /// `src/commands_spawn.rs` carries three `#[cfg(test)]` markers, two of them
+    /// on production functions (a `#[cfg(test)] pub fn` used only by tests), so
+    /// splitting at the first would cut the very call site the guard reads.
+    fn production_source(file: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join(file);
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{} is unreadable: {e}", path.display()));
+        let at = src
+            .rfind("\nmod tests {")
+            .unwrap_or_else(|| panic!("{file} must keep its test module at the end"));
+        let production = src[..at].to_string();
+        // Anti-vacuous, FIRST: an empty slice satisfies every count below.
+        assert!(
+            !production.is_empty(),
+            "the production slice of {file} must not be empty"
+        );
+        production
+    }
+
+    /// Assemble a needle at runtime so no guard below can be satisfied by its
+    /// own source text.
+    fn runtime_needle(parts: &[&str]) -> String {
+        parts.concat()
+    }
+
+    /// Body of the block opened by `header`, by brace counting.
+    /// Returns `None` if the braces never balance — a guard that cannot read its
+    /// input must not read as "clean".
+    fn block_after<'a>(src: &'a str, header: &str) -> Option<&'a str> {
+        let start = src.find(header)? + header.len();
+        let mut depth = 1usize;
+        for (i, ch) in src[start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(&src[start..start + i]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+```
+
+Hmm — `block_after` uses `header` which must END at the `{`. I'll pass the header including the `{`.
+
+Then test 1:
+
+```rust
+    /// GUARD (weak, and that is the point): the `!safe_mode` branch in
+    /// `src/cli.rs` still calls `load_project_context()` and still pushes what
+    /// it returns into the system prompt.
+    ///
+    /// WHAT THIS PROVES: the call is still textually present INSIDE the
+    /// non-safe-mode side, it is the only call to the loader in `cli.rs`, and
+    /// both hatches (`--safe-mode` and `--restricted`) still feed the flag that
+    /// guards it.
+    /// WHAT IT DOES NOT PROVE: that the call RUNS, that the branch is taken,
+    /// that the string reaches a prompt, or that anything about `--safe-mode`'s
+    /// behaviour is right. It is a change detector over a call site, not a
+    /// behavioural test — the loader's return value is covered by
+    /// `the_evolve_loop_still_receives_its_own_project_context` above.
+    /// It also says NOTHING about the spawn-side road (see the sibling guard).
+    ///
+    /// It couples to three names on purpose, so a rename is VISIBLE rather than
+    /// silent: the local `safe_mode`, the binding `project_context`, and the
+    /// receiver `system_prompt`. Nothing about this is a verdict on those names.
+    #[test]
+    fn the_safe_mode_branch_still_consults_the_project_context_loader() {
+        let production = production_source("cli.rs");
+        ...
+    }
+```
+
+Then assertions with distinct messages.
+
+For finding the guard I need the header `if !safe_mode {`. Note the guard `let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");` then `if !safe_mode {`. So branch_needle = "if !safe_mode {" preceded by 4 spaces. Fine.
+
+Let me write:
+
+```rust
+        let guard_needle = runtime_needle(&["let ", "safe", "_mode", " = "]);
+        let branch_needle = runtime_needle(&["if !", "safe", "_mode", " {"]);
+        let safe_mode_flag = runtime_needle(&["\"", "--safe", "-mode", "\""]);
+        let call_needle = runtime_needle(&["load_project", "_context", "()"]);
+        let consumed_needle = runtime_needle(&["push_str(&", "project", "_context", ")"]);
+
+        // Anti-vacuous, FIRST: if a spelling moved, say so here rather than
+        // letting the assertions below pass over an input they never read.
+        for (label, needle) in [
+            ("the safe-mode guard line", &guard_needle),
+            ("the non-safe-mode branch", &branch_needle),
+            ("the --safe-mode flag spelling", &safe_mode_flag),
+            ("the project-context call", &call_needle),
+            ("the push of the loaded context", &consumed_needle),
+        ] {
+            assert!(
+                production.contains(needle.as_str()),
+                "ANTI-VACUOUS CHECK FAILED: {label} ({needle:?}) is not in cli.rs's \
+                 production half, so this guard would pass by never reading it. Find the \
+                 new spelling and correct this guard; do not delete the assertion."
+            );
+        }
+        assert_eq!(
+            production.matches(&call_needle).count(),
+            1,
+            "cli.rs must call the project-context loader exactly once; found {}",
+            production.matches(&call_needle).count()
+        );
+
+        let guard_line = production
+            .find(&guard_needle)
+            .and_then(|at| production[at..].lines().next())
+            .expect("the guard line was asserted present above");
+        for (label, needle) in [
+            ("--safe-mode", &safe_mode_flag),
+            ("--restricted", &runtime_needle(&["\"", "--restricted", "\""])),
+        ] {
+        ...
+```
+
+Hmm wait: does the guard line contain `"--restricted"`? The line is:
+`let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");`
+The `--restricted` string is checked earlier at line ~2644 in the `restricted` variable computation: `args.iter().any(|a| a == "--restricted")`. So `"--restricted"` is NOT on the guard line. So I should assert the guard line contains the *variable* `restricted` (meaning the flag still ORs in the restricted resolution). Let me assert guard_line contains the needle `["rest", "ricted"]`, i.e. `restricted`, plus `"--safe-mode"`.
+
+But then `--restricted` → `restricted` feed: it's `let restricted = crate::restricted::restricted_from_sources(...)`. Asserting the guard line contains `restricted` pins that the `restricted` half is still ORed in. Good.
+
+Also `env!("CARGO_MANIFEST_DIR")` — clippy might complain about `&needle.as_str()` in the array; let me use tuples of (&str, String) and `production.contains(&needle)` where needle: String works via `contains(&String)`? No — `str::contains` takes a Pattern; `&String` implements Pattern? `impl Pattern for &String` exists. Yes, `&String` implements Pattern. Good.
+
+Clippy: there's a lint `clippy::needless_borrow` etc. Let me keep it simple and consume the Vec<(&str, String)>.
+
+Now test 2:
+
+```rust
+    /// Guard (weak by construction): the spawn path's OWN road to the project
+    /// context is pinned, and NOT judged.
+    ///
+    /// #902's body records that `src/commands_spawn.rs` reads this context
+    /// through a second road, outside `cli.rs`'s `!safe_mode` branch. Read at
+    /// HEAD, that is accurate: `fn spawn_project_context()` calls
+    /// `crate::cli::load_project_context()` through the pure
+    /// `spawn_project_context_with(is_safe_mode(), load)` seam, so the spawn
+    /// road honours the safe-mode GLOBAL rather than the argv branch.
+    ///
+    /// THIS TEST TAKES NO POSITION on which road is right — whether instruction
+    /// files should be gated at all, and by which predicate, is one of the
+    /// design questions #902 holds open. It pins what exists so a change to the
+    /// spawn path is VISIBLE rather than silent, exactly as it pins the argv
+    /// branch above. It proves the same small thing: the call is still written
+    /// down, in the function it is written down in, and nowhere else in that
+    /// file. It proves nothing about whether it runs.
+    #[test]
+    fn the_spawn_paths_own_context_call_is_pinned_without_a_verdict() {
+        let production = production_source("commands_spawn.rs");
+
+        let fn_needle = runtime_needle(&[
+            "fn spawn_project",
+            "_context() -> Option<String>",
+        ]);
+        let call_needle = runtime_needle(&["crate::cli::load_project", "_context()"]);
+        let seam_needle = runtime_needle(&["spawn_project", "_context_with("]);
+        let global_needle = runtime_needle(&["crate::cli_config::is_", "safe_mode()"]);
+
+        ... anti-vacuous loop ...
+        assert_eq!(production.matches(&call_needle).count(), 1, "...");
+        assert_eq!(production.matches(&fn_needle).count(), 1, "...");
+
+        let body = block_after(&production, &fn_needle)
+            .unwrap_or_else(|| panic!("could not read the body of the spawn-context wrapper"));
+        assert!(body.contains(&call_needle), "...");
+        assert!(body.contains(&seam_needle), "...");
+        assert!(body.contains(&global_needle), "...");
+    }
+```
+
+Careful: `fn_needle` = "fn spawn_project_context() -> Option<String>" — but `block_after` requires the header to include the `{`. Let me make block_after take header and then find the `{` after it: actually simpler — in block_after, after finding header, find the first `{` after it as the opener. Let me restructure block_after:
+
+```rust
+    fn block_after<'a>(src: &'a str, header: &str) -> Option<&'a str> {
+        let after_header = src.find(header)? + header.len();
+        let open = src[after_header..].find('{')? + after_header;
+        let start = open + 1;
+        let mut depth = 1usize;
+        for (i, ch) in src[start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(&src[start..start + i]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+```
+
+Good — header without `{`, and the block returned excludes the braces.
+
+Wait, one risk: `fn spawn_project_context() -> Option<String> {` — is the definition exactly that? Line 508: `fn spawn_project_context() -> Option<String> {`. Yes.
+
+And `spawn_project_context_with(` count in production = 2 (definition at 488 + call at 509). I'll assert body contains seam_needle rather than exact-2 count. Maybe also assert exactly 2 to make a new call site visible? That could be over-strict for a "pin". Hmm: if someone adds a second path calling the seam, the pin should make it visible. But this is a call-count over one function... I'll assert exactly one occurrence of `seam_needle` inside the fn body (that IS the function). And separately, note in the doc that the count in the file is not pinned. Actually let me keep it minimal and honest.
+
+Hmm, hold on. Let me reconsider whether test 2 is worth it at all — the task explicitly asks for it ("Step 2 ... assert nothing about which is right ... just pin what exists so a later change to the spawn path is visible rather than silent"). Yes, include it.
+
+Also, the task says STEP 2 is "the caller reachability guard" for the `!safe_mode` branch, and mentions the spawn call as a note to verify. Good — I'm covering both.
+
+Now `mod tests` in context.rs — need `use` items? `std::path::Path` used fully qualified is fine. `tempfile` already imported presumably. Fine.
+
+Let me now write the edit: insert before the final `}` of the tests module, after the last test.
+
+Let me write it.
+────────────────────────────────────────────────────────────────────────────────
+
+Now writing the missing half — STEP 2's caller reachability guard, appended to src/context.rs's test module.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (8 → 255 lines)
+                "the provenance BEGIN marker does not precede CLAUDE.md's content \
+                 (begin at {begin_at}, content at {body_at}) — the match may have come from \
+                 the file's own prose rather than from a block the loader emitted."
+  +         );
+  +     }
+  + 
+  +     // ---- #902 step 1, the CALLER half: two deliberately weak source-level
+  +     // guards (Day 210) ----
+  +     //
+  +     // The detector above answers "does the loader RETURN the file's content".
+  +     // It cannot answer "is the loader CONSULTED at all" — it calls the
+  +     // dir-taking seam directly, which is the same bypass a naive trust gate
+  +     // would sit on while leaving that detector green. These two guards cover the
+  +     // branches that decide whether the load happens. They are the deliberately
+  +     // WEAK kind this repo already uses for `connect_external_servers` and the
+  +     // MCP pre-flight retry: they read the SOURCE TEXT of the call sites, so they
+  +     // prove a call is still written down and prove nothing about whether it runs.
+  + 
+  +     /// Read a source file from this crate and return its production half.
+  +     ///
+  ... (233 more lines)
+ ✓ (2m 3s)
+                "the provenance BEGIN marker does not precede CLAUDE.md's content \
+                 (begin at {begin_at}, content at {body_at}) — the match may have come from \
+                 the file's own prose rather than from a block the loader emitted."
+  +         );
+  +     }
+  + 
+  +     // ---- #902 step 1, the CALLER half: two deliberately weak source-level
+  +     // guards (Day 210) ----
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The auto-check ran. Let me run the specific tests and check whether they pass. Let me first run just these two tests.
+
+Note: `restricted_local = runtime_needle(&["rest", "ricted", " ||"])` — the guard line is:
+`    let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");`
+So it contains `restricted ||`. Good.
+
+Let's run the tests.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 1200 cargo test --bin yo… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 1800 cargo test --bin yo… ✓ (178ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Hmm, 0 tests ran with those filters? That means the filters didn't match. `cargo test -- context::the_safe_mode_branch` — the test name would be `context::tests::the_safe_mode_branch_still_consults_the_project_context_loader`. The filter `context::the_safe_mode_branch` should... actually cargo test filters are substring matches on the full test path: `context::tests::the_safe_mode_branch_still...`. The filter string "context::the_safe_mode_branch" is not a substring of that (since "tests::" intervenes). So use shorter filters.
+
+Also note it says "Finished in 0.15s" — did it recompile? It says Finished, so the binary already compiled after my edit (auto-check ran it). Let me filter by just the test name.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 1800 cargo test --bin yo… ✓ (166ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The branch body was found but the call isn't in it. Why? Because `block_after(&production, &branch_needle)` finds the FIRST occurrence of `if !safe_mode {` — maybe there's an earlier occurrence, or the brace counting is off.
+
+Wait — actually the issue: `branch_needle = "if !safe_mode {"`. The header found is at production.find(branch_needle). Then `open` = first `{` after the header — but the header itself ENDS with `{`! So `after_header` points just past `{`, and `src[after_header..].find('{')` finds the NEXT `{` — which is the `if let Some(project_context) = ... {` at the end of line 2659. So the block I extracted is the inner `if let` body, not the branch.
+
+My doc said "the header's own `{` is located, so pass the header without it" — ambiguous. Fix: pass header WITHOUT `{` (i.e. "if !safe_mode"), then find `{` after. Let me change the call to pass `["if !", "safe", "_mode"]` and the assertion message still uses `branch_needle`.
+
+Let me restructure: define `branch_header = runtime_needle(&["if !", "safe", "_mode"])` and keep `branch_needle = branch_header + " {"` for the anti-vacuous presence check/message. Then call `block_after(&production, &branch_header)`.
+
+Wait but then the extracted body includes everything after `{` of the branch... Let's trace: header "if !safe_mode" ends right before " {". `after_header` = index of the space. `src[after_header..].find('{')` = the branch's own `{` (2 chars later). start = open+1 = right after `{`. Then depth counting from depth=1: the nested `if let ... {` → depth 2, its `}` → depth 1, then the branch's closing `}` → depth 0 → returns body = the inner if-let statement. Correct.
+
+Same bug applies to the spawn guard — but there I passed `fn_needle` = "fn spawn_project_context() -> Option<String>" without `{`, so `find('{')` finds the function's own `{`. That worked (test passed).
+
+Let me fix the branch call.
+────────────────────────────────────────────────────────────────────────────────
+
+The branch header I passed already ended with {, so block_after skipped to the inner brace. Fixing:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (6 → 10 lines)
+            let guard_needle = runtime_needle(&["let ", "safe", "_mode", " = "]);
+  -         let branch_needle = runtime_needle(&["if !", "safe", "_mode", " {"]);
+  +         // The header WITHOUT its brace: `block_after` locates the brace itself,
+  +         // and handing it a header that already ends in `{` silently slices the
+  +         // first INNER block instead of the branch.
+  +         let branch_header = runtime_needle(&["if !", "safe", "_mode"]);
+  +         let branch_needle = format!("{branch_header} {{");
+            let safe_mode_flag = runtime_needle(&["\"", "--safe", "-mode", "\""]);
+            let restricted_local = runtime_needle(&["rest", "ricted", " ||"]);
+            let call_needle = runtime_needle(&["load_project", "_context", "()"]);
+ ✓ (2m 0s)
+            let guard_needle = runtime_needle(&["let ", "safe", "_mode", " = "]);
+  -         let branch_needle = runtime_needle(&["if !", "safe", "_mode", " {"]);
+  +         // The header WITHOUT its brace: `block_after` locates the brace itself,
+  +         // and handing it a header that already ends in `{` silently slices the
+  +         // first INNER block instead of the branch.
+  +         let branch_header = runtime_needle(&["if !", "safe", "_mode"]);
+  +         let branch_needle = format!("{branch_header} {{");
+            let safe_mode_flag = runtime_needle(&["\"", "--safe", "-mode", "\""]);
+            let restricted_local = runtime_needle(&["rest", "ricted", " ||"]);
+            let call_needle = runtime_needle(&["load_project", "_context", "()"]);
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (8 → 8 lines)
+            // ...and that one road is INSIDE the non-safe-mode side.
+  -         let branch_body = block_after(&production, &branch_needle).unwrap_or_else(|| {
+  +         let branch_body = block_after(&production, &branch_header).unwrap_or_else(|| {
+                panic!(
+  -                 "could not read the body of `{branch_needle}` in src/cli.rs — its braces do \
+  +                 "could not read the body of `{branch_header}` in src/cli.rs — its braces do \
+                     not balance, so this guard cannot tell whether the call is inside the \
+                     branch. Fix the guard, do not assume it is fine."
+                )
+ ✓ (2m 11s)
+            // ...and that one road is INSIDE the non-safe-mode side.
+  -         let branch_body = block_after(&production, &branch_needle).unwrap_or_else(|| {
+  +         let branch_body = block_after(&production, &branch_header).unwrap_or_else(|| {
+                panic!(
+  -                 "could not read the body of `{branch_needle}` in src/cli.rs — its braces do \
+  +                 "could not read the body of `{branch_header}` in src/cli.rs — its braces do \
+                     not balance, so this guard cannot tell whether the call is inside the \
+                     branch. Fix the guard, do not assume it is fine."
+                )
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 1800 cargo test --bin yo… ✓ (184ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+All three pass. Now STEP 3: the positive control — mutate `load_project_context_from`'s instruction loop to skip the `push_str` of content, with `// NEUTERED POSITIVE CONTROL`, run the STEP-1 test, watch it fail by name, restore, watch it pass. All as ONE atomic command.
+
+Wait — the task's positive control targets the STEP-1 test (`the_evolve_loop_still_receives_its_own_project_context`, which exists and is newly added? No — it was committed Day 208). Hmm. The task says neuter the content read in `load_project_context_from`'s instruction loop and watch the STEP-1 test fail by name. Since STEP 1 already exists (landed by a previous session — interesting, the task file assumed it didn't exist; the task says to verify by reading, and I did: the STEP-1 detector DOES already exist, committed in 7009bffd "Day 208" — actually that was a full-history commit... it's the tip-ish? No, tip is 040fae72. 7009bffd is 3 commits back).
+
+So the honest report: STEP 1 already exists at HEAD (the detector was landed earlier), STEP 2 was missing and is what I added. I must also run the positive control as instructed (it's the strongest evidence that the STEP-1 detector actually fires), and additionally run a positive control for my NEW guard — that's more important evidence for my own diff: mutate the cli.rs call site and watch `the_safe_mode_branch_still_consults_the_project_context_loader` fail by name.
+
+Also I should use the NEUTERED marker convention so `tests/neutered_guards.rs` enforces removal — as one atomic command with restore.
+
+Let me do the controls serially, each atomic:
+
+Control A (my new guard): in src/cli.rs, comment out the `if !safe_mode {` guard? Better: mutate the call site — e.g. move the call out of the branch. Simplest surgical mutation: change `let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");` to `let safe_mode = false; ...` no, that keeps the call in the branch.
+
+Best mutation for my guard: change the call to compute-and-drop, e.g. replace
+```
+        if let Some(project_context) = load_project_context() {
+            system_prompt.push_str("\n\n# Project Instructions\n\n");
+            system_prompt.push_str(&project_context);
+        }
+```
+Hmm, simplest mutation that reddens the guard: add a second call site outside the branch — no, that's a "add" mutation. Let me instead mutate the call: change the line inside the branch to `if let Some(project_context) = None {` (drop the call → count becomes 0 → assertion 1 fails → red by name). And that also should be marked NEUTERED.
+
+Let me do it with sed on a temp basis, using a single bash invocation that mutates, runs the test, and restores via git checkout of just that file... careful: `git checkout -- src/cli.rs` would restore to HEAD, and my new test edits are in src/context.rs (untouched), so that's safe. But safer: copy to a backup and restore from the backup, then verify `git diff --stat` shows only context.rs.
+
+Also note `run_git()` test guard is irrelevant here (bash).
+
+Let me write control A:
+
+```bash
+cp src/cli.rs /tmp/cli.rs.bak
+python3 - <<'EOF'
+p='src/cli.rs'; s=open(p).read()
+old='        if let Some(project_context) = load_project_context() {'
+new='        if let Some(project_context) = None { // NEUTERED POSITIVE CONTROL'
+assert s.count(old)==1
+open(p,'w').write(s.replace(old,new))
+EOF
+cargo test --bin yoyo -- the_safe_mode_branch_still_consults 2>&1 | tail -20
+cp /tmp/cli.rs.bak src/cli.rs
+cargo test --bin yoyo -- the_safe_mode_branch_still_consults 2>&1 | tail -5
+git diff --stat
+```
+
+Hmm — but I must make sure no marker is left behind: the restore from backup handles it. Also `tests/neutered_guards.rs` is a test in tests/ — running the full suite while mutated would trip it. That's fine.
+
+Wait, careful: with the mutation, `project_context` would be None of unknown type → compile error? `let Some(project_context) = None` — type inference: `project_context` is used in `system_prompt.push_str(&project_context)` which requires `&str` (or Deref<str>). `Option::<String>::None` wouldn't be inferred... Actually inference would try to unify; `push_str(&project_context)` requires `&str`, so `project_context: String`, so `None::<String>` — fine, it compiles. Good. But `-D warnings` in clippy might flag unreachable/irrefutable? `if let Some(x) = None` → clippy has `clippy::if_let_some_result`? No... There's a rustc lint for `if let Some(..) = None`? Not by default I think. Anyway we only run `cargo test` for the control, and a compile error would still make it red but not "by name". Let me use a mutation guaranteed to compile but fail by name.
+
+Alternative mutation that's clearly a real neutering: wrap the whole branch in `if false`. E.g. change `if !safe_mode {` → `if false && !safe_mode {`. Then the call is still textually inside the branch! Wait — the guard reads TEXT, so it would still pass. Hmm, that's a limitation of a source-text guard: it can't detect `if false &&`.
+
+Right — my guard is textual, so it only catches structural moves (call removed/moved/hidden), not a predicate change. That's exactly what "weak + say so" means.
+
+So the honest control for my guard: delete the call from the branch (mutation A) → red by name.
+
+And to demonstrate the interesting direction (the one this task exists for): a *naive trust gate* landing would put a predicate in front of the call — textually the call is still in the branch, so my weak guard stays GREEN, but the STEP-1 live detector goes RED. Hmm! Wait — would it? A naive gate would be like `if !safe_mode && !should_prompt_for_trust() {` — the call is still there textually; STEP 1's detector calls `load_project_context_from(repo)` directly, bypassing the branch, so it would stay green too!
+
+Hmm, that's the real question the task raised: "This is the test that would go red if a naive trust gate landed, because CI is exactly the environment where nothing is trusted". But as I noted at the start, if the gate landed inside `load_project_context_from` (where the reading happens), STEP-1 goes red. If it landed at the call site as a predicate, neither goes red. That's a limit worth stating honestly in the ARCHITECTURE entry — the pair only catches a gate that lands *inside the loader* (true refusal) or a branch/call-site *removal*, not a predicate added at the call site.
+
+Hmm, but hold on. Would a gate more plausibly land inside the loader? The loader is where the instruction files are read and where a "read only if trusted" decision naturally sits. Also `config_paths::project_trust_grants` is consulted elsewhere. I should state this limit plainly rather than overclaim. Good — that's the honest thing, and it's a limit statement, not a defect.
+
+Actually — could I strengthen it cheaply to catch the predicate case? I could assert that the branch body contains `load_project_context()` and does NOT contain any additional `&&` condition... that's brittle/over-fitting. Better: keep the weak guard and state the limit. The task explicitly asks for a weak guard with stated limits.
+
+So:
+- Control A (my guard, structural): remove the call from the branch → `the_safe_mode_branch_still_consults_the_project_context_loader` reddens by name; restore; green.
+- Control B (STEP-1 detector, per the task): neuter the content push inside `load_project_context_from`'s instruction loop → `the_evolve_loop_still_receives_its_own_project_context` reddens by name; restore; green.
+
+Both atomic, serial.
+
+For control B, the loop in `load_project_context_from`:
+```rust
+    for name in PROJECT_CONTEXT_FILES {
+        if let Ok(content) = std::fs::read_to_string(dir.join(name)) {
+            let content = content.trim();
+            if !content.is_empty() {
+                if !context.is_empty() {
+                    context.push_str("\n\n");
+                }
+                // Every project-authored file carries its own provenance block —
+                // including the first, which previously got no marker at all.
+                context.push_str(&wrap_project_instruction(name, content, boundary));
+```
+Neuter: replace `context.push_str(&wrap_project_instruction(name, content, boundary));` with `// NEUTERED POSITIVE CONTROL` + nothing (skip the push). The task says "skip the `push_str` of content". Then the found/byte-count machinery still runs. Compiles fine (no unused warnings? `wrap_project_instruction` would become unused → dead_code warning, but we only run `cargo test`, not clippy; warnings are fine). Yes `cargo test` doesn't fail on warnings unless configured. Let me check if the crate has `#![deny(warnings)]`... Let me check main.rs for deny attributes.
+
+Let me just run it.
+
+Let me do both controls in one script but sequentially (serial), each with mutate→run→restore, and also check `git diff --stat` at the end and grep for markers.
+
+Let me check for `#![deny(` in main.rs first.
+────────────────────────────────────────────────────────────────────────────────
+
+All three tests pass. Now the positive controls — serial, each mutate→run→restore as one atomic command.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "deny(\|forbid(" src/mai… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+No `deny(unused_variables)`. Good — the silent control works.
+
+Run control 1: neuter the content read in `load_project_context_from`'s instruction loop (skip the push_str of content), watch `the_evolve_loop_still_receives_its_own_project_context` fail by name, restore, watch pass.
+
+The wrap line is:
+```rust
+                context.push_str(&wrap_project_instruction(name, content, boundary));
+```
+Neuter: replace with `let _ = wrap_project_instruction(name, content, boundary); // NEUTERED POSITIVE CONTROL`. Hmm but that produces no content. Let me do it with sed atomically.
+
+Actually to keep it clean and atomic, use python to do the edit, run the test, restore with git checkout of that file... but git checkout would revert my new tests too (they're uncommitted!). So no — restore by reversing the exact string substitution in python. Do all in one bash invocation.
+
+Let me write it carefully:
+
+```bash
+python3 - <<'PY'
+p='src/context.rs'
+s=open(p,encoding='utf-8').read()
+old="context.push_str(&wrap_project_instruction(name, content, boundary));"
+assert s.count(old)==1
+new="let _ = wrap_project_instruction(name, content, boundary); // NEUTERED POSITIVE CONTROL"
+open(p,'w',encoding='utf-8').write(s.replace(old,new))
+PY
+cargo test --bin yoyo -- the_evolve_loop_still_receives 2>&1 | tail -20
+python3 - <<'PY'
+p='src/context.rs'
+s=open(p,encoding='utf-8').read()
+new="let _ = wrap_project_instruction(name, content, boundary); // NEUTERED POSITIVE CONTROL"
+old="context.push_str(&wrap_project_instruction(name, content, boundary));"
+assert s.count(new)==1
+open(p,'w',encoding='utf-8').write(s.replace(new,old))
+PY
+grep -c NEUTERED src/context.rs || true
+git diff --stat
+```
+
+Wait, "control 1" only removes the content from the returned context, but the test also checks markers. With content skipped, `ctx` will lack "## Build & Test Commands" → the (3) assertion fails. Good, by name.
+
+But careful: the `found` vec still pushes, and the note may still print. Fine.
+
+Also `let _ = ...` — clippy might warn unused? `let _ =` is fine.
+
+Let me run it.
+
+Note: cargo test compiles the test binary; with the marker present, `tests/neutered_guards.rs` would fail — but I'm running only the one test via --bin yoyo, so it won't run that integration test. That's fine and expected; I'll restore before running the full suite.
+
+Let me do control 1 and control 2 (branch removal) serially.
+
+Control 2: remove the `if !safe_mode {` wrapper so the load is unconditional → expect `the_safe_mode_branch_still_consults_the_project_context_loader` to fail by name (branch_body can't be found → panic "could not read the body"). Hmm, that's a somewhat crude failure. Alternatively move the call outside... The most faithful control: neuter the guard line by replacing `let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");` with `let safe_mode = false; // NEUTERED POSITIVE CONTROL` — that removes `restricted` and `--safe-mode` from the guard line, so the guard-line assertions fire ("the safe-mode guard no longer consults --safe-mode"). Hmm, but that's the guard line, not the branch call. 
+
+The task's STEP 3 only asks for the content-read control. But this task's *new* guard deserves its own positive control too, since a guard I never saw fail is a guard I don't know works. And the branch-header bug I just hit proves that: the first version of `block_after` usage silently sliced the wrong block, and only a real run caught it.
+
+Best control for the branch guard: delete the `if !safe_mode {` wrapper **and** its closing brace, making the load unconditional — the realistic naive-gate-removal shape is the opposite (wrap it in a trusted condition), but any of these should red it. Actually the cleanest, most faithful mutation: change the guard line so safe_mode no longer includes `restricted` — i.e. simulate "someone edited the guard line and dropped a hatch". That's exactly what the guard exists to catch (it asserts both hatches on the guard line). Expected red: "the safe-mode guard no longer consults the restricted source" — by name.
+
+Also test that moving the call out of the branch reddens it. Let me do the "drop a hatch" one; it's cheap and precise.
+
+Let me run control 1 first (the task-mandated one).
+────────────────────────────────────────────────────────────────────────────────
+
+No deny(unused_variables) — the silent control is valid. Running control 1 as one atomic mutate→run→restore:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (22 lines) ✓ (52.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Control 1 done: red by name, restored green, 0 markers.
+
+Now control 2 for the new guard: drop the `restricted` hatch from the guard line and confirm the new CLI guard fails by name.
+
+Mutation: `let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");` → `let safe_mode = args.iter().any(|a| a == "--safe-mode"); // NEUTERED POSITIVE CONTROL`. Then the guard-line assertion "the safe-mode guard no longer consults the restricted source" fires. Also the anti-vacuous needle `restricted ||` no longer present in production → but wait, `restricted` is also used elsewhere... the needle is `"restricted ||"`, which would disappear from production entirely → the ANTI-VACUOUS check fires first: "the restricted source ORed into the flag". Hmm, that's still a failure by name, but it triggers the anti-vacuous assertion rather than the positive assertion. Both are "red by name", but I'd prefer to see the substantive assertion fire.
+
+Better mutation: keep `restricted ||` but make it not part of the guard line. E.g. move `restricted` out: change to `let _restricted = restricted; let safe_mode = args.iter().any(...)`. Then anti-vacuous needle passes (still present in production) and the guard-line check fails. Let me do that:
+
+old: `let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");`
+new:
+```
+let _restricted = restricted; // NEUTERED POSITIVE CONTROL
+    let safe_mode = args.iter().any(|a| a == "--safe-mode");
+```
+That's 2 lines. Indentation: the original line has 4 spaces. Fine.
+
+Then: guard_needle "let safe_mode = " found; branch present; `restricted ||` present in production (in the new line); safe_mode_flag present; call present; consumed present. Then guard_line = "    let safe_mode = args.iter().any(|a| a == \"--safe-mode\");" → does not contain "restricted ||" → assert fails with "the safe-mode guard no longer consults the restricted source". 
+
+Also control 3: move the call out of the branch? That's a third control; probably enough with two. But let me also verify the spawn guard reddens — cheap: neuter the spawn wrapper call. Actually, let me do control 2 (CLI branch guard) and control 3 (spawn guard) as atomic commands, then run the full suite.
+
+Control 3 mutation: in commands_spawn.rs, change `crate::cli::load_project_context()` to `None::<String>`... but that would break compilation (the closure type). Better: replace `spawn_project_context_with(crate::cli_config::is_safe_mode(), &|| {` ... hmm.
+
+Simplest for control 3: rename the call so the count changes — e.g. change the closure body's call to a local dummy. Let's see the code:
+
+```rust
+fn spawn_project_context() -> Option<String> {
+    spawn_project_context_with(crate::cli_config::is_safe_mode(), &|| {
+        crate::cli::load_project_context()
+    })
+}
+```
+
+Mutation: delete the call line and return `None` instead... that changes the count from 1 to 0, and `call_sites == 1` fails by name. But it must still compile: 
+
+```rust
+fn spawn_project_context() -> Option<String> {
+    spawn_project_context_with::<()>(...)   // messy
+```
+No. Alternative: `spawn_project_context_with(crate::cli_config::is_safe_mode(), &|| None) // NEUTERED POSITIVE CONTROL` — that compiles (closure returning None::<String>? `&|| None` — the closure return type must be Option<String>, inferred from `spawn_project_context_with`'s `&dyn Fn() -> Option<String>` → OK, `None` will infer as Option<String>).
+
+That removes both `crate::cli::load_project_context()` (count 0 ≠ 1 → fails by name) and the file loses that needle → the ANTI-VACUOUS check for "the loader call" fires first. Either way red by name. Fine — but I want to see the *count* assertion. Hmm. It doesn't matter much; the point is the guard reddens. But per the repo's discipline, an anti-vacuous assertion firing is a legitimate "fail by name". Still, cleanest to demonstrate the guard's substantive assertions.
+
+Honestly, 2 solid controls (the mandated content control + the CLI branch-guard control) satisfy the task. For the spawn guard, its anti-vacuous design makes it fire on any change to that call — that's by construction. Let me still run a third control that reddens it for the *right* reason: remove the safe-mode global from the wrapper body while leaving the call intact:
+
+old:
+```
+    spawn_project_context_with(crate::cli_config::is_safe_mode(), &|| {
+        crate::cli::load_project_context()
+    })
+```
+new:
+```
+    // NEUTERED POSITIVE CONTROL
+    spawn_project_context_with(false, &|| {
+        crate::cli::load_project_context()
+    })
+```
+Then: fn needle present (1), call present (1), seam present, global needle `crate::cli_config::is_safe_mode()` — is it present elsewhere in production? Earlier count in prod was 1, which is this one. So removing it → anti-vacuous check for "the safe-mode global" fires. Hmm, again anti-vacuous.
+
+To hit the body assertion instead I'd need the global needle to survive elsewhere in production. Not worth contorting. The anti-vacuous check firing IS the guard catching the change — that's its job (it says "this guard would pass by never reading it"). Actually no — anti-vacuous firing means "correct this guard", which is a slightly different message. But it does mean the mutation was caught by name. And crucially, the assertion `body.contains(&global_needle)` would also fire if the anti-vacuous pre-check weren't there... 
+
+I'll run control 3 with the third shape (the one that keeps the global but moves it out of the wrapper) — no. Let me just do the CLI-guard control (control 2), which reddens for the substantive reason, and note the spawn guard's anti-vacuous design honestly. Two controls is proportionate: one for the content detector (mandated), one for the new branch guard.
+
+Let me run control 2.
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 red by name, restored green, no markers left. Now control 2 for the new branch guard:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (24 lines) ✓ (51.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The anti-vacuous pre-check fired (`"restricted ||"` disappeared from production because I rewrote it as `let _restricted = restricted;`). It caught the mutation by name, but via the anti-vacuous assertion rather than the substantive one. Let me run a third control that reddens the *substantive* branch assertion: move the loader call OUT of the `if !safe_mode` branch (i.e. make it unconditional) while keeping everything else.
+
+Mutation: 
+old:
+```
+    let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");
+    if !safe_mode {
+        if let Some(project_context) = load_project_context() {
+```
+new:
+```
+    let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");
+    if !safe_mode {
+        if let Some(_safe_mode_only) = None::<String> { // NEUTERED POSITIVE CONTROL
+```
+Hmm, that removes the call (count 0 → fails the count assertion... anti-vacuous first).
+
+Better: keep the call and the count, but move it outside the branch. The realistic shape of a naive gate: wrap the load in a NEW condition. E.g.:
+
+old:
+```
+    let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");
+    if !safe_mode {
+        if let Some(project_context) = load_project_context() {
+```
+new:
+```
+    let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");
+    if !safe_mode {
+        if false { // NEUTERED POSITIVE CONTROL
+        if let Some(project_context) = load_project_context() {
+```
+then the count is still 1, all needles present, and `block_after("if !safe_mode")` returns the body which still contains the call → the guard would still pass! Because the call is textually still inside the outer branch. Right — that's the *stated limit* of a textual guard; a nested `if false` is exactly what it cannot see. Honest.
+
+So to redden the substantive branch assertion I need the call textually outside the branch body. E.g. hoist it above:
+
+old:
+```
+    let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");
+    if !safe_mode {
+        if let Some(project_context) = load_project_context() {
+            system_prompt.push_str("\n\n# Project Instructions\n\n");
+            system_prompt.push_str(&project_context);
+        }
+    }
+```
+new: hoist the load before the branch:
+```
+    let loaded_once = load_project_context(); // NEUTERED POSITIVE CONTROL
+    let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");
+    if !safe_mode {
+        if let Some(project_context) = loaded_once.clone() {
+            system_prompt.push_str("\n\n# Project Instructions\n\n");
+            system_prompt.push_str(&project_context);
+        }
+    }
+```
+Hmm, but then the consumed needle `push_str(&project_context)` still present, count of call still 1. `block_after(branch_header)` body would contain `loaded_once.clone()` but NOT `load_project_context()` → the substantive assertion "the project-context call is no longer inside the `if !safe_mode {` branch" fires. 
+
+That's the real shape: the load happens before the safe-mode decision — i.e. `--safe-mode` no longer suppresses it. Exactly what the guard exists to catch. Let me run that as control 3 (atomic).
+
+Then run the full suite + clippy + fmt.
+
+Let me check the exact text at the call site first.
+────────────────────────────────────────────────────────────────────────────────
+
+The anti-vacuous pre-check caught it. Now a third control that reddens the substantive branch assertion — hoisting the load above the safe-mode decision, which is the real defect shape (--safe-mode no longer suppressing the load):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (29 lines) ✓ (52.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Control 3: red by name on the substantive assertion, restored green, `git diff --stat src/cli.rs` printed nothing (byte-identical restore). 
+
+Now: cargo fmt, clippy, full test suite.
+────────────────────────────────────────────────────────────────────────────────
+
+Control 3 reddens the substantive branch assertion, src/cli.rs restored byte-identically. Now the full check suite:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && git diff --stat && … ✓ (17.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Clippy clean. `cargo fmt` didn't change anything (diff stat identical before/after). Now the full test suite. Note `tests/neutered_guards.rs` will run — 0 markers left, fine.
+
+Also `tests/module_size.rs` — check the line count of src/context.rs after my additions: 1498 + 253 = ~1751? Let me check: cap is 2000. Let me confirm.
+
+Run full cargo test.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/context.rs && timeout … ✓ (1m 53s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 3000 cargo test 2>&1 | g… ✓ (2m 53s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No failures across all test binaries (17 "test result: ok" lines, 0 FAILED). 
+
+Wait — earlier the full run had more test binaries. Let me double-check the total number of test results and that the context tests ran. Let me grep for the new test names in the full run and the counts.
+
+Also: the task said "cargo test (plus targeted cargo test context::)" — done.
+
+Let me verify the new tests appear in the full suite output and confirm the module_size gate passed (context.rs at 1751 lines < 2000, not listed → no register entry owed; the task said the file is un-listed, so no register line needed. Let me verify context.rs is not in the register, and that module_size passed).
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 3000 cargo test 2>&1 > /… ✓ (1m 26s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Everything green. All 3 new tests pass in the full suite. `tests/neutered_guards.rs` passes (0 markers). module_size passes; `src/context.rs` is not in the register (un-listed, 1751 < 2000), so no register line owed. The 3 size warnings are pre-existing drift in other modules (commands_risk.rs, commands_risk_snapshots.rs, help.rs) — not mine.
+
+Note: the module_size warnings mention drift in files I didn't touch — those are pre-existing (they were mentioned in "Recently Changed Files" and memory). Not my task.
+
+Now, ARCHITECTURE.md entry + commit. Also `cargo fmt -- --check` explicitly.
+
+Let me check the ARCHITECTURE.md context.rs bullet to append the Day-210 entry. The bullet at line 434 is huge. The repo's convention: append the new day's entry inside the `context.rs` bullet. Let me find the end of that bullet (line 434 is one giant line? Let me check whether it's a single line). Given the earlier `grep -n` showed line 434 with a huge amount of text and the file is 1213 lines, bullet 434 is one very long line. Let me check.
+────────────────────────────────────────────────────────────────────────────────
+
+All green: 3 new tests pass in the full suite, no failures, neutered_guards clean, src/context.rs at 1751 lines (un-listed, under the 2000 cap so no register row owed).
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Wait — the ARCHITECTURE.md bullet for context.rs already ends with "src/context.rs ended at **1498** lines ... no register line was owed" — meaning another session (Day 209?) already recorded a context.rs entry mentioning 1498 lines. Hmm, that says 1498, which was the pre-my-change count. Was that written for the `the_evolve_loop_still_receives_its_own_project_context` addition? Let me look at the tail of that bullet more carefully — the last part seems to be about a task. Let me print the last ~3000 characters of line 434 to see the structure and where to append.
+
+Also, `cargo fmt -- --check` passes (exit 0, "FMT OK").
+
+Let me read the tail of the bullet.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==434{print substr($0, le… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now I understand the full bullet. It documents the Day-196 detector (which is the STEP 1 half of #902 step 1 — already landed), including its positive control (skipping CLAUDE.md inside the loader → 2 failures).
+
+So my new Day-210 addition = STEP 2 (the caller reachability guards), which the bullet does not mention. I should append a Day-210 clause to this same bullet. Keep it concise but in the house style (it's the ARCHITECTURE convention: record mechanism, controls, limits, stale claims).
+
+Key content for the entry:
+- Day 210 (00:22), #902 step 1's second half: the CALLER guards. The Day-196 detector answers "does the loader RETURN the content" and calls the dir-taking seam directly — the same bypass a naive trust gate would sit on while leaving it green. Two deliberately weak source-level guards added in `src/context.rs`'s test module.
+- What they prove / don't prove; needle assembly at runtime; the split-at-LAST-`mod tests {` detail with its measured reason (commands_spawn.rs has 3 `#[cfg(test)]`, so the `restricted.rs` first-marker idiom would have cut off the very call site).
+- Not judged: #902's spawn-road claim verified true at HEAD (spawn_project_context → spawn_project_context_with(is_safe_mode(), ...)), and its line numbers are stale (cli.rs:2450-2451 → 2657-2659; commands_spawn.rs:489 cited elsewhere). Assert nothing about which road is right.
+- Positive controls: three, serial, atomic. Control A (mandated): skip the `push_str` of content in the loader → `the_evolve_loop_still_receives_its_own_project_context` red by name at the (3) assertion; restored byte-identically, 0 markers. Control B: drop the `restricted` conjunct → reddens the new guard on its ANTI-VACUOUS line ("restricted ||" vanished from production) rather than the substantive one — recorded honestly. Control C: hoist the load above the safe-mode branch (the real defect shape) → reddens the substantive assertion "the project-context call is no longer inside the `if !safe_mode {` branch"; restore left `src/cli.rs` byte-identical (git diff --stat empty).
+- Superseded/stale: the `--safe-mode` hatch line numbers cited in this bullet (`src/cli.rs:2450-2451`) are stale — HEAD is 2657–2659. Also #902's own line numbers (cli.rs:2659 for the spawn claim is right for the parent call; the issue's "src/commands_spawn.rs also calls load_project_context() directly" is true but through the seam, not a bare direct call). Hmm — careful: #902 (per the task text) "records that src/commands_spawn.rs also calls load_project_context() directly, outside that branch". Verified: it calls `crate::cli::load_project_context()` inside `fn spawn_project_context()` through the `spawn_project_context_with` seam. So "directly, outside that branch" is accurate in the sense that it's a second road outside cli.rs's argv branch — but not a raw direct call in the sense the entry should imply? It IS a direct call to the loader (not to `load_project_context_from`). I verified it. I'll state it neutrally: verified true, and it is the only loader call in that file.
+- Lines: src/context.rs ended at 1751 this time — and I paste that number after `cargo fmt` (fmt --check passed after the final edit, so 1751 is stable). Still un-listed → no register line owed.
+- Honest limits of the new guards: textual presence only; a `if false {` nested inside the branch is invisible (a textual guard cannot see a nested condition); it does not prove the call runs or that the content arrives. Also: **it does not detect the naive gate if that gate is expressed as a trust predicate inside the same textual position** — hmm, actually the guard WOULD stay green if someone added `if is_trust_project() && !safe_mode {`... wait, the branch header needle is `if !safe_mode` — adding a conjunct to the header would break the header needle → anti-vacuous fires. Good, that's a real property worth stating: a modified branch *condition* is caught by the header needle (it reddens), while a nested inner condition is not.
+- Stated limit re: the spawn guard — it takes no verdict (that's the gate's design question).
+
+Also: no docs change required (no user-visible behavior change). But ARCHITECTURE.md is required by the task.
+
+Also the note: `src/context.rs` at 1751; CLAUDE.md untouched.
+
+Let me write the entry as an appended clause to line 434 (the context.rs bullet). I'll use python to append to that line to avoid quoting issues with edit_file on a 22KB line.
+
+Careful with the style: bold key phrases, honest limits, the `NEUTERED` marker story, the count.
+
+Let me draft:
+
+**Day 210 (00:22), #902 step 1's second half — the CALLER guards, and they are deliberately weak.** ... 
+
+I'll append it.
+
+Then commit.
+
+One more thing to verify for the entry: the claim that the Day-196 detector calls the dir-taking seam directly and would stay green under a caller-level gate — that's exactly the shape the Day-206 lesson named. It's verifiable by reading (the test calls `load_project_context_from(repo)`). Yes, verified from the source I read. And the control I ran (control A) confirms the detector fires on a loader-level skip, while NOTHING fires on a caller-level skip — actually can I claim that? I claimed the detector "leaves that green"; the test calls the seam directly, so a change to cli.rs's branch cannot affect it at all. That's a structural claim, verifiable by reading, and my control C (hoisting the load out of the branch) did NOT redden `the_evolve_loop_still_receives_its_own_project_context` — I only ran the new guard in control C. Let me be careful: in control C I ran only `-- the_safe_mode_branch_still_consults`. I should verify the claim that the Day-196 detector stays green under a caller-level break — that's the "near-miss direction" evidence and it's exactly the discipline this repo requires (the surviving-green reading). Let me re-run control C but with BOTH tests, to record the honest "the detector did NOT move" evidence.
+
+That's cheap and it strengthens the entry. Let me do it.
+────────────────────────────────────────────────────────────────────────────────
+
+One more piece of evidence for the entry: under control C (caller-level break) I should record whether the Day-196 detector stays green — that is the surviving-green reading this repo requires:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (27 lines) ✓ (26.4s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+All verification done. Now write the ARCHITECTURE.md entry and commit.
+
+Key evidence to record:
+- Control A (loader skip): 1 test red by name, restored green, 0 markers.
+- Control B (drop `restricted ||` from the guard): reddened the ANTI-VACUOUS pre-check line, restored, byte-identical.
+- Control C (hoist the call above `if !safe_mode`): 2 passed / 1 failed — the new caller guard reddens by name while the Day-196 detector `the_evolve_loop_still_receives_its_own_project_context` STAYS GREEN. That is the surviving-green reading and the whole justification: the Day-196 detector bypasses the caller by calling the dir-taking seam directly, so it cannot see a caller-level break.
+
+Now append the entry.
+────────────────────────────────────────────────────────────────────────────────
+
+All three controls verified. Now the ARCHITECTURE.md entry:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (109ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The assertion `'no register line was owed' in lines[433]` failed — but the earlier awk showed it at NR==434, which is index 433. Let me check. The awk output was from the substr of the end; it contained "no register line was owed". Hmm, wait — maybe the file has \r\n? Or maybe my python read differs. Let me check lines[433].
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (6 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+The file has 1214 lines when read with python split('\n') (trailing newline creates an empty last element). So my earlier `grep -c ""` = 1213 counts lines excluding the final empty. Anyway index is 433. The assertion failed because... oh! `assert len(lines) == 1213` failed first — no wait, the traceback says line 3: `assert len(lines) == 1213`. Yes that's the failing assert (line 3 of the script). lines has 1214 elements.
+
+So my earlier assert on 'no register line was owed' never ran. Fix: use index 433.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (30ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 3000 cargo test 2>&1 | g… ✓ (2m 12s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four checks green. Committing:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (55ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed as 30b7f174.
+
+## What I found and what I built
+
+STEP 0 falsified part of the task file. The task described STEP 1 (the live detector) as the deliverable — but reading src/context.rs at HEAD, that test already exists: the_evolve_loop_still_receives_its_own_project_context landed Day 196. So I added only what was genuinely missing.
+
+The gap: the CALLER half. The Day-196 detector calls load_project_context_from(CARGO_MANIFEST_DIR) — the dir-taking seam — which bypasses the caller by construction. It is structurally incapable of failing when the caller stops consulting the loader, and a trust gate is precisely a caller-level break. That is why STEP 2's reachability guard was the load-bearing half here, not STEP 1.
+
+Two new weak source-level guards in src/context.rs:
+• `the_safe_mode_branch_still_consults_the_project_context_loader — pins that src/cli.rs's one call is inside if !safe_mode, that the result is still **consumed** (push_str into system_prompt), and that both hatches (--safe-mode, the restricted` resolution) still reach the flag.
+• `the_spawn_paths_own_context_call_is_pinned_without_a_verdict` — pins the spawn road (one call, inside the safe-mode-aware seam) **without judging which road is right**, since that is one of #902's open design questions.
+
+## Evidence from the three controls (serial, each one atomic mutate→run→restore)
+
+• **A — neuter the loader's `push_str` → the Day-196 detector red by name**; restored byte-identically, 0 markers.
+• **B — drop `restricted ||` from the guard line → the new test reddens on its anti-vacuous** assertion rather than passing vacuously.
+• **C — hoist the load above `if !safe_mode` → 2 passed; 1 failed: the new guard reddens, and the Day-196 detector stays green**. That surviving green is the measured proof of the gap.
+
+## Two honest notes
+
+• One correction fell out of building it: splitting at the first #[cfg(test)] is wrong for src/commands_spawn.rs, which has three such markers, two on production functions. My helper splits at the last mod tests {.
+• A first attempt at control A passed nothing useful — I hit a block_after bug (header handed with its brace) that silently sliced the inner block. Fixed before the controls.
+
+Limits, stated in the doc comments: these prove the call is still written down, never that it runs. No trust gate, no predicate, no production line changed — src/cli.rs and src/commands_spawn.rs are byte-identical after the controls. cargo fmt, clippy -D warnings, build, and test all green. #902 stays open.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
