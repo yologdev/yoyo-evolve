@@ -372,53 +372,94 @@ def _int_or_zero(value: object) -> int:
     return 0
 
 
-def count_task_reverts(outcomes: list[dict]) -> tuple[int, int]:
-    """Return (reverted_task_count, sessions_with_reverts) from loaded outcomes.
+def count_task_reverts(outcomes: list[dict]) -> tuple[int, int, int]:
+    """Return (reverted_sessions, unresolved_tasks, unresolved_sessions).
 
-    Per-task reverts are the COMMON case and leave no commit: the harness does a
-    `git reset --hard` and files an agent-revert issue, so REVERT_COMMIT_RE (which
-    only matches the whole-session build-failure commit) can never see them. The
-    evidence is already in the outcome dicts as attempted-minus-succeeded.
+    `attempted - succeeded` is NOT the revert population, and this function used
+    to say it was: it read `reverted` and threw the distinction away. The two
+    populations are disjoint and each keeps its own name:
+
+      * `reverted_sessions` — `o["reverted"] is True`. `outcome.json`'s flag is
+        SESSION-level (written in exactly one place in scripts/evolve.sh, the
+        build-fix-exhausted arm), so it can only ever size a SESSION count; the
+        number of TASKS such a revert covered is not in the artifact, and
+        printing one would be the confident-wrong-diagnosis defect. Measured over
+        all 631 recorded `outcome.json` files on `audit-log`, the flag is present
+        and `False` in 631 of 631 — this arm has never fired in the record, so
+        the old wording was wrong for 100% of the rows that carried it.
+      * `unresolved_tasks` / `unresolved_sessions` — `lost > 0` with the flag
+        FALSE. The count is real; the CAUSE is not in the artifact. This is the
+        state `NO_VERDICT_NOTE` names for one row (Day 209, `session_row_note`).
+        85 of the 631 recorded sessions are in it, every one of them flag-false.
+
+    ABSENT-KEY DEFAULT, stated rather than inferred: `o.get("reverted", False)`.
+    An older outcome dict with no `reverted` key carries no record of a
+    session-level revert, and the writer has always emitted the key — so
+    absence reads as NOT reverted and the session lands in the unresolved
+    population, never in the reverted one.
+
+    The union of the two populations (the sessions carrying ANY signal) is their
+    sum, which is why the old third element — which was only ever printed as one
+    number in one sentence — is no longer returned.
     """
-    reverted_tasks = 0
-    sessions = 0
+    reverted_sessions = 0
+    unresolved_tasks = 0
+    unresolved_sessions = 0
     for o in outcomes:
+        if o.get("reverted", False):
+            reverted_sessions += 1
+            continue
         attempted = _int_or_zero(o.get("tasks_attempted", 0))
         succeeded = _int_or_zero(o.get("tasks_succeeded", 0))
         lost = max(0, attempted - succeeded)
-        reverted_tasks += lost
-        # A whole-session revert is a session with reverts too, even if the
-        # per-task counters happen to agree (attempted == succeeded).
-        if lost > 0 or bool(o.get("reverted", False)):
-            sessions += 1
-    return reverted_tasks, sessions
+        if lost > 0:
+            unresolved_tasks += lost
+            unresolved_sessions += 1
+    return reverted_sessions, unresolved_tasks, unresolved_sessions
 
 
 def render_reverts(reverts: int, outcomes: list[dict]) -> str:
-    """Report the two revert signals as distinct named things — never summed.
+    """Report the three revert signals as distinct named things — never summed.
 
     They measure different events: a whole-session revert COMMIT (build failure
-    after the session) vs a per-task `git reset --hard` that leaves no commit.
-    Summing them would invent a number that counts nothing.
+    after the session) vs an `outcome.json` session-level `reverted` flag vs
+    `attempted - succeeded`, which is a task that did not reach a verdict and
+    whose cause is not in the artifact at all. Summing any two of them would
+    invent a number that counts nothing, and conflating the last two is what the
+    Day-210 fix removed.
+
+    A clean window (`0, 0, 0`) is byte-identical to the pre-change output, and
+    the third clause costs a line ONLY when it is non-zero, because this block is
+    rendered into the planner prompt every session.
     """
     total_sessions = len(outcomes)
     if total_sessions == 0:
         return ""
-    reverted_tasks, revert_sessions = count_task_reverts(outcomes)
-    if reverted_tasks == 0 and reverts == 0:
+    reverted_sessions, unresolved_tasks, unresolved_sessions = count_task_reverts(
+        outcomes
+    )
+    if reverted_sessions == 0 and unresolved_tasks == 0 and reverts == 0:
         return (
             "## Reverts in window\n"
             f"0 task reverts in last ~{total_sessions} sessions, "
             f"0 whole-session revert commits in {WINDOW_DAYS} days."
         )
     lines = ["## Reverts in window"]
-    if reverted_tasks:
-        lines.append(
-            f"{reverted_tasks} task(s) reverted across {revert_sessions} of the last "
-            f"~{total_sessions} sessions (per-task resets, no commit)."
+    # The two task-population clauses share one line so the section keeps its
+    # 3-line ceiling; they stay separately NAMED, which is the whole rule.
+    clauses = [
+        (
+            f"{reverted_sessions} session(s) reverted (outcome.json `reverted` flag, whole session)."
+            if reverted_sessions
+            else f"0 task reverts in last ~{total_sessions} sessions."
         )
-    else:
-        lines.append(f"0 task reverts in last ~{total_sessions} sessions.")
+    ]
+    if unresolved_tasks:
+        clauses.append(
+            f"{unresolved_tasks} task(s) {NO_VERDICT_NOTE} across "
+            f"{unresolved_sessions} of the last ~{total_sessions} sessions."
+        )
+    lines.append(" ".join(clauses))
     lines.append(
         f"{reverts} whole-session revert commit(s) in last {WINDOW_DAYS} days."
     )
@@ -4813,19 +4854,50 @@ src/commands_config.rs
         f"0 whole-session revert commits in {WINDOW_DAYS} days.",
     )
 
-    # 2. Per-task resets only — invisible to REVERT_COMMIT_RE, visible here.
-    PER_TASK = [outcome(2, 1), outcome(1, 1), outcome(2, 0)]
+    # 2. `attempted - succeeded` with the flag FALSE is NOT a revert — it is the
+    #    population `NO_VERDICT_NOTE` names. This is the row that failed before
+    #    Day 210: it read "3 task(s) reverted across 2 of the last ~3 sessions
+    #    (per-task resets, no commit)".
+    NO_VERDICT = [outcome(2, 1), outcome(1, 1), outcome(2, 0)]
     assert_eq(
-        "per-task resets are counted and named",
-        render_reverts(0, PER_TASK),
+        "flag-false losses are counted as no-verdict, never as reverts",
+        render_reverts(0, NO_VERDICT),
         "## Reverts in window\n"
-        "3 task(s) reverted across 2 of the last ~3 sessions "
-        "(per-task resets, no commit).\n"
+        "0 task reverts in last ~3 sessions. "
+        f"3 task(s) {NO_VERDICT_NOTE} across 2 of the last ~3 sessions.\n"
         f"0 whole-session revert commit(s) in last {WINDOW_DAYS} days.",
     )
 
-    # 3. Whole-session revert commit only — the old signal, still reported,
-    #    still named as its own thing.
+    # 3. The flag is the ONLY artefactual claim of a revert, and it sizes as a
+    #    SESSION count: how many TASKS a whole-session revert covered is not in
+    #    `outcome.json`, so no task count is printed for it.
+    FLAGGED = [
+        outcome(2, 1, reverted=True),
+        outcome(1, 1),
+        outcome(2, 0, reverted=True),
+    ]
+    assert_eq(
+        "the reverted flag is reported as its own named thing",
+        render_reverts(0, FLAGGED),
+        "## Reverts in window\n"
+        "2 session(s) reverted (outcome.json `reverted` flag, whole session).\n"
+        f"0 whole-session revert commit(s) in last {WINDOW_DAYS} days.",
+    )
+
+    # 3b. The flag fires even when the counters AGREE. `attempted == succeeded`
+    #     with `reverted: true` used to render the clean all-clear, because the
+    #     early-return keyed on the task count alone — so a real revert was
+    #     hidden behind "0 task reverts ... 0 whole-session revert commits".
+    assert_eq(
+        "a flagged session with agreeing counters is not hidden by the all-clear",
+        render_reverts(0, [outcome(1, 1, reverted=True)]),
+        "## Reverts in window\n"
+        "1 session(s) reverted (outcome.json `reverted` flag, whole session).\n"
+        f"0 whole-session revert commit(s) in last {WINDOW_DAYS} days.",
+    )
+
+    # 3c. Whole-session revert COMMIT only — the old signal, still reported,
+    #     still named as its own thing (the pre-existing row, unchanged).
     assert_eq(
         "whole-session commits reported separately",
         render_reverts(1, GREEN),
@@ -4834,22 +4906,23 @@ src/commands_config.rs
         f"1 whole-session revert commit(s) in last {WINDOW_DAYS} days.",
     )
 
-    # 4. Both — the two numbers must never be summed into one.
+    # 4. All three signals at once — never summed, each named.
+    BOTH = [outcome(2, 1, reverted=True), outcome(2, 1), outcome(1, 1)]
     assert_eq(
-        "both signals render as two distinct lines",
-        render_reverts(2, PER_TASK),
+        "three signals render as three distinct named clauses",
+        render_reverts(2, BOTH),
         "## Reverts in window\n"
-        "3 task(s) reverted across 2 of the last ~3 sessions "
-        "(per-task resets, no commit).\n"
+        "1 session(s) reverted (outcome.json `reverted` flag, whole session). "
+        f"1 task(s) {NO_VERDICT_NOTE} across 1 of the last ~3 sessions.\n"
         f"2 whole-session revert commit(s) in last {WINDOW_DAYS} days.",
     )
 
-    # 5. A whole-session revert counts as a session with reverts even when the
-    #    per-task counters agree (absence gets its own value, Day 144).
+    # 5. The flag counts its session even when the per-task counters agree
+    #    (absence gets its own value, Day 144).
     assert_eq(
         "whole-session flag counts the session",
         count_task_reverts([outcome(1, 1, reverted=True), outcome(1, 1)]),
-        (0, 1),
+        (1, 0, 0),
     )
 
     # 6. Defensive reads: the JSON is written by a shell script.
@@ -4858,23 +4931,59 @@ src/commands_config.rs
         count_task_reverts(
             [{"tasks_attempted": "two", "tasks_succeeded": None}, {}]
         ),
-        (0, 0),
+        (0, 0, 0),
     )
     assert_eq(
         "succeeded > attempted never goes negative",
         count_task_reverts([outcome(1, 3)]),
-        (0, 0),
+        (0, 0, 0),
+    )
+
+    # 6b. The ABSENT-KEY DEFAULT, decided and pinned rather than inferred from
+    #     `lost`: an older outcome dict with no `reverted` key carries no record
+    #     of a session-level revert, so it lands in the unresolved population and
+    #     never in the reverted one. The fixture is asserted anti-vacuously to
+    #     REALLY lack the key, so a typo cannot make the row agree with itself.
+    ABSENT = {"tasks_attempted": 2, "tasks_succeeded": 1}
+    assert_true(
+        "anti-vacuous: the absent-key fixture really lacks `reverted`",
+        "reverted" not in ABSENT,
+    )
+    assert_eq(
+        "an absent `reverted` key defaults to NOT reverted (unresolved)",
+        count_task_reverts([ABSENT]),
+        (0, 1, 1),
+    )
+
+    # 6c. Anti-vacuous on the other side: the fixtures that are supposed to
+    #     carry the key really do, carrying the values the rows above claim.
+    assert_true(
+        "anti-vacuous: the fixtures carry the `reverted` values the rows claim",
+        all("reverted" in o for o in GREEN + NO_VERDICT + FLAGGED)
+        and [o["reverted"] for o in FLAGGED] == [True, False, True]
+        and all(o["reverted"] is False for o in NO_VERDICT),
+    )
+
+    # 6d. The populations PARTITION the sessions that carry a signal — one
+    #     flagged session and one unresolved session, counted once each.
+    assert_eq(
+        "the two task populations partition the sessions with a signal",
+        count_task_reverts(BOTH),
+        (1, 1, 1),
     )
 
     # 7. No outcomes at all → no section (the section can't speak about nothing).
     assert_eq("no outcomes renders nothing", render_reverts(0, []), "")
 
-    # 8. The section stays inside its 3-line budget under TOTAL_LINE_CAP.
+    # 8. The section stays inside its 3-line budget under TOTAL_LINE_CAP. The
+    #    two task populations share a line precisely so a third named thing
+    #    costs no extra line; the unresolved clause is conditional, so a clean
+    #    or flagged-only window renders 2–3.
     assert_true(
         "section is at most 3 lines",
         max(
             len(render_reverts(r, o).splitlines())
-            for r, o in ((0, GREEN), (0, PER_TASK), (1, GREEN), (2, PER_TASK))
+            for r, o in ((0, GREEN), (0, NO_VERDICT), (1, GREEN), (2, FLAGGED), (2, BOTH))
         )
         <= 3,
     )
