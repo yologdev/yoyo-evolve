@@ -1,0 +1,110 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me look at the actual diff. The commit is committed? Let me check git status/diff and the file.
+
+Let me inspect key elements: NO_VERDICT_NOTE usage, the zero path byte-identity, and whether the tests pass.
+
+Quick checks:
+1. `NO_VERDICT_NOTE` is defined as "did not reach a verdict (tree green, no revert recorded)". Using it in a sentence "3 task(s) did not reach a verdict (tree green, no revert recorded) across 2 of the last ~3 sessions." Fine.
+
+2. Zero path byte-identical: task says "`reverted_tasks == 0 and reverts == 0` returns the current two-line string". Diff keeps the same string. But the new condition adds unresolved_tasks == 0. Note: if flagged reverted_sessions > 0 but unresolved == 0, they still render lines. Good.
+
+Wait — there's a subtlety with the task's requirement "The zero path must stay byte-identical. `reverted_tasks == 0 and reverts == 0` returns the current two-line string". The original code: if reverted_tasks == 0 and reverts == 0 → return clean. New: if reverted_sessions == 0 and unresolved_tasks == 0 and reverts == 0 → clean. Under the old semantics, reverted_tasks == 0 corresponded to sum of lost == 0. Now unresolved_tasks is the same sum for flag-false rows; flagged rows now counted as reverted_sessions. So the clean path differs only for the fixture with reverted:true and attempted==succeeded, which the old code rendered as clean (a bug). That's fine and improved, and documented.
+
+But is the clean-window string byte-identical? Yes, same text.
+
+3. Tests: task asked for rows. The diff added them. Also asked to run `python3 scripts/extract_trajectory.py --test` and paste the result into the commit message. Let me check the commit message.
+
+4. ARCHITECTURE.md updated. Good.
+
+5. One file constraint: task says "One file" but constraint also says "New history goes in ARCHITECTURE.md". So two files: extract_trajectory.py and ARCHITECTURE.md. That's per the task's docs instruction. The task description Files: scripts/extract_trajectory.py, plus constraint 4 says record history in ARCHITECTURE.md. So fine.
+
+Let me actually verify by running the test and checking the commit message. Also check the existing self-test harness still passes (the harness ran full cargo tests but python tests aren't run by CI). Let me run `python3 scripts/extract_trajectory.py --test`.
+
+Also check: there's a possible issue in test #8 line-count: `(0, GREEN)` — GREEN fixture. Fine.
+
+Also `assert_eq` and `assert_true` helpers exist? Presumably pre-existing.
+
+Also potential hidden callers of count_task_reverts returning 2-tuple elsewhere. Let me grep.
+
+Let's do this quickly.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && python3 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "count_task_reverts\|re… ✓ (64ms)
+ ✓ (66ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Tests pass. Check call sites of count_task_reverts/render_reverts outside self-tests.
+
+Let me grep more precisely.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.9s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "count_task_reverts\|ren… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Now check the render at line 3838 (caller) uses render_reverts(reverts, outcomes) — fine.
+
+Verify the live behavior with a small script: simulate old vs new. Also check zero-path byte-identity against git's old version. Let me run the old function from git show against the new for a clean window and compare output.
+
+Let me do a focused check: run old version's render_reverts on a clean window and new version, compare.
+
+Actually simpler: extract output strings. Let's do it via python using git show of the old file, importing? Simpler: I trust the diff text — the clean-window string is unchanged literal. Let me verify by diff of that hunk: old returned:
+
+"## Reverts in window\n"
+f"0 task reverts in last ~{total_sessions} sessions, "
+f"0 whole-session revert commits in {WINDOW_DAYS} days."
+
+New: identical. Good.
+
+But wait: the task said "reverted_tasks == 0 and reverts == 0 returns the current two-line string" — the new condition makes flagged-with-agreeing-counters render non-clean, which is the bug fix (documented, and the task's own step didn't explicitly forbid; the task said keep the zero path byte-identical for a clean window — `attempted == succeeded`, `reverted` false). Fine.
+
+One concern: task required "reverted: true, attempted > succeeded → counted in the reverted population, and not in unresolved." In the new code, flagged rows `continue` before the losing computation, so a flagged row with lost>0 counts only as reverted_sessions=1 and contributes 0 to unresolved. But note it also doesn't count the tasks at all — documented. The test fixture BOTH covers flag+lost but only asserts total partition (1,1,1) for [outcome(2,1,reverted=True), outcome(2,1), outcome(1,1)]. Hmm, that test asserts partition. There's no direct test asserting a flagged row with attempted>succeeded is not in unresolved... Actually test #4 BOTH: first element outcome(2,1,reverted=True) has lost=1 but unresolved_tasks total = 1 (from the second fixture outcome(2,1)), so yes implicitly it asserts the flagged lost isn't added. Good enough.
+
+Now, is there a doc sync? ARCHITECTURE.md updated — yes, that's the required home. CLAUDE.md not required.
+
+Product surface: this is a script for the evolve loop only, no product surface. N/A.
+
+forgotten_touchpoints: the changed tuple arity — all call sites in this file updated (line 438 only consumer; tests updated). No other module imports it? grep showed only extract_trajectory.py. Fine.
+
+Let me quickly verify the actual rendered output for a flagged/clean window by running the functions to ensure nothing crashes (e.g., NO_VERDICT_NOTE import order — it's a module constant defined at line 194, used at 458; fine, module-level).
+
+Run a quick python snippet.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (95ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Zero path is byte-identical to old. Behavior matches the task. Everything checks out.
+
+One thing: the "across N of the last ~M sessions" for the unresolved clause: unresolved_sessions counts sessions with lost>0 and flag false. Task allowed keeping the sessions semantics or splitting; they split and said so. Fine.
+
+Write verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (49.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md: PASS.
+
+Key evidence:
+• Ran the shipped code: clean window renders byte-identically to HEAD~1's version (compared directly against the old file), flag-false losses now use NO_VERDICT_NOTE, and reverted: true gets its own named session clause.
+• `python3 scripts/extract_trajectory.py --test → ALL PASSED; commit message pastes that run and states no CI step invokes --test` (#951).
+• 3-tuple arity propagated to the only consumer (render_reverts call at line 3838) and all self-test rows; no other callers exist.
+• ARCHITECTURE.md updated as required; CLAUDE.md correctly untouched.
+• No product surface touched.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

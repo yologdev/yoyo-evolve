@@ -1,0 +1,71 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me judge the diff. The task asks for: thread the dropped count into both structs, print clause in both notes, tests, ARCHITECTURE.md update.
+
+Let me verify actual state of files — check the producer is set (the correction in ARCHITECTURE notes the first cut missed the live seam). The diff shows `count_unhittable_surprises_at` now sets `count.dropped = dropped`. Good.
+
+Let me do a quick focused check on the actual file to confirm both `_dropped` are gone and the clause function exists, and that tests exist. Also check module size gate? Not needed.
+
+Let me run a quick grep.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "_dropped\|count.dropped…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head -20 &&… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+No `_dropped` bindings remain (only doc mention). Both `count.dropped = dropped` present at 338 and 862. Clause function present, consumed at 460, 944, 969.
+
+Check module size gate: commands_risk_unhittable.rs is 1956 lines. Task said cap 2000. Fine. Let's check the gate test to confirm no failure — tests passed per harness. But module_size.rs test might have a cap; harness says tests pass.
+
+Also check that the note's leading marker etc. Let me quickly run the targeted test to confirm and exercise the note? The harness already ran them. But instruction: if user-facing feature, try it. This is a stderr note improvement in `/risk`. I could run the yoyo binary `risk` and grep for malformed. Actually the real ledger is clean (dropped == 0), so the clause shouldn't print — which is itself the byte-identity regression check. Let me quickly run the binary's risk output tail to verify no "malformed" appears (clean repo). That's a quick confirmation.
+
+Actually building the binary may be expensive; target/debug/yoyo may exist.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1 && grep -rn… ✓ (4ms)
+ ✓ (730ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Live run: clean repo prints no "malformed" clause — byte-identity holds (the line matches pre-Day-210 output for the ledger join, plus the second instrument clause created by Day 209/210 which pre-existed).
+
+Wait — the "two instruments name 5..6" clause: is that pre-existing? Yes, from Day 210 earlier session (cycle 12 closure) per ARCHITECTURE. So byte-identity of dropped==0 holds.
+
+Let me quickly verify the doc-sync: ARCHITECTURE.md updated — yes, big entry under commands_risk_unhittable.rs. Task also required tests. Present.
+
+Check that the new tests pass specifically — harness says tests pass. Let me do one focused run of the new test names to be confident (fast, targeted).
+
+Actually the harness already ran the full suite as PASS. I'll do one quick targeted test run for the new tests to confirm they exist and pass (cheap-ish, but compiling may take a while if not built). The binary is built; tests may need compiling. Might take a few minutes. Given budget, maybe run `cargo test --bin yoyo commands_risk_unhittable` — could be slow. The harness said tests pass. I have enough evidence. Maybe skip.
+
+One more check: does something in the diff touch product surface? No CLI flags/config. The note is printed on `/risk` stderr — a minor behavioral change but not a product-surface default; it's opt-in only when ledger malformed. Evolve-kind acceptable.
+
+Also check forgotten_touchpoints: new struct field `dropped` on two structs — consumers present in same diff (set in two places, consumed in note composers). New function dropped_ledger_clause with consumers. Renamed bindings fine. All RetrospectiveCount literals updated (compiles). Good.
+
+Write verdict.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.9s (2 ✓)
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (46.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md: PASS.
+
+Key evidence I actually checked:
+• `grep -n "_dropped" in src/commands_risk_unhittable.rs → no live bindings remain (only doc-comment prose); count.dropped = dropped` present at both producers (lines 338 and 862).
+• `dropped_ledger_clause is a single shared composer consumed by unhittable_note (:460) and both retrospective_note` arms (:944, :969) — no duplicated wording.
+• Ran the real binary: ./target/debug/yoyo risk on this repo (clean ledger, dropped == 0) prints the unhittable line with no "malformed" clause, confirming the byte-identity regression surface the task demanded.
+• ARCHITECTURE.md updated under commands_risk_unhittable.rs with the Day 210 entry; CLAUDE.md left alone as instructed.
+• No product surface touched (stderr note only, silent unless the ledger is corrupt).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

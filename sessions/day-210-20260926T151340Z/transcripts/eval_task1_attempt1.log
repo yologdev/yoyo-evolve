@@ -1,0 +1,125 @@
+  yoyo (piped mode) — model: deepseek-v4-flash
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Let me verify the diff against the task. Let me check the actual files.
+
+Key checks:
+1. `dropped` field added to `UnhittableCount` and `RetrospectiveCount` — yes in the diff.
+2. Both `_dropped` bindings changed to `dropped` — the diff shows `retrospective_unhittable_at` at :827 changed. What about `count_unhittable_surprises_at` at :309? The diff doesn't show that change! Let me check.
+
+The task says both call sites: `count_unhittable_surprises_at` (`:309`) and `retrospective_unhittable_at` (`:760`). The diff only shows the retrospective one being changed. Let me verify.
+
+Actually the diff shows `count_unhittable_surprises_with_git` returning count, and `UnhittableCount` gained `dropped`. But does the live seam actually set `count.dropped`? Let me look at the file.
+
+Let me read the actual source.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "_dropped\|dropped" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "read_first_scored" src/… ✓ (2ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Line 325 still has `_dropped` in `count_unhittable_surprises_at`. Let me look at that function to see if `dropped` is actually being set on the live path.
+
+The task explicitly requires: "Change both `_dropped` bindings to `dropped` and store it." And the live seam must print the clause. Let me read the count_unhittable_surprises_at function.
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_unhittable.rs:300..360 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: `count_unhittable_surprises_at` (line 325) still binds `_dropped` and **never sets** `count.dropped`. So on the live seam, `UnhittableCount::dropped` is always 0 (Default). `unhittable_note` calls `dropped_ledger_clause(count.dropped)` which always gets 0 → clause never printed on the live/watch path.
+
+This is exactly the defect the task described — the whole point. The task said:
+
+"Change both `_dropped` bindings to `dropped` and store it."
+
+The diff only changed one of the two. The live path is dead: the field exists but is never populated by any producer. The live note test `a_dirty_first_scored_ledger_is_visible_on_the_live_seam_too` constructs `UnhittableCount` with `dropped: 2` by hand — proving nothing about the reader (the exact Day-201 anti-pattern the task warned about). And the task explicitly required: "Same clause in `unhittable_note` (the live path) from the same field, so the two seams cannot disagree about one ledger."
+
+So the live seam is a "deaf door" — it's the exact "two doors, one policy, one deaf" shape that the task warned about. The field is populated on the retrospective seam but never on the live seam.
+
+This is a genuine functional bug. The task's Step 1 explicitly required changing both bindings. The diff shows only one changed. Let me confirm there's no other place that sets `count.dropped` on the live path.
+
+Line 838 `count.dropped = dropped;` — that's in retrospective_unhittable_at. Let me double check there's no other assignment.
+
+From grep: `count.dropped = dropped;` only at line 838.
+
+So `UnhittableCount.dropped` is never set from the reader on the live path. That's a FAIL.
+
+Wait — but is `count_unhittable_surprises_at` the only live producer? Yes per grep, only line 325 there.
+
+Also `a_dirty_first_scored_ledger_is_visible_on_the_live_seam_too` uses `UnhittableCount { dropped: 2, ..clean }` hand-set — proves nothing about the reader. The task explicitly required that the live seam carry the clause from the same field, and the whole point is the producer. This is a real gap.
+
+Let me confirm the live test: it constructs the count by hand. Yes.
+
+Let me also check whether there could be a claim in ARCHITECTURE.md that the live seam is wired. The ARCHITECTURE entry says "Both `_dropped` bindings became `dropped` and set the field on the count" — that claim is false at HEAD. Only one binding was changed.
+
+Let me verify by reading lines 1555-1600 for the hand-set test.
+
+Actually already clear. But let me double check the whole file for `dropped:` assignments in non-test code and any other producer of UnhittableCount.
+
+Given grep shows only `count.dropped = dropped;` at 838, the live path's `UnhittableCount.dropped` stays 0 always. Definitive.
+
+Let me also quickly check whether callers of count_unhittable_surprises_at might set it. Grep for count_unhittable_surprises_at callers.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "count_unhittable_surpr… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed: every live call site goes through `count_unhittable_surprises_with_git` → `count_unhittable_surprises_at` → `_dropped` discarded. So `UnhittableCount.dropped` is always 0 in production. The live seam clause is dead code that never fires.
+
+The task explicitly required Step 1: "Change both `_dropped` bindings to `dropped` and store it." Only one was changed. And the task explicitly said "Same clause in `unhittable_note` (the live path) from the same field, so the two seams cannot disagree about one ledger" — the live path doesn't get the field from the reader at all.
+
+Also, the ARCHITECTURE.md record claims "Both `_dropped` bindings became `dropped` and set the field on the count" — a false claim at HEAD.
+
+This is a clear FAIL: the implementation misses half the required change and the live seam is deaf.
+
+Let me write the verdict. Line 325 is at the `count_unhittable_surprises_at` function.
+
+I should also verify one thing — maybe there's a design reason? The task said both. And the ARCHITECTURE claim says both. So it's a miss, not a deliberate deviation documented elsewhere. Let me grep ARCHITECTURE for the claim to be sure. The diff shows: "Both `_dropped` bindings became `dropped` and set the field on the count". Yes.
+
+Verdict: FAIL.
+
+Checked: intent_alignment: FAIL — the live seam's `_dropped` at line 325 was not changed; `UnhittableCount.dropped` is never populated from the reader.
+Checked: forgotten_touchpoints: FAIL — the new field `dropped` on `UnhittableCount` has no producer on the live path; clause is dead.
+Checked: doc_sync: PASS — ARCHITECTURE.md updated (new file history), though it contains a false claim.
+Checked: product_surface: N/A — no config/CLI/startup change.
+
+Actually doc_sync: the behavior change is documented in ARCHITECTURE.md (the correct place per project convention). But the doc claim is false ("Both `_dropped` bindings became `dropped`"). Hmm. doc_sync checks that behavior change reflected in docs. It's reflected, but inaccurately. I could mark it PASS with note or FAIL. The rule: doc_sync FAIL if behavior change not reflected. It is reflected, albeit with an inaccurate claim of completeness. I'll mark PASS but note the inaccurate claim. Actually the doc says both changed which is false — that's a doc inaccuracy accompanying a code bug. I'll note it in reason. Let me keep doc_sync PASS since docs were updated in the right place; the inaccuracy is part of the bug report.
+
+Write the verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed the defect. Let me verify the live-seam test's fixture approach:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1554,1566p' src/commands… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+Confirmed. The live seam test hand-sets `dropped: 2` — exactly the Day-201 anti-pattern the task forbade for proving the reader. And the production live path never sets dropped.
+
+Write FAIL verdict.
+────────────────────────────────────────────────────────────────────────────────
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (46.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: FAIL
+
+The diff fixes only the retrospective seam. The live seam's _dropped binding at src/commands_risk_unhittable.rs:325 (count_unhittable_surprises_at) was not changed — all three live call sites go through it via count_unhittable_surprises_with_git, and no production code ever assigns count.dropped on that path (only retrospective_unhittable_at:838 does). So UnhittableCount::dropped is permanently 0, the new dropped_ledger_clause call in unhittable_note is dead, and the two seams can absolutely disagree about one ledger — the exact "two doors, one policy, one deaf" shape the task explicitly warned against.
+
+The live-seam test proves nothing about the reader: it sets dropped: 2 by hand, which is the Day-201 anti-pattern the task forbade. The ARCHITECTURE.md entry also falsely claims both bindings were changed.
+
+Verdict written to session_plan/eval_task_1.md.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
