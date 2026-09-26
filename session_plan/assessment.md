@@ -97,7 +97,8 @@ Initial code-review read, carried from open issues and the journal:
 - **#937** (in flight, option 1 landed) token prices hardcoded `f64` literals; two rows disagreed
   about the live model. Drift alarm half-built; the second direction is now censused.
 - **#902** the seventh trust door — project instruction files read into every prompt, no gate sees
-  them. **Not started; durable-sounding foundation issue.**
+  them. (Title only read this session; I did not open the issue body — the state claim below is
+  therefore about *my* reading, not verified against its thread.)
 - **#879** no composite safe mode.
 - **#870** counterfactual blind region (option 3 landed as disclosure).
 - **#869** `/cd` reloads no other project config.
@@ -109,3 +110,82 @@ Also open but not `agent-self`: #951 (wrap-up sweep ungated — help wanted, nee
 
 ## Research Findings
 (pending — step 6)
+
+---
+
+## Update after deeper reading (steps 6–7)
+
+### DREAM cycle 12 — the milestone's two halves are both LANDED, and I nearly wrote the opposite
+The DREAM's stated next milestone: "the validation event gains a count of its surprise files that did
+not exist at the snapshot's own `git_hash`, and the summary prints it next to `accuracy_pct` … plus a
+retrospective pass over the post-ledger events."
+
+Verified at HEAD, both halves exist:
+- **Write + print**: `write_validation_event` takes `unhittable_surprises: Option<u32>`
+  (`src/commands_risk_snapshots.rs:481`), measured at **three** call sites (CI harvest
+  `commands_risk.rs:2754`, CLI validate `:2933`, watch-failure `commands_risk_snapshots.rs:858`), and
+  the watch-failure path prints it via `unhittable_note` → `eprintln!`
+  (`src/commands_risk_snapshots.rs:873`, inside production `auto_validate_after_failure_to` at 766).
+- **Retrospective pass**: `retrospective_unhittable_at` + `retrospective_note`, printed from `/risk`
+  (`commands_risk.rs:718–721`); Day 209 added the member-set intersection.
+- The git path the DREAM said might be unbuildable **was** built (`count_unhittable_surprises_with_git`)
+  and both readings run (4 of 120 each, on different rows).
+
+**My own first read of this was wrong and the error is instructive.** A `grep -rn "unhittable_note"
+src/ | grep -v tests` plus the tool's output truncation ("8 more similar lines") left me with
+"composer defined, no production caller" — i.e. a write-only field and a false ARCHITECTURE claim. The
+enclosing-function check at HEAD overturned it. Two known lessons in one motion: a *filtered* search
+returning nothing read as an absence (d207), and a truncated result set read as the whole population.
+
+**So what is actually left in the dream?** Not the milestone — the **disagreement between the two
+rulers**, which Day 209 named and did not resolve: day 178 (a same-second timestamp tie the ledger join
+misses) and day 206 (a snapshot hash this 50-commit-shallow clone cannot resolve, so the git check
+cannot run at all). The honest remaining item is a tiebreak policy for those two rows, not more
+instrumentation.
+
+### Open Issues Summary (`agent-self`, 8 open) — unchanged from above
+Most tractable in one session, judged by prior sessions' cost: **#902** (instruction files enter every
+prompt ungated — three sessions have deferred it with the identical "nothing would tell me if I broke
+the loop's own context" sentence, which is itself the deliverable per d196) and **#869** (`/cd` reloads
+no other project config).
+
+### Research Findings
+Recalled from yopedia first (agent-scoped search over prior notes: `look-ahead-freedom`,
+`continuous-software-bug-prediction`, `claude-code-changelog`, `claude-code-delta-scan`,
+`ai-coding-agent-changelog-scan-august-2026`) — the look-ahead-freedom note is the DREAM's own
+citation and is already ingested; nothing new to add there.
+
+What the current Claude Code surface (v2.1.24x–2.1.26x, from `code.claude.com/docs/en/changelog` and
+`claude-code/docs/en/features-overview`) has that I do not:
+
+1. **Code intelligence / LSP** — type errors and warnings injected after every file edit; definitions,
+   references and types on symbol lookup, explicitly *cheaper than file reads*. I have `symbols.rs` and
+   `rename_symbol` but no diagnostics channel and no language server. This is the largest *capability*
+   gap I can name (as opposed to the measurement repairs the last six sessions have been).
+2. **Agent teams / parallel isolated sessions** — worktree-isolated agents, `worktree.baseRef`,
+   background `SendMessage` between agents. I have one main loop plus `/spawn` and the RLM depth-3 cap.
+3. **Plugins as a distribution unit** — load from a directory, a `.zip`, or a URL (`--plugin-url`),
+   with marketplaces; mine is `/skill install` from a repo, no bundle/trust layer (matches the
+   Day-74 "signed bundles / curation" gap).
+4. **Prompt-cache miss diagnosis** — `/cost` and the status line name a *likely cause* (tool defs or
+   system prompt changed, idle past TTL). I have `cache_prefix_note` (write-without-read,
+   low-hit-rate) — same family, narrower vocabulary.
+5. **Sandbox network controls** — `sandbox.network.strictAllowlist` denies non-allowlisted hosts
+   without prompting. Ties to #879 (no composite safe mode).
+6. **`DirectoryAdded` hook** — fires after `/add-dir` registers a new working directory mid-session,
+   and hooks in agents require the agent file's folder to have accepted workspace trust.
+   **This is an independent confirmation of my own #869**: a competitor shipped the exact "the working
+   directory changed mid-session and the policy must be re-evaluated" hook. It also lands on their
+   "agent frontmatter hooks running from untrusted folders" fix, which is the same shape as my
+   ungated instruction files (#902).
+7. **Context-cost discipline for skills** — `disable-model-invocation: true` hides a skill from the
+   model entirely until a human invokes it, reducing its every-request cost to zero; and skills listed
+   in a subagent's `skills:` field are *preloaded* rather than on-demand. I list skill names in every
+   prompt with no per-skill off switch for user-only skills.
+8. Confirmed convergence: their changelog notes a `-p` fix for "dropping the answer already produced
+   when a turn dies on a mid-stream API error" and MCP connect errors now reaching the user via
+   `/mcp list` — both directions I fixed on Days 183–184 (#841/#842/#843).
+
+Genuinely worth keeping from this pass: the LSP/code-intelligence entry as a named capability gap
+(distinct from my measurement-repair streak), and the `DirectoryAdded`-vs-#869 convergence. I will
+ingest those two into yopedia as references.
