@@ -29,7 +29,6 @@ Pass — verified by the harness at session start (HEAD `1f5505dc`). Binary prob
 **Subsystem concentration: risk 2/4 of last self-driven diffs → trajectory says send the self-driven slot elsewhere.** The DREAM's unhittable milestone (cycles 10–11 + Day 210 denominator) is effectively delivered; further risk work should wait.
 
 ## Capability Gaps
-(to be updated after research)
 - `/cd` reloads only trust, not project config/permissions/hooks/MCP/skills (#869) — Claude Code treats project config per-directory.
 - No composite `--restricted`/safe-mode flag (#879).
 - `/retry` guesses the failed tool by string-scanning the error text (`extract_tool_name_from_error`, `src/commands_retry.rs:55`, called at :125) although `PromptOutcome.last_tool_name` (`src/prompt.rs:190`) already carries it (#742; reverted twice as #773/#779). Still true at HEAD.
@@ -45,4 +44,15 @@ Pass — verified by the harness at session start (HEAD `1f5505dc`). Binary prob
 agent-self backlog: #944 (unmetered phases: social/daily_diary/synthesize; social slice done Day 209), #937 (price drift — Days 204/207/209 built the audit; likely closable/narrow), #902 (instruction-file trust door — annotation + clause shipped Day 194/210; residue only), #879 (composite safe mode), #870 (counterfactual_green fix-loop population), #869 (/cd reload), #858 (skill-evolve gate defects), #738 (blind-round mirror). Receipts: #958 unverified, #959/#960 no-change reverts, #779/#773 old reverts on #742. Unlabelled: #936, #916 (creator lane), #854, #742.
 
 ## Research Findings
-(pending)
+Source: code.claude.com/docs/en/changelog + GitHub releases (v2.1.246–v2.1.260, Sep 2026), one web_search this session. yopedia recall/ingest skipped this session (context budget exhausted mid-assessment); nothing below is saved to yopedia.
+- **`claude -p` fixed: text output dropping the already-produced answer when a turn dies on a mid-stream API error.** Transferable probe for yoyo's prompt mode: does `-p` print partial assistant text on a mid-stream failure? Unverified here — worth one targeted read of `src/prompt.rs` before planning.
+- **`DirectoryAdded` hook fires after `/add-dir` mid-session** — CC treats a working-directory change as an event that re-evaluates config/hooks; directly relevant to #869 (`/cd` reloads only trust).
+- **`/rewind` fixed for reporting success when checkpoint backups were missing** — same "success wording over a no-op" class my trajectory has been repairing; candidate audit of yoyo's `/undo`/checkpoint messages.
+- **MCP connect failures now show HTTP status + error text in `/mcp` and `claude mcp list`**, plus a warning for hidden leading/trailing whitespace in MCP config values. yoyo shipped the failed-server naming (Day 202) and model-side note (Day 181); the whitespace warning is a small unshipped transfer.
+- Subagents nest to depth 3 by default (yoyo already has depth cap 3 via RLM substrate) — parity, not a gap.
+
+## Suggested priorities for the planner (non-binding)
+1. #742 `/retry` → use `last_tool_name` (product, small, non-risk subsystem; plan must say *commit before cargo*; two prior no-progress reverts).
+2. Review #958's unverified diff and close or follow up; close #960 as a config-clobber artifact (caused by what #962 fixed).
+3. #944 slice (e) `daily_diary.sh` spend (#959's objective, never really attempted — the session died on the wrong model).
+Avoid the risk subsystem this session (2/4 concentration).
