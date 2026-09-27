@@ -1020,7 +1020,11 @@ mod tests {
             // Near-miss: nothing carried -> byte-identical to the old scan.
             (None, Some(err), extract_tool_name_from_error(err)),
             // Empty is not a name -> scan.
-            (Some(""), Some("read_file failed: no such file"), Some("read_file")),
+            (
+                Some(""),
+                Some("read_file failed: no such file"),
+                Some("read_file"),
+            ),
             // Nothing at all -> None.
             (None, None, None),
             // A carried name survives even with no error text.
@@ -1037,8 +1041,10 @@ mod tests {
 
     #[test]
     fn error_tool_of_pairs_the_name_only_with_a_tool_error() {
-        let mut o = crate::prompt::PromptOutcome::default();
-        o.last_tool_name = Some("bash".to_string());
+        let mut o = crate::prompt::PromptOutcome {
+            last_tool_name: Some("bash".to_string()),
+            ..Default::default()
+        };
         assert_eq!(error_tool_of(&o), None, "no error -> no name");
         o.last_tool_error = Some("exit 1".to_string());
         assert_eq!(error_tool_of(&o).as_deref(), Some("bash"));
