@@ -1474,3 +1474,14 @@ fn slash_command_refusal_is_referenced_at_both_doors() {
         "both doors must construct a PromptDoor variant"
     );
 }
+
+/// #965: `--output-format json` alone must emit the JSON envelope (it wrote
+/// nothing before); `text` and `stream-json` must not get it.
+#[test]
+fn output_format_json_reaches_the_json_envelope() {
+    use crate::cli::OutputFormat;
+    assert!(wants_json_envelope(false, OutputFormat::Json));
+    assert!(wants_json_envelope(true, OutputFormat::Json));
+    assert!(!wants_json_envelope(false, OutputFormat::Text));
+    assert!(!wants_json_envelope(false, OutputFormat::StreamJson));
+}

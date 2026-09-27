@@ -333,6 +333,13 @@ fn emit_output(
     write_output_file(output_path, &response.text).is_err()
 }
 
+/// #965: `--output-format json` set only `output_format`, while `emit_output`
+/// reads the legacy `--json` bool alone, so it wrote no JSON at all. Both
+/// spellings now reach the envelope; `stream-json` keeps its own NDJSON path.
+fn wants_json_envelope(legacy_json_flag: bool, output_format: cli::OutputFormat) -> bool {
+    legacy_json_flag || output_format == cli::OutputFormat::Json
+}
+
 /// Handle `--prompt / -p` single-shot mode: run one prompt (optionally with an
 /// image), print the result (or write to `--output`), and return. Calls
 /// `std::process::exit` on fatal errors (bad image, API failure with no
@@ -1078,7 +1085,7 @@ async fn main() {
     };
     let image_path = config.image_path;
     let no_update_check = config.no_update_check;
-    let json_output = config.json_output;
+    let json_output = wants_json_envelope(config.json_output, config.output_format);
     let output_format = config.output_format;
     let print_mode = config.print_mode;
     let is_interactive = io::stdin().is_terminal() && config.prompt_arg.is_none();
