@@ -646,14 +646,19 @@ pub fn generate_init_content(dir: &std::path::Path) -> String {
 }
 
 pub fn handle_init() {
+    handle_init_in(&std::env::current_dir().unwrap_or_default());
+}
+
+/// Directory-taking seam for `handle_init` (#962): tests route `yoyo init` into a tempdir.
+pub(crate) fn handle_init_in(dir: &std::path::Path) {
     let path = "YOYO.md";
-    if std::path::Path::new(path).exists() {
+    if dir.join(path).exists() {
         println!("{DIM}  {path} already exists — not overwriting.{RESET}\n");
-    } else if std::path::Path::new("CLAUDE.md").exists() {
+    } else if dir.join("CLAUDE.md").exists() {
         println!("{DIM}  CLAUDE.md already exists — yoyo reads it as a compatibility alias.");
         println!("  Rename it to YOYO.md when you're ready: mv CLAUDE.md YOYO.md{RESET}\n");
     } else {
-        let cwd = std::env::current_dir().unwrap_or_default();
+        let cwd = dir.to_path_buf();
         let project_type = detect_project_type(&cwd);
         println!("{DIM}  Scanning project...{RESET}");
         if project_type != ProjectType::Unknown {
@@ -668,7 +673,7 @@ pub fn handle_init() {
             );
         }
         let content = generate_init_content(&cwd);
-        match std::fs::write(path, &content) {
+        match std::fs::write(dir.join(path), &content) {
             Ok(_) => {
                 let line_count = content.lines().count();
                 let word = crate::format::pluralize(line_count, "line", "lines");

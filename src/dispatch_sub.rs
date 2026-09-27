@@ -200,7 +200,25 @@ fn goal_args_need_session(args: &[String]) -> bool {
 /// - `Some(Some(cfg))` — a subcommand matched and produced a usable
 ///   `Config` (no current subcommand does this; reserved for future use).
 /// - `None` — no subcommand matched; fall through to flag parsing.
+#[cfg(test)]
+#[path = "dispatch_sub_project_tests.rs"]
+mod project_tests;
+
 pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>> {
+    try_dispatch_subcommand_in(args, None)
+}
+
+/// Where `setup` / `init` write and what `setup` reads (#962). `None` = cwd + real
+/// stdin (production); tests pass a tempdir so the repo's `.yoyo.toml` is never touched.
+pub(crate) struct ProjectIo<'a> {
+    pub dir: &'a std::path::Path,
+    pub input: &'a mut dyn std::io::BufRead,
+}
+
+pub(crate) fn try_dispatch_subcommand_in(
+    args: &[String],
+    project: Option<ProjectIo>,
+) -> Option<Option<Config>> {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print_help();
         return Some(None);
@@ -261,11 +279,21 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 return Some(None);
             }
             "setup" => {
-                crate::setup::run_setup_wizard();
+                match project {
+                    None => drop(crate::setup::run_setup_wizard()),
+                    Some(p) => {
+                        let mut input = p.input;
+                        let out = &mut std::io::stdout();
+                        drop(crate::setup::run_wizard_interactive_in(p.dir, &mut input, out));
+                    }
+                }
                 return Some(None);
             }
             "init" => {
-                crate::commands_project::handle_init();
+                match project {
+                    None => crate::commands_project::handle_init(),
+                    Some(p) => crate::commands_project::handle_init_in(p.dir),
+                }
                 return Some(None);
             }
             "lint" => {
@@ -1392,28 +1420,6 @@ mod tests {
         assert!(
             matches!(result, Some(None)),
             "expected Some(None) for bare `version` subcommand"
-        );
-    }
-
-    #[test]
-    fn test_try_dispatch_subcommand_setup_bare() {
-        // `yoyo setup` should dispatch the setup wizard (returns Some(None)).
-        let args = vec!["yoyo".into(), "setup".into()];
-        let result = try_dispatch_subcommand(&args);
-        assert!(
-            matches!(result, Some(None)),
-            "expected Some(None) for bare `setup` subcommand"
-        );
-    }
-
-    #[test]
-    fn test_try_dispatch_subcommand_init_bare() {
-        // `yoyo init` should dispatch the init handler (returns Some(None)).
-        let args = vec!["yoyo".into(), "init".into()];
-        let result = try_dispatch_subcommand(&args);
-        assert!(
-            matches!(result, Some(None)),
-            "expected Some(None) for bare `init` subcommand"
         );
     }
 
