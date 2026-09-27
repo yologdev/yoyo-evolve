@@ -947,6 +947,13 @@ impl PromptEventState {
                                             .replace('\n', &format!("\n{YELLOW}     {RESET}"))
                                     );
                                 }
+                                // #965: a non-retriable provider error (400/401/403/404
+                                // and anything else that reaches here) must be RECORDED,
+                                // not only printed — otherwise into_result() returns Done,
+                                // `-p` exits 0 and `--output-format json` emits nothing.
+                                // The FatalError arms in both prompt loops do not re-print,
+                                // so stderr stays byte-identical to before.
+                                self.fatal_error = Some(err_msg.clone());
                             }
                         }
                     }
