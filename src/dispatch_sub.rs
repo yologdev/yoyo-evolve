@@ -284,7 +284,9 @@ pub(crate) fn try_dispatch_subcommand_in(
                     Some(p) => {
                         let mut input = p.input;
                         let out = &mut std::io::stdout();
-                        drop(crate::setup::run_wizard_interactive_in(p.dir, &mut input, out));
+                        drop(crate::setup::run_wizard_interactive_in(
+                            p.dir, &mut input, out,
+                        ));
                     }
                 }
                 return Some(None);

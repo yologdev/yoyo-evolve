@@ -43,5 +43,9 @@ fn test_try_dispatch_subcommand_init_bare() {
         "init must write YOYO.md into the tempdir"
     );
     assert_eq!(yoyo_md_before, None, "fixture: repo root has no YOYO.md");
-    assert_eq!(repo_file("YOYO.md"), None, "init wrote YOYO.md into repo root");
+    assert_eq!(
+        repo_file("YOYO.md"),
+        None,
+        "init wrote YOYO.md into repo root"
+    );
 }
