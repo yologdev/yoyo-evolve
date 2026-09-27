@@ -111,6 +111,13 @@ class ParseAssistantJson(unittest.TestCase):
         text = 'Here you go:\n```json\n{"outstanding_commitments": []}\n```'
         self.assertEqual(_parse_assistant_json(text), {"outstanding_commitments": []})
 
+    def test_first_object_wins_over_trailing_data(self):
+        # Run 36353975707: the answer arrived twice ("Extra data: line 2") and
+        # the old first-{ to last-} slice failed on it.
+        once = '{"outstanding_commitments": []}'
+        self.assertEqual(_parse_assistant_json(once + "\n\n" + once), {"outstanding_commitments": []})
+        self.assertEqual(_parse_assistant_json(once + " trailing }"), {"outstanding_commitments": []})
+
     def test_returns_none_for_malformed_json(self):
         self.assertIsNone(_parse_assistant_json("{not json}"))
 
@@ -403,9 +410,12 @@ class YoyoArgv(unittest.TestCase):
     def test_one_bare_turn(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("MODEL", None)
-            argv = _yoyo_argv("/tmp/sys.txt")
-        for flag in ("--safe-mode", "--no-tools", "--print"):
+            argv = _yoyo_argv("/tmp/sys.txt", "/tmp/out.txt")
+        for flag in ("--safe-mode", "--no-tools"):
             self.assertIn(flag, argv)
+        self.assertEqual(argv[argv.index("-o") + 1], "/tmp/out.txt")
+        # Not --print: it emits the answer twice.
+        self.assertNotIn("--print", argv)
         self.assertEqual(argv[argv.index("--max-turns") + 1], "1")
         self.assertEqual(argv[argv.index("--system-file") + 1], "/tmp/sys.txt")
         # No model, provider or key of its own: yoyo resolves them.
@@ -414,7 +424,7 @@ class YoyoArgv(unittest.TestCase):
 
     def test_model_env_overrides_one_run(self):
         with patch.dict(os.environ, {"MODEL": "some-model"}):
-            argv = _yoyo_argv("/tmp/sys.txt")
+            argv = _yoyo_argv("/tmp/sys.txt", "/tmp/out.txt")
         self.assertEqual(argv[argv.index("--model") + 1], "some-model")
 
 
@@ -453,11 +463,18 @@ class YoyoSubprocess(unittest.TestCase):
     """End to end through subprocess against a fake yoyo (YOYO_BIN), so the
     argv, stdin, stdout and exit-code handling are exercised for real."""
 
+    # Prologue: find the -o and --system-file arguments like yoyo would.
+    PROLOGUE = (
+        'out=""; sys=""\n'
+        'while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift;; '
+        '--system-file) sys="$2"; shift;; esac; shift; done\n'
+    )
+
     def _fake_yoyo(self, script):
         d = tempfile.mkdtemp()
         path = os.path.join(d, "yoyo")
         with open(path, "w") as f:
-            f.write("#!/bin/sh\n" + script)
+            f.write("#!/bin/sh\n" + self.PROLOGUE + script)
         os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
         return path
 
@@ -467,16 +484,18 @@ class YoyoSubprocess(unittest.TestCase):
             os.environ.pop("MODEL", None)
             return _call_yoyo('{"issues": []}')
 
-    def test_success_returns_stdout(self):
-        out = self._run('cat >/dev/null; echo \'{"outstanding_commitments": []}\'\n')
+    def test_success_reads_the_output_file_not_stdout(self):
+        out = self._run(
+            'cat >/dev/null; echo "stdout decoy"\n'
+            'printf \'{"outstanding_commitments": []}\' > "$out"\n'
+        )
         self.assertEqual(json.loads(out), {"outstanding_commitments": []})
 
     def test_receives_payload_and_system_file(self):
         # The fake echoes back what it got so the test sees the real wiring.
         out = self._run(
-            'while [ "$1" != "--system-file" ]; do shift; done; sys="$2"\n'
             'payload=$(cat)\n'
-            'grep -q "outstanding_commitments" "$sys" && echo "{\\"ok\\": \\"$payload\\"}"\n'
+            'grep -q "outstanding_commitments" "$sys" && echo "{\\"ok\\": \\"$payload\\"}" > "$out"\n'
         )
         self.assertIn("issues", out)
 
@@ -493,8 +512,9 @@ class YoyoSubprocess(unittest.TestCase):
         self.assertEqual(cm.exception.code, 3)
 
     def test_empty_response_is_unknown_not_zero(self):
+        # An answer on stdout alone does not count: the output file is empty.
         with self.assertRaises(SystemExit) as cm:
-            self._run("cat >/dev/null; exit 0\n")
+            self._run('cat >/dev/null; echo \'{"outstanding_commitments": []}\'; exit 0\n')
         self.assertEqual(cm.exception.code, 3)
 
     def test_missing_binary_is_config(self):

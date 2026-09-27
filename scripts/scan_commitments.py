@@ -190,13 +190,15 @@ def _yoyo_bin():
     return local if os.path.exists(local) else "yoyo"
 
 
-def _yoyo_argv(system_file):
-    """One chat-only turn: no tools, no project context/skills/MCP (--safe-mode),
-    response text only on stdout. Provider and model come from .yoyo.toml like
-    every other loop call; MODEL overrides one run, as in the harness scripts."""
+def _yoyo_argv(system_file, output_file):
+    """One chat-only turn: no tools, no project context/skills/MCP (--safe-mode).
+    The answer is read from `-o`, which holds the final response text exactly
+    once; stdout is not used because `--print` emits it twice (streamed, then
+    again at the end). Provider and model come from .yoyo.toml like every
+    other loop call; MODEL overrides one run, as in the harness scripts."""
     argv = [
         _yoyo_bin(), "--safe-mode", "--no-tools", "--max-turns", "1",
-        "--system-file", system_file, "--print", "--no-update-check",
+        "--system-file", system_file, "-o", output_file, "--no-update-check",
     ]
     if os.environ.get("MODEL"):
         argv += ["--model", os.environ["MODEL"]]
@@ -232,42 +234,49 @@ def _call_yoyo(user_text):
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
         f.write(SYSTEM_PROMPT + json.dumps(OUTPUT_SCHEMA))
         system_file = f.name
+    fd, output_file = tempfile.mkstemp(suffix=".txt")
+    os.close(fd)
     try:
-        proc = subprocess.run(
-            _yoyo_argv(system_file), input=user_text, capture_output=True,
-            text=True, timeout=YOYO_TIMEOUT_SECS,
-        )
-    except FileNotFoundError:
-        _warn(f"yoyo binary not found ({_yoyo_bin()}); set YOYO_BIN")
-        sys.exit(2)
-    except subprocess.TimeoutExpired:
-        _warn(f"yoyo timed out after {YOYO_TIMEOUT_SECS}s")
-        sys.exit(3)
+        try:
+            proc = subprocess.run(
+                _yoyo_argv(system_file, output_file), input=user_text,
+                capture_output=True, text=True, timeout=YOYO_TIMEOUT_SECS,
+            )
+        except FileNotFoundError:
+            _warn(f"yoyo binary not found ({_yoyo_bin()}); set YOYO_BIN")
+            sys.exit(2)
+        except subprocess.TimeoutExpired:
+            _warn(f"yoyo timed out after {YOYO_TIMEOUT_SECS}s")
+            sys.exit(3)
+        with open(output_file, encoding="utf-8", errors="replace") as f:
+            answer = f.read()
     finally:
         os.unlink(system_file)
+        os.unlink(output_file)
 
     failure = _classify_failure(proc.stderr)
     if failure:
         exit_code, message = failure
         _warn(message)
         sys.exit(exit_code)
-    if not proc.stdout.strip():
+    if not answer.strip():
         _warn(f"yoyo returned no response (exit {proc.returncode}); stderr tail: {proc.stderr[-300:]!r}")
         sys.exit(3)
-    return proc.stdout
+    return answer
 
 
 def _parse_assistant_json(text):
-    """Extract the JSON object from the model's response text. Tolerates a
-    code fence or stray prose around it, since no schema is enforced
-    server-side. Returns None if there is no parseable object."""
-    text = (text or "").strip()
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
+    """Extract the first JSON object from the model's response text. Tolerates
+    a code fence, prose around it, or anything after it (the object is
+    decoded from its first `{` and the rest is ignored), since no schema is
+    enforced server-side. Returns None if there is no parseable object."""
+    text = text or ""
+    start = text.find("{")
+    if start == -1:
         _warn("response had no JSON object")
         return None
     try:
-        parsed = json.loads(text[start:end + 1])
+        parsed, _ = json.JSONDecoder().raw_decode(text, start)
     except json.JSONDecodeError as e:
         _warn(f"response was not valid JSON: {e}")
         return None
