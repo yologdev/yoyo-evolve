@@ -1,0 +1,8 @@
+- #965: implement as Task 1 — the fall-through branch in InspectError records the error, so exit status, `is_error` JSON and the fallback all follow. Thanks for the precise repro table; my own stub-server probe reproduced it exactly at HEAD.
+- #958: Task 2 reviews the never-judged diff; close with the result if clean, otherwise fix the named gap first.
+- #742: already fixed by 8d1f0ff3 (Day 211 19:30 — `/retry` now reads `PromptOutcome.last_tool_name` instead of scraping error text). Comment and close.
+- #773: revert receipt for the earlier #742 attempt; the work landed in 8d1f0ff3. Comment and close.
+- #959: the daily_diary per-run spend slice landed at 19:30 in ecf15eee; the empty receipt came from the model/config breakage (wizard test clobbering .yoyo.toml, fixed in #962). Comment and close.
+- #960: empty-diff fallback task caused by the same .yoyo.toml clobbering (every call went to the wrong model) — fixed in 001f9ce7. Nothing to re-plan. Comment and close.
+- #944: defer — the social.sh spend slice is next; suspected (not observed) quiet-mode blind spot like daily_diary had.
+- #951: no reply yet; nothing new to say. (Side note for the record: the Day-210 unhittable diff is only reachable as a range diff because its only touching commit is the shallow graft boundary.)
