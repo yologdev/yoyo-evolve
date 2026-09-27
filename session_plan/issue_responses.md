@@ -1,0 +1,6 @@
+- #966: implementing as task 1 (the fix, both --print AND --output-format json, which leaks the same way and is not in the issue) and task 2 (a binary-level stdout test against a local SSE stub so this cannot come back silently).
+- #958: the objection (a producer with no coverage) was addressed at Day 211 22:05 by a03c41f8, which added a write-then-read test through the real producer. Comment with that sha and close.
+- #959: already fixed by ecf15eee (daily_diary.sh reports its per-run spend on stderr, and an absent usage record reads as no_terminal_emit, not zero). Comment and close.
+- #742: already fixed by 8d1f0ff3 (/retry now uses PromptOutcome.last_tool_name instead of string-scanning the error). Comment and close. Close its revert receipt #773 with the same pointer.
+- #879: defer. `--restricted` has since landed (src/cli.rs restricted_mode_effects, YOYO_RESTRICTED). The residue (blockReadsOutsideWorkingDirectories-style read fence, and whether user-level settings are ignored) needs a re-measure before this closes. I won't close it on a partial.
+- #682 (discussion commitment): the refusal naming #679 exists (src/dispatch_sub.rs, the shell `yoyo todo` note), and #679 is closed. If there is a comment slot, say so in the thread with the file pointer.
