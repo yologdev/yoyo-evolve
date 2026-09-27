@@ -1,0 +1,79 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git diff 9c222c88 HEAD -- src/comm… ✓ (6ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "unmeasurable_surprises\|u… ✓ (5ms)
+  ▶ read src/commands_risk_snapshots.rs:474..486  ▶ read src/commands_risk_snapshots.rs:556..568 ✓ (0ms)
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "recorded_unmeasurable\|re… ✓ (3ms)
+  ▶ read src/commands_risk_unhittable.rs:610..635  ▶ read src/commands_risk_unhittable.rs:985..1015 ✓ (0ms)
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git diff 9c222c88 HEAD -- src/comm… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn '"unmeasurable_surprises"… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn 'unhittable_surprises"\]\… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'unhittable_surprises\|aut… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'unhittable_surprises\|aut…  ▶ read /tmp/g.txt ✗ (0ms)
+    │ Cannot access /tmp/g.txt: No such file or directory (os error 2)
+ ✓ (4ms)
+  14 tools completed in 25.8s (13 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1895,1940p src/commands_ris… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive control on the producer (atomic: mutate → test → restore).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/commands_risk_snapshots.rs … ✓ (23.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control stayed green: nothing pins the writer. Adding a test that goes through the real writer and then through the real reader.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn a_half_recorded_pair_i… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (43 lines) ✓ (20.0s)
+  2 tools completed in 29.1s (2 ✓)
+
+Re-run the same control, now expecting red by name:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/commands_risk_snapshots.rs … ✓ (23.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control now fails by name and the file is restored. Next: the docs note, then the full gate.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "commands_risk_unhittable.… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (17 lines) ✓ (1m 35s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -cE "FAILED… ✓ (49.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 47s (3 ✓)
+
+I reviewed the Day-210 diff for #958. Two of the three checks passed and the third didn't: nothing tested that the denominator actually gets written to the ledger. I added a test that does, and it's committed as a03c41f8. cargo fmt, clippy with -D warnings and the full cargo test all pass.
+
+I read the diff as the range git diff 9c222c88 HEAD, because the shallow clone makes the individual commits unreadable.
+
+• **(a) The denominator is written where the numerator is — yes.** `write_validation_event` writes `unmeasurable_surprises` right after `unhittable_surprises` (`src/commands_risk_snapshots.rs:563`). All three live callers pass Some(unhittable.unmeasurable).
+• **(b) Old ledger rows read as "not recorded", not as 0 of 0 — yes.** A missing key parses as `None` (`src/commands_risk_unhittable.rs:528-529`). A row only counts when both halves are present (line 815), and the summary clause only appears when at least one row has both (line 999). An old ledger's output is unchanged.
+• **(c) A test builds its input through the real code — no.** The reader side was fine, but every recorded-pair test fed in a hand-typed JSON line (`…4,…144`), so nothing ever exercised the writer. To confirm, I disabled the line that writes unmeasurable_surprises (marked NEUTERED, restored in the same command). cargo test commands_risk still passed, 485 of 485.
+
+Fix: a new test, the_writer_records_the_denominator_and_the_parser_reads_it_back, in src/commands_risk_unhittable_tests.rs. It writes through the real write_validation_event and reads back through the real parse_surprise_rows. It checks that 4 and 144 come back intact, and that None leaves the key out instead of writing 0. I re-ran the same disabling test and that new test failed by name. After restoring the line, everything passed.
+
+Two things the diff's claim overstates:
+• The field called the "denominator" is really the count of surprises that couldn't be classified either way, not the number examined; the number examined is already the length of the row's surprises list.
+• The summary reads "N unhittable and M undecidable", not a literal "N of M".
+• One gap remains: the new test covers the writer, but not the three callers' choice to pass unhittable.unmeasurable.
+
+All of this, with line references, is in a Day 211 note on the commands_risk_unhittable.rs entry in ARCHITECTURE.md. I also added a "#958: reviewed … close" line to session_plan/issue_responses.md.
+
+  watch: no files changed this turn — skipping
+
