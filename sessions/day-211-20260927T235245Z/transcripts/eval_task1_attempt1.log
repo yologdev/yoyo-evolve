@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; ls target/debug… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1008,1018p src/prompt.rs; s… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>… (25 lines) ✓ (5.1s)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 27.6s (4 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+I rebuilt the binary and ran it against a local stub that mimics Anthropic's streaming API:
+
+| Mode | stdout |
+|---|---|
+| -p hi --print | {"answer": 42}, exactly once, no leading blank line |
+| piped input with --print | same, exactly once |
+| --output-format json | one JSON object that python3 -m json.tool accepts, with the answer in "response" |
+| plain -p (no --print) | still streams as before: \n{"answer": 42}\n\n |
+
+• **Scope:** all 14 streamed-text writes in `src/prompt.rs` now go through one gated helper. That includes the framing newlines and the closing newline of each turn. The final payload is still written only by emit_output.
+• **Flag:** the new stdout-reserved flag is set on both the single-prompt path and the piped path. Every new function has a caller in the same diff.
+• Tests: they cover --print and json separately, check that output is byte-identical when the flag is off, and include a source-level guard that counts the gated call sites.
+• **Docs:** the changelog and `piped-mode.md` are updated. The doc also says plainly that tool-progress lines still go to stdout; I only tested with tools disabled, so that case is unchecked.
+
+One cleanup note: the new paragraph in piped-mode.md was inserted between the json and stream-json bullets, which splits that list in two.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
