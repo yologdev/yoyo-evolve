@@ -169,19 +169,6 @@ const REGISTERED_GLOBAL_RACES: &[(&str, &str)] = &[
         "test_last_failed_run_store_and_retrieve",
     ),
     (
-        "src/commands_session.rs",
-        "test_compact_thrash_detection_increments_on_low_reduction",
-    ),
-    (
-        "src/commands_session.rs",
-        "test_compact_thrash_detection_resets_on_meaningful_reduction",
-    ),
-    (
-        "src/commands_session.rs",
-        "test_is_compact_thrashing_boundary",
-    ),
-    ("src/commands_session.rs", "test_reset_compact_thrash"),
-    (
         "src/conversations.rs",
         "test_last_side_store_set_get_overwrite_empty",
     ),
