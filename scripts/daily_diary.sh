@@ -212,7 +212,7 @@ report_diary_spend() {
 }
 
 set +o errexit
-"$YOYO_BIN" --model "${MODEL:-claude-opus-4-6}" --max-turns 1 < "$PROMPT_FILE"
+"$YOYO_BIN" ${MODEL:+--model "$MODEL"} --max-turns 1 < "$PROMPT_FILE"
 DIARY_EXIT=$?
 set -o errexit
 report_diary_spend || true

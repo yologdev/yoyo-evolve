@@ -10,7 +10,7 @@
 # Environment:
 #   ANTHROPIC_API_KEY  — required
 #   REPO               — GitHub repo (default: yologdev/yoyo-evolve)
-#   MODEL              — LLM model (default: claude-opus-4-6)
+#   MODEL              — LLM model override for one run (default: `model` in .yoyo.toml)
 #   TIMEOUT            — Total planning phase time budget in seconds (default: 1200)
 #                        Split evenly between assessment (A1) and planning (A2) agents
 #   FORCE_RUN          — Set to "true" to bypass the run-frequency gate
@@ -24,7 +24,14 @@ set -euo pipefail
 # Auto-detect REPO, BOT_LOGIN, BIRTH_DATE (fork-friendly)
 source "$(dirname "$0")/common.sh"
 
-MODEL="${MODEL:-claude-opus-4-6}"
+# Model: the top-level `model` in .yoyo.toml is the single source (it sits
+# next to `provider`, so the two cannot drift apart); MODEL overrides one run.
+CONFIG_MODEL=$(awk -F'"' '/^\[/{exit} /^model[[:space:]]*=/{print $2; exit}' .yoyo.toml 2>/dev/null || true)
+MODEL="${MODEL:-$CONFIG_MODEL}"
+if [ -z "$MODEL" ]; then
+    echo "FATAL: no model. Set model in .yoyo.toml (or MODEL for one run)." >&2
+    exit 1
+fi
 TIMEOUT="${TIMEOUT:-1200}"
 FALLBACK_PROVIDER="${FALLBACK_PROVIDER:-}"
 

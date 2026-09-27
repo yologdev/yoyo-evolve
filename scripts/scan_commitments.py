@@ -36,16 +36,34 @@ import json
 import os
 import sys
 import time
+import tomllib
 import urllib.error
 import urllib.request
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
-# Follow the fleet-wide MODEL contract (the same secret every loop reads)
-# instead of hardcoding a model the key may not be scoped for — the
-# hardcoded claude-opus-4-6 401'd every session for two days (Jul 15-16)
-# while the fleet model worked fine in the same runs.
-MODEL = os.environ.get("MODEL", "claude-opus-4-6")
+
+
+def _project_config():
+    """Top-level keys of the repo's .yoyo.toml, or {} if it cannot be read.
+
+    .yoyo.toml is the single place the loop's provider and model are set; a
+    `MODEL` env var is only a per-run override. A hardcoded model here went
+    stale twice: an old default 401'd every session for two days (Jul 15-16),
+    and during the DeepSeek period this scanner sent the DeepSeek id to
+    Anthropic and 404'd every session.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".yoyo.toml")
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+_CONFIG = _project_config()
+PROVIDER = _CONFIG.get("provider", "")
+MODEL = os.environ.get("MODEL") or _CONFIG.get("model", "")
 MAX_TOKENS = 4096
 TIMEOUT_SECS = 60
 MAX_RETRIES = 3
@@ -400,6 +418,17 @@ def main():
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         _warn("ANTHROPIC_API_KEY unset — workflow config regression?")
+        sys.exit(2)
+    # This scanner speaks only the Anthropic Messages API. Under any other
+    # provider the model id is not an Anthropic one, so a call can only 404.
+    if PROVIDER != "anthropic":
+        _warn(
+            f".yoyo.toml provider is {PROVIDER or 'unset'!r}, not 'anthropic' — "
+            "this scanner only calls Anthropic, so it did not run"
+        )
+        sys.exit(2)
+    if not MODEL:
+        _warn("no model: set `model` in .yoyo.toml (or MODEL for one run)")
         sys.exit(2)
 
     git_log = os.environ.get("GIT_LOG_RECENT", "")

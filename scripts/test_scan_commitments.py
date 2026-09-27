@@ -442,5 +442,45 @@ class RetryPolicy(unittest.TestCase):
             self.assertEqual(result, {"content": []})
 
 
+class ProjectConfigTest(unittest.TestCase):
+    """The model comes from .yoyo.toml; a non-Anthropic provider refuses."""
+
+    ENV = {"BOT_LOGIN": "yoyo-evolve[bot]", "ANTHROPIC_API_KEY": "sk-fake"}
+
+    def _main_exit_code(self, provider, model):
+        import scan_commitments
+
+        with patch.dict(os.environ, self.ENV), \
+             patch.object(scan_commitments, "PROVIDER", provider), \
+             patch.object(scan_commitments, "MODEL", model), \
+             patch("scan_commitments._post") as post, \
+             patch("sys.stdin", io.StringIO("[]")):
+            try:
+                scan_commitments.main()
+            except SystemExit as e:
+                self.assertEqual(post.call_count, 0, "refusal must not call the API")
+                return e.code
+            return 0
+
+    def test_model_resolves_from_repo_config(self):
+        import scan_commitments
+
+        # Anti-vacuous: the repo's config really names a model and a provider.
+        self.assertTrue(scan_commitments._project_config().get("model"))
+        self.assertTrue(scan_commitments._project_config().get("provider"))
+
+    def test_non_anthropic_provider_refuses_with_config_exit(self):
+        self.assertEqual(self._main_exit_code("deepseek", "deepseek-v4-flash"), 2)
+        self.assertEqual(self._main_exit_code("", "claude-opus-5-5"), 2)
+
+    def test_missing_model_refuses_with_config_exit(self):
+        self.assertEqual(self._main_exit_code("anthropic", ""), 2)
+
+    def test_anthropic_with_model_proceeds(self):
+        # Near-miss guard: the normal configuration is not refused (empty
+        # stdin → clean return, exit 0).
+        self.assertEqual(self._main_exit_code("anthropic", "claude-opus-5-5"), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

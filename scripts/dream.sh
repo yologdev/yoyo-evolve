@@ -25,7 +25,7 @@
 #
 # Environment:
 #   ANTHROPIC_API_KEY     — required
-#   MODEL                 — LLM model (default: claude-opus-4-6)
+#   MODEL                 — LLM model override for one run (default: `model` in .yoyo.toml)
 #   DREAM_COOLDOWN_SECS   — minimum seconds between cycles (default: 604800 = 7d)
 #   DREAM_TIMEOUT         — agent wall-clock budget seconds (default: 900)
 #   FALLBACK_PROVIDER     — passed through to yoyo as --fallback
@@ -38,7 +38,14 @@ set -euo pipefail
 
 source "$(dirname "$0")/common.sh"
 
-MODEL="${MODEL:-claude-opus-4-6}"
+# Model: the top-level `model` in .yoyo.toml is the single source (it sits
+# next to `provider`, so the two cannot drift apart); MODEL overrides one run.
+CONFIG_MODEL=$(awk -F'"' '/^\[/{exit} /^model[[:space:]]*=/{print $2; exit}' .yoyo.toml 2>/dev/null || true)
+MODEL="${MODEL:-$CONFIG_MODEL}"
+if [ -z "$MODEL" ]; then
+    echo "FATAL: no model. Set model in .yoyo.toml (or MODEL for one run)." >&2
+    exit 1
+fi
 COOLDOWN="${DREAM_COOLDOWN_SECS:-604800}"   # ~7 days — a dream is not a mood
 TIMEOUT="${DREAM_TIMEOUT:-900}"
 FALLBACK_PROVIDER="${FALLBACK_PROVIDER:-}"

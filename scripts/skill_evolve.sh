@@ -13,7 +13,7 @@
 #
 # Environment:
 #   ANTHROPIC_API_KEY            — required
-#   MODEL                        — LLM model (default: claude-opus-4-6)
+#   MODEL                        — LLM model override for one run (default: `model` in .yoyo.toml)
 #   SKILL_EVOLVE_THRESHOLD       — sessions required before a cycle runs (default: 5)
 #   SKILL_EVOLVE_COOLDOWN_SECS   — minimum seconds between cycles (default: 86400)
 #   SKILL_EVOLVE_TIMEOUT         — agent wall-clock budget seconds (default: 1500)
@@ -45,7 +45,14 @@ else
 fi
 GASP_OUTCOME=""
 
-MODEL="${MODEL:-claude-opus-4-6}"
+# Model: the top-level `model` in .yoyo.toml is the single source (it sits
+# next to `provider`, so the two cannot drift apart); MODEL overrides one run.
+CONFIG_MODEL=$(awk -F'"' '/^\[/{exit} /^model[[:space:]]*=/{print $2; exit}' .yoyo.toml 2>/dev/null || true)
+MODEL="${MODEL:-$CONFIG_MODEL}"
+if [ -z "$MODEL" ]; then
+    echo "FATAL: no model. Set model in .yoyo.toml (or MODEL for one run)." >&2
+    exit 1
+fi
 THRESHOLD="${SKILL_EVOLVE_THRESHOLD:-5}"
 COOLDOWN="${SKILL_EVOLVE_COOLDOWN_SECS:-86400}"
 TIMEOUT="${SKILL_EVOLVE_TIMEOUT:-1500}"

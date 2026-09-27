@@ -38,7 +38,11 @@ budget_left() { # $1=YOYO_SESSION_BUDGET_SECS  $2=JOB_DEADLINE_EPOCH
 }
 check "budget: unset → gates disabled"      "$(budget_left '' '')"        "999999"
 check "budget: numeric honored"             "$(budget_left 500 '')"       "500"
-check "budget: non-numeric → 2700 fallback" "$(budget_left '45m' '')"     "2700"
+# 2699..2700 for the same two-`date`-reads race the checks below document
+# (observed 2026-09-27: got 2699).
+L=$(budget_left '45m' '')
+[ "$L" -ge 2699 ] 2>/dev/null && [ "$L" -le 2700 ] && ok "budget: non-numeric → 2700 fallback" \
+    || bad "budget: non-numeric → 2700 fallback" "expected 2699..2700, got '$L'"
 L=$(budget_left 7200 "$(( $(date +%s) + 2400 ))")
 [ "$L" -ge 1190 ] && [ "$L" -le 1200 ] && ok "budget: job deadline clamps (2400-1200 margin)" \
     || bad "budget: job deadline clamps" "expected ~1200, got $L"
@@ -629,6 +633,36 @@ if require "agent_log_has_api_error extracted" "$AE_FN"; then
         "$(ae "  (API error: prompt is too long: {\"type\":\"error\"})\n")" "no"
     check "api error: clean log -> no abort" "$(ae "all good\n")" "no"
 fi
+
+# ── model: .yoyo.toml is the single source, nothing hardcodes an id ─────────
+# Until 2026-09-27 the model id was copied into 22 places (every workflow's
+# `secrets.MODEL || '…'`, every script's `${MODEL:-…}`), still naming a model two
+# switches old, while `provider` lived only in .yoyo.toml. That split is how
+# Days 210-211 sent a DeepSeek id to Anthropic (404 on every call). Comment
+# lines are exempt (history may name models); so is extract_trajectory.py,
+# whose self-test fixtures carry model ids but never select one.
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+MODEL_ID_RE='claude-(opus|sonnet|haiku|fable|mythos)-[0-9]|deepseek-(v[0-9]|flash|chat|reasoner)|gpt-[0-9]|gemini-[0-9]'
+hardcoded_models() { # $@ = files → offending file:line, one per line
+    grep -HnE "$MODEL_ID_RE" "$@" 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#'
+}
+HC_FILES=$(cd "$ROOT" && ls scripts/*.sh scripts/*.py .github/workflows/*.yml \
+    | grep -vE '^scripts/test_|^scripts/extract_trajectory\.py$')
+require "model guard: file list" "$HC_FILES" && \
+    check "model guard: no script or workflow hardcodes a model id" \
+        "$(cd "$ROOT" && hardcoded_models $HC_FILES | head -3)" ""
+HC_TMP=$(mktemp -d)
+printf 'MODEL="${MODEL:-claude-opus-5-5}"\n# was claude-opus-4-6\n' > "$HC_TMP/a.sh"
+check "model guard: positive control flags a hardcoded default" \
+    "$(hardcoded_models "$HC_TMP/a.sh" | wc -l | tr -d ' ')" "1"
+rm -rf "$HC_TMP"
+check "model guard: .yoyo.toml names a provider and a model" \
+    "$(awk -F'"' '/^\[/{exit} /^(provider|model)[[:space:]]*=/{n++} END{print n+0}' "$ROOT/.yoyo.toml")" "2"
+# Every harness script resolves the model the same way, from .yoyo.toml.
+for _s in evolve.sh social.sh skill_evolve.sh dream.sh; do
+    check "model guard: $_s resolves MODEL from .yoyo.toml" \
+        "$(grep -c '^MODEL="${MODEL:-$CONFIG_MODEL}"$' "$ROOT/scripts/$_s")" "1"
+done
 
 # ── main push: retry, and never echo a failure into success ────────────────
 PR_FN=$(awk '/^push_main_with_retry\(\) \{/,/^\}/' "$SCRIPT")
