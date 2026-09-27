@@ -95,6 +95,8 @@ mod conversations;
 mod dispatch;
 mod dispatch_near_miss;
 mod dispatch_sub;
+#[cfg(test)]
+mod dispatch_sub_project_tests;
 mod docs;
 mod format;
 #[cfg(feature = "gasp")]

@@ -200,10 +200,6 @@ fn goal_args_need_session(args: &[String]) -> bool {
 /// - `Some(Some(cfg))` — a subcommand matched and produced a usable
 ///   `Config` (no current subcommand does this; reserved for future use).
 /// - `None` — no subcommand matched; fall through to flag parsing.
-#[cfg(test)]
-#[path = "dispatch_sub_project_tests.rs"]
-mod project_tests;
-
 pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>> {
     try_dispatch_subcommand_in(args, None)
 }

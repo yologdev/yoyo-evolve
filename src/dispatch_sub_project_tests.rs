@@ -1,7 +1,7 @@
 //! #962: `yoyo setup` / `yoyo init` dispatch tests, routed into a tempdir.
 //! The old tests ran the real wizard / init handler against the process cwd
 //! (the repo root) and clobbered `.yoyo.toml` in the evolve job.
-use super::*;
+use crate::dispatch_sub::{try_dispatch_subcommand_in, ProjectIo};
 
 fn repo_file(name: &str) -> Option<Vec<u8>> {
     std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(name)).ok()
