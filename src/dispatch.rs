@@ -398,6 +398,10 @@ pub(crate) struct DispatchContext<'a> {
     pub undo_context: &'a mut Option<String>,
     pub last_input: &'a mut Option<String>,
     pub last_error: &'a mut Option<String>,
+    /// The tool that produced `last_error`, carried from `PromptOutcome::last_tool_name`
+    /// so `/retry` need not guess it from the error text (#742). Assigned wherever
+    /// `last_error` is, so the two never disagree.
+    pub last_error_tool: &'a mut Option<String>,
     pub bookmarks: &'a mut commands::Bookmarks,
     pub checkpoint_store: &'a mut commands::CheckpointStore,
     pub session_start: Instant,
@@ -1164,15 +1168,18 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             CommandResult::Continue
         }
         CommandRoute::Retry => {
-            *ctx.last_error = commands::handle_retry(
+            let (err, tool) = commands::handle_retry(
                 ctx.agent,
                 ctx.input,
                 ctx.last_input,
                 ctx.last_error,
+                ctx.last_error_tool.as_deref(),
                 ctx.session_total,
                 &ctx.agent_config.model,
             )
             .await;
+            *ctx.last_error = err;
+            *ctx.last_error_tool = tool;
             CommandResult::Continue
         }
         CommandRoute::Loop => {
@@ -1213,6 +1220,7 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 )
                 .await;
                 crate::format::maybe_ring_bell(prompt_start.elapsed());
+                *ctx.last_error_tool = crate::commands_retry::error_tool_of(&outcome);
                 *ctx.last_error = outcome.last_tool_error;
                 auto_compact_if_needed(ctx.agent);
             }
@@ -1231,6 +1239,7 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 )
                 .await;
                 crate::format::maybe_ring_bell(prompt_start.elapsed());
+                *ctx.last_error_tool = crate::commands_retry::error_tool_of(&outcome);
                 *ctx.last_error = outcome.last_tool_error;
                 auto_compact_if_needed(ctx.agent);
             }
@@ -1248,11 +1257,13 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 commands::PlanResult::PlanGenerated(plan_prompt) => {
                     *ctx.last_input = Some(plan_prompt);
                     *ctx.last_error = None;
+                    *ctx.last_error_tool = None;
                     auto_compact_if_needed(ctx.agent);
                     CommandResult::Continue
                 }
                 commands::PlanResult::Apply(apply_prompt) => {
                     *ctx.last_error = None;
+                    *ctx.last_error_tool = None;
                     commands::set_plan_apply_active(true);
                     CommandResult::SendToAgent(apply_prompt)
                 }
@@ -1271,6 +1282,7 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             {
                 *ctx.last_input = Some(extended_prompt);
                 *ctx.last_error = None; // Clear — handle_extended reports its own errors
+                *ctx.last_error_tool = None;
                 auto_compact_if_needed(ctx.agent);
             }
             CommandResult::Continue

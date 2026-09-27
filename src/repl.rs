@@ -679,6 +679,8 @@ struct PostPromptContext<'a> {
     /// edit anything" (#774).
     edits_before: usize,
     last_error: &'a mut Option<String>,
+    /// Sibling of `last_error`: the tool that produced it (#742).
+    last_error_tool: &'a mut Option<String>,
     prompt_start: Instant,
     effective_input: &'a str,
     turn_count: usize,
@@ -691,6 +693,7 @@ struct PostPromptContext<'a> {
 async fn handle_post_prompt(mut ctx: PostPromptContext<'_>) {
     crate::format::maybe_ring_bell(ctx.prompt_start.elapsed());
     *ctx.last_error = ctx.outcome.last_tool_error.clone();
+    *ctx.last_error_tool = crate::commands_retry::error_tool_of(ctx.outcome);
 
     // Notify the user if the context was auto-compacted due to overflow
     if ctx.outcome.was_overflow {
@@ -726,6 +729,7 @@ async fn handle_post_prompt(mut ctx: PostPromptContext<'_>) {
             )
             .await;
             *ctx.last_error = retry_outcome.last_tool_error.clone();
+            *ctx.last_error_tool = crate::commands_retry::error_tool_of(&retry_outcome);
 
             // If fallback also failed, restore original provider info for display
             // but keep the fallback agent since the original was already broken
@@ -818,6 +822,8 @@ async fn handle_post_prompt(mut ctx: PostPromptContext<'_>) {
         .await;
         if !watch_result.passed {
             *ctx.last_error = watch_result.last_tool_error;
+            // The watch fix carries no tool name; /retry falls back to the scan.
+            *ctx.last_error_tool = None;
         }
     }
 
@@ -961,6 +967,7 @@ pub async fn run_repl(
     let mut turns_since_slash_command: usize = 0;
     let mut last_input: Option<String> = None;
     let mut last_error: Option<String> = None;
+    let mut last_error_tool: Option<String> = None;
     let mut bookmarks = commands::Bookmarks::new();
     let session_changes = SessionChanges::new();
     let mut turn_history = TurnHistory::new();
@@ -1080,6 +1087,7 @@ pub async fn run_repl(
             undo_context: &mut undo_context,
             last_input: &mut last_input,
             last_error: &mut last_error,
+            last_error_tool: &mut last_error_tool,
             bookmarks: &mut bookmarks,
             checkpoint_store: &mut checkpoint_store,
             session_start,
@@ -1302,6 +1310,7 @@ pub async fn run_repl(
             changes_before: &changes_before,
             edits_before,
             last_error: &mut last_error,
+            last_error_tool: &mut last_error_tool,
             prompt_start,
             effective_input: &effective_input,
             turn_count,
@@ -1401,6 +1410,7 @@ pub async fn run_repl(
                     changes_before: &cont_changes_before,
                     edits_before: cont_edits_before,
                     last_error: &mut last_error,
+                    last_error_tool: &mut last_error_tool,
                     prompt_start: cont_start,
                     effective_input: cont_prompt,
                     turn_count,

@@ -108,21 +108,54 @@ pub fn parse_with_modifier(input: &str) -> Option<String> {
     }
 }
 
+/// Decide which tool `/retry` should name in its recovery hint (#742).
+///
+/// `carried` is the tool name the prompt loop recorded alongside the error
+/// (`PromptOutcome::last_tool_name`, plumbed through the REPL as
+/// `last_error_tool`). It is the real value, so it wins whenever it is a
+/// non-empty name. Only when nothing was carried — the watch-fix result, or
+/// any path that records an error without a tool — do we fall back to
+/// string-scanning the error text, which guesses and can be fooled by an
+/// error that quotes a *different* tool's name.
+pub(crate) fn resolve_retry_tool(carried: Option<&str>, error: Option<&str>) -> Option<String> {
+    match carried {
+        Some(name) if !name.is_empty() => Some(name.to_string()),
+        _ => error
+            .and_then(extract_tool_name_from_error)
+            .map(str::to_string),
+    }
+}
+
+/// Carry the failing tool's name only when the outcome actually recorded a
+/// tool error, so a name is never paired with an error it did not produce.
+pub(crate) fn error_tool_of(outcome: &crate::prompt::PromptOutcome) -> Option<String> {
+    if outcome.last_tool_error.is_some() {
+        outcome.last_tool_name.clone()
+    } else {
+        None
+    }
+}
+
+/// Re-run the last input. Returns `(last_tool_error, last_tool_name)` from the
+/// retried turn so the caller can refresh both halves of the REPL's error
+/// state together.
 pub async fn handle_retry(
     agent: &mut Agent,
     input: &str,
     last_input: &Option<String>,
     last_error: &Option<String>,
+    last_tool: Option<&str>,
     session_total: &mut Usage,
     model: &str,
-) -> Option<String> {
+) -> (Option<String>, Option<String>) {
     match last_input {
         Some(prev) => {
             // Parse optional --with modifier for iterative refinement
             let with_modifier = parse_with_modifier(input);
 
-            // Try to extract the tool name from the error text for targeted recovery hints
-            let tool_name = last_error.as_deref().and_then(extract_tool_name_from_error);
+            // Prefer the tool name the prompt loop carried; scan the error text only as a fallback
+            let tool_name = resolve_retry_tool(last_tool, last_error.as_deref());
+            let tool_name = tool_name.as_deref();
             let retry_input = build_retry_prompt(prev, last_error, tool_name);
 
             // Append the --with modifier if present
@@ -145,11 +178,12 @@ pub async fn handle_retry(
             }
             let outcome = run_prompt(agent, &retry_input, session_total, model).await;
             auto_compact_if_needed(agent);
-            outcome.last_tool_error
+            let tool = error_tool_of(&outcome);
+            (outcome.last_tool_error, tool)
         }
         None => {
             eprintln!("{DIM}  (nothing to retry — no previous input){RESET}\n");
-            None
+            (None, None)
         }
     }
 }
@@ -972,6 +1006,42 @@ mod tests {
             extract_tool_name_from_error("still searching for the answer"),
             None
         );
+    }
+
+    #[test]
+    fn resolve_retry_tool_prefers_the_carried_name_over_the_scan() {
+        // #742: an edit_file failure whose text quotes "bash".
+        let err = "old_text not found; try running bash to inspect the file";
+        // Anti-vacuous: the fixture really does fool the scan.
+        assert_eq!(extract_tool_name_from_error(err), Some("bash"));
+        let cases: &[(Option<&str>, Option<&str>, Option<&str>)] = &[
+            // The bug: the carried name must win.
+            (Some("edit_file"), Some(err), Some("edit_file")),
+            // Near-miss: nothing carried -> byte-identical to the old scan.
+            (None, Some(err), extract_tool_name_from_error(err)),
+            // Empty is not a name -> scan.
+            (Some(""), Some("read_file failed: no such file"), Some("read_file")),
+            // Nothing at all -> None.
+            (None, None, None),
+            // A carried name survives even with no error text.
+            (Some("write_file"), None, Some("write_file")),
+        ];
+        for (carried, error, want) in cases {
+            assert_eq!(
+                resolve_retry_tool(*carried, *error).as_deref(),
+                *want,
+                "carried={carried:?} error={error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn error_tool_of_pairs_the_name_only_with_a_tool_error() {
+        let mut o = crate::prompt::PromptOutcome::default();
+        o.last_tool_name = Some("bash".to_string());
+        assert_eq!(error_tool_of(&o), None, "no error -> no name");
+        o.last_tool_error = Some("exit 1".to_string());
+        assert_eq!(error_tool_of(&o).as_deref(), Some("bash"));
     }
 
     #[test]
