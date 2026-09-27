@@ -1,0 +1,83 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;… ✓ (11ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; pwd; sed -n 195,300p src/dispatch_sub.rs; sed… ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "pub fn\|pub(crate) fn\|^fn " src/set… ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 325,365p src/setup.rs; sed -n 775,805p… ✓ (8ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 365,775p src/setup.rs | grep -n "read_… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1822,1860p src/setup.rs; sed -n 2025,2…  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "tempfile\|^use \|^    use " src/disp… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1,80p tests/module_size.rs | grep -v "… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 52.8s (8 ✓)
+
+The tool is eliding lines; let me read the rule directly.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "grandfather\|GRANDFATHER\|grow\|ceil… ✓ (4ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 20,50p tests/module_size.rs; sed -n 35… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; awk 'NR>=20 && NR<=50 {print NR": "$0}' tests… ✓ (6ms)
+  3 tools completed in 5.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && python3 - <<'EOF' (136 lines) ✓ (45ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | grep -E "^(… ✓ (11.8s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && python3 - <<'EOF' (7 lines) ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && git log --oneline -2 && git status --short … ✓ (1m 32s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test orphan_module… ✓ (301ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && grep -rn "commands_risk_epistemic_tests" sr… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 4m 2s (5 ✓, 1 ✗)
+
+Follow the existing pattern: declare it in main.rs instead of #[path].
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && sed -n 68,71p src/main.… (10 lines) ✓ (1.5s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && sed -i 's|    // Day 211 (#962): 2162 -> 21… ✓ (2m 15s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoyo dispatch_… ✓ (1.9s)
+  3 tools completed in 2m 26s (3 ✓)
+
+
+Remaining: clippy + fmt check, the census, the ARCHITECTURE.md entry, and the final commit.
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && timeout 500 cargo clippy --all-targets -- -… ✓ (18.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && for n in 1487 1509 1659 1799 1809 1819; do … ✓ (18ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && grep -n "src/dispatch_sub.rs" ARCHITECTURE.… ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && cat >> ARCHITECTURE.md … (13 lines) ✓ (8ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && git add ARCHITECTURE.md && git commit -qm "… ✓ (44ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 52.9s (5 ✓)
+
+The setup and init dispatch tests no longer touch the repo root; they write into a tempdir instead. The full cargo test, clippy -D warnings and fmt --check passed, and .yoyo.toml was unmodified before every commit. The one part I didn't finish is the census of other tests that might write to the repo (see the end).
+
+What changed
+• **src/dispatch_sub.rs:** `try_dispatch_subcommand(args)` is now a one-line wrapper around `try_dispatch_subcommand_in(args, project: Option<ProjectIo>)`. `ProjectIo { dir, input } is only read by the setup and init` branches.
+  • With None (normal use), those branches make the same calls as before: run_setup_wizard() and handle_init().
+  • With `Some, setup goes through the existing dir-taking wizard (run_wizard_interactive_in(dir, input, stdout)) and init goes through a new handle_init_in(dir)`.
+• **`src/commands_project.rs:** handle_init() now calls handle_init_in(current_dir().unwrap_or_default())`. The paths and printed messages are the same as before.
+• Tests: both moved to src/dispatch_sub_project_tests.rs (declared #[cfg(test)] in main.rs, the same way commands_risk_epistemic_tests is). This kept dispatch_sub.rs from absorbing them.
+  • They still go through the full dispatcher, so each one fails if setup or init stops routing.
+  • The setup test feeds scripted answers (4\n\n1\n: ollama, default model, save to project), so it never asks for a key or reads the environment. It checks that .yoyo.toml appears in the tempdir and that the repo's .yoyo.toml bytes are the same before and after.
+  • The init test checks that YOYO.md appears in the tempdir and does not appear in the repo root.
+  • No env vars are set in either test.
+• **`tests/module_size.rs:** updated the size limits for two grandfathered files: dispatch_sub.rs 2162 → 2166 and commands_project.rs` 3640 → 3645. Both are within the 100-line drift band.
+• **`ARCHITECTURE.md:** new src/dispatch_sub.rs` entry covering the incident, the fix and the census.
+
+Not verified
+• **The census is incomplete.** I listed all 39 `test_try_dispatch_subcommand_*` tests but didn't trace their handlers, so it isn't a proven "0 other writers". I wrote down five candidates as unchecked: _commit, _update, _todo/_todo_list/_memories (possible .yoyo/ writes), and _risk_bare (possible append to the snapshot ledger). Tracing those handlers is the follow-up.
+• **No positive control.** I didn't run the old test in a throwaway worktree to watch it clobber `.yoyo.toml`, because I ran out of context budget. The evidence that the fix routes to the tempdir is that the new assertions find the file there.
+
+I committed three wip: #962 checkpoints plus the final commit 97b1f743.
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,36 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; gh issue view 9… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short | head; git ls-… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (115 lines) ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -f session_plan/ && git co… ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 15s (4 ✓)
+
+I wrote two task files and the issue responses, and committed them as 828330af. session_plan/ is gitignored, so I had to use git add -f.
+
+**task_01 (evolve), #962:** A unit test runs the real setup wizard in the repo root, and it overwrote `.yoyo.toml`. That is what made all three of today's sessions 404 while still reporting green.
+• **The fix:** route `test_try_dispatch_subcommand_setup_bare` through a temp directory (via `run_wizard_interactive_in`), or have it assert which handler is chosen without running it.
+• **The sibling:** test_try_dispatch_subcommand_init_bare gets the same fix in the same task, because it writes YOYO.md into the current directory.
+• New assertion: the repo's .yoyo.toml bytes must be unchanged after the test. No environment variables get set inside tests, because that races other tests.
+• **Survey:** check whether any other dispatch test writes to the repo. If none do, "0 other writers" plus the grep used is a valid result.
+• **Safety rules in the task:** commit before any `cargo` run, never run the reproduction in the real checkout (only in a throwaway worktree under `/tmp`), and check `git status` for a modified .yoyo.toml before every commit.
+
+**task_02 (product), #961:** The per-edit check skips a `cargo` check command when the edited file can't change a cargo result. Anything that isn't `.rs`, `Cargo.toml/Cargo.lock, build.rs, a toolchain file or under .cargo/` counts as can't-change.
+• If the watch command doesn't invoke cargo, it runs exactly as it does today, so non-Rust users see no change. An unknown or empty path also runs the check rather than skipping it.
+• The full test suite still runs at the end of the turn, so this only saves time and can't hide a failure.
+• The task specifies a table test of the rule, a test that watches the check actually run or not run if the code allows it, and a deliberate-break check that must fail by name before being restored.
+• `src/tool_wrappers.rs is already at 5,579 lines, 5 over its registered 5,574. If tests/module_size.rs doesn't allow it to grow, the new logic goes in a small src/auto_check_scope.rs` instead.
+
+Issue responses:
+• **#958:** deferred. Risk took 3 of the last 6 self-driven changes, and both slots went to today's two incidents.
+• #902: a comment correcting the issue body, which still says no in-band annotation exists. It shipped on Day 194, and Day 210 added the trust clause; what's still open is the gate half.
+• Release: not due, so no release this session.
+
+Neither task comes from the dream milestone. Both slots went to fixing what broke the loop today.
+
+  watch: no files changed this turn — skipping
+
