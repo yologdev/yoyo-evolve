@@ -162,5 +162,61 @@ fi
 PROMPT_FILE=$(mktemp)
 echo "$PROMPT" > "$PROMPT_FILE"
 
+# ── #944: this run's own spend, reported on STDERR (stdout is the diary) ──
+# Mirrors scripts/social.sh's Day-209 block, with ONE deliberate difference:
+# stdout is NOT captured. Stdin is a file here, so if stdout were piped into
+# `tee` both would be non-terminal and yoyo auto-enables quiet mode
+# (src/cli.rs, the `!stdin.is_terminal() && !stdout.is_terminal()` clause),
+# which suppresses `print_usage` -- the `↳` line could never be in the capture,
+# and a human running this in a terminal would silently lose colour and chrome.
+# So the spend is read from the one channel quiet cannot close: the
+# `"type":"usage"` record `emit_output` writes to the audit file. Everything
+# below is fail-soft; the diary is produced with the same exit status as before.
+export YOYO_AUDIT=1
+DIARY_AUDIT_FILE=".yoyo/audit.jsonl"
+# Per-run watermark: the file is append-only and survives between runs on a
+# persistent checkout, so the delta, not the total, is "what this run spent".
+DIARY_AUDIT_BEFORE=0
+if [ -f "$DIARY_AUDIT_FILE" ]; then
+    DIARY_AUDIT_BEFORE=$(wc -l < "$DIARY_AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+    case "$DIARY_AUDIT_BEFORE" in '' | *[!0-9]*) DIARY_AUDIT_BEFORE=0 ;; esac
+fi
+
+report_diary_spend() {
+    local usage_rec="" audit_after=0 delta=0 size=0
+    if [ -f "$DIARY_AUDIT_FILE" ]; then
+        audit_after=$(wc -l < "$DIARY_AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+        case "$audit_after" in '' | *[!0-9]*) audit_after=0 ;; esac
+        delta=$((audit_after - DIARY_AUDIT_BEFORE))
+        if [ "$delta" -lt 0 ]; then
+            delta=0
+        fi
+        if [ "$delta" -gt 0 ]; then
+            usage_rec=$(tail -n "$delta" "$DIARY_AUDIT_FILE" 2>/dev/null | grep -a '"type":"usage"' | tail -n 1 || true)
+        fi
+    fi
+    if [ -n "$usage_rec" ]; then
+        echo "Spend (this run): $usage_rec" >&2
+    else
+        # An absent usage record is NOT a zero: reuse extract_trajectory.py's
+        # USAGE_NO_TERMINAL_EMIT wording so a killed run never reads as free.
+        echo "Spend (this run): no usage record — the process did not reach its terminal emit (no_terminal_emit)" >&2
+    fi
+    if [ -f "$DIARY_AUDIT_FILE" ]; then
+        size=$(wc -c < "$DIARY_AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+        case "$size" in '' | *[!0-9]*) size=0 ;; esac
+        echo "Spend audit: ${delta} record(s) this run (line ${DIARY_AUDIT_BEFORE} → ${audit_after}); ${size} bytes cumulative in ${DIARY_AUDIT_FILE}" >&2
+    else
+        echo "Spend audit: WARNING — no ${DIARY_AUDIT_FILE}; audit records were not written this run (cumulative size unknown)" >&2
+    fi
+}
+
+set +o errexit
 "$YOYO_BIN" --model "${MODEL:-claude-opus-4-6}" --max-turns 1 < "$PROMPT_FILE"
+DIARY_EXIT=$?
+set -o errexit
+report_diary_spend || true
 rm -f "$PROMPT_FILE"
+if [ "$DIARY_EXIT" -ne 0 ]; then
+    exit "$DIARY_EXIT"
+fi
