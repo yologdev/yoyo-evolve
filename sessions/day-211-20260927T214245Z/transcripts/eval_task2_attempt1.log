@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo && for … ✓ (1.8s)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.8s (2 ✓)
+
+Task 2 (#964) passes, and the verdict is written to session_plan/eval_task_2.md.
+
+I ran the repro against the built binary with a dummy key and --model claude-opus-5-5:
+• **`--max-tokens 131072:** prints the warning max_tokens: configured 131072 exceeds claude-opus-5-5's declared output ceiling 128000 …`.
+• **`--max-tokens 128000`:** prints nothing, so this repo's own correct value doesn't trigger a false alarm.
+
+What the diff does, per the task:
+• **Probe committed first:** 83fd193f wip: #964 probe findings. It found the value did reach the config. Two things kept the warning from ever appearing:
+  • Quiet mode, which turns on automatically for every piped, scripted or CI run, was hiding it.
+  • The ceiling being compared against was yoagent's 64K default for the request, not the model's real maximum. yoagent has no field for the maximum.
+• **Both halves fixed together:**
+  • The warning no longer checks quiet mode.
+  • On the Anthropic path, the comparison now uses one hard-coded entry: claude-opus-* → 128000, taken from the provider's error text in #964 (the code comment says where it came from).
+  • Any other Anthropic model skips the check.
+  • Other providers keep their existing ceilings, and the DeepSeek/OpenAI-compatible test rows are unchanged.
+• **Nothing left dangling:** the ceiling argument changed from a plain number to an optional one, and all four call sites plus the three existing tests were updated in the same diff. The size-register bump (4513 → 4623) is included, and there are no new enum variants.
+
+One small cleanup, not a reason to fail: the new test helper went in between the existing table test's doc comment and its #[test], so that comment now sits on the helper instead of the test.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

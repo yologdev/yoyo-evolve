@@ -1,0 +1,136 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "max_tokens_ceiling_warnin… ✓ (5ms)
+  ▶ read src/agent_builder.rs:1390..1500  ▶ read src/agent_builder.rs:1118..1143 ✓ (1ms)
+ ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 12.9s (4 ✓)
+
+Now the anthropic branch of create_model_config, and yoagent's preset.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn create_model_config" -… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn anthropic_model_config… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=~/.cargo/registry/src/index.crat… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 11.5s (3 ✓)
+
+The ceiling passed for opus-5-5 is the preset's max_tokens = 64_000 ("defaults to 64K of the model's 128K max output"), so 131072 > 64000 *should* trip. Something else is silent. Probing:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (10 lines) ✓ (9.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp; ANTHROPIC_API_KEY=dummy /home/runner/work/yoyo-evolve/yoyo-evolve/targe… ✓ (221ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2200,2260p src/cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "model_is_known_for_provid… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "unknown_model_warning\|mo… ✓ (5ms)
+  5 tools completed in 27.1s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Precedent confirmed: unknown_model_warning and model_provider_mismatch_warning print unconditionally, not quiet-gated. Removing the probe and committing findings first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i '/PROBE max_tokens=.*DO NOT… ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (76ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.0s (2 ✓)
+
+Now the fix. Changing configure_agent to take Option<u32> so "unknown maximum" is a state, not a fake number.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2870,2885p src/agent_builde… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (95 lines) ✓ (9.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "configure_agent(" src/age… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2793,2802p src/agent_builde… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (21ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 39.3s (5 ✓)
+
+Now the rest of the edits (same script minus the first replacement):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (75 lines) ✓ (9.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Builds clean. Adding emission-point tests next to the existing table (which I leave untouched):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (77 lines) ✓ (24.5s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build -q 2>&1|tail -2; cd /t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy -q --all-targets -- -… ✓ (9.5s)
+ ✓ (1m 47s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 49s (2 ✓)
+
+The repro now warns at 131072 and stays quiet at 128000. The only failure is the module-size gate, which I'll check:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test module_size 2>&1… ✓ (175ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate is failing on commands_risk.rs / commands_risk_snapshots.rs, files I didn't touch. Checking whether that failure was already there:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short; cargo test --t… ✓ (146ms)
+
+Those are only warnings. The fatal line must be agent_builder (4623 vs 4513 = +110, over the 100 grace):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test module_size 2>&1… ✓ (140ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test module_size 2>&1… ✓ (140ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Pasting the number the gate printed (after the final cargo fmt):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/("src\/agent_builder.rs"… ✓ (1m 19s)
+
+All green. Updating the ARCHITECTURE note with the fix, then committing.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (14 lines) ✓ (66ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The warning now fires on the Anthropic path. It checks against 128000, which is the real limit for claude-opus-5 models, not the 64000 default. On the #964 repro, 131072 prints the warning and this repo's 128000 prints nothing. Build, clippy with -D warnings, fmt check and the full cargo test all pass.
+
+What was wrong (checked with a temporary print before changing any code): the probe showed max_tokens=Some(131072) ceiling=64000 quiet=true.
+• **The silence:** the warning only printed when quiet mode was off. yoyo turns quiet mode on by itself whenever both stdin and stdout are non-terminal, so every piped, scripted or CI run — and -p — hid it. Your configured value was reaching the check fine.
+• **The wrong number:** yoagent 0.18.1 has no field for a model's maximum output. The Anthropic presets' `max_tokens` is the default a request uses (its docs say "defaults to 64K of the model's 128K max output"). Fixing only the silence would have made 128000 warn falsely, because 128000 > 64000.
+
+Fix (`src/agent_builder.rs`):
+• The warning no longer depends on quiet mode. It predicts that every call will fail and it goes to stderr, the same as the existing unknown-model and wrong-provider warnings. A comment at that spot explains why.
+• New `anthropic_output_maximum(model)` has exactly one entry: `claude-opus-5*` → 128000, taken from the provider error quoted in #964. Its doc comment says nothing re-checks that number, so it will go stale silently if Anthropic raises the cap.
+• For every other Anthropic model the limit is unknown, so the check is skipped rather than compared against the default. Other providers work as before, and the existing DeepSeek rows in max_tokens_ceiling_warning_table weren't edited and still pass.
+
+Tests:
+• `anthropic_ceiling_warning_uses_real_maximum_not_preset_default: checks the exact warning text at 131072, None` at 128000, and confirms the preset default really is below 128000, so the 128000 case would fail if the default were used.
+• `anthropic_ceiling_unknown_maximum_skips_the_warning`: covers the skip for models with no known limit.
+• `max_tokens_ceiling_warning_is_not_quiet_gated`: a weaker check that only reads the source to confirm the quiet check is gone, not that the line actually shows up.
+
+I didn't deliberately break the new tests to confirm they catch the bug.
+
+Other changes:
+• The module-size limit for src/agent_builder.rs went from 4513 to 4623, the number the size check printed. The file grew by 110 lines, past the 100-line allowance, and that failure was the only one in the test run.
+• ARCHITECTURE.md now has the probe findings (in a separate wip: #964 probe findings commit made before the code change) and a note on the fix.
+• I didn't file a yoagent issue about the missing maximum-output field, and .yoyo.toml is unchanged.
+
+  watch: no files changed this turn — skipping
+

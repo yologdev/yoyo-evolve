@@ -1,0 +1,63 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; grep -n "COMPAC… ✓ (17ms)
+  ▶ $ grep -n "COMPACT_THRASH_COUNT\|compact_thrash\|THRASH" src/commands_session.rs; …  ▶ read src/commands_session.rs:15..135 ✓ (0ms)
+ ✓ (15ms)
+  ▶ $ sed -n 1,60p tests/global_state_races.rs; echo ....; sed -n 100,230p tests/globa… ✓ (4ms)
+  ▶ $ sed -n 60,98p tests/global_state_races.rs; grep -n "fn \|contains\|is_ident\|wor… ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (71 lines) ✓ (19ms)
+  ▶ read src/commands_session.rs:978..1040 ✓ (0ms)
+  ▶ $ python3 - <<'EOF' (71 lines) ✓ (28ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 44.4s (8 ✓)
+
+The race gate will now flag those four register rows as "debt paid", so they must come out of tests/global_state_races.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (20 lines) ✓ (18ms)
+  ▶ $ cargo fmt && cargo build 2>&1 | tail -2 && cargo clippy --all-targets -- -D warn… ✓ (26.6s)
+  ▶ $ git add -A && git commit -qm "wip: retire paid compact-thrash race register rows… ✓ (26.2s)
+  3 tools completed in 57.2s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ pass=0; for i in $(seq 1 20); do cargo test --bin yoyo test_compact_thrash_detec… ✓ (2.4s)
+  ▶ $ cargo test 2>&1 | grep -E "^test result|FAILED|panicked" | sort | uniq -c | head… ✓ (1m 23s)
+  ▶ $ cargo test 2>&1 | grep -E "^test result" | grep -v " 0 failed" ; echo "non-ok li… ✓ (1m 20s)
+  ▶ $ grep -n "commands_session" ARCHITECTURE.md | head; grep -n "^## \|^### " ARCHITE… ✓ (7ms)
+  ▶ $ sed -n 1210,1240p ARCHITECTURE.md | cut -c1-200; wc -l ARCHITECTURE.md ✓ (4ms)
+  ▶ $ wc -l src/commands_session.rs; git show HEAD~2:src/commands_session.rs | wc -l; … ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 2m 55s (6 ✓)
+
+Not registered and under the cap, so the size gate has no entry to update. Writing the ARCHITECTURE entry:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat >> ARCHITECTURE.md <<'EOF' (13 lines) ✓ (40ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The compact-thrash tests no longer race (#963): all four tests that touched the shared global counter now each use their own counter. The repeat run from the issue passed 20/20, and build, clippy, fmt and the full cargo test all pass.
+
+The fix (src/commands_session.rs)
+• The counter logic now lives in three _with functions that take the counter as a parameter: reset_compact_thrash_with, is_compact_thrashing_with and record_compaction_with. Production code passes the global COMPACT_THRASH_COUNT. The math and the strict < COMPACT_MIN_REDUCTION comparison are unchanged.
+• Step 1's search found four tests that wrote the global, all in this file: the two named in the issue, test_reset_compact_thrash and test_is_compact_thrashing_boundary. No test in any other file touches it.
+• All four now use a local counter. Every original assertion is still there, pointed at that local counter.
+• The two detection tests now go through the real record_compaction_with instead of setting the counter by hand, so they check how a compaction gets counted. I also added a boundary check: freeing exactly 10% resets the streak, while freeing 9% adds to it.
+
+One file outside the task's list: tests/global_state_races.rs listed those four tests as known races. That gate fails once a listed test stops touching the global, so I deleted the four entries. Without that, cargo test would go red.
+
+Verification
+• My first 20-run loop reported 0/20, but the fault was in my counter, not the tests. The test filter also matched test_compact_thrash_constants, so each run printed "3 passed" while the check looked for "2 passed". Every run in that loop showed 0 failures.
+• With the issue's exact filter (test_compact_thrash_detection) the count was 20/20.
+• 20/20 is evidence the race is gone, not proof. The stronger argument is that none of these tests share a counter any more.
+• The ARCHITECTURE.md entry records the race, the fix, the 20/20 result and the counting mistake.
+
+It's in three commits: f3edf4b3 (the fix, committed before any long cargo run), 2c9fba9f (the gate entries) and 0f9d50ab (the final Task 1 commit).
+
+  watch: no files changed this turn — skipping
+

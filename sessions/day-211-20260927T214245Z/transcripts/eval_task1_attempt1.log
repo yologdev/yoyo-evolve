@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "COMPACT_THRASH_COUNT\|… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "COMPACT_THRASH_COUNT" s… ✓ (2ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 14.8s (3 ✓)
+
+Verdict: PASS. The change does what issue #963 asked: the compact-thrash tests no longer share the global counter, so they can't race. I wrote the verdict to session_plan/eval_task_1.md.
+
+• **The fix:** three new helpers take the counter as a parameter: `reset_compact_thrash_with`, `is_compact_thrashing_with` and `record_compaction_with`. The public functions and compact_agent_with_keep call them with &COMPACT_THRASH_COUNT. The arithmetic was moved unchanged, so production behaviour should be the same.
+• **The tests:** all four tests that used to write the global now use a local `AtomicU32`, and every original assertion is still there. A grep shows no test references COMPACT_THRASH_COUNT any more. The one assertion whose setup changed: the reset case used to store 0 by hand and now records a real 100→90 compaction. That gives a reduction of exactly 0.1, which is not below the strict < 0.10 limit, so it still resets the count.
+• **Every new function has a caller.** The public functions and their callers in dispatch.rs (lines 578, 1134, 1152) are unchanged.
+• **Extra file:** the diff also edits `tests/global_state_races.rs`, which the task didn't list. That was necessary: it removes the four registered-race entries, and the race gate requires that once a test stops touching the global.
+• **Docs:** the new `ARCHITECTURE.md` entry lists every reader and writer and says the 20/20 was measured. It also says that result is evidence the race is gone, not proof.
+• **Product surface:** none touched. The diff changes no config defaults, CLI flags or startup behaviour.
+
+I didn't re-run the tests or the 20/20 loop myself; the harness reported build and tests as passing.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
