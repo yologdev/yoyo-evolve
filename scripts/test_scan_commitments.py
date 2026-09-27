@@ -2,25 +2,27 @@
 """Tests for scripts/scan_commitments.py — the LLM-based commitment scanner.
 
 Run via:  python3 scripts/test_scan_commitments.py
-(Pure stdlib unittest — no pytest, no anthropic SDK, no network.)
+(Pure stdlib unittest — no pytest, no network. The yoyo call is either
+mocked at `_call_yoyo` or run against a fake yoyo script via YOYO_BIN.)
 """
 
 import io
 import json
 import os
+import stat
 import sys
+import tempfile
 import unittest
-import urllib.error
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from scan_commitments import (  # noqa: E402
-    MAX_RETRIES,
-    MODEL,
     _build_payload,
-    _call_api_with_retries,
+    _call_yoyo,
+    _classify_failure,
     _parse_assistant_json,
+    _yoyo_argv,
     scan,
 )
 
@@ -99,41 +101,43 @@ class BuildPayload(unittest.TestCase):
 
 
 class ParseAssistantJson(unittest.TestCase):
-    def test_extracts_first_text_block(self):
-        resp = {"content": [{"type": "text", "text": '{"outstanding_commitments": []}'}]}
-        parsed = _parse_assistant_json(resp)
+    def test_extracts_json_object(self):
+        parsed = _parse_assistant_json('{"outstanding_commitments": []}')
         self.assertEqual(parsed, {"outstanding_commitments": []})
 
+    def test_tolerates_code_fence_and_prose(self):
+        # No schema is enforced server-side any more, so wrapping must not
+        # turn a real answer into "unreadable".
+        text = 'Here you go:\n```json\n{"outstanding_commitments": []}\n```'
+        self.assertEqual(_parse_assistant_json(text), {"outstanding_commitments": []})
+
     def test_returns_none_for_malformed_json(self):
-        resp = {"content": [{"type": "text", "text": "not json"}]}
-        self.assertIsNone(_parse_assistant_json(resp))
+        self.assertIsNone(_parse_assistant_json("{not json}"))
 
-    def test_returns_none_for_no_text_block(self):
-        resp = {"content": [{"type": "image", "source": {}}]}
-        self.assertIsNone(_parse_assistant_json(resp))
+    def test_returns_none_for_no_json_object(self):
+        self.assertIsNone(_parse_assistant_json("I could not decide."))
 
-    def test_returns_none_for_empty_content(self):
-        self.assertIsNone(_parse_assistant_json({"content": []}))
-        self.assertIsNone(_parse_assistant_json({}))
+    def test_returns_none_for_empty_or_non_object(self):
+        self.assertIsNone(_parse_assistant_json(""))
+        self.assertIsNone(_parse_assistant_json(None))
 
 
 class ScanIntegration(unittest.TestCase):
-    """Tests scan() with the urllib call mocked."""
+    """Tests scan() with the yoyo call mocked."""
 
     def _mock_response(self, outstanding):
-        text = json.dumps({"outstanding_commitments": outstanding})
-        return {"content": [{"type": "text", "text": text}]}
+        return json.dumps({"outstanding_commitments": outstanding})
 
     def test_empty_issues_skips_api_call(self):
-        with patch("scan_commitments._call_api_with_retries") as mock_call:
-            blocks = scan([], BOT, "", api_key="sk-fake")
+        with patch("scan_commitments._call_yoyo") as mock_call:
+            blocks = scan([], BOT, "")
             self.assertEqual(blocks, [])
             mock_call.assert_not_called()
 
     def test_issues_without_bot_comment_skip_api(self):
         issue = _issue(1, "X", [_comment("alice", "human only")])
-        with patch("scan_commitments._call_api_with_retries") as mock_call:
-            blocks = scan([issue], BOT, "", api_key="sk-fake")
+        with patch("scan_commitments._call_yoyo") as mock_call:
+            blocks = scan([issue], BOT, "")
             self.assertEqual(blocks, [])
             mock_call.assert_not_called()
 
@@ -148,8 +152,8 @@ class ScanIntegration(unittest.TestCase):
             "promise_quote": "Picking this up next session.",
             "rationale": "No commit since references #418.",
         }])
-        with patch("scan_commitments._call_api_with_retries", return_value=resp):
-            blocks = scan([issue], BOT, "", api_key="sk-fake")
+        with patch("scan_commitments._call_yoyo", return_value=resp):
+            blocks = scan([issue], BOT, "")
         self.assertEqual(len(blocks), 1)
         self.assertIn("#418", blocks[0])
         self.assertIn("Picking this up next session.", blocks[0])
@@ -158,20 +162,19 @@ class ScanIntegration(unittest.TestCase):
     def test_no_outstanding_means_no_blocks(self):
         issue = _issue(418, "X", [_comment(BOT, "Done.")])
         resp = self._mock_response([])
-        with patch("scan_commitments._call_api_with_retries", return_value=resp):
-            blocks = scan([issue], BOT, "", api_key="sk-fake")
+        with patch("scan_commitments._call_yoyo", return_value=resp):
+            blocks = scan([issue], BOT, "")
         self.assertEqual(blocks, [])
 
     def test_api_failure_exits_3_not_empty(self):
         # Contract (2026-08): an unusable API response must EXIT 3, never yield
         # an empty result — "couldn't check" must not reach the harness as
-        # "checked, none found". _call_api_with_retries no longer returns None
-        # on any path, so the old return_value=None mock simulated an
-        # impossible state and masked a real AttributeError crash.
+        # "checked, none found". _call_yoyo never returns on failure, so a
+        # return_value=None mock would simulate an impossible state.
         issue = _issue(418, "X", [_comment(BOT, "Picking this up next session.")])
-        with patch("scan_commitments._call_api_with_retries", side_effect=SystemExit(3)):
+        with patch("scan_commitments._call_yoyo", side_effect=SystemExit(3)):
             with self.assertRaises(SystemExit) as cm:
-                scan([issue], BOT, "", api_key="sk-fake")
+                scan([issue], BOT, "")
         self.assertEqual(cm.exception.code, 3)
 
     def test_unknown_issue_number_in_response_is_skipped(self):
@@ -181,36 +184,34 @@ class ScanIntegration(unittest.TestCase):
             {"issue_number": 999, "promise_quote": "?", "rationale": "?"},
             {"issue_number": 418, "promise_quote": "Picking this up.", "rationale": "ok"},
         ])
-        with patch("scan_commitments._call_api_with_retries", return_value=resp):
-            blocks = scan([issue], BOT, "", api_key="sk-fake")
+        with patch("scan_commitments._call_yoyo", return_value=resp):
+            blocks = scan([issue], BOT, "")
         self.assertEqual(len(blocks), 1)
         self.assertIn("#418", blocks[0])
 
-    def test_request_body_shape(self):
-        """Pins the wire format so a refactor that renames `output_config`,
-        drops `cache_control`, or moves `system` to a string triggers a test
-        failure here instead of an API 400 in production.
-        """
+    def test_unreadable_answer_exits_3_not_empty(self):
+        # Same contract for an answer with no parseable JSON: UNKNOWN, not zero.
+        issue = _issue(418, "X", [_comment(BOT, "Picking this up next session.")])
+        with patch("scan_commitments._call_yoyo", return_value="I am not sure."):
+            with self.assertRaises(SystemExit) as cm:
+                scan([issue], BOT, "")
+        self.assertEqual(cm.exception.code, 3)
+
+    def test_prompt_shape(self):
+        """Pins what yoyo is sent: the user message is a JSON-encoded object
+        carrying the issues and the git log."""
         captured = {}
 
-        def capture(api_key, body_bytes):
-            captured["body"] = json.loads(body_bytes)
-            return {"content": [{"type": "text", "text": '{"outstanding_commitments": []}'}]}
+        def capture(user_text):
+            captured["text"] = user_text
+            return '{"outstanding_commitments": []}'
 
         issue = _issue(1, "X", [_comment(BOT, "Picking this up.")])
-        with patch("scan_commitments._call_api_with_retries", side_effect=capture):
-            scan([issue], BOT, "git-log-text", api_key="sk-fake")
-
-        body = captured["body"]
-        self.assertEqual(body["model"], MODEL)
-        self.assertIn("max_tokens", body)
-        self.assertEqual(body["system"][0]["cache_control"], {"type": "ephemeral"})
-        self.assertEqual(body["output_config"]["format"]["type"], "json_schema")
-        self.assertEqual(body["messages"][0]["role"], "user")
-        # User content must be a JSON-encoded string (not a list of blocks).
-        inner = json.loads(body["messages"][0]["content"])
+        with patch("scan_commitments._call_yoyo", side_effect=capture):
+            scan([issue], BOT, "git-log-text")
+        inner = json.loads(captured["text"])
         self.assertIn("issues", inner)
-        self.assertIn("recent_commits", inner)
+        self.assertEqual(inner["recent_commits"], "git-log-text")
 
 
 class SourceAwareness(unittest.TestCase):
@@ -220,8 +221,7 @@ class SourceAwareness(unittest.TestCase):
     """
 
     def _mock_response(self, outstanding):
-        text = json.dumps({"outstanding_commitments": outstanding})
-        return {"content": [{"type": "text", "text": text}]}
+        return json.dumps({"outstanding_commitments": outstanding})
 
     def test_discussion_source_renders_discussion_header(self):
         issue = _issue(
@@ -235,8 +235,8 @@ class SourceAwareness(unittest.TestCase):
             "promise_quote": "I'll tag @danstis on the next release.",
             "rationale": "No release tagged since.",
         }])
-        with patch("scan_commitments._call_api_with_retries", return_value=resp):
-            blocks = scan([issue], BOT, "", api_key="sk-fake")
+        with patch("scan_commitments._call_yoyo", return_value=resp):
+            blocks = scan([issue], BOT, "")
         self.assertEqual(len(blocks), 1)
         self.assertIn("### Discussion #37 —", blocks[0])
         self.assertNotIn("### Issue #37", blocks[0])
@@ -252,8 +252,8 @@ class SourceAwareness(unittest.TestCase):
             "promise_quote": "Picking this up next session.",
             "rationale": "No commit references #418.",
         }])
-        with patch("scan_commitments._call_api_with_retries", return_value=resp):
-            blocks = scan([issue], BOT, "", api_key="sk-fake")
+        with patch("scan_commitments._call_yoyo", return_value=resp):
+            blocks = scan([issue], BOT, "")
         self.assertEqual(len(blocks), 1)
         self.assertIn("### Issue #418 —", blocks[0])
         self.assertNotIn("### Discussion #418", blocks[0])
@@ -285,8 +285,8 @@ class SourceAwareness(unittest.TestCase):
                 "rationale": "discussion outstanding",
             },
         ])
-        with patch("scan_commitments._call_api_with_retries", return_value=resp):
-            blocks = scan([the_issue, the_discussion], BOT, "", api_key="sk-fake")
+        with patch("scan_commitments._call_yoyo", return_value=resp):
+            blocks = scan([the_issue, the_discussion], BOT, "")
         joined = "\n".join(blocks)
         self.assertIn("### Issue #5 — Issue five title", joined)
         self.assertIn("### Discussion #5 — Discussion five title", joined)
@@ -306,8 +306,8 @@ class SourceAwareness(unittest.TestCase):
             "promise_quote": "Picking this up next session.",
             "rationale": "outstanding",
         }])
-        with patch("scan_commitments._call_api_with_retries", return_value=resp):
-            blocks = scan([issue], BOT, "", api_key="sk-fake")
+        with patch("scan_commitments._call_yoyo", return_value=resp):
+            blocks = scan([issue], BOT, "")
         self.assertEqual(len(blocks), 1)
         self.assertIn("### Issue #9 —", blocks[0])
 
@@ -339,8 +339,7 @@ class PaginationLimitation(unittest.TestCase):
     """
 
     def _mock_response(self, outstanding):
-        text = json.dumps({"outstanding_commitments": outstanding})
-        return {"content": [{"type": "text", "text": text}]}
+        return json.dumps({"outstanding_commitments": outstanding})
 
     def _long_thread(self, include_bot_comment):
         """A long discussion thread whose proving bot comment is the FIRST
@@ -375,8 +374,8 @@ class PaginationLimitation(unittest.TestCase):
             "promise_quote": "I'll ship the discussed feature next cycle.",
             "rationale": "No commit ships the discussed feature since.",
         }])
-        with patch("scan_commitments._call_api_with_retries", return_value=resp):
-            blocks = scan([issue], BOT, "", api_key="sk-fake")
+        with patch("scan_commitments._call_yoyo", return_value=resp):
+            blocks = scan([issue], BOT, "")
         self.assertEqual(len(blocks), 1)
         self.assertIn("### Discussion #37 —", blocks[0])
 
@@ -391,95 +390,142 @@ class PaginationLimitation(unittest.TestCase):
         # scanner never calls the API. The commitment is silently invisible.
         payload, _ = _build_payload([issue], BOT, "")
         self.assertEqual(payload, [])
-        with patch("scan_commitments._call_api_with_retries") as mock_call:
-            blocks = scan([issue], BOT, "", api_key="sk-fake")
+        with patch("scan_commitments._call_yoyo") as mock_call:
+            blocks = scan([issue], BOT, "")
             mock_call.assert_not_called()
         self.assertEqual(blocks, [])
 
 
-class RetryPolicy(unittest.TestCase):
-    """Pins the retry classifier in _call_api_with_retries — the riskiest
-    untested code in the script. A regression that retries on 401, or stops
-    retrying on 5xx, would silently break the cron without these.
-    """
+class YoyoArgv(unittest.TestCase):
+    """The call is one chat-only turn that reads provider and model from
+    .yoyo.toml, like every other loop call."""
 
-    def _http_error(self, code):
-        return urllib.error.HTTPError(
-            "https://api.anthropic.com/v1/messages",
-            code, "x", {}, io.BytesIO(b"{}")
+    def test_one_bare_turn(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MODEL", None)
+            argv = _yoyo_argv("/tmp/sys.txt")
+        for flag in ("--safe-mode", "--no-tools", "--print"):
+            self.assertIn(flag, argv)
+        self.assertEqual(argv[argv.index("--max-turns") + 1], "1")
+        self.assertEqual(argv[argv.index("--system-file") + 1], "/tmp/sys.txt")
+        # No model, provider or key of its own: yoyo resolves them.
+        for flag in ("--model", "--provider", "--api-key"):
+            self.assertNotIn(flag, argv)
+
+    def test_model_env_overrides_one_run(self):
+        with patch.dict(os.environ, {"MODEL": "some-model"}):
+            argv = _yoyo_argv("/tmp/sys.txt")
+        self.assertEqual(argv[argv.index("--model") + 1], "some-model")
+
+
+class FailureClassification(unittest.TestCase):
+    """Pins how a failed yoyo call maps to exit codes — the contract the
+    evolve.sh wrapper reads (2 = loud config banner, 3 = UNKNOWN)."""
+
+    RED, RESET = "\x1b[31m", "\x1b[0m"
+
+    def test_auth_error_is_config(self):
+        err = f"\n{self.RED}  error: Auth error: HTTP 401 Unauthorized: {{}}{self.RESET}\n"
+        self.assertEqual(_classify_failure(err)[0], 2)
+
+    def test_400_and_404_are_config(self):
+        for code in (400, 404):
+            err = f"  error: API error: HTTP {code} Bad: {{}}\n"
+            self.assertEqual(_classify_failure(err)[0], 2, code)
+
+    def test_429_and_5xx_are_transient(self):
+        for code in (429, 503):
+            err = f"  error: API error: HTTP {code} Busy: {{}}\n"
+            self.assertEqual(_classify_failure(err)[0], 3, code)
+
+    def test_message_carries_the_provider_error(self):
+        # The old HTTP client discarded the 429 body; the reason must reach
+        # the log now.
+        err = '  error: API error: HTTP 429 Too Many Requests: {"message":"why"}\n'
+        self.assertIn('"message":"why"', _classify_failure(err)[1])
+
+    def test_no_error_line_is_not_a_failure(self):
+        self.assertIsNone(_classify_failure("note: All tools disabled\n"))
+        self.assertIsNone(_classify_failure(""))
+
+
+class YoyoSubprocess(unittest.TestCase):
+    """End to end through subprocess against a fake yoyo (YOYO_BIN), so the
+    argv, stdin, stdout and exit-code handling are exercised for real."""
+
+    def _fake_yoyo(self, script):
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "yoyo")
+        with open(path, "w") as f:
+            f.write("#!/bin/sh\n" + script)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+        return path
+
+    def _run(self, script):
+        env = {"YOYO_BIN": self._fake_yoyo(script)}
+        with patch.dict(os.environ, env):
+            os.environ.pop("MODEL", None)
+            return _call_yoyo('{"issues": []}')
+
+    def test_success_returns_stdout(self):
+        out = self._run('cat >/dev/null; echo \'{"outstanding_commitments": []}\'\n')
+        self.assertEqual(json.loads(out), {"outstanding_commitments": []})
+
+    def test_receives_payload_and_system_file(self):
+        # The fake echoes back what it got so the test sees the real wiring.
+        out = self._run(
+            'while [ "$1" != "--system-file" ]; do shift; done; sys="$2"\n'
+            'payload=$(cat)\n'
+            'grep -q "outstanding_commitments" "$sys" && echo "{\\"ok\\": \\"$payload\\"}"\n'
         )
+        self.assertIn("issues", out)
 
-    def test_401_is_fatal_no_retry(self):
-        with patch("scan_commitments._post", side_effect=self._http_error(401)) as p, \
-             patch("scan_commitments.time.sleep"):
+    def test_auth_error_with_exit_0_still_fails_as_config(self):
+        # yoyo has been seen to exit 0 after an auth failure; the error line
+        # must decide, not the exit status.
+        with self.assertRaises(SystemExit) as cm:
+            self._run('cat >/dev/null; echo "  error: Auth error: HTTP 401 Unauthorized: {}" >&2; exit 0\n')
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_rate_limit_is_transient(self):
+        with self.assertRaises(SystemExit) as cm:
+            self._run('cat >/dev/null; echo "  error: API error: HTTP 429 Too Many Requests: {}" >&2; exit 1\n')
+        self.assertEqual(cm.exception.code, 3)
+
+    def test_empty_response_is_unknown_not_zero(self):
+        with self.assertRaises(SystemExit) as cm:
+            self._run("cat >/dev/null; exit 0\n")
+        self.assertEqual(cm.exception.code, 3)
+
+    def test_missing_binary_is_config(self):
+        with patch.dict(os.environ, {"YOYO_BIN": "/nonexistent/yoyo"}):
             with self.assertRaises(SystemExit) as cm:
-                _call_api_with_retries("sk-fake", b"{}")
-            self.assertEqual(cm.exception.code, 2)
-            self.assertEqual(p.call_count, 1)  # no retry
-
-    def test_400_is_fatal_no_retry(self):
-        with patch("scan_commitments._post", side_effect=self._http_error(400)) as p, \
-             patch("scan_commitments.time.sleep"):
-            with self.assertRaises(SystemExit) as cm:
-                _call_api_with_retries("sk-fake", b"{}")
-            self.assertEqual(cm.exception.code, 2)
-            self.assertEqual(p.call_count, 1)
-
-    def test_429_retries_then_gives_up(self):
-        with patch("scan_commitments._post", side_effect=self._http_error(429)) as p, \
-             patch("scan_commitments.time.sleep"):
-            # Transient exhaustion exits 3 (was: returned None).
-            with self.assertRaises(SystemExit) as cm:
-                _call_api_with_retries("sk-fake", b"{}")
-            self.assertEqual(cm.exception.code, 3)
-            self.assertEqual(p.call_count, MAX_RETRIES)
-
-    def test_503_then_success(self):
-        responses = [self._http_error(503), {"content": []}]
-        with patch("scan_commitments._post", side_effect=responses), \
-             patch("scan_commitments.time.sleep"):
-            result = _call_api_with_retries("sk-fake", b"{}")
-            self.assertEqual(result, {"content": []})
+                _call_yoyo("{}")
+        self.assertEqual(cm.exception.code, 2)
 
 
-class ProjectConfigTest(unittest.TestCase):
-    """The model comes from .yoyo.toml; a non-Anthropic provider refuses."""
-
-    ENV = {"BOT_LOGIN": "yoyo-evolve[bot]", "ANTHROPIC_API_KEY": "sk-fake"}
-
-    def _main_exit_code(self, provider, model):
+class MainConfig(unittest.TestCase):
+    def test_missing_bot_login_is_config(self):
         import scan_commitments
 
-        with patch.dict(os.environ, self.ENV), \
-             patch.object(scan_commitments, "PROVIDER", provider), \
-             patch.object(scan_commitments, "MODEL", model), \
-             patch("scan_commitments._post") as post, \
+        with patch.dict(os.environ, {"BOT_LOGIN": ""}), \
+             patch("scan_commitments._call_yoyo") as call, \
              patch("sys.stdin", io.StringIO("[]")):
-            try:
+            with self.assertRaises(SystemExit) as cm:
                 scan_commitments.main()
-            except SystemExit as e:
-                self.assertEqual(post.call_count, 0, "refusal must not call the API")
-                return e.code
-            return 0
+        self.assertEqual(cm.exception.code, 2)
+        call.assert_not_called()
 
-    def test_model_resolves_from_repo_config(self):
+    def test_no_provider_or_key_gate(self):
+        # Near-miss guard: with BOT_LOGIN set and no API key in the env, main()
+        # proceeds (yoyo owns credentials); empty stdin → clean exit 0.
         import scan_commitments
 
-        # Anti-vacuous: the repo's config really names a model and a provider.
-        self.assertTrue(scan_commitments._project_config().get("model"))
-        self.assertTrue(scan_commitments._project_config().get("provider"))
-
-    def test_non_anthropic_provider_refuses_with_config_exit(self):
-        self.assertEqual(self._main_exit_code("deepseek", "deepseek-v4-flash"), 2)
-        self.assertEqual(self._main_exit_code("", "claude-opus-5-5"), 2)
-
-    def test_missing_model_refuses_with_config_exit(self):
-        self.assertEqual(self._main_exit_code("anthropic", ""), 2)
-
-    def test_anthropic_with_model_proceeds(self):
-        # Near-miss guard: the normal configuration is not refused (empty
-        # stdin → clean return, exit 0).
-        self.assertEqual(self._main_exit_code("anthropic", "claude-opus-5-5"), 0)
+        env = {"BOT_LOGIN": "yoyo-evolve[bot]"}
+        with patch.dict(os.environ, env), \
+             patch("sys.stdin", io.StringIO("[]")):
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            scan_commitments.main()
 
 
 if __name__ == "__main__":

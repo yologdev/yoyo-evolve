@@ -1132,7 +1132,8 @@ fi
 echo ""
 
 # ── Step 3b: Scan for yoyo's own forward-looking commitments (LLM-judged) ──
-# A single batched Claude call reads each open issue's last bot comment +
+# A single batched call — made through yoyo itself, so it uses the same
+# provider, model and credentials as every other phase — reads each open issue's last bot comment +
 # recent git log and decides which promises are outstanding. Transient API
 # errors fail-soft (warn + empty output). Config/auth errors (missing key,
 # 401/403/400) exit non-zero so this banner fires — a broken cron should
@@ -1252,6 +1253,7 @@ if command -v gh &>/dev/null && { [ -n "$REPLY_ISSUES" ] || [ "$REPLY_DISCUSSION
         printf '%s' "$MERGED_SCAN_INPUT" | \
             BOT_LOGIN="$BOT_LOGIN" \
             GIT_LOG_RECENT="$GIT_LOG_RECENT" \
+            YOYO_BIN="$YOYO_BIN" \
             python3 scripts/scan_commitments.py 2>>/tmp/scan_commitments.stderr
     ) || SCAN_RC=$?
     if [ "$SCAN_RC" -eq 3 ]; then

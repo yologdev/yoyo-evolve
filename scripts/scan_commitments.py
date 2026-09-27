@@ -8,9 +8,14 @@ satisfied by a recent git commit? Outstanding commitments are surfaced at
 the top of the Phase A prompt so yoyo sees its broken promises before
 choosing new work.
 
-Uses urllib only — no third-party dependencies — because evolve.sh runs in
-GitHub Actions where reaching for `pip install anthropic` would add another
-step that can fail silently.
+The call goes through yoyo itself (`--safe-mode --no-tools --max-turns 1`),
+not a hand-rolled HTTP client, so it uses exactly the provider, model,
+credential handling and retries every other loop call uses, read from the
+same .yoyo.toml. Its own copy of that layer broke three times: a hardcoded
+model 401'd (Jul 15-16), OAuth-token auth went unhandled (~Jul 24 to Aug 8),
+and the scan returned 429 or 404 on every session from at least Aug 24 to
+Sep 27 while yoyo's own calls with the same token succeeded. Still stdlib
+only: no `pip install` step to fail silently in CI.
 
 Usage (from evolve.sh):
     cat reply_issues.json | BOT_LOGIN=yoyo-evolve \\
@@ -22,10 +27,12 @@ Output on stdout: zero or more `### Issue #N — title\n...\n---` blocks.
 
 Exit codes:
   0 — ran cleanly (may have emitted zero blocks)
-  2 — config or auth failure (missing key, missing BOT_LOGIN, 401/403/400);
-       the bash wrapper surfaces this as a louder banner so a broken cron
-       does not silently lose commitment visibility for hours.
-  3 — transient failure (429, 5xx, network, timeout) after retries; the
+  2 — config or auth failure (missing BOT_LOGIN, yoyo binary not found, or
+       yoyo reporting an auth error or an HTTP 400/401/403/404); the bash
+       wrapper surfaces this as a louder banner so a broken cron does not
+       silently lose commitment visibility for hours.
+  3 — transient or unusable result (429, 5xx, network, timeout, no parseable
+       JSON) after yoyo's own retries; the
        session continues without the commitment block, but the wrapper says
        "commitments UNKNOWN this session", never "No outstanding commitments"
        — exit 0 here made the harness assert a fact it never established
@@ -34,46 +41,16 @@ Exit codes:
 
 import json
 import os
+import re
+import subprocess
 import sys
-import time
-import tomllib
-import urllib.error
-import urllib.request
+import tempfile
 
-API_URL = "https://api.anthropic.com/v1/messages"
-API_VERSION = "2023-06-01"
+# yoyo retries transient provider errors itself; this bounds the whole call.
+YOYO_TIMEOUT_SECS = 600
 
-
-def _project_config():
-    """Top-level keys of the repo's .yoyo.toml, or {} if it cannot be read.
-
-    .yoyo.toml is the single place the loop's provider and model are set; a
-    `MODEL` env var is only a per-run override. A hardcoded model here went
-    stale twice: an old default 401'd every session for two days (Jul 15-16),
-    and during the DeepSeek period this scanner sent the DeepSeek id to
-    Anthropic and 404'd every session.
-    """
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".yoyo.toml")
-    try:
-        with open(path, "rb") as f:
-            return tomllib.load(f)
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
-
-
-_CONFIG = _project_config()
-PROVIDER = _CONFIG.get("provider", "")
-MODEL = os.environ.get("MODEL") or _CONFIG.get("model", "")
-MAX_TOKENS = 4096
-TIMEOUT_SECS = 60
-MAX_RETRIES = 3
-RETRY_BASE_DELAY = 2.0  # seconds; doubled each attempt
-
-# Static across sessions, marked ephemeral so it becomes a cacheable prefix
-# once it crosses the model's minimum cacheable token count (~1024 for Opus).
-# At current length it may fall below the threshold; `cache_control` is a
-# forward-compatible no-op if so. Volatile per-session data (issue bodies,
-# git log) goes in the user message, after this prefix.
+# The system prompt is passed to yoyo with --system-file; volatile per-session
+# data (issue bodies, git log) goes in the user message on stdin.
 SYSTEM_PROMPT = """\
 You are a triage assistant for an autonomous coding agent named yoyo.
 
@@ -116,9 +93,12 @@ B) IF it is a commitment, has it been fulfilled by any of the recent git
    commitment promised. Be conservative: prefer false (unfulfilled) when
    uncertain.
 
-Return your judgment as structured JSON matching the provided schema. Only
-include issues that are TRULY outstanding commitments — skip non-promises
-and skip fulfilled ones."""
+Only include issues that are TRULY outstanding commitments — skip
+non-promises and skip fulfilled ones.
+
+Respond with exactly one JSON object and nothing else — no prose, no code
+fences — matching this JSON Schema:
+"""
 
 OUTPUT_SCHEMA = {
     "type": "object",
@@ -201,110 +181,101 @@ def _build_payload(issues, bot_login, git_log_recent):
     return trimmed_issues, git_log
 
 
-def _auth_headers(api_key):
-    """Auth headers matching yoagent's provider logic (anthropic.rs:119):
-    an OAuth access token (sk-ant-oat...) must go on `Authorization: Bearer`
-    with the oauth beta header — sent as x-api-key it 401s instantly, which
-    is exactly how this scan silently died every session after the repo
-    secret became an OAuth token (~Jul 24): the binary auto-detected the
-    token type, this script didn't. (The Jul 16 fix 2b37bf9b blamed the
-    model string; the auth path was the real difference.)"""
-    if "sk-ant-oat" in api_key:
-        return {
-            "authorization": f"Bearer {api_key}",
-            "anthropic-beta": "oauth-2025-04-20",
-        }
-    return {"x-api-key": api_key}
+def _yoyo_bin():
+    """YOYO_BIN if set (evolve.sh passes its fresh build), else the repo's debug
+    build, else `yoyo` on PATH."""
+    if os.environ.get("YOYO_BIN"):
+        return os.environ["YOYO_BIN"]
+    local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "target", "debug", "yoyo")
+    return local if os.path.exists(local) else "yoyo"
 
 
-def _post(api_key, body_bytes):
-    """POST to the Messages API, returning the parsed JSON body."""
-    headers = {
-        "Content-Type": "application/json",
-        "anthropic-version": API_VERSION,
-    }
-    headers.update(_auth_headers(api_key))
-    req = urllib.request.Request(
-        API_URL,
-        data=body_bytes,
-        headers=headers,
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=TIMEOUT_SECS) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+def _yoyo_argv(system_file):
+    """One chat-only turn: no tools, no project context/skills/MCP (--safe-mode),
+    response text only on stdout. Provider and model come from .yoyo.toml like
+    every other loop call; MODEL overrides one run, as in the harness scripts."""
+    argv = [
+        _yoyo_bin(), "--safe-mode", "--no-tools", "--max-turns", "1",
+        "--system-file", system_file, "--print", "--no-update-check",
+    ]
+    if os.environ.get("MODEL"):
+        argv += ["--model", os.environ["MODEL"]]
+    return argv
 
 
-def _call_api_with_retries(api_key, body_bytes):
-    """Call the API with exponential backoff on transient failures.
-
-    Returns the parsed response on success, or None on transient failure
-    (caller treats this as silent fail-soft). On auth/config/request-shape
-    Never returns None: every failure path exits (2 config/auth, 3 anything
-    else unusable), so callers can treat a return value as a real response.
-    For config
-    errors (401, 403, 400) this calls `sys.exit(2)` directly — those are
-    config regressions, not runtime conditions, and must surface loudly.
-    """
-    last_err = None
-    for attempt in range(MAX_RETRIES):
-        try:
-            return _post(api_key, body_bytes)
-        except urllib.error.HTTPError as e:
-            # Retry on 429 and 5xx; everything else is fatal.
-            if e.code == 429 or e.code >= 500:
-                last_err = f"HTTP {e.code}: {e.reason}"
-            else:
-                try:
-                    detail = e.read().decode("utf-8")[:500]
-                except (OSError, UnicodeDecodeError):
-                    detail = ""
-                # 401/403/400 are config bugs (revoked key, lost permission,
-                # request-shape drift). Exit non-zero so evolve.sh surfaces it
-                # rather than letting the cron drift silently for hours.
-                if e.code in (401, 403, 400):
-                    _warn(f"HTTP {e.code} {e.reason} — config/auth failure; {detail}")
-                    sys.exit(2)
-                # Any other non-retryable code (404 from a mistyped MODEL,
-                # 413, 422 …) is still "couldn't check", NOT "checked, none
-                # found". Returning None here fell into _parse_assistant_json
-                # and crashed with AttributeError — the caller's own comment
-                # already assumed this branch exited. Exit 3 like the other
-                # unusable-response paths.
-                _warn(f"HTTP {e.code} {e.reason} (no retry); {detail}")
-                sys.exit(3)
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            last_err = f"network/timeout: {e}"
-        except json.JSONDecodeError as e:
-            last_err = f"invalid JSON response: {e}"
-
-        if attempt < MAX_RETRIES - 1:
-            delay = RETRY_BASE_DELAY * (2 ** attempt)
-            _warn(f"attempt {attempt + 1}/{MAX_RETRIES} failed ({last_err}); retry in {delay:.0f}s")
-            time.sleep(delay)
-
-    _warn(f"all {MAX_RETRIES} attempts failed: {last_err}")
-    # Exit 3, not return-empty: "couldn't check" must be distinguishable from
-    # "checked, none found" (see module docstring).
-    sys.exit(3)
+# yoyo's terminal failure line, e.g. `  error: API error: HTTP 429 ...` or
+# `  error: Auth error: HTTP 401 ...` (ANSI colour optional).
+_YOYO_ERROR_RE = re.compile(r"^(?:\x1b\[[0-9;]*m)?\s*error: (API|Auth) error: (.*)$", re.M)
+_CONFIG_HTTP = {400, 401, 403, 404}
 
 
-def _parse_assistant_json(response):
-    """Extract the structured JSON from the assistant's first text block."""
-    content = response.get("content") or []
-    for block in content:
-        if block.get("type") == "text":
-            text = block.get("text", "")
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError as e:
-                _warn(f"assistant text was not valid JSON: {e}")
-                return None
-    _warn("response had no text block")
-    return None
+def _classify_failure(stderr):
+    """(exit_code, message) for a failed yoyo call, or None if stderr carries no
+    terminal provider error. Auth errors and 400/401/403/404 are config (2);
+    429, 5xx and anything else are transient (3)."""
+    m = _YOYO_ERROR_RE.search(stderr or "")
+    if not m:
+        return None
+    kind, detail = m.group(1), m.group(2).strip()
+    code = re.search(r"HTTP (\d{3})", detail)
+    status = int(code.group(1)) if code else None
+    exit_code = 2 if kind == "Auth" or status in _CONFIG_HTTP else 3
+    return exit_code, f"{kind} error: {detail[:500]}"
 
 
-def scan(issues, bot_login, git_log_recent, api_key):
-    """Call Claude once and return formatted commitment blocks."""
+def _call_yoyo(user_text):
+    """Run one yoyo turn and return its response text. Never returns on
+    failure: exits 2 (config) or 3 (transient/unusable), so a caller can treat
+    a return value as a real answer. yoyo's exit status is not trusted on its
+    own — it has been seen to exit 0 after an auth failure — so failure is
+    read from its error line and from an empty response."""
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        f.write(SYSTEM_PROMPT + json.dumps(OUTPUT_SCHEMA))
+        system_file = f.name
+    try:
+        proc = subprocess.run(
+            _yoyo_argv(system_file), input=user_text, capture_output=True,
+            text=True, timeout=YOYO_TIMEOUT_SECS,
+        )
+    except FileNotFoundError:
+        _warn(f"yoyo binary not found ({_yoyo_bin()}); set YOYO_BIN")
+        sys.exit(2)
+    except subprocess.TimeoutExpired:
+        _warn(f"yoyo timed out after {YOYO_TIMEOUT_SECS}s")
+        sys.exit(3)
+    finally:
+        os.unlink(system_file)
+
+    failure = _classify_failure(proc.stderr)
+    if failure:
+        exit_code, message = failure
+        _warn(message)
+        sys.exit(exit_code)
+    if not proc.stdout.strip():
+        _warn(f"yoyo returned no response (exit {proc.returncode}); stderr tail: {proc.stderr[-300:]!r}")
+        sys.exit(3)
+    return proc.stdout
+
+
+def _parse_assistant_json(text):
+    """Extract the JSON object from the model's response text. Tolerates a
+    code fence or stray prose around it, since no schema is enforced
+    server-side. Returns None if there is no parseable object."""
+    text = (text or "").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        _warn("response had no JSON object")
+        return None
+    try:
+        parsed = json.loads(text[start:end + 1])
+    except json.JSONDecodeError as e:
+        _warn(f"response was not valid JSON: {e}")
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def scan(issues, bot_login, git_log_recent):
+    """Ask the configured model once, via yoyo, and return formatted commitment blocks."""
     trimmed_issues, git_log = _build_payload(issues, bot_login, git_log_recent)
     if not trimmed_issues:
         return []
@@ -316,38 +287,14 @@ def scan(issues, bot_login, git_log_recent, api_key):
         "recent_commits": git_log,
     }
 
-    request_body = {
-        "model": MODEL,
-        "max_tokens": MAX_TOKENS,
-        "system": [
-            {
-                "type": "text",
-                "text": SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        "messages": [
-            {
-                "role": "user",
-                "content": json.dumps(user_payload, separators=(",", ":")),
-            }
-        ],
-        "output_config": {
-            "format": {
-                "type": "json_schema",
-                "schema": OUTPUT_SCHEMA,
-            }
-        },
-    }
-
-    body_bytes = json.dumps(request_body).encode("utf-8")
-    # _call_api_with_retries exits the process on failure (2 config, 3
-    # transient) — reaching here means we have a response.
-    response = _call_api_with_retries(api_key, body_bytes)
+    # _call_yoyo exits the process on failure (2 config, 3 transient) —
+    # reaching here means we have a response.
+    response = _call_yoyo(json.dumps(user_payload, separators=(",", ":")))
 
     parsed = _parse_assistant_json(response)
     if parsed is None:
-        return []
+        # An answer we cannot read is "couldn't check", never "none found".
+        sys.exit(3)
 
     items = parsed.get("outstanding_commitments") or []
     if not isinstance(items, list):
@@ -409,26 +356,12 @@ def scan(issues, bot_login, git_log_recent, api_key):
 
 
 def main():
-    # Missing BOT_LOGIN / ANTHROPIC_API_KEY are config regressions, not
-    # runtime conditions — exit non-zero so the bash wrapper surfaces them.
+    # A missing BOT_LOGIN is a config regression, not a runtime condition —
+    # exit non-zero so the bash wrapper surfaces it. Credentials, provider and
+    # model are yoyo's to resolve.
     bot_login = os.environ.get("BOT_LOGIN", "")
     if not bot_login:
         _warn("BOT_LOGIN unset — workflow config regression?")
-        sys.exit(2)
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        _warn("ANTHROPIC_API_KEY unset — workflow config regression?")
-        sys.exit(2)
-    # This scanner speaks only the Anthropic Messages API. Under any other
-    # provider the model id is not an Anthropic one, so a call can only 404.
-    if PROVIDER != "anthropic":
-        _warn(
-            f".yoyo.toml provider is {PROVIDER or 'unset'!r}, not 'anthropic' — "
-            "this scanner only calls Anthropic, so it did not run"
-        )
-        sys.exit(2)
-    if not MODEL:
-        _warn("no model: set `model` in .yoyo.toml (or MODEL for one run)")
         sys.exit(2)
 
     git_log = os.environ.get("GIT_LOG_RECENT", "")
@@ -446,7 +379,7 @@ def main():
         _warn("stdin was not a JSON array")
         return
 
-    blocks = scan(issues, bot_login, git_log, api_key)
+    blocks = scan(issues, bot_login, git_log)
     print("\n".join(blocks))
 
 
