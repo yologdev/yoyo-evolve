@@ -164,7 +164,8 @@ async fn finish_prompt_epilogue(
         eprintln!("{warning}");
     }
     maybe_ring_bell(prompt_start.elapsed());
-    println!();
+    // #966: the turn's closing newline frames streamed text, not the payload.
+    write_stream_text("\n");
 }
 
 /// #966: write streamed answer text (and the newlines that frame it) to
