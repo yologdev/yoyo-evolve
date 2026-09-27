@@ -3930,3 +3930,46 @@ mod fatal_text_handoff_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod reserved_stdout_tests {
+    use super::*;
+
+    /// #966: reserved (`--print` / json) → the streamed text writes nothing.
+    #[test]
+    fn reserved_stdout_receives_no_streamed_text() {
+        let mut out = Vec::new();
+        assert!(!write_stream_text_with(true, "{\"answer\": 42}", &mut out));
+        assert!(!write_stream_text_with(true, "\n", &mut out));
+        assert!(out.is_empty(), "reserved stdout must stay empty");
+    }
+
+    /// Near-miss: unreserved (REPL, plain `-p`) streams byte-identically.
+    #[test]
+    fn unreserved_stdout_streams_byte_identically() {
+        let mut out = Vec::new();
+        for s in ["\n", "{\"answer\": 42}", "✓ ünïcode", "\n"] {
+            assert!(write_stream_text_with(false, s, &mut out));
+        }
+        assert_eq!(out, "\n{\"answer\": 42}✓ ünïcode\n".as_bytes());
+    }
+
+    /// Source-level guard: every streamed-text write in the renderer goes
+    /// through `write_stream_text`, so a new ungated `print!("{rendered}")`
+    /// fails here. It proves the gate is PRESENT at 14 sites, not that it fires.
+    #[test]
+    fn every_streamed_text_write_is_gated() {
+        let src = include_str!("prompt.rs");
+        let body = &src[..src
+            .find(&format!("#[cfg({})]\nmod tests", "test"))
+            .unwrap()];
+        let call = format!("{}(", "write_stream_text");
+        let sites = body.matches(&call).count() - 1; // minus the definition
+        assert_eq!(sites, 14, "gated streamed-text sites changed");
+        for bare in ["rendered", "remaining"] {
+            let a = format!("print!(\"{{}}\", {bare})");
+            let b = format!("print!(\"{{{bare}}}\")");
+            assert!(!body.contains(&a) && !body.contains(&b), "ungated {bare}");
+        }
+    }
+}

@@ -1485,3 +1485,13 @@ fn output_format_json_reaches_the_json_envelope() {
     assert!(!wants_json_envelope(false, OutputFormat::Text));
     assert!(!wants_json_envelope(false, OutputFormat::StreamJson));
 }
+
+/// #966: both `--print` and the JSON envelope reserve stdout, and neither
+/// passes because of the other; plain `-p` / the REPL does not reserve it.
+#[test]
+fn reserves_stdout_for_print_and_json_independently() {
+    assert!(reserves_stdout(true, false), "--print alone must reserve");
+    assert!(reserves_stdout(false, true), "json alone must reserve");
+    assert!(reserves_stdout(true, true));
+    assert!(!reserves_stdout(false, false), "plain -p must stream");
+}
