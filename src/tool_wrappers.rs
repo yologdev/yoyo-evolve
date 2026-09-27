@@ -619,8 +619,9 @@ const AUTO_CHECK_MAX_CHARS: usize = 2000;
 
 /// A tool wrapper that automatically runs a check command after file edits.
 /// When a watch command is configured (via `/watch set`), it runs the first
-/// watch phase (typically lint) after successful write_file or edit_file
-/// operations and appends any errors to the tool result.
+/// watch phase (under auto-watch: the full clippy+test gate) after successful
+/// write_file or edit_file operations — unless the edited path cannot affect a
+/// cargo command (#961) — and appends any errors to the tool result.
 ///
 /// This gives the agent immediate compilation feedback inline with each edit,
 /// catching errors before moving on to the next file — similar to how Aider
@@ -652,6 +653,7 @@ impl AgentTool for AutoCheckTool {
         params: serde_json::Value,
         ctx: yoagent::types::ToolContext,
     ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        let edited = params["path"].as_str().unwrap_or("").to_string();
         let result = self.inner.execute(params, ctx).await?;
 
         // Only run check when a watch command is active
@@ -660,8 +662,13 @@ impl AgentTool for AutoCheckTool {
             return Ok(result);
         }
 
-        // Use only the first phase (typically lint/check, not the full test suite)
+        // The first watch phase — under auto-watch this is the whole
+        // `cargo clippy ... && cargo test` gate, not a light lint. Skipped when
+        // the edited file cannot affect a cargo command (#961, auto_check_scope).
         let check_cmd = &commands[0];
+        if !crate::auto_check_scope::edit_can_affect_check(&edited, check_cmd) {
+            return Ok(result);
+        }
         let (passed, output) = crate::watch::run_watch_command(check_cmd);
 
         if passed {
