@@ -45,8 +45,7 @@ pub(crate) fn edit_can_affect_check(edited_path: &str, check_cmd: &str) -> bool 
     if p.extension().is_some_and(|e| e == "rs") {
         return true;
     }
-    if p
-        .file_name()
+    if p.file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| CARGO_INPUT_FILE_NAMES.contains(&n))
     {
@@ -99,5 +98,64 @@ mod tests {
                 "edit_can_affect_check({path:?}, {cmd:?})"
             );
         }
+    }
+
+    /// A mock write tool: succeeds with fixed text, no side effects.
+    struct OkTool;
+
+    #[async_trait::async_trait]
+    impl yoagent::types::AgentTool for OkTool {
+        fn name(&self) -> &str {
+            "write_file"
+        }
+        fn label(&self) -> &str {
+            "write_file"
+        }
+        fn description(&self) -> &str {
+            "mock"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        async fn execute(
+            &self,
+            _params: serde_json::Value,
+            _ctx: yoagent::types::ToolContext,
+        ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+            Ok(yoagent::types::ToolResult {
+                content: vec![yoagent::Content::Text {
+                    text: "written".to_string(),
+                }],
+                details: serde_json::Value::Null,
+            })
+        }
+    }
+
+    /// Emission point: drive the real `AutoCheckTool` with a watch command
+    /// that invokes cargo AND touches a marker, then observe the marker.
+    /// `true cargo` makes `cargo` a token without needing cargo on PATH.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn auto_check_skips_cargo_command_for_non_code_edit_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("ran");
+        let cmd = format!("true cargo; touch '{}'", marker.display());
+        crate::watch::set_watch_command(&cmd);
+        let tool = crate::tool_wrappers::with_auto_check(Box::new(OkTool));
+        let ctx = || yoagent::types::ToolContext::new("t", "t");
+
+        let md = tool
+            .execute(serde_json::json!({"path": "README.md"}), ctx())
+            .await
+            .unwrap();
+        assert!(!marker.exists(), ".md edit must not run the cargo check");
+        assert_eq!(md.content.len(), 1);
+
+        tool.execute(serde_json::json!({"path": "src/a.rs"}), ctx())
+            .await
+            .unwrap();
+        let rs_ran = marker.exists();
+        crate::watch::clear_watch_command();
+        assert!(rs_ran, ".rs edit must run the cargo check");
     }
 }
