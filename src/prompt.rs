@@ -167,6 +167,24 @@ async fn finish_prompt_epilogue(
     println!();
 }
 
+/// #966: write streamed answer text (and the newlines that frame it) to
+/// stdout — unless stdout is reserved for the final payload (`--print`,
+/// `--output-format json`), where `emit_output` is the single writer and
+/// streaming it here as well printed the answer twice. Suppressed, never
+/// rerouted: stderr already carries the UI chrome.
+fn write_stream_text(s: &str) {
+    write_stream_text_with(stdout_reserved(), s, &mut io::stdout());
+}
+
+/// Pure seam for [`write_stream_text`]: tests pass `reserved` and a buffer
+/// instead of toggling the process global. Returns whether anything was written.
+fn write_stream_text_with(reserved: bool, s: &str, out: &mut impl Write) -> bool {
+    if reserved {
+        return false;
+    }
+    out.write_all(s.as_bytes()).is_ok()
+}
+
 /// Outcome of a prompt execution, including the text response and any tool error.
 #[derive(Debug, Clone, Default)]
 pub struct PromptOutcome {
@@ -589,7 +607,7 @@ impl PromptEventState {
 
         // Show turn boundary when transitioning from text to a new tool batch
         if self.in_text {
-            println!();
+            write_stream_text("\n");
             self.in_text = false;
         }
 
@@ -835,7 +853,7 @@ impl PromptEventState {
         }
 
         if !self.in_text {
-            println!();
+            write_stream_text("\n");
             self.in_text = true;
             self.had_text = true;
         }
@@ -855,7 +873,7 @@ impl PromptEventState {
         // with print doesn't affect correctness. (render_latency_budget)
         let rendered = self.md_renderer.render_delta(&filtered);
         if !rendered.is_empty() {
-            print!("{}", rendered);
+            write_stream_text(&rendered);
         }
         io::stdout().flush().ok();
         self.collected_text.push_str(&filtered);
@@ -875,7 +893,7 @@ impl PromptEventState {
         if !remaining.is_empty() {
             let rendered = self.md_renderer.render_delta(&remaining);
             if !rendered.is_empty() {
-                print!("{rendered}");
+                write_stream_text(&rendered);
                 io::stdout().flush().ok();
             }
             self.collected_text.push_str(&remaining);
@@ -900,7 +918,7 @@ impl PromptEventState {
                 match classify_stop_reason(stop_reason) {
                     StopHandling::InspectError => {
                         if self.in_text {
-                            println!();
+                            write_stream_text("\n");
                             self.in_text = false;
                         }
                         // #646: `StopReason::Error` with no message at all is the
@@ -963,7 +981,7 @@ impl PromptEventState {
                         // is deliberately NOT set here, so into_result() returns
                         // Done and the auto-retry machinery never fires.
                         if self.in_text {
-                            println!();
+                            write_stream_text("\n");
                             self.in_text = false;
                         }
                         // The notice text is built by `refusal_notice` and its
@@ -1100,7 +1118,7 @@ async fn handle_prompt_events(
                     AgentEvent::ProgressMessage { text, .. } => {
                         if let Some(s) = state.spinner.take() { s.stop(); }
                         if state.in_text {
-                            println!();
+                            write_stream_text("\n");
                             state.in_text = false;
                         }
                         println!("{DIM}  {text}{RESET}");
@@ -1117,9 +1135,9 @@ async fn handle_prompt_events(
                     {
                         let remaining = state.md_renderer.flush();
                         if !remaining.is_empty() {
-                            print!("{remaining}");
+                            write_stream_text(&remaining);
                         }
-                        println!();
+                        write_stream_text("\n");
                         state.in_text = false;
                     }
                     AgentEvent::TurnStart => {
@@ -1135,7 +1153,7 @@ async fn handle_prompt_events(
                     AgentEvent::LoopDetected { tool_name, repetitions, aborted, .. } => {
                         if let Some(s) = state.spinner.take() { s.stop(); }
                         if state.in_text {
-                            println!();
+                            write_stream_text("\n");
                             state.in_text = false;
                         }
                         announce_loop_detected(&tool_name, repetitions, aborted);
@@ -1158,7 +1176,7 @@ async fn handle_prompt_events(
                 if let Some(s) = state.spinner.take() { s.stop(); }
                 agent.abort();
                 if state.in_text {
-                    println!();
+                    write_stream_text("\n");
                 }
                 println!("\n{DIM}  (interrupted — press Ctrl+C again to exit){RESET}");
                 return PromptResult::Done {
@@ -1180,12 +1198,12 @@ async fn handle_prompt_events(
     // Flush any remaining buffered markdown content
     let remaining = state.md_renderer.flush();
     if !remaining.is_empty() {
-        print!("{}", remaining);
+        write_stream_text(&remaining);
         io::stdout().flush().ok();
     }
 
     if state.in_text {
-        println!();
+        write_stream_text("\n");
     }
 
     state.into_result()

@@ -333,6 +333,13 @@ fn emit_output(
     write_output_file(output_path, &response.text).is_err()
 }
 
+/// #966: `--print` and the JSON envelope both make `emit_output` the single
+/// writer of stdout, so the streaming renderer must stay off it in EITHER
+/// mode — fixing only `--print` left `| jq` failing with "Extra data".
+fn reserves_stdout(print_mode: bool, json_output: bool) -> bool {
+    print_mode || json_output
+}
+
 /// #965: `--output-format json` set only `output_format`, while `emit_output`
 /// reads the legacy `--json` bool alone, so it wrote no JSON at all. Both
 /// spellings now reach the envelope; `stream-json` keeps its own NDJSON path.
@@ -1206,6 +1213,10 @@ async fn main() {
         if print_mode {
             disable_color();
         }
+        // #966: stdout carries only the final payload in --print / json.
+        if reserves_stdout(print_mode, json_output) {
+            format::reserve_stdout_for_payload();
+        }
         // Slash commands need REPL state, so `-p` can't dispatch them either.
         // Refuse at the dispatch site — before `run_single_prompt` builds an
         // agent and before the image/text branch splits — so no API turn is
@@ -1233,6 +1244,9 @@ async fn main() {
     if !io::stdin().is_terminal() {
         if print_mode {
             disable_color();
+        }
+        if reserves_stdout(print_mode, json_output) {
+            format::reserve_stdout_for_payload();
         }
         run_piped_mode(
             &mut agent_config,

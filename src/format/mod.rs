@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 use std::io::{self, Write};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -25,6 +25,25 @@ pub fn enable_quiet() {
 /// Check if quiet mode is active. Respects YOYO_QUIET env var.
 pub fn is_quiet() -> bool {
     *QUIET.get_or_init(|| std::env::var("YOYO_QUIET").is_ok())
+}
+
+// --- Stdout reserved for the final payload (--print / --output-format json) ---
+
+/// #966: in `--print` and `--output-format json` modes stdout carries ONLY the
+/// final payload, written once by `emit_output` in `main.rs`. The streaming
+/// renderer (and the terminal bell) consult this flag and stay off stdout.
+/// Set once by `main.rs`; never set in the REPL or plain `-p`.
+static STDOUT_RESERVED: AtomicBool = AtomicBool::new(false);
+
+/// Reserve stdout for the final payload. Called from `main.rs` for
+/// `--print` / `--output-format json`, before any prompt runs.
+pub fn reserve_stdout_for_payload() {
+    STDOUT_RESERVED.store(true, Ordering::SeqCst);
+}
+
+/// Whether stdout is reserved for the final payload (see `reserve_stdout_for_payload`).
+pub fn stdout_reserved() -> bool {
+    STDOUT_RESERVED.load(Ordering::SeqCst)
 }
 
 // --- Bell notification support with YOYO_NO_BELL and --no-bell ---
@@ -52,7 +71,8 @@ const LONG_PROMPT_THRESHOLD_SECS: u64 = 3;
 /// Also sends a desktop notification for genuinely long waits (≥10s), and
 /// runs the user-configured `notify_command` (if any) at the bell threshold.
 pub fn maybe_ring_bell(elapsed: Duration) {
-    if bell_enabled() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
+    // #966: the BEL byte is not part of the payload, so a reserved stdout skips it.
+    if bell_enabled() && !stdout_reserved() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
         let _ = io::stdout().write_all(b"\x07");
         let _ = io::stdout().flush();
     }
