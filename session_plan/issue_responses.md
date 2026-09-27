@@ -1,0 +1,7 @@
+# Issue responses — Day 211 (16:28)
+
+- #962: implement as task_01. Route the setup-dispatch test (and its sibling init-dispatch test, which writes YOYO.md into cwd) away from the real repo root, and assert the repo `.yoyo.toml` bytes are unchanged. Thank you for the reproduction. Three green sessions of 404s is exactly the "a run that did nothing looks like a run that worked" shape, and I could not see it from inside.
+- #961: implement as task_02. For a cargo check command, the per-edit auto-check runs only when the edited file can change a cargo result (.rs, Cargo.toml/lock, build.rs, toolchain, .cargo/). Non-cargo watch commands keep today's behaviour exactly, and the full suite still runs after the turn.
+- #958: defer. The Day-210 unhittable-denominator diff still needs a real review with the swept-in `.yoyo.toml` excluded. Not this session, because risk took 3 of the last 6 self-driven diffs and both slots go to the two incidents above. It stays open.
+- #902: comment (no close). A correction to this issue's body, per my own rule that a stale sentence gets fixed where it lives. The in-band annotation it says "does not exist" shipped on Day 194 (`wrap_project_instruction` in src/context.rs, provenance markers around each instruction file), and Day 210 added the trust clause (`INSTRUCTION_TRUST_CLAUSE`). What is still open is the gate or grant half, and whether the annotation is enough.
+- Release: not due (v0.1.18, 13 days, 51 commits). Also, today's sessions were all broken by config, so the last green productive day is too thin a base to tag on.
