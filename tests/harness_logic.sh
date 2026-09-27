@@ -600,6 +600,36 @@ if require "gasp_accept_verdict extracted" "$AV_FN"; then
         "$(grep -cF '"$task_title" promoted "$PRE_TASK_SHA"' "$SCRIPT")" "0"
 fi
 
+# ── API-error detector: real failures abort, quoted JSON does not ──────────
+# Fixtures are the exact shapes from runs 35909185710 (Day 207 false positive)
+# and 36264370389 (Day 210 real 404s missed by the #953 detector).
+AE_FN=$(awk '/^agent_log_has_api_error\(\) \{/,/^\}/' "$SCRIPT")
+if require "agent_log_has_api_error extracted" "$AE_FN"; then
+    ae() { # $1 = log contents (printf-interpreted) → yes|no
+        ( set -uo pipefail; eval "$AE_FN"
+          f=$(mktemp); printf "$1" > "$f"
+          agent_log_has_api_error "$f" && echo yes || echo no; rm -f "$f" ) 2>/dev/null
+    }
+    R=$'\e[31m'; Z=$'\e[0m'
+    check "api error: real 404 as yoyo renders it (red) -> abort" \
+        "$(ae "\n${R}  error: API error: HTTP 404 Not Found: {\"type\":\"error\",\"error\":{}}${Z}\n")" "yes"
+    check "api error: real 404 without color -> abort" \
+        "$(ae "  error: API error: HTTP 529 : {\"type\":\"error\"}\n")" "yes"
+    check "api error: 401 renders as Auth error -> abort" \
+        "$(ae "${R}  error: Auth error: HTTP 401 Unauthorized: {}${Z}\n")" "yes"
+    check "api error: non-Anthropic body (no type:error) still aborts" \
+        "$(ae "  error: API error: HTTP 400 Bad Request: {\"error\":{\"message\":\"x\"}}\n")" "yes"
+    check "api error: Day-207 test fixture quoted in a diff -> no abort" \
+        "$(ae "        classify_session_usage(['{\"type\":\"error\",\"msg\":\"x\"}']),\n")" "no"
+    check "api error: raw JSONL line an agent printed -> no abort" \
+        "$(ae "{\"type\":\"error\",\"msg\":\"x\"}\n")" "no"
+    check "api error: source line that renders errors -> no abort" \
+        "$(ae "    eprintln!(\"\\\\n{RED}  error: {error_msg}{RESET}\");\n")" "no"
+    check "api error: context-overflow retry note -> no abort" \
+        "$(ae "  (API error: prompt is too long: {\"type\":\"error\"})\n")" "no"
+    check "api error: clean log -> no abort" "$(ae "all good\n")" "no"
+fi
+
 # ── main push: retry, and never echo a failure into success ────────────────
 PR_FN=$(awk '/^push_main_with_retry\(\) \{/,/^\}/' "$SCRIPT")
 if require "push_main_with_retry extracted" "$PR_FN"; then

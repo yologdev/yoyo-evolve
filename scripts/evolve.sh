@@ -623,10 +623,21 @@ run_agent_with_fallback() {
     return "$exit_code"
 }
 
-# Only a standalone provider error event is an API failure. Agent prose,
-# tool output, and source code can quote the same JSON fragment verbatim.
+# A terminal provider failure is the line yoyo prints once retries are spent:
+# `  error: API error: HTTP 404 Not Found: {...}` (or `Auth error:` for a
+# 401/403), red-wrapped on stderr, which run_agent_with_fallback merges into
+# the log. Anchor on that rendering, never on the provider's JSON body.
+#
+# Two earlier shapes, both wrong, recorded so neither returns:
+# - bare substring `"type":"error"`: fired on agent prose, diffs and test
+#   fixtures quoting it (Day 207: a Python test fixture aborted a nearly
+#   finished task and cancelled the next one).
+# - line-anchored `^\s*{"type":"error"` (#953): yoyo never prints the body at
+#   line start, so it missed every real failure. Days 210-211 ran with 7
+#   HTTP 404s per session and no abort, while matching raw JSONL an agent
+#   printed.
 agent_log_has_api_error() {
-    grep -qE '^[[:space:]]*\{"type":"error"([,}])' "$1" 2>/dev/null
+    grep -qE $'^(\e\\[[0-9;]*m)?[[:space:]]*error: (API|Auth) error: ' "$1" 2>/dev/null
 }
 
 # ── Ensure fresh token (retries start with a stale token from job start) ──
