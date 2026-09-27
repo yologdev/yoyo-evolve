@@ -1154,6 +1154,27 @@ ceiling {ceiling}. The provider may reject the request with a 400. Lower max_tok
     ))
 }
 
+/// The real maximum `max_tokens` an Anthropic model accepts, or `None` when
+/// yoyo does not know it (#964) — in which case the ceiling warning is skipped
+/// rather than compared against the wrong number.
+///
+/// yoagent 0.18.1's `ModelConfig` has no max-output field: its Anthropic
+/// presets' `max_tokens` is the request *default* (its own doc comments say
+/// "defaults to 64K of the model's 128K max output"), so it cannot serve as the
+/// ceiling. This is deliberately a single entry, not a table, and its one
+/// number is cited from the provider's own rejection text quoted in #964:
+/// `max_tokens: 131072 > 128000, which is the maximum allowed` for
+/// `claude-opus-5-5`. **Nothing re-derives it** — if Anthropic raises the cap,
+/// this goes stale silently (it would warn on a value the API now accepts).
+/// Every other Anthropic id returns `None`: an unknown maximum stays unknown.
+pub(crate) fn anthropic_output_maximum(model: &str) -> Option<u32> {
+    if model.starts_with("claude-opus-5") {
+        Some(128_000)
+    } else {
+        None
+    }
+}
+
 impl AgentConfig {
     /// Apply common configuration to an agent (system prompt, model, API key,
     /// thinking level, skills, tools, and optional limits).
@@ -1171,7 +1192,7 @@ impl AgentConfig {
         &self,
         mut agent: Agent,
         model_context_window: u32,
-        model_output_ceiling: u32,
+        model_output_ceiling: Option<u32>,
     ) -> Agent {
         // User override takes precedence; otherwise use the model's actual context window
         let effective_window = self.context_window.unwrap_or(model_context_window);
@@ -1400,15 +1421,25 @@ impl AgentConfig {
             // `max_tokens_ceiling_warning` for why that is a decision and not
             // an oversight. Sits BEFORE `with_max_tokens` so the number warned
             // about is the number that is applied.
-            if !crate::format::is_quiet() {
-                if let Some(warning) = max_tokens_ceiling_warning(
+            //
+            // #964: deliberately NOT gated on `is_quiet()`. Quiet is
+            // auto-enabled whenever stdin and stdout are both non-terminal —
+            // every piped, scripted and CI run — and that is exactly where a
+            // bare HTTP 400 on every call is hardest to diagnose. This line
+            // predicts that every request will fail, so it is not the
+            // `config:`/`context:` chrome quiet exists to suppress; it goes to
+            // stderr (never the data channel), like the sibling
+            // `unknown_model_warning` / `model_provider_mismatch_warning`.
+            // `None` (maximum unknown) skips the comparison entirely.
+            if let Some(warning) = model_output_ceiling.and_then(|ceiling| {
+                max_tokens_ceiling_warning(
                     max,
-                    model_output_ceiling,
+                    ceiling,
                     &self.model,
                     crate::format::is_plain_output(),
-                ) {
-                    eprintln!("{warning}");
-                }
+                )
+            }) {
+                eprintln!("{warning}");
             }
             agent = agent.with_max_tokens(max);
         }
@@ -1453,28 +1484,31 @@ impl AgentConfig {
             // OpenAI-compat unknown-provider path.
             let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
-            let output_ceiling = model_config.max_tokens;
+            // #964: NOT `model_config.max_tokens` — on every Anthropic preset
+            // that field is the request DEFAULT (64K of opus-5's 128K), so
+            // comparing against it would warn on a correct 128000.
+            let output_ceiling = anthropic_output_maximum(&self.model);
             let agent = Agent::from_provider(AnthropicProvider, model_config);
             self.configure_agent(agent, context_window, output_ceiling)
         } else if self.provider == "google" {
             // Google uses its own provider
             let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
-            let output_ceiling = model_config.max_tokens;
+            let output_ceiling = Some(model_config.max_tokens);
             let agent = Agent::from_provider(GoogleProvider, model_config);
             self.configure_agent(agent, context_window, output_ceiling)
         } else if self.provider == "bedrock" {
             // Bedrock uses AWS SigV4 signing with ConverseStream protocol
             let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
-            let output_ceiling = model_config.max_tokens;
+            let output_ceiling = Some(model_config.max_tokens);
             let agent = Agent::from_provider(BedrockProvider, model_config);
             self.configure_agent(agent, context_window, output_ceiling)
         } else {
             // All other providers use OpenAI-compatible API
             let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
-            let output_ceiling = model_config.max_tokens;
+            let output_ceiling = Some(model_config.max_tokens);
             let agent = Agent::from_provider(OpenAiCompatProvider, model_config);
             self.configure_agent(agent, context_window, output_ceiling)
         }
@@ -2796,7 +2830,7 @@ mod tests {
                 yoagent::provider::ModelConfig::mock(),
             ),
             200_000,
-            200_000,
+            Some(200_000),
         );
         // Agent built successfully with context config
         let _ = agent;
@@ -2840,7 +2874,7 @@ mod tests {
                 yoagent::provider::ModelConfig::mock(),
             ),
             200_000,
-            200_000,
+            Some(200_000),
         );
         let _ = agent;
 
@@ -2878,7 +2912,7 @@ mod tests {
                 yoagent::provider::ModelConfig::mock(),
             ),
             200_000,
-            200_000,
+            Some(200_000),
         );
         let _ = agent;
     }
@@ -3540,6 +3574,82 @@ session will fail on the first turn with 'Tool names must be unique'."
     /// regression surface**: every user who configured nothing, and every user
     /// whose config sits at or under the ceiling (including this repo's own
     /// `.yoyo.toml`: 131072 against DeepSeek's 384000).
+    /// #964: the Anthropic path compares against the model's real output
+    /// MAXIMUM, never the preset's request default. Composed exactly as
+    /// `configure_agent` composes it (`anthropic_output_maximum(model)
+    /// .and_then(|c| max_tokens_ceiling_warning(...))`), so the string asserted
+    /// is the string a caller receives.
+    fn anthropic_ceiling_warning(model: &str, configured: u32) -> Option<String> {
+        anthropic_output_maximum(model)
+            .and_then(|c| max_tokens_ceiling_warning(configured, c, model, true))
+    }
+
+    #[test]
+    fn anthropic_ceiling_warning_uses_real_maximum_not_preset_default() {
+        // The provider's own rejection (#964): 131072 > 128000.
+        assert_eq!(
+            anthropic_ceiling_warning("claude-opus-5-5", 131_072).as_deref(),
+            Some(
+                "max_tokens: configured 131072 exceeds claude-opus-5-5's declared output \
+ceiling 128000. The provider may reject the request with a 400. Lower max_tokens to \
+128000 or below, or pick a model that allows more."
+            )
+        );
+        // Near-miss: this repo's correct value. Comparing against the preset's
+        // DEFAULT (64000) is exactly what would cry wolf here.
+        assert_eq!(anthropic_ceiling_warning("claude-opus-5-5", 128_000), None);
+        // Anti-vacuous: the preset default really is below 128000, so the
+        // near-miss above would fail if the default were used as the ceiling.
+        let preset_default = anthropic_model_config("claude-opus-5-5").max_tokens;
+        assert!(
+            preset_default < 128_000,
+            "fixture premise: preset max_tokens {preset_default} should be the 64K default"
+        );
+        assert!(max_tokens_ceiling_warning(128_000, preset_default, "m", true).is_some());
+    }
+
+    #[test]
+    fn anthropic_ceiling_unknown_maximum_skips_the_warning() {
+        // Documented gate-off: yoagent 0.18.1 carries no max-output field, and
+        // only opus-5's cap is citable (from #964's provider error). For any
+        // other Anthropic id the maximum is unknown, so no comparison is made —
+        // even an absurd value — rather than comparing against the default.
+        assert_eq!(anthropic_output_maximum("claude-sonnet-5"), None);
+        assert_eq!(anthropic_output_maximum("claude-haiku-4-5"), None);
+        assert_eq!(
+            anthropic_ceiling_warning("claude-sonnet-5", 10_000_000),
+            None
+        );
+        assert_eq!(anthropic_output_maximum("claude-opus-5"), Some(128_000));
+    }
+
+    /// #964: the warning must not be muted by quiet mode, which is
+    /// auto-enabled on every piped/scripted run. Weak source-level guard: it
+    /// proves `configure_agent`'s max_tokens block does not consult
+    /// `is_quiet()`, never that the line reached a terminal.
+    #[test]
+    fn max_tokens_ceiling_warning_is_not_quiet_gated() {
+        let src = include_str!("agent_builder.rs");
+        let start_needle = ["if let Some(max) = ", "self.max_tokens {"].concat();
+        let start = src.find(&start_needle).expect("max_tokens block present");
+        let end_needle = ["agent.with_max_tokens", "(max);"].concat();
+        let end = start + src[start..].find(&end_needle).expect("block end present");
+        let block = &src[start..end];
+        assert!(
+            block.contains("max_tokens_ceiling_warning("),
+            "anti-vacuous slice"
+        );
+        let quiet = ["is_", "quiet()"].concat();
+        let code_mentions = block
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .any(|l| l.contains(&quiet));
+        assert!(
+            !code_mentions,
+            "ceiling warning must not be gated on quiet (#964)"
+        );
+    }
+
     #[test]
     fn max_tokens_ceiling_warning_table() {
         // The ordinary case: configured at or under the ceiling → silent.

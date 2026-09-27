@@ -183,7 +183,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // near-miss guard on the preset's two numbers) compares the user's
     // configured `max_tokens` against it. The +166 is mostly comment and test:
     // the two deltas at the arm, the near-miss guard, and the warning table.
-    ("src/agent_builder.rs", 4513),
+    ("src/agent_builder.rs", 4623),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
