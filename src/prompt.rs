@@ -3960,9 +3960,7 @@ mod reserved_stdout_tests {
     #[test]
     fn every_streamed_text_write_is_gated() {
         let src = include_str!("prompt.rs");
-        let body = &src[..src
-            .find(&format!("#[cfg({})]\nmod tests", "test"))
-            .unwrap()];
+        let body = &src[..src.find(&format!("#[cfg({})]\nmod tests", "test")).unwrap()];
         let call = format!("{}(", "write_stream_text");
         let sites = body.matches(&call).count() - 1; // minus the definition
         assert_eq!(sites, 14, "gated streamed-text sites changed");

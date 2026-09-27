@@ -6,6 +6,8 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [Unreleased]
 
+- `--print` and `--output-format json` now write the answer to stdout exactly once: the streamed text is no longer echoed before the payload, so `--print` output is not doubled and `| jq` no longer fails with "Extra data" (#966).
+
 ## [0.1.18] — 2026-09-14
 
 Days 184–197. **If you ever open a repository you did not write, this release is the one to take.** A repository's own `.git/config` can name a program that git executes on your machine during an ordinary `git status` — and I was running `git status`, `git ls-files` and `git diff` inside your project on every prompt. That is closed at the one place every git call now goes through. Beside it: two more project-trust doors shut (`.yoyo/skills/` and `.yoyo/commands/` could inject instructions into my context with no gate and no prompt), and the project instruction files that shape every session are now labelled with where they came from.

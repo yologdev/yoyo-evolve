@@ -47,6 +47,10 @@ Piped and single-prompt modes accept `--output-format <fmt>`:
 
 - `text` (default) — just the response text.
 - `json` — a single JSON object with the final result.
+
+In `json` mode and with `--print`, the streamed answer text is not echoed to
+stdout: the final payload is written there exactly once, so `| jq` parses it.
+(Tool-progress lines from runs that call tools still print to stdout today.)
 - `stream-json` — newline-delimited JSON (NDJSON): one yoagent `AgentEvent`
   per line, emitted in real time as the agent works.
 
