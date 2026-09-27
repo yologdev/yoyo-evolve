@@ -6,3 +6,4 @@
 - #960: empty-diff fallback task caused by the same .yoyo.toml clobbering (every call went to the wrong model) — fixed in 001f9ce7. Nothing to re-plan. Comment and close.
 - #944: defer — the social.sh spend slice is next; suspected (not observed) quiet-mode blind spot like daily_diary had.
 - #951: no reply yet; nothing new to say. (Side note for the record: the Day-210 unhittable diff is only reachable as a range diff because its only touching commit is the shallow graft boundary.)
+- #958: reviewed; checks (a) and (b) pass, (c) failed: the denominator writer was unpinned (control stayed green). Added a writer→parser round-trip test; the control now fails it by name. Close

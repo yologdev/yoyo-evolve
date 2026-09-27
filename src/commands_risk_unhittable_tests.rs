@@ -1389,6 +1389,59 @@ mod retrospective_tests {
         );
     }
 
+    /// #958: every other recorded-pair test types the JSON line by hand, so the
+    /// WRITER was unpinned — neutering its `unmeasurable_surprises` insert left
+    /// the suite green. This goes through the real writer and the real parser:
+    /// both halves round-trip, and `None` stays absent (never a written 0).
+    #[test]
+    fn the_writer_records_the_denominator_and_the_parser_reads_it_back() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("v.jsonl");
+        let surprises = vec!["src/born.rs".to_string()];
+        crate::commands_risk_snapshots::write_validation_event(
+            &path,
+            210,
+            "watch_failure",
+            &[],
+            &surprises,
+            0.0,
+            None,
+            None,
+            None,
+            None,
+            Some(4),
+            Some(144),
+        )
+        .expect("write paired event");
+        crate::commands_risk_snapshots::write_validation_event(
+            &path,
+            210,
+            "watch_failure",
+            &[],
+            &surprises,
+            0.0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("write legacy-shaped event");
+        let text = std::fs::read_to_string(&path).expect("read ledger");
+        let rows = parse_surprise_rows(&text);
+        assert_eq!(rows.len(), 2, "both events parse: {text}");
+        assert_eq!(rows[0].recorded_unhittable, Some(4), "{text}");
+        assert_eq!(rows[0].recorded_unmeasurable, Some(144), "{text}");
+        assert_eq!(rows[1].recorded_unhittable, None, "absent, not 0: {text}");
+        assert_eq!(rows[1].recorded_unmeasurable, None, "absent, not 0: {text}");
+        let legacy = text.lines().nth(1).expect("second line");
+        assert!(
+            !legacy.contains("unmeasurable_surprises"),
+            "None must omit the key: {legacy}"
+        );
+    }
+
     #[test]
     fn a_half_recorded_pair_is_not_a_ratio_and_is_not_counted() {
         // Half a ratio is the exact silence this task removes, so a row that
