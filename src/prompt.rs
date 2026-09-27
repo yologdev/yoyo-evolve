@@ -2980,27 +2980,146 @@ mod tests {
         }
     }
 
-    /// The half of the measurement that is NOT about truncation, recorded
-    /// because it is the surprising row: an API error carrying no recognised
-    /// keyword sets nothing at all, so it surfaces as `Done` rather than as any
-    /// error. Not a truncation defect and deliberately not repaired here — the
-    /// phrase list is #855's open subject. Pinned so the reading is not
-    /// re-derived, and so a future widening of the phrase list is a visible
-    /// change rather than a silent one.
+    /// The half of the measurement that is NOT about truncation. Until Day 211
+    /// this test pinned the surprising row — an API error carrying no
+    /// recognised keyword set nothing and surfaced as `Done` — "so that a
+    /// future change is a visible change rather than a silent one". #965 is
+    /// that change, made deliberately: `-p` exited 0 and `--output-format json`
+    /// wrote nothing on a 401/404. The characterization is inverted, not
+    /// deleted: both rows now surface as `FatalError`, which becomes
+    /// `last_api_error` (exit 1, `is_error: true`, fallback eligible).
     #[test]
-    fn unrecognised_api_error_surfaces_as_done_not_fatal() {
+    fn unrecognised_api_error_surfaces_as_fatal_not_done() {
         assert_eq!(
             classify_shape(Some("API error: something no phrase list recognises")),
-            "Done",
-            "an unrecognised API error is neither retried nor surfaced as an error"
+            "FatalError",
+            "#965: an unrecognised API error must surface as an error, never Done"
         );
-        // Near-miss guard: an auth error is likewise not fatal — it is refused
-        // by the non-retriable status-code check and falls through to Done.
         assert_eq!(
             classify_shape(Some("Auth error: 401 unauthorized")),
-            "Done",
-            "auth errors take the diagnostic path, not the fatal one"
+            "FatalError",
+            "#965: an auth error must surface as an error, never Done"
         );
+    }
+
+    /// #965 at the emission point: the `PromptOutcome` a caller of the display
+    /// path receives (`into_result()` → `fatal_handoff` → `build_outcome`, the
+    /// same composition both loops use). Representative non-retriable provider
+    /// errors must carry `last_api_error`, which is what main turns into exit 1
+    /// and `is_error: true`, and what `try_fallback_prompt` retries on.
+    #[test]
+    fn non_retriable_provider_errors_surface_as_last_api_error() {
+        let cases = [
+            "API error: 400 Bad Request: invalid model parameter",
+            "Auth error: 401 Unauthorized: invalid x-api-key",
+            "API error: 403 Forbidden",
+            "API error: 404 Not Found: model not found",
+        ];
+        for msg in cases {
+            let mut state = state_for_test();
+            state.handle_agent_end(vec![error_assistant_msg(Some(msg))], "claude-test");
+            assert_eq!(
+                state.fatal_error.as_deref(),
+                Some(msg),
+                "#965: {msg} must be recorded verbatim in fatal_error"
+            );
+            assert_eq!(state.overflow_error, None, "{msg} is not an overflow");
+            assert_eq!(state.retriable_error, None, "{msg} is not retriable");
+            let outcome = outcome_from_state(state);
+            assert_eq!(
+                outcome.last_api_error.as_deref(),
+                Some(msg),
+                "#965: {msg} must reach the caller as last_api_error (exit 1)"
+            );
+        }
+    }
+
+    /// #965 near-miss guards, at the same emission point: none of these may be
+    /// dragged into the new fatal branch.
+    #[test]
+    fn non_error_and_classified_errors_keep_their_paths_after_965() {
+        // A successful turn: no error at all.
+        let mut state = state_for_test();
+        state.collected_text = "hello".to_string();
+        assert_eq!(outcome_from_state(state).last_api_error, None);
+        // Benign stream end: delivered in full, stays clean.
+        let mut state = state_for_test();
+        state.handle_agent_end(
+            vec![error_assistant_msg(Some(
+                "stream ended without a terminator",
+            ))],
+            "claude-test",
+        );
+        assert_eq!(state.fatal_error, None);
+        assert_eq!(outcome_from_state(state).last_api_error, None);
+        // Context overflow keeps its own path (auto-compaction).
+        let mut state = state_for_test();
+        state.handle_agent_end(
+            vec![error_assistant_msg(Some(
+                "prompt is too long: 250000 tokens",
+            ))],
+            "claude-test",
+        );
+        assert_eq!(state.fatal_error, None);
+        assert_eq!(
+            state.overflow_error.as_deref(),
+            Some("prompt is too long: 250000 tokens")
+        );
+        // Retriable 5xx / 429 keep the retry path.
+        for msg in [
+            "API error: 503 Service Unavailable",
+            "429 Too Many Requests",
+        ] {
+            let mut state = state_for_test();
+            state.handle_agent_end(vec![error_assistant_msg(Some(msg))], "claude-test");
+            assert_eq!(state.fatal_error, None, "{msg} must not become fatal");
+            assert_eq!(state.retriable_error.as_deref(), Some(msg));
+        }
+    }
+
+    /// Compose the value a display-path caller receives from a finished state,
+    /// through the production helpers rather than a struct literal.
+    fn outcome_from_state(state: PromptEventState) -> PromptOutcome {
+        match state.into_result() {
+            PromptResult::Done {
+                collected_text,
+                text_since_last_tool,
+                last_tool_error,
+                last_tool_name,
+                ..
+            } => build_outcome(
+                collected_text,
+                text_since_last_tool,
+                last_tool_error,
+                last_tool_name,
+                false,
+                None,
+            ),
+            PromptResult::FatalError {
+                error_msg,
+                collected_text,
+                ..
+            } => {
+                let (text, api_error) = fatal_handoff(collected_text, error_msg);
+                build_outcome(text, String::new(), None, None, false, api_error)
+            }
+            PromptResult::RetriableError { error_msg, .. } => build_outcome(
+                String::new(),
+                String::new(),
+                None,
+                None,
+                false,
+                Some(error_msg),
+            ),
+            PromptResult::ContextOverflow { error_msg, .. } => build_outcome(
+                String::new(),
+                String::new(),
+                None,
+                None,
+                true,
+                Some(error_msg),
+            ),
+        }
     }
 
     /// Drive `handle_stream_json_events` with a hand-fed event stream and return
