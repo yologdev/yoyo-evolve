@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || true; bash -n script… ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "audit_log_usage\|YOYO_AU… ✓ (5ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 17.6s (3 ✓)
+
+Verdict: PASS. It's written to session_plan/eval_task_2.md. The only checks I ran were bash -n and a few greps of the source; I didn't re-run the stub cases.
+
+• **What changed:** `scripts/daily_diary.sh` now sets `YOYO_AUDIT=1` and records the audit file's line count before the run. Afterwards it prints to stderr (not stdout, where the diary goes) either this run's usage record or the honest no_terminal_emit absence. It also prints the per-run record count and the cumulative file size, labelled separately. Every step keeps going if the audit file or usage record is missing, and a non-zero exit from yoyo is passed through.
+• **One difference from the spec, and it holds up:** the spec said to capture the output and grep the `↳` usage line. The diff reads the `"type": "usage"` record from `.yoyo/audit.jsonl` instead, and leaves stdout uncaptured. The code backs this up:
+  • `src/cli.rs:2210 switches on quiet mode when neither stdin nor stdout is a terminal, and quiet mode hides the ↳` line. Piping the output into a capture would therefore always come back empty.
+  • `src/main.rs:311` writes the usage record to the audit file, which quiet mode doesn't affect.
+• **Other checks:**
+  • `bash -n` is clean.
+  • The new function is called, and every new variable is read.
+  • No protected files were touched, and no CLI flags, config defaults or startup behaviour changed.
+  • The script and the `ARCHITECTURE.md` entry were committed separately, script first, as the ordering rule asks.
+  • The `ARCHITECTURE.md` entry records the before/after, the reason for the change of method, and what's still open: this is a per-run report rather than durable storage, and any total is a lower bound because sub-agent tokens aren't counted (yoagent#173).
+
+The implementer also noticed that the same quiet-mode rule means social.sh's Day-209 ↳ grep probably never matches in production. That comes from reading the code, not from a real run, and it's filed as a follow-up rather than fixed here.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

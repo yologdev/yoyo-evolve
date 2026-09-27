@@ -1,0 +1,65 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 350,452p scripts/social.sh;… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 740,775p src/format/mod.rs;… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "stdout().is_terminal\|io… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2200,2215p src/cli.rs; sed … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn '"usage"' src/*.rs | grep… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 290,340p src/main.rs; sed -… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 215,250p src/prompt_budget.… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "cd \|pushd" scripts/daily… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn audit_base" -A12 src/p… ✓ (3ms)
+  10 tools completed in 55.2s (10 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (69 lines) ✓ (30ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && R=$PWD && BL… (17 lines) ✓ (97ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 140,160p src/prompt_budge… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (72ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 34.0s (4 ✓)
+
+Both commits are in. Now the gates: no Rust changed, but some tests read ARCHITECTURE.md and scripts, so I'm running the full suite.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 32s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -q 2>&1 | grep -E "^t… ✓ (1m 30s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 11s (2 ✓)
+
+scripts/daily_diary.sh now prints its own per-run spend on stderr, and the diary on stdout is unchanged. It's in two commits: ecf15eee is the script, committed before any verification or cargo run as the plan required, and 8c30a63e is the ARCHITECTURE.md entry. fmt, clippy (-D warnings) and cargo test all pass with 0 failures; no Rust was touched.
+
+I did one thing differently from the spec, and why. The spec said to capture the run's output and grep it for the ↳ usage line. That can't work here. Stdin is a file, and src/cli.rs turns on quiet mode when stdin and stdout are both non-terminals. Piping stdout into tee makes that true, and quiet mode suppresses print_usage, so the captured file would never contain the ↳ line. It would also silently take colour and chrome away from anyone running the script in a terminal.
+
+So stdout is left alone, and the spend comes from the "type":"usage" record that yoyo writes to .yoyo/audit.jsonl whether or not quiet is on. The script finds it in this run's new audit lines. That pattern matches 28 real records in the live audit file.
+
+Test output. I ran a stub YOYO_BIN against the block copied out of the shipped file with sed, each case in its own temp dir, all in one command:
+```
+(a) exit=0  Spend (this run): {"cost_usd":0.0123,"input_tokens":1000,"output_tokens":200,"type":"usage"}
+            Spend audit: 2 record(s) this run (line 0 → 2); 91 bytes cumulative in .yoyo/audit.jsonl
+(b) exit=124  Spend (this run): no usage record — the process did not reach its terminal emit (no_terminal_emit)
+              Spend audit: 1 record(s) this run (line 0 → 1); 16 bytes cumulative in .yoyo/audit.jsonl
+(c) exit=0  … no_terminal_emit
+            Spend audit: WARNING — no .yoyo/audit.jsonl; audit records were not written this run (cumulative size unknown)
+(d) exit=0  Spend (this run): {"cost_usd":0.5,"type":"usage"}
+            Spend audit: 2 record(s) this run (line 5 → 7); 128 bytes cumulative in .yoyo/audit.jsonl
+(e) new exit=0 old exit=0 — stdout BYTE-IDENTICAL to pre-change (41 bytes), both honest absences on stderr
+(f) exit-3 run: new exit=3 old exit=3
+```
+Case (e) was the unchanged-diary check: YOYO_AUDIT unset, no audit file, no usage record, and cmp against the old script's stdout. The exit status matches the old script in every case.
+
+Side effect. The temporary prompt file used to be left behind when yoyo failed. It's now deleted, and the non-zero exit code is still passed on.
+
+Possible bug in last session's `social.sh` change. It greps for the same ↳ line, and it too reads stdin from a file and pipes output through tee. By the same reasoning that grep probably never matches in production, so it would always print no_terminal_emit. I got this from reading the code and haven't seen it on a real social run. Its audit-count half isn't affected. I left it alone because it's outside this task's files, and noted it in ARCHITECTURE.md as a follow-up.
+
+What this doesn't fix. It's a per-run report, not a permanent record: if the runner's checkout is thrown away, the number goes with it. A permanent record would have to live in a workflow file, which is protected and needs a human. Because of the sub-agent token issue (yologdev/yoagent#173), every number here is a lower bound. dream.sh and synthesize.yml still report no spend at all.
+
+  watch: no files changed this turn — skipping
+
