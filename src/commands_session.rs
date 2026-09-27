@@ -30,12 +30,40 @@ const COMPACT_MIN_REDUCTION: f64 = 0.10;
 
 /// Reset the thrash counter (call when context changes significantly, e.g. /clear, /load).
 pub fn reset_compact_thrash() {
-    COMPACT_THRASH_COUNT.store(0, Ordering::Relaxed);
+    reset_compact_thrash_with(&COMPACT_THRASH_COUNT);
 }
 
 /// Check whether auto-compaction is currently suppressed due to thrashing.
 pub fn is_compact_thrashing() -> bool {
-    COMPACT_THRASH_COUNT.load(Ordering::Relaxed) >= COMPACT_THRASH_THRESHOLD
+    is_compact_thrashing_with(&COMPACT_THRASH_COUNT)
+}
+
+// The `_with` seams below take the counter as a PARAMETER so tests can drive a
+// local `AtomicU32` instead of the process-global one (#963: two tests mutating
+// `COMPACT_THRASH_COUNT` raced under libtest's parallel scheduler). Production
+// always passes `&COMPACT_THRASH_COUNT`; the logic lives here exactly once.
+
+fn reset_compact_thrash_with(counter: &AtomicU32) {
+    counter.store(0, Ordering::Relaxed);
+}
+
+fn is_compact_thrashing_with(counter: &AtomicU32) -> bool {
+    counter.load(Ordering::Relaxed) >= COMPACT_THRASH_THRESHOLD
+}
+
+/// Record one compaction's yield: a reduction under `COMPACT_MIN_REDUCTION`
+/// counts toward thrashing, anything at or above it resets the streak.
+fn record_compaction_with(counter: &AtomicU32, before_tokens: u64, after_tokens: u64) {
+    let reduction = if before_tokens > 0 {
+        (before_tokens - after_tokens) as f64 / before_tokens as f64
+    } else {
+        0.0
+    };
+    if reduction < COMPACT_MIN_REDUCTION {
+        counter.fetch_add(1, Ordering::Relaxed);
+    } else {
+        counter.store(0, Ordering::Relaxed);
+    }
 }
 
 // ── compact ──────────────────────────────────────────────────────────────
@@ -113,16 +141,7 @@ pub fn compact_agent_with_keep(
         None
     } else {
         // Track whether the compaction was meaningful for thrash detection
-        let reduction = if before_tokens > 0 {
-            (before_tokens - after_tokens) as f64 / before_tokens as f64
-        } else {
-            0.0
-        };
-        if reduction < COMPACT_MIN_REDUCTION {
-            COMPACT_THRASH_COUNT.fetch_add(1, Ordering::Relaxed);
-        } else {
-            COMPACT_THRASH_COUNT.store(0, Ordering::Relaxed);
-        }
+        record_compaction_with(&COMPACT_THRASH_COUNT, before_tokens, after_tokens);
         Some((before_count, before_tokens, after_count, after_tokens))
     }
 }
@@ -963,60 +982,66 @@ mod tests {
         assert!((COMPACT_MIN_REDUCTION - 0.10).abs() < f64::EPSILON);
     }
 
+    // The four tests below drive a LOCAL counter through the `_with` seams
+    // rather than the process-global `COMPACT_THRASH_COUNT`: libtest runs them
+    // in parallel, and on the shared global they raced (#963).
+
     #[test]
     fn test_reset_compact_thrash() {
         // Set to some value, then reset
-        COMPACT_THRASH_COUNT.store(5, Ordering::Relaxed);
-        reset_compact_thrash();
-        assert_eq!(COMPACT_THRASH_COUNT.load(Ordering::Relaxed), 0);
+        let counter = AtomicU32::new(5);
+        reset_compact_thrash_with(&counter);
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
     }
 
     #[test]
     fn test_compact_thrash_detection_increments_on_low_reduction() {
-        reset_compact_thrash();
-        assert!(!is_compact_thrashing());
+        let counter = AtomicU32::new(0);
+        assert!(!is_compact_thrashing_with(&counter));
 
-        // Simulate two low-yield compactions
-        COMPACT_THRASH_COUNT.fetch_add(1, Ordering::Relaxed);
-        assert!(!is_compact_thrashing()); // 1 < 2
-        COMPACT_THRASH_COUNT.fetch_add(1, Ordering::Relaxed);
-        assert!(is_compact_thrashing()); // 2 >= 2
-
-        reset_compact_thrash(); // cleanup
+        // Simulate two low-yield compactions (5% < 10%) through the real recorder
+        record_compaction_with(&counter, 100, 95);
+        assert_eq!(counter.load(Ordering::Relaxed), 1);
+        assert!(!is_compact_thrashing_with(&counter)); // 1 < 2
+        record_compaction_with(&counter, 100, 95);
+        assert_eq!(counter.load(Ordering::Relaxed), 2);
+        assert!(is_compact_thrashing_with(&counter)); // 2 >= 2
     }
 
     #[test]
     fn test_compact_thrash_detection_resets_on_meaningful_reduction() {
-        reset_compact_thrash();
+        let counter = AtomicU32::new(0);
 
         // Simulate hitting thrash state
-        COMPACT_THRASH_COUNT.store(2, Ordering::Relaxed);
-        assert!(is_compact_thrashing());
+        counter.store(2, Ordering::Relaxed);
+        assert!(is_compact_thrashing_with(&counter));
 
-        // A meaningful compaction resets it
-        COMPACT_THRASH_COUNT.store(0, Ordering::Relaxed);
-        assert!(!is_compact_thrashing());
+        // A meaningful compaction resets it — exactly 10% is the near-miss:
+        // `reduction < COMPACT_MIN_REDUCTION` is strict, so 10% counts as meaningful.
+        record_compaction_with(&counter, 100, 90);
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+        assert!(!is_compact_thrashing_with(&counter));
 
-        reset_compact_thrash(); // cleanup
+        // One token less freed (9%) is low-yield and counts again.
+        record_compaction_with(&counter, 100, 91);
+        assert_eq!(counter.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn test_is_compact_thrashing_boundary() {
-        reset_compact_thrash();
+        let counter = AtomicU32::new(0);
 
         // Below threshold
-        COMPACT_THRASH_COUNT.store(1, Ordering::Relaxed);
-        assert!(!is_compact_thrashing());
+        counter.store(1, Ordering::Relaxed);
+        assert!(!is_compact_thrashing_with(&counter));
 
         // At threshold
-        COMPACT_THRASH_COUNT.store(2, Ordering::Relaxed);
-        assert!(is_compact_thrashing());
+        counter.store(2, Ordering::Relaxed);
+        assert!(is_compact_thrashing_with(&counter));
 
         // Above threshold
-        COMPACT_THRASH_COUNT.store(10, Ordering::Relaxed);
-        assert!(is_compact_thrashing());
-
-        reset_compact_thrash(); // cleanup
+        counter.store(10, Ordering::Relaxed);
+        assert!(is_compact_thrashing_with(&counter));
     }
 
     #[test]
