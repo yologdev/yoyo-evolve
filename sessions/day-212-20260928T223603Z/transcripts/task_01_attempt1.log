@@ -1,0 +1,84 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 14,100p src/prompt.rs; sed … ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 3620,3665p src/prompt.rs; e… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=3640 && NR<=3816 && /fn |… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 11,15p src/prompt.rs | cat … ✓ (2m 1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp /tmp/before.txt /tmp/before_ful… ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 2m 30s (6 ✓)
+
+Baseline: 6129 passed. Now the move, done with a script so it's verbatim.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (28 lines) ✓ (272ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+prompt.rs got rewritten before the directory existed. I'll restore it (it had no uncommitted changes before I started) and run the script again.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git checkout -… (28 lines) ✓ (31ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '"/src/prompt.rs"\|read sr… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo build 2>&1 | gr… ✓ (12.6s)
+  3 tools completed in 22.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Build is clean. Next: update the ratchet entry, then add the ARCHITECTURE note.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/^    ("src\/prompt.rs", … ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^- \`prompt.rs\`\|^- \*\*… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 511,513p ARCHITECTURE.md | … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (18.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 33.1s (4 ✓)
+
+fmt and clippy are clean. Now the full test suite, compared against the 6129 baseline:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | tee /tmp/after_f… ✓ (2m 48s)
+
+Same total, and all 8 moved tests ran under prompt::turn_prefix. Committing:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A src… (16 lines) ✓ (49ms)
+
+I moved the turn-prefix helpers into a new child module, which brings src/prompt.rs from 4006 to 3785 lines. That's 128 under its old registered 3913. Before, the file was 93 lines into a 100-line grace band, so seven more lines would have failed the size gate. Build, clippy with -D warnings, the fmt check and cargo test all pass.
+
+• **What moved:** `apply_effort_hint`, `apply_effort_hint_with`, `apply_external_failure_note_with` and `prepend_external_failure_block_with`, plus their 8 unit tests. They now live in src/prompt/turn_prefix.rs (241 lines). None of them relied on anything private to prompt.rs, so all four moved and no visibility was widened. prompt.rs declares mod turn_prefix; and re-exports the three helpers its call sites use, so no caller changed.
+• **Size register:** `tests/module_size.rs:482` now reads `("src/prompt.rs", 3785)`. It had to be updated because the gate also fails when a file shrinks. The new file is under the 2000-line cap, so it needs no entry.
+• **Test count:** 6129 passed before and 6129 after, 0 failed. The 8 moved tests now run under prompt::turn_prefix.
+• **One edit inside a moved test:** `test_apply_effort_hint_wrapper_reads_the_global_level` finds the wrapper by reading its source file, so I changed that path from `src/prompt.rs` to `src/prompt/turn_prefix.rs`. Otherwise the test would have looked in the wrong file. The assertion itself is unchanged.
+• **Docs:** there's a dated note with the measured before/after counts under prompt.rs's entry in ARCHITECTURE.md.
+
+The task is in two commits. The first (0d4c61c4) is the checkpoint you asked for before running cargo. It contains only the move and doesn't include the ratchet update. 7e1420c3 is the finished task.
+
+One slip along the way: my first move script overwrote prompt.rs before creating the new directory, and then errored out. I restored the file with git checkout -- src/prompt.rs, which lost nothing since it had no uncommitted changes, and re-ran the script with checks that the line ranges were right.
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short | head; git log… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Nothing is left to do: the task was already finished and committed before this turn. I just re-checked, and everything is in place:
+
+• **Working tree:** nothing uncommitted.
+• Commits: 0d4c61c4 is the checkpoint taken before running cargo, and 7e1420c3 is the finished task.
+• **Size: `wc -l src/prompt.rs` gives 3785**, down from 4006 and under the old registered 3913. The size register at tests/module_size.rs:482 reads ("src/prompt.rs", 3785).
+• **Checks:** at commit time, build, `cargo test` (6129 passed before and after, 0 failed), clippy with `-D warnings` and the fmt check all passed. I didn't re-run them this turn because nothing has changed since.
+
+The task said to do nothing beyond this, so I've stopped here.
+
+  watch: no files changed this turn — skipping
+

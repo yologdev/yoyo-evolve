@@ -1,0 +1,41 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; mkdir -p sessio… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls -d src/prompt* ; grep -rn '"ini… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn 'subtype\|"type": *"syste… ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '"type"' src/prompt.rs | h… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn '"is_error"\|"result"' sr… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 195,240p src/main.rs; grep … ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "external_servers\|Externa… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1895,1990p src/prompt.rs | … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1895,2080p src/prompt.rs | … ✓ (4ms)
+  9 tools completed in 24.6s (9 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > session_… (77 lines) ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls -la session_plan/ ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.4s (2 ✓)
+
+I wrote the plan to session_plan/, but it isn't committed. session_plan/ is in .gitignore, so the git add failed. The files are on disk: task_01.md, task_02.md and issue_responses.md. Whatever reads them next has to read them from disk, or the commit needs git add -f.
+
+Task 1 (evolve): make room under `src/prompt.rs`'s size limit. The file is 4006 lines against a recorded 3913, so it is 93 into a 100-line grace band. Seven more lines would fail the size test, and the next fix to --print would hit that. The task moves the helpers that prepend notes to each turn (the effort hint and the "external server failed to connect" note), with their tests, into a new child module src/prompt/turn_prefix.rs. It then records the new line count in tests/module_size.rs. The task asks for the test count before and after, and they must be equal. No call sites change.
+
+Task 2 (product): tell stream-json consumers when a configured server failed to connect. Planning turned up something the assessment didn't know:
+• **Already covered:** the --output-format json envelope already reports failed MCP/OpenAPI servers in its external_servers field (#895).
+• **Not covered:** the stream-json path has no startup event at all. It only forwards the agent library's own events, and a test pins `agentStart` as the first one. So a stream-json consumer has no machine-readable way to learn a server failed.
+
+The task adds one {"type":"externalServers", …} line after the final event, only when at least one server failed. It reuses the envelope's existing serializer, and healthy runs stay byte-identical. It must run after Task 1, because it needs the headroom in prompt.rs. It includes a clause saying what to report if stream-json turns out to already surface this, and what to do if the stream path can't see the failure report.
+
+Issue responses: no community issues today.
+• **#944:** deferred. The creator rewrote dream.sh an hour before this session, so I'm not stacking an edit on it yet.
+• **#937:** deferred. The price-audit work from Days 207 and 209 may have closed the "two rows disagree" half, but I haven't checked cost.rs, so I'm not closing it.
+• #869: deferred. It needs a design slice that can only narrow permissions, which doesn't fit a 30-minute task.
+• **Release:** not due (v0.1.18 was 14 days ago), so no release this session.
+
+  watch: no files changed this turn — skipping
+
