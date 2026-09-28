@@ -208,7 +208,7 @@ fn build_json_output_with(
 ) -> String {
     let cost_usd = estimate_cost(usage, model);
     let json_obj = serde_json::json!({
-        "response": response.text,
+        "response": answer_payload(&response.text),
         "model": model,
         "usage": {
             "input_tokens": usage.input,
@@ -310,7 +310,7 @@ fn emit_output(
     // for every piped run. A file write is the one channel neither can close.
     prompt_budget::audit_log_usage(usage, model, duration, num_turns, is_error);
     if print_mode {
-        print!("{}", response.text);
+        print!("{}", answer_payload(&response.text));
     } else if json_output {
         println!(
             "{}",
@@ -338,6 +338,23 @@ fn emit_output(
 /// mode — fixing only `--print` left `| jq` failing with "Extra data".
 fn reserves_stdout(print_mode: bool, json_output: bool) -> bool {
     print_mode || json_output
+}
+
+/// Day 212: the answer as the reserved stdout payload (`--print` text and the
+/// JSON envelope's `response`), minus any leading whitespace-only LINES.
+/// Measured: `claude-opus-4-6` opens its first text delta with `"\n\nPONG"`
+/// (stream-json shows it in the provider delta itself), so `--print` stdout
+/// began `\n\n`. Only whole blank lines are cut: the first real line keeps
+/// its indentation, and everything after it — including trailing newlines —
+/// is byte-identical. The streamed (unreserved) surface and `--output` files
+/// are deliberately untouched.
+fn answer_payload(text: &str) -> &str {
+    let rest = text.trim_start();
+    let prefix = &text[..text.len() - rest.len()];
+    match prefix.rfind('\n') {
+        Some(nl) => &text[nl + 1..],
+        None => text,
+    }
 }
 
 /// #965: `--output-format json` set only `output_format`, while `emit_output`
