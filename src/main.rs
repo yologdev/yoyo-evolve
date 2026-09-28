@@ -349,12 +349,14 @@ fn reserves_stdout(print_mode: bool, json_output: bool) -> bool {
 /// is byte-identical. The streamed (unreserved) surface and `--output` files
 /// are deliberately untouched.
 fn answer_payload(text: &str) -> &str {
-    let rest = text.trim_start();
-    let prefix = &text[..text.len() - rest.len()];
-    match prefix.rfind('\n') {
-        Some(nl) => &text[nl + 1..],
-        None => text,
+    let mut out = text;
+    while let Some((line, after)) = out.split_once('\n') {
+        if !line.trim().is_empty() {
+            break;
+        }
+        out = after;
     }
+    out
 }
 
 /// #965: `--output-format json` set only `output_format`, while `emit_output`

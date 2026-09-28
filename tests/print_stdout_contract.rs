@@ -28,7 +28,12 @@ const ANSWER: &str = r#"{"answer": 42}"#;
 
 /// One Anthropic Messages SSE stream whose only text is `ANSWER`.
 fn sse_body() -> String {
-    let text = serde_json::to_string(ANSWER).unwrap();
+    sse_text_body(ANSWER)
+}
+
+/// One Anthropic Messages SSE stream whose single text delta is `answer`.
+fn sse_text_body(answer: &str) -> String {
+    let text = serde_json::to_string(answer).unwrap();
     let events: Vec<(&str, String)> = vec![
         (
             "message_start",
@@ -514,5 +519,85 @@ fn piped_print_mode_stdout_is_exactly_the_answer_bytes_after_a_thinking_block() 
         ANSWER,
         "piped --print stdout must be exactly the answer bytes, untrimmed; stderr={}",
         run.stderr
+    );
+}
+
+/// Day 212 (evaluator re-run): with the default model `claude-opus-4-6` the
+/// provider's FIRST text delta itself is `"\n\nPONG"` (seen verbatim in
+/// `--output-format stream-json`), so `--print` stdout began `\n\n` even with
+/// every chrome emitter already on stderr. The stub replays that exact shape.
+const LEADING_BLANK_LINES: &str = "\n\n";
+
+#[test]
+fn print_mode_strips_model_emitted_leading_blank_lines() {
+    let body = sse_text_body(&format!("{LEADING_BLANK_LINES}{ANSWER}"));
+    // Anti-vacuous: the stub really sends the answer prefixed by blank lines.
+    assert!(
+        body.contains(r#""text":"\n\n{"#),
+        "fixture must stream a text delta that opens with two newlines"
+    );
+    let run = run_yoyo_with(
+        &["--no-tools", "--max-turns", "1"],
+        &["--print", "-p", "hi"],
+        None,
+        vec![body.clone()],
+    );
+    assert_reached_stub(&run);
+    assert_eq!(
+        run.stdout.first().copied(),
+        ANSWER.as_bytes().first().copied(),
+        "--print stdout must START with the answer's first byte; stdout={:?} stderr={}",
+        String::from_utf8_lossy(&run.stdout),
+        run.stderr
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        ANSWER,
+        "--print stdout must be exactly the answer bytes, untrimmed; stderr={}",
+        run.stderr
+    );
+
+    // Piped door into the same reserve.
+    let piped = run_yoyo_with(
+        &["--no-tools", "--max-turns", "1"],
+        &["--print"],
+        Some("hi\n"),
+        vec![body.clone()],
+    );
+    assert_reached_stub(&piped);
+    assert_eq!(String::from_utf8_lossy(&piped.stdout), ANSWER);
+
+    // JSON envelope: same payload in `response`.
+    let json = run_yoyo_with(
+        &["--no-tools", "--max-turns", "1"],
+        &["--output-format", "json", "-p", "hi"],
+        None,
+        vec![body],
+    );
+    assert_reached_stub(&json);
+    let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap_or_else(|e| {
+        panic!(
+            "json stdout must parse: {e}; stdout={:?}",
+            String::from_utf8_lossy(&json.stdout)
+        )
+    });
+    assert_eq!(v["response"], ANSWER);
+}
+
+/// Near-miss: plain `-p` (no reserve) streams the model's bytes as before —
+/// the leading blank lines still reach stdout there, untouched by this fix.
+#[test]
+fn plain_prompt_mode_still_streams_model_leading_blank_lines() {
+    let run = run_yoyo_with(
+        &["--no-tools", "--max-turns", "1"],
+        &["-p", "hi"],
+        None,
+        vec![sse_text_body(&format!("{LEADING_BLANK_LINES}{ANSWER}"))],
+    );
+    assert_reached_stub(&run);
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        out.contains(&format!("{LEADING_BLANK_LINES}{ANSWER}")),
+        "unreserved -p must stream the model bytes verbatim; stdout={out:?}"
     );
 }

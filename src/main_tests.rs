@@ -1495,3 +1495,47 @@ fn reserves_stdout_for_print_and_json_independently() {
     assert!(reserves_stdout(true, true));
     assert!(!reserves_stdout(false, false), "plain -p must stream");
 }
+
+/// Day 212: the reserved payload drops only leading whitespace-only LINES —
+/// the measured `claude-opus-4-6` shape `"\n\nPONG"` — and nothing else.
+#[test]
+fn answer_payload_strips_only_leading_blank_lines() {
+    let cases: &[(&str, &str)] = &[
+        ("\n\nPONG", "PONG"),
+        ("\nPONG\n", "PONG\n"),
+        ("\r\n\r\nPONG", "PONG"),
+        (" \t\n\nPONG", "PONG"),
+        // Near-miss guards: byte-identical when nothing leads with a blank line.
+        ("PONG", "PONG"),
+        ("PONG\n\n", "PONG\n\n"),
+        ("    indented code\n", "    indented code\n"),
+        ("\n    indented code", "    indented code"),
+        ("a\n\nb", "a\n\nb"),
+        ("", ""),
+        ("\n\n", ""),
+        ("  ✓ ok", "  ✓ ok"),
+    ];
+    for (input, want) in cases {
+        assert_eq!(answer_payload(input), *want, "input {input:?}");
+    }
+}
+
+/// Day 212: the JSON envelope's `response` gets the same payload as `--print`.
+#[test]
+fn json_response_drops_leading_blank_lines() {
+    let response = PromptOutcome {
+        text: "\n\nPONG".to_string(),
+        ..Default::default()
+    };
+    let out = build_json_output(
+        &response,
+        "claude-opus-4-6",
+        &Usage::default(),
+        false,
+        &SessionChanges::new(),
+        std::time::Duration::from_millis(1),
+        1,
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(parsed["response"], "PONG");
+}
