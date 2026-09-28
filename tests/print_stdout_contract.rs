@@ -18,7 +18,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -110,10 +110,10 @@ fn sse_tool_use_body() -> String {
 /// Start a stub on 127.0.0.1:0 that answers POSTs with SSE bodies: the Nth POST gets `bodies[N]` (the last body
 /// repeats), so a tool turn can be followed by the final answer. Returns the
 /// port and a flag set once a POST has been received.
-fn start_stub_seq(bodies: Vec<String>) -> (u16, Arc<AtomicBool>) {
+fn start_stub_seq(bodies: Vec<String>) -> (u16, Arc<AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub");
     let port = listener.local_addr().unwrap().port();
-    let hit = Arc::new(AtomicBool::new(false));
+    let hit = Arc::new(AtomicUsize::new(0));
     let hit_thread = Arc::clone(&hit);
     thread::spawn(move || {
         // Serve connections until the test process exits; the binary should
@@ -146,7 +146,7 @@ fn start_stub_seq(bodies: Vec<String>) -> (u16, Arc<AtomicBool>) {
             let mut body = vec![0u8; content_length];
             let _ = reader.read_exact(&mut body);
             if request_line.starts_with("POST") {
-                hit_thread.store(true, Ordering::SeqCst);
+                hit_thread.fetch_add(1, Ordering::SeqCst);
             }
             let payload = bodies[served.min(bodies.len() - 1)].clone();
             if request_line.starts_with("POST") {
@@ -169,6 +169,8 @@ struct Run {
     stderr: String,
     success: bool,
     stub_hit: bool,
+    /// POSTs the stub received (retries included).
+    requests: usize,
 }
 
 /// Run the real binary against a fresh stub with `extra` args. When `stdin`
@@ -185,6 +187,17 @@ fn run_yoyo(extra: &[&str], stdin: Option<&str>) -> Run {
 /// General form: `base` replaces the tool/turn flags and the stub serves
 /// `bodies` in order. The cwd holds `a.txt` (`TOOL_FILE_CONTENTS`).
 fn run_yoyo_with(base: &[&str], extra: &[&str], stdin: Option<&str>, bodies: Vec<String>) -> Run {
+    run_yoyo_within(base, extra, stdin, bodies, Duration::from_secs(20))
+}
+
+/// `run_yoyo_with` with an explicit wall-clock budget (retry backoff needs more).
+fn run_yoyo_within(
+    base: &[&str],
+    extra: &[&str],
+    stdin: Option<&str>,
+    bodies: Vec<String>,
+    budget: Duration,
+) -> Run {
     let (port, hit) = start_stub_seq(bodies);
     let home = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();
@@ -227,7 +240,7 @@ fn run_yoyo_with(base: &[&str], extra: &[&str], stdin: Option<&str>, bodies: Vec
         drop(pipe);
     }
     // 20s budget: poll, then kill so a hang fails loudly instead of wedging CI.
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + budget;
     loop {
         if child.try_wait().unwrap().is_some() {
             break;
@@ -236,7 +249,7 @@ fn run_yoyo_with(base: &[&str], extra: &[&str], stdin: Option<&str>, bodies: Vec
             let _ = child.kill();
             let out = child.wait_with_output().unwrap();
             panic!(
-                "yoyo did not exit within 20s; stdout={:?} stderr={}",
+                "yoyo did not exit within {budget:?}; stdout={:?} stderr={}",
                 String::from_utf8_lossy(&out.stdout),
                 String::from_utf8_lossy(&out.stderr)
             );
@@ -248,7 +261,8 @@ fn run_yoyo_with(base: &[&str], extra: &[&str], stdin: Option<&str>, bodies: Vec
         stdout: out.stdout,
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
         success: out.status.success(),
-        stub_hit: hit.load(Ordering::SeqCst),
+        stub_hit: hit.load(Ordering::SeqCst) > 0,
+        requests: hit.load(Ordering::SeqCst),
     }
 }
 
@@ -599,5 +613,73 @@ fn plain_prompt_mode_still_streams_model_leading_blank_lines() {
     assert!(
         out.contains(&format!("{LEADING_BLANK_LINES}{ANSWER}")),
         "unreserved -p must stream the model bytes verbatim; stdout={out:?}"
+    );
+}
+
+/// Distinctive partial answer the broken stream delivers before it dies.
+const PARTIAL: &str = "PARTIAL_ANSWER_7Q";
+
+/// A stream that delivers `PARTIAL` as a text delta and then dies on an SSE
+/// `error` event (`overloaded_error`) — no `content_block_stop`, no
+/// `message_stop`. Served to EVERY request, so every retry dies the same way.
+fn sse_dies_mid_stream_body() -> String {
+    let text = serde_json::to_string(PARTIAL).unwrap();
+    sse_events(vec![
+        (
+            "message_start",
+            r#"{"type":"message_start","message":{"id":"msg_die","type":"message","role":"assistant","model":"claude-stub","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":1}}}"#.to_string(),
+        ),
+        (
+            "content_block_start",
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#.to_string(),
+        ),
+        (
+            "content_block_delta",
+            format!(
+                r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":{text}}}}}"#
+            ),
+        ),
+        (
+            "error",
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#.to_string(),
+        ),
+    ])
+}
+
+/// Transferred class (Claude Code: "`-p` text output dropping the answer
+/// already produced when a turn dies on a mid-stream API error"). A turn whose
+/// stream dies after text arrived must put that text on stdout under
+/// `--print`, while the NONZERO exit says it failed.
+#[test]
+fn print_mode_keeps_partial_answer_when_turn_dies_mid_stream() {
+    let run = run_yoyo_within(
+        &["--no-tools", "--max-turns", "1"],
+        &["--print", "-p", "hi"],
+        None,
+        vec![sse_dies_mid_stream_body()],
+        Duration::from_secs(120),
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
+    eprintln!(
+        "PROBE readings: stdout={stdout:?} success={} requests={} stderr_tail={:?}",
+        run.success,
+        run.requests,
+        run.stderr.lines().rev().take(4).collect::<Vec<_>>()
+    );
+    assert!(run.stub_hit, "anti-vacuous: stub never received a POST");
+    assert!(
+        !run.success,
+        "a dead turn must exit nonzero; stderr={}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.to_lowercase().contains("error") || run.stderr.contains("failed"),
+        "stderr must carry the failure; stderr={}",
+        run.stderr
+    );
+    assert_eq!(
+        stdout, PARTIAL,
+        "--print stdout must carry the partial answer already produced; stderr={}",
+        run.stderr
     );
 }
