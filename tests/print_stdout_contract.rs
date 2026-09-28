@@ -683,3 +683,188 @@ fn print_mode_keeps_partial_answer_when_turn_dies_mid_stream() {
         run.stderr
     );
 }
+
+// ── The whole contract in one scenario ───────────────────────────────────
+//
+// Five point fixes in two days (#966 duplication, the tool-progress leak,
+// model-emitted leading blank lines, the dropped partial answer, help text)
+// each added a test for ITS OWN emitter. The tests above therefore each
+// exercise one writer at a time, and a sixth writer that only fires when two
+// features meet (say, a separator emitted at the tool-result -> thinking
+// transition) would pass every one of them. This scenario puts every stdout
+// writer the stub can provoke into ONE run and pins the whole buffer:
+//
+//   turn 1: thinking block -> `read_file` tool call (a.txt in the tempdir cwd)
+//   (tool result: the real read_file runs, its progress line is chrome)
+//   turn 2: thinking block -> text delta "\n\n" -> text delta = answer,
+//           whose body carries an internal blank line
+//
+// Writers covered: the streamed text renderer, turn-boundary / tool progress
+// chrome, the thinking renderer, the leading-blank-line strip, and
+// `emit_output` itself (the single sanctioned stdout writer). Not covered:
+// the `--help` text (no model turn at all) and the mid-stream-death path
+// (a nonzero-exit run) — each keeps its own test above.
+
+/// Final answer for the whole-contract run. The internal blank line is the
+/// near-miss: the leading-blank-line strip must NOT touch blank lines that
+/// sit inside the answer.
+const CONTRACT_ANSWER: &str = "first line of the answer\n\nthird line after a blank";
+
+/// Build one assistant turn from content blocks. Each block is
+/// (`content_block_start` JSON for `content_block`, list of delta JSONs).
+fn sse_turn(id: &str, blocks: Vec<(String, Vec<String>)>, stop_reason: &str) -> String {
+    let mut events: Vec<(&str, String)> = vec![(
+        "message_start",
+        format!(
+            r#"{{"type":"message_start","message":{{"id":"{id}","type":"message","role":"assistant","model":"claude-stub","content":[],"stop_reason":null,"stop_sequence":null,"usage":{{"input_tokens":5,"output_tokens":1}}}}}}"#
+        ),
+    )];
+    for (index, (block, deltas)) in blocks.into_iter().enumerate() {
+        events.push((
+            "content_block_start",
+            format!(r#"{{"type":"content_block_start","index":{index},"content_block":{block}}}"#),
+        ));
+        for delta in deltas {
+            events.push((
+                "content_block_delta",
+                format!(r#"{{"type":"content_block_delta","index":{index},"delta":{delta}}}"#),
+            ));
+        }
+        events.push((
+            "content_block_stop",
+            format!(r#"{{"type":"content_block_stop","index":{index}}}"#),
+        ));
+    }
+    events.push((
+        "message_delta",
+        format!(
+            r#"{{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}","stop_sequence":null}},"usage":{{"output_tokens":9}}}}"#
+        ),
+    ));
+    events.push(("message_stop", r#"{"type":"message_stop"}"#.to_string()));
+    sse_events(events)
+}
+
+fn thinking_block(text: &str) -> (String, Vec<String>) {
+    let t = serde_json::to_string(text).unwrap();
+    (
+        r#"{"type":"thinking","thinking":""}"#.to_string(),
+        vec![
+            format!(r#"{{"type":"thinking_delta","thinking":{t}}}"#),
+            r#"{"type":"signature_delta","signature":"stub-signature"}"#.to_string(),
+        ],
+    )
+}
+
+fn text_block(deltas: &[&str]) -> (String, Vec<String>) {
+    (
+        r#"{"type":"text","text":""}"#.to_string(),
+        deltas
+            .iter()
+            .map(|d| {
+                let t = serde_json::to_string(d).unwrap();
+                format!(r#"{{"type":"text_delta","text":{t}}}"#)
+            })
+            .collect(),
+    )
+}
+
+/// The two stub turns of the whole-contract scenario.
+fn contract_bodies() -> Vec<String> {
+    let partial = serde_json::to_string(r#"{"path": "a.txt"}"#).unwrap();
+    let turn1 = sse_turn(
+        "msg_contract_1",
+        vec![
+            thinking_block(THINKING),
+            (
+                r#"{"type":"tool_use","id":"toolu_contract_1","name":"read_file","input":{}}"#
+                    .to_string(),
+                vec![format!(
+                    r#"{{"type":"input_json_delta","partial_json":{partial}}}"#
+                )],
+            ),
+        ],
+        "tool_use",
+    );
+    let turn2 = sse_turn(
+        "msg_contract_2",
+        vec![
+            thinking_block(THINKING),
+            text_block(&[LEADING_BLANK_LINES, CONTRACT_ANSWER]),
+        ],
+        "end_turn",
+    );
+    vec![turn1, turn2]
+}
+
+fn run_contract(extra: &[&str]) -> Run {
+    let bodies = contract_bodies();
+    // Anti-vacuous: the fixture really carries every emitter's trigger, so a
+    // green result cannot come from a stub that skipped one.
+    assert!(bodies[0].contains("thinking_delta") && bodies[0].contains("\"tool_use\""));
+    assert!(bodies[1].contains("thinking_delta"));
+    assert!(
+        bodies[1].contains(r#""text":"\n\n"}"#),
+        "turn 2 must stream a text delta that is exactly two newlines"
+    );
+    assert!(
+        CONTRACT_ANSWER.contains("\n\n"),
+        "near-miss needs an internal blank line"
+    );
+    run_yoyo_with(&["--max-turns", "4"], extra, None, bodies)
+}
+
+/// One run, every stdout writer the stub can provoke: `--print` stdout must be
+/// EXACTLY the final answer bytes — no leading blank lines, no tool progress,
+/// no thinking text, no turn separators, internal blank line intact.
+#[test]
+fn print_mode_whole_contract_stdout_is_exactly_the_answer() {
+    let run = run_contract(&["--print", "-p", "read a.txt"]);
+    assert_reached_stub(&run);
+    assert!(
+        run.requests >= 2,
+        "anti-vacuous: the tool turn must be followed by a second request; requests={}",
+        run.requests
+    );
+    assert_tool_progress_on_stderr(&run);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        CONTRACT_ANSWER,
+        "--print stdout must be exactly the final answer bytes, untrimmed; stderr={}",
+        run.stderr
+    );
+}
+
+/// Same scenario under `--output-format json`: stdout is exactly ONE JSON
+/// value with nothing before or after it (only the envelope's own trailing
+/// newline), and its `response` is the answer with the internal blank line.
+#[test]
+fn json_mode_whole_contract_stdout_is_exactly_one_value() {
+    let run = run_contract(&["--output-format", "json", "-p", "read a.txt"]);
+    assert_reached_stub(&run);
+    assert!(run.requests >= 2, "requests={}", run.requests);
+    assert_tool_progress_on_stderr(&run);
+    let stdout = String::from_utf8(run.stdout.clone()).expect("utf-8 stdout");
+    // No stray byte before the document: the very first byte opens it.
+    assert_eq!(
+        stdout.as_bytes().first().copied(),
+        Some(b'{'),
+        "json stdout must start with the document; stdout={stdout:?} stderr={}",
+        run.stderr
+    );
+    let values: Vec<serde_json::Value> = serde_json::Deserializer::from_str(&stdout)
+        .into_iter::<serde_json::Value>()
+        .collect::<Result<_, _>>()
+        .unwrap_or_else(|e| panic!("json stdout must parse cleanly: {e}; stdout={stdout:?}"));
+    assert_eq!(values.len(), 1, "exactly one JSON value; stdout={stdout:?}");
+    // Nothing after the value but the single newline `println!` adds.
+    assert_eq!(
+        stdout,
+        format!("{}\n", stdout.trim_end_matches('\n')),
+        "only one trailing newline may follow the document; stdout={stdout:?}"
+    );
+    assert_eq!(
+        values[0]["response"], CONTRACT_ANSWER,
+        "envelope response must be the answer, internal blank line intact"
+    );
+}
