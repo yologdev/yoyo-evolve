@@ -1,0 +1,71 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (8ms)
+  ▶ read tests/print_stdout_contract.rs:17..687 ✓ (1ms)
+  ▶ read tests/print_stdout_contract.rs:115..635 ✓ (1ms)
+  ▶ read tests/print_stdout_contract.rs:213..585 ✓ (1ms)
+  ▶ read tests/print_stdout_contract.rs:311..536 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "leading\|strip_leading\|s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 285,380p src/main.rs; grep … ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> tests/p… (187 lines) ✓ (1.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 46.1s (8 ✓)
+
+Both green. Now the positive controls, one at a time, each mutate→run→restore in a single command.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/main.rs… (8 lines) ✓ (42.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Strip control reddens both new tests by name (plus the pre-existing one); restored clean. Next: the chrome reserve gate.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/prompt.… (8 lines) ✓ (36.8s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git diff --sta… (8 lines) ✓ (42.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/prompt.… (7 lines) ✓ (46.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 34s (2 ✓)
+
+Both new tests fail by name under the chrome-gate control too, and the tree is back to clean. Now the full gate:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (2m 5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "FAILED|… ✓ (1m 15s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 31s (2 ✓)
+
+I added one process-level test that checks the whole --print stdout contract in a single run. It passes on the current code without any source change. Committed as d454f4aa; the only file touched is tests/print_stdout_contract.rs.
+
+The scenario. The binary runs against the local SSE stub in a tempdir cwd with a tempdir HOME and no config:
+• **Turn 1:** a thinking block, then a real read_file call on a.txt in the tempdir.
+• **Turn 2:** another thinking block, a text delta that is exactly `"\n\n"`, then the answer. The answer contains a blank line in the middle, which is the near-miss: the strip must remove leading blank lines only.
+
+What the two new tests check:
+• `print_mode_whole_contract_stdout_is_exactly_the_answer`: stdout must be byte-for-byte the answer, with nothing trimmed before comparing. It also checks the tool's progress line reached stderr and that the stub received at least 2 requests, so the run really went through the tool turn.
+• `json_mode_whole_contract_stdout_is_exactly_one_value: the first byte of stdout must be {, stdout must parse as exactly one JSON value, only the single newline println! adds may follow it, and response` must equal the answer with its middle blank line intact.
+• The fixture checks itself before running, so a green result can't come from a stub that skipped one of the triggers.
+
+Positive controls. Each was run as one mutate→run→restore command, one after the other, and afterwards git diff src/ was empty and there are no NEUTERED markers left:
+• Disabling the leading-blank-line strip (answer_payload in src/main.rs) made both new tests fail by name, plus the existing leading-blank-line test.
+• Disabling the reserve check in write_chrome in src/prompt.rs made both new tests fail by name, plus the two existing tool-turn tests.
+
+Two corrections to the task text:
+• The leading-newline strip lives in src/main.rs (answer_payload), not in src/prompt.rs.
+• There is no trailing newline in --print mode. It uses print!, and the existing byte-exact tests already assert stdout equals the answer with nothing after it, so the new test does the same. The JSON envelope is the one that ends with a single \n.
+
+Not covered by the new test: --help text (no model turn happens) and the stream that dies mid-answer (the run exits non-zero). The doc comment says so, and both keep their own tests.
+
+cargo fmt --check, cargo clippy --all-targets -D warnings and the full cargo test all pass.
+
+  watch: no files changed this turn — skipping
+
