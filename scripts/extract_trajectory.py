@@ -7094,10 +7094,14 @@ src/commands_config.rs
 
     # --- Fixtures. Stamps are 2026-09-20T02:00:00Z .. so the epochs are small
     # and hand-checkable, and they are built by the SAME parser the code uses.
+    # A_0 is the PREDECESSOR: session stamps are END times, so A_1's window
+    # is (A_0, A_1] and needs A_0 to exist to be closed at the bottom.
+    S_DAY_A_0 = "day-194-20260919T180000Z"
     S_DAY_A_1 = "day-195-20260920T020000Z"
     S_DAY_A_2 = "day-195-20260920T100000Z"  # 8h later, SAME day as A_1
     S_DAY_A_3 = "day-195-20260920T180000Z"
     S_DAY_B_1 = "day-196-20260921T020000Z"
+    T_A_0 = compact_utc_epoch(session_dir_stamp(S_DAY_A_0))
     T_A_1 = compact_utc_epoch(session_dir_stamp(S_DAY_A_1))
     T_A_2 = compact_utc_epoch(session_dir_stamp(S_DAY_A_2))
     T_A_3 = compact_utc_epoch(session_dir_stamp(S_DAY_A_3))
@@ -7122,12 +7126,14 @@ src/commands_config.rs
     # nothing. The DAY is corroborated, so `classify_productivity` sees a
     # healthy day and says so; only the session-level join can see A_2.
     disc_sessions = [
+        ClaimSession(S_DAY_A_0, False),
         ClaimSession(S_DAY_A_1, True),
         ClaimSession(S_DAY_A_2, True),
         ClaimSession(S_DAY_A_3, True),
     ]
-    disc_commits = [commit_at(T_A_1, "a" * 8)]
-    disc = classify_session_claims(disc_sessions, disc_commits, T_A_1 - 10)
+    # Commits sit minutes BEFORE the stamp, because the stamp is the END.
+    disc_commits = [commit_at(T_A_1 - 300, "a" * 8), commit_at(T_A_3 - 60, "3" * 8)]
+    disc = classify_session_claims(disc_sessions, disc_commits, T_A_0 - 10)
     disc_by_name = {c.name: c.state for c in disc}
     assert_eq(
         "discriminating: the sibling WITH a commit in its window is corroborated",
@@ -7139,11 +7145,11 @@ src/commands_config.rs
         disc_by_name[S_DAY_A_2],
         CLAIM_NO_COMMITS,
     )
-    # A_3 is the newest session, so its window is OPEN and it is never accused.
+    # A_3 is the newest session, and its window is CLOSED: its stamp is its end.
     assert_eq(
-        "the newest session's open window is NOT an accusation",
+        "the newest session's window is closed at its own stamp, and corroborated",
         disc_by_name[S_DAY_A_3],
-        CLAIM_OPEN_WINDOW,
+        CLAIM_CORROBORATED,
     )
     # AND THE DAY-LEVEL CHECK CANNOT SEE IT. This is what makes the row above
     # worth a separate reader rather than a change to the existing one.
@@ -7187,7 +7193,7 @@ src/commands_config.rs
             c.state
             for c in classify_session_claims(disc_sessions, None, None)
         ],
-        [CLAIM_COULD_NOT_CHECK] * 3,
+        [CLAIM_COULD_NOT_CHECK] * 3 + [CLAIM_NO_CLAIM],
     )
     assert_eq(
         "COULD_NOT_CHECK: a window before the clone's oldest commit is refused, "
@@ -7196,27 +7202,65 @@ src/commands_config.rs
             c.state
             for c in classify_session_claims(disc_sessions, disc_commits, T_B_1)
         ],
-        [CLAIM_COULD_NOT_CHECK] * 3,
+        [CLAIM_COULD_NOT_CHECK] * 3 + [CLAIM_NO_CLAIM],
     )
 
     # HALF-OPEN WINDOWS: a commit exactly ON a boundary belongs to exactly one
     # session -- the later one -- never to both and never to neither.
+    # END-ANCHORED `(prev, stamp]`: a commit exactly ON a stamp belongs to the
+    # session that stamp CLOSES (its wrap-up carries that second), not the next.
     boundary = classify_session_claims(
-        [ClaimSession(S_DAY_A_1, True), ClaimSession(S_DAY_A_2, True)],
-        [commit_at(T_A_2, "b" * 8)],
-        T_A_1 - 10,
+        [
+            ClaimSession(S_DAY_A_0, False),
+            ClaimSession(S_DAY_A_1, True),
+            ClaimSession(S_DAY_A_2, True),
+        ],
+        [commit_at(T_A_1, "b" * 8)],
+        T_A_0 - 10,
     )
     boundary_by_name = {c.name: c.state for c in boundary}
     assert_eq(
-        "a commit stamped exactly at the next session's start is NOT the earlier "
-        "session's",
+        "a commit stamped exactly at a session's own stamp corroborates THAT session",
         boundary_by_name[S_DAY_A_1],
-        CLAIM_NO_COMMITS,
+        CLAIM_CORROBORATED,
     )
     assert_eq(
-        "that same commit DOES corroborate the session whose window opens on it",
+        "that same commit is NOT the next session's",
         boundary_by_name[S_DAY_A_2],
-        CLAIM_CORROBORATED,
+        CLAIM_NO_COMMITS,
+    )
+
+    # DAY 212'S SHAPE (the defect this window fixes): end-stamped sessions whose
+    # task commits sit minutes BEFORE each stamp are ALL corroborated.
+    d212 = ["day-212-20260928T015004Z", "day-212-20260928T110922Z",
+            "day-212-20260928T210136Z"]
+    t212 = [compact_utc_epoch(session_dir_stamp(n)) for n in d212]
+    s212 = [ClaimSession("day-211-20260927T235245Z", False)] + [
+        ClaimSession(n, True) for n in d212
+    ]
+    c212 = [commit_at(t - 25 * 60, "%08d" % i) for i, t in enumerate(t212)]
+    by212 = {c.name: c.state for c in classify_session_claims(s212, c212, t212[0] - 86400)}
+    for n in d212:
+        assert_eq(f"day-212 shape: {n} is corroborated by its own commits",
+                  by212[n], CLAIM_CORROBORATED)
+    # NEAR-MISS: a commit AFTER a session's own stamp is the NEXT session's.
+    late = classify_session_claims(
+        s212[:2] + [ClaimSession(d212[1], False)],
+        [commit_at(t212[0] + 60, "9" * 8)],
+        t212[0] - 86400,
+    )
+    assert_eq(
+        "near-miss: a claiming session whose only task commit is AFTER its stamp "
+        "is still flagged",
+        {c.name: c.state for c in late}[d212[0]],
+        CLAIM_NO_COMMITS,
+    )
+    # The OLDEST session has no predecessor: open at the bottom, never accused.
+    assert_eq(
+        "the oldest session (no predecessor) is OPEN, neither credited nor accused",
+        [c.state for c in classify_session_claims(
+            [ClaimSession(S_DAY_A_1, True)], [], T_A_0 - 10)],
+        [CLAIM_OPEN_WINDOW],
     )
 
     # ANTI-VACUOUS: no sessions is not "every session was fine".
@@ -7240,14 +7284,14 @@ src/commands_config.rs
     assert_true(
         "the summary names the population it counted over, and says CLOSED",
         any(
-            "1 of 2 closed, claiming session(s): claimed success, no task commits"
+            "1 of 3 closed, claiming session(s): claimed success, no task commits"
             in ln
             for ln in lines
         ),
     )
     assert_true(
         "the open-window session is NOT in the denominator the summary names",
-        not any("1 of 3" in ln for ln in lines),
+        not any("1 of 4" in ln for ln in lines),
     )
     # A ZERO IS A VALUE: the check ran and found nothing. The trailing
     # non-claiming session is what CLOSES A_2's window -- without it A_2 is the
@@ -7255,12 +7299,13 @@ src/commands_config.rs
     zero_lines = claim_corroboration_lines(
         classify_session_claims(
             [
+                ClaimSession(S_DAY_A_0, False),
                 ClaimSession(S_DAY_A_1, True),
                 ClaimSession(S_DAY_A_2, True),
                 ClaimSession(S_DAY_A_3, False),
             ],
-            [commit_at(T_A_1, "c" * 8), commit_at(T_A_2, "d" * 8)],
-            T_A_1 - 10,
+            [commit_at(T_A_1 - 60, "c" * 8), commit_at(T_A_2 - 60, "d" * 8)],
+            T_A_0 - 10,
         )
     )
     assert_true(
@@ -7275,12 +7320,13 @@ src/commands_config.rs
     mixed = claim_corroboration_lines(
         classify_session_claims(
             [
+                ClaimSession(S_DAY_A_0, False),
                 ClaimSession(S_DAY_A_1, True),
                 ClaimSession(S_DAY_A_2, False),
                 ClaimSession("day-195-notatimestamp", True),
             ],
-            [commit_at(T_A_1, "e" * 8)],
-            T_A_1 - 10,
+            [commit_at(T_A_1 - 60, "e" * 8)],
+            T_A_0 - 10,
         )
     )
     assert_true(
@@ -7321,12 +7367,13 @@ src/commands_config.rs
     )
     all_corr = classify_session_claims(
         [
+            ClaimSession(S_DAY_A_0, False),
             ClaimSession(S_DAY_A_1, True),
             ClaimSession(S_DAY_A_2, True),
             ClaimSession(S_DAY_A_3, False),
         ],
-        [commit_at(T_A_1, "f" * 8), commit_at(T_A_2, "1" * 8)],
-        T_A_1 - 10,
+        [commit_at(T_A_1 - 60, "f" * 8), commit_at(T_A_2 - 60, "1" * 8)],
+        T_A_0 - 10,
     )
     assert_eq(
         "near-miss: an all-corroborated window appends ONLY the zero summary, "
