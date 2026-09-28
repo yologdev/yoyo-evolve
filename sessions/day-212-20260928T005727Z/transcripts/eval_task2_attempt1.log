@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && d=$(mkte… ✓ (17ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.0s (2 ✓)
+
+Verdict: PASS, written to session_plan/eval_task_2.md.
+
+I ran the built binary in a fresh temp directory:
+
+| Command | Output | Exit |
+|---|---|---|
+| yoyo todo add "buy milk" | Refusal on stderr: nothing was changed; the list is session-only; use /todo add <description> inside yoyo; persistence is tracked in #679 | 1 |
+| yoyo todo clear | Same refusal, pointing to /todo clear | 1 |
+| yoyo todo list | "No tasks", plus a note on stderr that the list only lives for one process | 0 |
+
+So the green ✓ that reported success and then lost the item is gone. Read-only commands still work.
+
+• **Matches the task:** the refusal text comes from one function, and a test checks its exact wording. There is also a test that `/todo add` inside the interactive session still adds items, and an integration test that the shell command no longer reports success.
+• **No orphaned code:** everything new is used in this diff. The old note function it replaced was removed and its one call site updated.
+• **Docs:** the help text now says adding and editing belong to `/todo`. A search of `docs/src/usage` and `README.md` found no other docs describing `yoyo todo` as a shell command.
+
+One cleanup item: an unrelated line was added to .yoyo/risk_validations.jsonl in the same diff. It's noted in the verdict and not a reason to fail.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

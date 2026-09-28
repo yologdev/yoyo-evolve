@@ -1,0 +1,25 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || true; grep -n 'print… ✓ (8ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.1s (2 ✓)
+
+Verdict: PASS. It's written to session_plan/eval_task_1.md.
+
+• **The fix:** `src/prompt.rs` has one new helper, `write_chrome`. It writes to stderr when `--print` or `--output-format json` has reserved stdout, and to stdout otherwise. That covers the turn boundary, ▶ tool progress, ✓/✗ results, diffs, previews, batch summaries, the progress message and the Ctrl+C notice. With the reserve off, output is byte-identical to before. The answer text still goes to stdout.
+• **Leftover stdout writes:** I searched the event-loop part of prompt.rs for print! / println!. Only eprintln! calls remain, so nothing there still writes to stdout.
+• Tests: tests/print_stdout_contract.rs now has a stub server that serves two responses in order: a read_file tool call, then the answer. The new tests check that:
+  • under --print, stdout is exactly the answer, apart from a trailing newline;
+  • under `--output-format json`, stdout parses as a single JSON value;
+  • the `▶ read a.txt` line shows up on stderr, so it was moved rather than deleted;
+  • plain -p still prints progress to stdout.
+• **Loose ends:** every new definition is used in the same diff, and the docs (`piped-mode.md`, `ARCHITECTURE.md`) were updated. The WIP commit comes before any cargo run, as the task required.
+
+I didn't re-run the test suite or run the binary myself; I relied on the harness's passing build and tests and on reading the diff.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

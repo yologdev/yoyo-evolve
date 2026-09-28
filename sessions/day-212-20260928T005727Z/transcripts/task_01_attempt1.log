@@ -1,0 +1,109 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 150,185p src/prompt.rs; ech… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 660,880p src/prompt.rs; sed… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=776 && NR<=800' src/promp… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -B8 'println!("{DIM}  {tex… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (18 lines) ✓ (26ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 26.8s (6 ✓)
+
+Now the helper, next to write_stream_text:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (3 → 15 lines)
+    fn write_stream_text(s: &str) {
+        write_stream_text_with(stdout_reserved(), s, &mut io::stdout());
+  + }
+  + 
+  + /// Event-loop chrome (turn boundaries, `▶ tool` progress, ✓/✗, diffs,
+  + /// previews, batch summaries): stdout normally — byte-identical to the old
+  + /// `print!`/`println!` — but stderr while `--print` / `--output-format json`
+  + /// reserve stdout for the payload, so a pipe gets only the answer.
+  + fn write_chrome(s: &str) {
+  +     if stdout_reserved() {
+  +         let _ = io::stderr().write_all(s.as_bytes());
+  +     } else {
+  +         let _ = io::stdout().write_all(s.as_bytes());
+  +     }
+    }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && git commit -qm "wip:… ✓ (2m 20s)
+    fn write_stream_text(s: &str) {
+        write_stream_text_with(stdout_reserved(), s, &mut io::stdout());
+  + }
+  + 
+  + /// Event-loop chrome (turn boundaries, `▶ tool` progress, ✓/✗, diffs,
+  + /// previews, batch summaries): stdout normally — byte-identical to the old
+  + /// `print!`/`println!` — but stderr while `--print` / `--output-format json`
+  + /// reserve stdout for the payload, so a pipe gets only the answer.
+  ... (7 more lines)
+ ✗ (2m 20s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git log --oneline -2; git status -… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat tests/print_stdout_contract.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,30p tests/print_stdout_co… ✓ (5ms)
+  5 tools completed in 2m 25s (4 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (156 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> tests/p… (18 lines) ✓ (2.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (18 lines) ✓ (2.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 18.7s (3 ✓)
+
+Now the positive control — one atomic command: neuter the helper, run the test, restore.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/prompt.… (3 lines) ✓ (10.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control reddened both new reserve tests by name while the near-miss stayed green. After the restore, NEUTERED is gone and prompt.rs shows no diff. Next, the docs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "stdout\|stderr" docs/src/… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^- \`prompt.rs\`" ARCHITE… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (19.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 | grep… ✓ (2m 0s)
+  5 tools completed in 2m 33s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && git commit -qm "Day … ✓ (45ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Fixed: under --print and --output-format json, stdout now carries only the answer, and tool progress goes to stderr. It's committed (997f8029, on top of the WIP commit 130e3850). Build, the full cargo test run, clippy with -D warnings and the format check all pass.
+
+The fix. I added one helper, write_chrome(s), in src/prompt.rs. It writes to stderr when stdout is reserved for the answer (--print, --output-format json) and to stdout otherwise, with the same bytes as the old print!. All 17 non-answer print sites in the event loop now go through it, including the turn boundary, the ▶ tool line, ✓/✗ results and the Ctrl+C notice. The answer text still goes to stdout exactly as before. I committed this before running any cargo command, as the task required.
+
+Tests (tests/print_stdout_contract.rs). The local stub server can now return a sequence of responses: first a read_file call on a.txt, then the final answer. Four new tests; the existing four are unchanged and still pass:
+• `--print with a tool turn: stdout equals the answer exactly (a trailing newline is the only extra allowed) and contains no ▶`.
+• --output-format json with a tool turn: stdout parses as exactly one JSON value.
+• Both tests also check that ▶ read a.txt appears on stderr, so the tool really ran and its line was moved, not deleted.
+• Near-miss: plain `-p (no --print) still prints the progress line on stdout, so the REPL and plain -p` behave as before.
+
+Positive control. In one command I disabled the stderr branch of the helper (marked NEUTERED), ran the tests and restored the file. Exactly the two new stdout-reserve tests failed by name and the rest stayed green. Afterwards there were no NEUTERED markers and no diff to prompt.rs.
+
+Docs. docs/src/usage/piped-mode.md said "Tool-progress lines … still print to stdout today"; that line now says progress goes to stderr and stdout carries only the answer. I also added a Day 212 note under prompt.rs in ARCHITECTURE.md.
+
+Worth knowing:
+• With a tool turn, --print output ends without a trailing newline. The test allows either, because whether to add one is a separate product decision.
+• `.yoyo/risk_weights.json already had uncommitted changes when I started. The task's git add -A` swept them into the WIP commit.
+• **Out of scope, not fixed:** the leading `\n\n` in the collected response text; where it comes from is still unmeasured. I also didn't re-check `print_context_usage` and `print_usage`, which still print to stdout unless quiet mode is on.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/prompt.rs
+

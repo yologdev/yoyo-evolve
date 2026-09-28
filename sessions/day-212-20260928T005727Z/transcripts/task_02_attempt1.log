@@ -1,0 +1,188 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && git…  ▶ search '"todo"' in src ✓ (12ms)
+ ✓ (170ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && B=$PWD/target/debug/yoyo && T=$(…  ▶ read src/dispatch_sub.rs:560..610 ✓ (0ms)
+ ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "todo_cli_session_note\|… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 55,110p src/dispatch_sub.… ✓ (136ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 66,78p src/dispatch_sub.r… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1760,1830p src/dispatch_s… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -ln "CARGO_BIN_EXE_yoyo" te… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p tests/integration.r… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_todo.rs src/d… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 71,130p tests/module_size… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1270,1300p src/help_data.… ✓ (15ms)
+  13 tools completed in 1m 1s (13 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 445,456p src/help.rs; sed… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the edits. commands_todo.rs — add the pure functions after `TODO_VERBS`:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_todo.rs (1 → 41 lines)
+    pub(crate) const TODO_VERBS: &[&str] = &["list", "add", "done", "wip", "remove", "clear", "board"];
+  + 
+  + /// The `TODO_VERBS` that mutate the in-memory session list. A one-shot shell
+  + /// call (`yoyo todo add ...`) is a fresh process, so a mutation there would
+  + /// print a success mark and be forgotten the moment the process exits (#679,
+  + /// promised in Discussion #682). The shell path refuses these instead.
+  + pub(crate) const SESSION_MUTATING_TODO_VERBS: &[&str] = &["add", "done", "wip", "remove", "clear"];
+  + 
+  + /// The refusal a one-shot shell `yoyo todo <verb>` prints for a mutating
+  + /// verb, or `None` for read-only verbs (`list`, bare, `board`, unknown).
+  + /// Glyph-free by construction (ASCII only), so it needs no plain-output twin.
+  + pub(crate) fn shell_todo_refusal(verb: &str) -> Option<String> {
+  +     let args = match verb {
+  +         "add" => " <description>",
+  +         "done" | "wip" | "remove" => " <id>",
+  +         "clear" => "",
+  +         _ => return None,
+  +     };
+  +     Some(format!(
+  +         "  yoyo todo {verb}: refused -- nothing was changed.\n\
+  ... (21 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 64,90p src/dispatch_sub.r… ✓ (18.3s)
+    pub(crate) const TODO_VERBS: &[&str] = &["list", "add", "done", "wip", "remove", "clear", "board"];
+  + 
+  + /// The `TODO_VERBS` that mutate the in-memory session list. A one-shot shell
+  + /// call (`yoyo todo add ...`) is a fresh process, so a mutation there would
+  + /// print a success mark and be forgotten the moment the process exits (#679,
+  + /// promised in Discussion #682). The shell path refuses these instead.
+  + pub(crate) const SESSION_MUTATING_TODO_VERBS: &[&str] = &["add", "done", "wip", "remove", "clear"];
+  + 
+  ... (13 more lines)
+ ✓ (18.3s)
+  2 tools completed in 20.4s (2 ✓)
+
+Now remove the old helper from dispatch_sub.rs (lines 67–88) and rewire the arm, using Python to delete the exact span.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (35 lines) ✓ (28ms)
+
+Fix the help text that advertised yoyo todo add as a shell verb:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "  todo              Manage project tasks (e.g. yoyo todo list, yoyo todo add ...)"
+  +         "  todo              Show tasks or the board (yoyo todo board); add/done/... live in /todo"
+ ✓ (17.7s)
+  -         "  todo              Manage project tasks (e.g. yoyo todo list, yoyo todo add ...)"
+  +         "  todo              Show tasks or the board (yoyo todo board); add/done/... live in /todo"
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_todo.rs (6 → 8 lines)
+  +     if !SESSION_MUTATING_TODO_VERBS.contains(&verb) {
+  +         return None;
+  +     }
+        let args = match verb {
+            "add" => " <description>",
+            "done" | "wip" | "remove" => " <id>",
+  -         "clear" => "",
+  -         _ => return None,
+  +         _ => "", // clear
+        };
+ ✓ (2m 16s)
+  +     if !SESSION_MUTATING_TODO_VERBS.contains(&verb) {
+  +         return None;
+  +     }
+        let args = match verb {
+            "add" => " <description>",
+            "done" | "wip" | "remove" => " <id>",
+  -         "clear" => "",
+  -         _ => return None,
+  +         _ => "", // clear
+        };
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 42s (2 ✓)
+
+Now the tests in commands_todo.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_todo.rs (4 → 65 lines)
+    mod tests {
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     #[test]
+  +     fn shell_todo_refusal_exact_text_names_679_and_slash_todo() {
+  +         assert_eq!(
+  +             shell_todo_refusal("add").as_deref(),
+  +             Some(
+  +                 "  yoyo todo add: refused -- nothing was changed.\n\
+  +                  \x20 The todo list is session-only: it lives inside a running yoyo session, and each\n\
+  +                  \x20 shell call is a fresh process, so the change would be forgotten when it exits.\n\
+  +                  \x20 Start yoyo and use: /todo add <description>\n\
+  +                  \x20 Persistence across invocations is tracked in #679."
+  +             )
+  +         );
+  +         for verb in SESSION_MUTATING_TODO_VERBS {
+  +             let msg = shell_todo_refusal(verb).expect("mutating verb must refuse");
+  +             assert!(msg.contains("#679"), "{verb}: {msg}");
+  +             assert!(msg.contains(&format!("/todo {verb}")), "{verb}: {msg}");
+  ... (44 more lines)
+ ✓ (2m 16s)
+    mod tests {
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     #[test]
+  +     fn shell_todo_refusal_exact_text_names_679_and_slash_todo() {
+  +         assert_eq!(
+  +             shell_todo_refusal("add").as_deref(),
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn … (40 lines) ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 30s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "FAIL… ✓ (1m 30s)
+  4 tools completed in 5m 34s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/commands_todo.rs /tmp/ct.… ✓ (55.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The positive control reddened the named test, and restoring the file turned it green again (the tree matches the WIP commit). Now the final commit:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (16 lines) ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've kept the #682 promise. Running yoyo todo add "buy milk" from the shell no longer prints a green ✓ and then forgets the item. It now refuses, points you to /todo, and names #679.
+
+Before the fix (debug build at 90e69801, in a throwaway repo), the bug was still there:
+• `yoyo todo add "buy milk" printed ✓ Added task #1: buy milk` and exited 0.
+• `yoyo todo list then printed No tasks` and exited 0.
+• An earlier fix had added a stderr note saying the list is per-process, but the success mark still printed and nothing mentioned #679.
+
+After the fix:
+• **Refused verbs:** `add`, `done`, `wip` and `remove` (which also change the list), plus `clear`. From the shell these print a refusal on stderr and exit 1. The message says the list only lives inside a running session, shows the matching /todo <verb> … command, and says persistence is tracked in #679. I checked add and clear by hand; the refusal text is the same for all five.
+• **Unchanged:** `yoyo todo list`, bare `yoyo todo` and `yoyo todo board` behave exactly as before and exit 0. The `/todo` command inside the interactive session is untouched.
+• **Where the code lives:** the refusal comes from one function, `shell_todo_refusal` in `src/commands_todo.rs`, and uses plain ASCII only. The old note helper moved from `src/dispatch_sub.rs` to sit next to it. That file is on the list of oversized modules that aren't allowed to grow, and it dropped from 2166 to 2150 lines.
+• **Help text:** yoyo --help no longer lists yoyo todo add ... as a shell command. docs/ never mentioned the shell form, so it needed no change.
+
+Tests added:
+• an exact-text check of the refusal
+• a check that every refused verb names #679 and /todo <verb>, with no non-ASCII characters
+• a check that read-only verbs don't refuse
+• a check that `/todo add` inside the session still adds
+• a test that runs the real binary and confirms exit 1, no "Added task", and #679 on stderr
+
+I also broke the verb check on purpose once: the exact-text test failed, and it passed again after I restored the file.
+
+Checks: build, clippy with -D warnings, cargo fmt --check and the full cargo test all pass (0 failures).
+
+Commits: all the code is in the WIP commit 9fbc49a1, which I made before running tests, as the task asked. The task-titled commit cbd77743 is empty and only carries the full write-up.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/2 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/commands_todo.rs, src/help.rs
+
