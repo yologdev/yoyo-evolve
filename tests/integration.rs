@@ -2832,3 +2832,35 @@ fn hooks_empty_state_reads_the_shared_phase_statement() {
         );
     }
 }
+
+#[test]
+fn shell_todo_add_refuses_instead_of_printing_success_and_forgetting() {
+    // #682 / #679: `yoyo todo add` in a fresh process used to print a green
+    // success mark and exit 0, then the item was gone on the next call.
+    let dir = std::env::temp_dir().join(format!("yoyo-todo-refusal-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let output = yoyo_cmd()
+        .args(["todo", "add", "buy milk"])
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run yoyo");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+    assert!(!stdout.contains("Added task"), "stdout: {stdout}");
+    assert!(!stdout.contains('✓') && !stderr.contains('✓'));
+    assert!(stderr.contains("#679"), "stderr: {stderr}");
+    assert!(stderr.contains("/todo add"), "stderr: {stderr}");
+
+    // Near-miss: the read-only verb stays harmless and exits 0.
+    let list = yoyo_cmd()
+        .args(["todo", "list"])
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run yoyo");
+    assert_eq!(list.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&list.stdout).contains("No tasks"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

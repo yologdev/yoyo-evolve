@@ -13,6 +13,48 @@ use std::sync::RwLock;
 /// disk-backed verb — was advertised nowhere).
 pub(crate) const TODO_VERBS: &[&str] = &["list", "add", "done", "wip", "remove", "clear", "board"];
 
+/// The `TODO_VERBS` that mutate the in-memory session list. A one-shot shell
+/// call (`yoyo todo add ...`) is a fresh process, so a mutation there would
+/// print a success mark and be forgotten the moment the process exits (#679,
+/// promised in Discussion #682). The shell path refuses these instead.
+pub(crate) const SESSION_MUTATING_TODO_VERBS: &[&str] = &["add", "done", "wip", "remove", "clear"];
+
+/// The refusal a one-shot shell `yoyo todo <verb>` prints for a mutating
+/// verb, or `None` for read-only verbs (`list`, bare, `board`, unknown).
+/// Glyph-free by construction (ASCII only), so it needs no plain-output twin.
+pub(crate) fn shell_todo_refusal(verb: &str) -> Option<String> {
+    if !SESSION_MUTATING_TODO_VERBS.contains(&verb) {
+        return None;
+    }
+    let args = match verb {
+        "add" => " <description>",
+        "done" | "wip" | "remove" => " <id>",
+        _ => "", // clear
+    };
+    Some(format!(
+        "  yoyo todo {verb}: refused -- nothing was changed.\n\
+         \x20 The todo list is session-only: it lives inside a running yoyo session, and each\n\
+         \x20 shell call is a fresh process, so the change would be forgotten when it exits.\n\
+         \x20 Start yoyo and use: /todo {verb}{args}\n\
+         \x20 Persistence across invocations is tracked in #679."
+    ))
+}
+
+/// The note the read-only shell `yoyo todo ...` path owes the user (#679):
+/// the list it shows is this process's own, which starts empty. `board` is
+/// exempt: it reads `session_plan/*.md` on disk, so it genuinely persists and
+/// the note would be a lie about it.
+pub(crate) fn shell_todo_session_note(verb: &str) -> Option<&'static str> {
+    match verb {
+        "board" => None,
+        _ => Some(
+            "note: the todo list is in-memory and per-process -- each `yoyo todo` \
+             shell call is a fresh process, so nothing persists between calls. Use \
+             /todo inside the interactive REPL for a session-scoped list.",
+        ),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TodoStatus {
     Pending,
@@ -711,6 +753,67 @@ fn handle_todo_board_with_dir(input: &str, base_dir: &str) -> String {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    #[test]
+    fn shell_todo_refusal_exact_text_names_679_and_slash_todo() {
+        assert_eq!(
+            shell_todo_refusal("add").as_deref(),
+            Some(
+                "  yoyo todo add: refused -- nothing was changed.\n\
+                 \x20 The todo list is session-only: it lives inside a running yoyo session, and each\n\
+                 \x20 shell call is a fresh process, so the change would be forgotten when it exits.\n\
+                 \x20 Start yoyo and use: /todo add <description>\n\
+                 \x20 Persistence across invocations is tracked in #679."
+            )
+        );
+        for verb in SESSION_MUTATING_TODO_VERBS {
+            let msg = shell_todo_refusal(verb).expect("mutating verb must refuse");
+            assert!(msg.contains("#679"), "{verb}: {msg}");
+            assert!(msg.contains(&format!("/todo {verb}")), "{verb}: {msg}");
+            // Glyph-free: no ✓ (the lie this replaces) and nothing non-ASCII.
+            assert!(msg.is_ascii(), "{verb} refusal must be glyph-free: {msg}");
+        }
+        assert!(shell_todo_refusal("clear")
+            .unwrap()
+            .contains("/todo clear\n"));
+    }
+
+    #[test]
+    fn shell_todo_refusal_leaves_read_only_verbs_alone() {
+        for verb in ["", "list", "board", "frobnicate"] {
+            assert_eq!(shell_todo_refusal(verb), None, "{verb:?} must not refuse");
+        }
+        // Every mutating verb is a real verb, and the only non-mutating real
+        // verbs are the read-only ones.
+        for verb in SESSION_MUTATING_TODO_VERBS {
+            assert!(TODO_VERBS.contains(verb), "{verb} not in TODO_VERBS");
+        }
+        let read_only: Vec<_> = TODO_VERBS
+            .iter()
+            .filter(|v| !SESSION_MUTATING_TODO_VERBS.contains(v))
+            .collect();
+        assert_eq!(read_only, vec![&"list", &"board"]);
+    }
+
+    #[test]
+    fn shell_todo_session_note_exempts_board_only() {
+        assert_eq!(shell_todo_session_note("board"), None);
+        assert!(shell_todo_session_note("list")
+            .unwrap()
+            .contains("in-memory and per-process"));
+        assert!(shell_todo_session_note("").is_some());
+    }
+
+    #[test]
+    #[serial]
+    fn repl_todo_add_still_adds_near_miss() {
+        // The refusal is shell-boundary only: the REPL path is untouched.
+        todo_clear();
+        let out = handle_todo("/todo add buy milk");
+        assert!(out.contains("Added task #"), "{out}");
+        assert!(handle_todo("/todo list").contains("buy milk"));
+        todo_clear();
+    }
 
     #[test]
     #[serial]

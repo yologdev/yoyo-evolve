@@ -448,7 +448,7 @@ pub fn cli_help_text() -> String {
     let _ = writeln!(s, "  permissions       Show security/permission config");
     let _ = writeln!(
         s,
-        "  todo              Manage project tasks (e.g. yoyo todo list, yoyo todo add ...)"
+        "  todo              Show tasks or the board (yoyo todo board); add/done/... live in /todo"
     );
     let _ = writeln!(
         s,
