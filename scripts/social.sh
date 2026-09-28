@@ -358,11 +358,11 @@ gasp_session_start "$DAY" "social_day" "social session (replies, discussions, pe
 
 # ── #944: this run's own spend, captured instead of deleted ──
 #
-# `yoyo` already prints this run's token usage at the end of a prompt
-# (`print_usage` -> `format_usage_line`, src/format/mod.rs); the line below
-# tees it into $AGENT_LOG, which social.sh then deleted unread. Nothing was
-# missing but one read, so the accounting lives here rather than in a new
-# feature.
+# `yoyo` already records this run's token usage: with YOYO_AUDIT=1 its
+# terminal emit appends a `"type":"usage"` record to the audit file below.
+# (The `↳` usage line is NOT usable here — quiet mode suppresses it under the
+# `| tee` capture; see report_social_spend.) Nothing was missing but one read,
+# so the accounting lives here rather than in a new feature.
 #
 # `YOYO_AUDIT=1` (the same shape scripts/evolve.sh uses) turns on the per-run
 # record `.yoyo/audit.jsonl` carries since #848. That file is **gitignored**
@@ -386,28 +386,44 @@ fi
 # Report this run's own spend, before $AGENT_LOG is deleted. Fail-soft by
 # contract, not by nicety: social.sh has re-enabled `set -o errexit` by the
 # time any of this runs, so every command whose no-match case is normal is
-# guarded, and a missing audit file, an absent usage line or an unreadable
+# guarded, and a missing audit file, an absent usage record or an unreadable
 # temp path warns and continues. The social phase must never fail because its
 # own accounting did.
 report_social_spend() {
-    local usage_line="" normalized="" audit_after=0 delta=0 size=0
-    # 1. The usage line, matched by the shape the binary actually emits. The
-    #    compact form is `↳ <elapsed> · <in>→<out> tokens[...]` (the leading
-    #    glyph plus a duration: "812ms", "4.2s", "1m 12s", "1h 4m", "1d 3h").
-    #    Colours are auto-disabled when stdout is not a terminal, so this is
-    #    the bare text under `tee`.
-    usage_line=$(grep -aE '↳ [0-9]+([.][0-9]+)?(ms|s|m |h |d )' "$AGENT_LOG" 2>/dev/null | tail -n 1 || true)
-    normalized="${usage_line#"${usage_line%%[![:space:]]*}"}"
-    if [ -n "$normalized" ]; then
-        echo "  Spend (this run): $normalized"
+    local usage_recs="" usage_count=0 audit_after=0 delta=0 size=0
+    # 1. The usage record(s) from THIS run's audit delta. The `↳` usage line
+    #    is never in $AGENT_LOG in production: yoyo auto-enables quiet mode
+    #    when stdin and stdout are both non-terminal (src/cli.rs, the
+    #    `!stdin.is_terminal() && !stdout.is_terminal()` arm), which the
+    #    `2>&1 | tee` capture always is, and quiet suppresses that line. The
+    #    audit's `"type":"usage"` record is written before any mode branch
+    #    (run 36463335955 printed no_terminal_emit on a run that finished).
+    if [ -f "$AUDIT_FILE" ]; then
+        audit_after=$(wc -l < "$AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+        case "$audit_after" in '' | *[!0-9]*) audit_after=0 ;; esac
+        delta=$((audit_after - AUDIT_BEFORE))
+        if [ "$delta" -lt 0 ]; then
+            delta=0
+        fi
+        if [ "$delta" -gt 0 ]; then
+            usage_recs=$(tail -n "$delta" "$AUDIT_FILE" 2>/dev/null | grep -a '"type":"usage"' || true)
+        fi
+    fi
+    if [ -n "$usage_recs" ]; then
+        # social.sh may run the binary more than once, so every record in the
+        # delta is printed with the count — never silently the last one only.
+        usage_count=$(printf '%s\n' "$usage_recs" | grep -c . || true)
+        echo "  Spend (this run): ${usage_count} usage record(s)"
+        printf '%s\n' "$usage_recs" | while IFS= read -r rec; do
+            echo "    $rec"
+        done
     else
-        # An absent usage line is NOT a zero. A run killed by the timeout
-        # (exit 124) never reaches `print_usage`, and neither does one that
-        # died before its terminal emit — the same condition
-        # scripts/extract_trajectory.py files as USAGE_NO_TERMINAL_EMIT. Reuse
-        # that wording rather than inventing a second one, and never render
-        # the absence as 0: a killed run and an honestly-empty run must not
-        # read the same.
+        # An absent usage record is NOT a zero. A run killed by the timeout
+        # (exit 124), or one that died before its terminal emit, writes none —
+        # the condition scripts/extract_trajectory.py files as
+        # USAGE_NO_TERMINAL_EMIT. Reuse that wording, and never render the
+        # absence as 0: a killed run and an honestly-empty run must not read
+        # the same.
         echo "  Spend (this run): no usage record — the process did not reach its terminal emit (no_terminal_emit)"
     fi
     # 2. The audit delta for THIS run, plus the file's cumulative size as a
