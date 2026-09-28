@@ -868,5 +868,53 @@ if require "dream: checkpoint block extracted" "$CK_BLOCK"; then
     check "dream: staged out-of-scope file does NOT ride along" "$(ck_case junk)"  ".dream_last_run"
 fi
 
+# social.sh's spend reader (#944). Production captures yoyo with `2>&1 | tee`,
+# so stdin and stdout are both non-terminal, yoyo auto-enables quiet mode
+# (src/cli.rs) and the `↳` usage line never reaches $AGENT_LOG. Run
+# 36463335955 (2026-09-28) finished and still printed no_terminal_emit because
+# the reader grepped that line. Every case below uses the PRODUCTION shape: an
+# AGENT_LOG with no `↳` line, and the spend only in the audit delta.
+SOCIAL="$(cd "$(dirname "$0")/.." && pwd)/scripts/social.sh"
+SS_FN=$(awk '/^report_social_spend\(\) \{/,/^\}/' "$SOCIAL")
+ss_case() { # $1=pre-existing lines (watermark)  $2=lines appended this run, '|'-separated
+    ( set -uo pipefail
+      d=$(mktemp -d) && cd "$d" || exit 1
+      AUDIT_FILE="$d/audit.jsonl"; AGENT_LOG="$d/agent.log"
+      printf 'thinking about replies\nposted a comment\n' > "$AGENT_LOG"
+      printf '%s' "$1" | tr '|' '\n' > "$AUDIT_FILE"
+      AUDIT_BEFORE=$(wc -l < "$AUDIT_FILE" | tr -d '[:space:]')
+      [ -n "$2" ] && printf '%s\n' "$2" | tr '|' '\n' >> "$AUDIT_FILE"
+      eval "$SS_FN"
+      report_social_spend; echo "rc=$?"
+      cd / && rm -rf "$d"
+    ) 2>/dev/null
+}
+TOOL='{"type":"tool_call","tool":"bash"}'
+U1='{"type":"usage","input_tokens":1200,"output_tokens":340}'
+U2='{"type":"usage","input_tokens":900,"output_tokens":55}'
+has() { printf '%s' "$1" | grep -qF -- "$2" && echo yes || echo no; }
+if require "social: report_social_spend extracted" "$SS_FN"; then
+    # Case A — the shape the old `↳` grep got wrong: finished run, no `↳` line.
+    A=$(ss_case "$TOOL|$TOOL|" "$TOOL|$TOOL|$U1")
+    check "social spend A: usage record reported"             "$(has "$A" "$U1")"                "yes"
+    check "social spend A: finished run is not no_terminal_emit" "$(has "$A" no_terminal_emit)"   "no"
+    check "social spend A: count stated"                      "$(has "$A" '1 usage record(s)')"  "yes"
+    check "social spend A: audit line byte-identical"         "$(printf '%s\n' "$A" | grep -c '^  Spend audit: 3 record(s) this run (line 2 → 5); ')" "1"
+    check "social spend A: fail-soft rc"                      "$(has "$A" 'rc=0')"               "yes"
+    # Case B — two processes in one run: both records, never only the last.
+    B=$(ss_case "$TOOL|" "$TOOL|$U1|$TOOL|$U2")
+    check "social spend B: count 2"                           "$(has "$B" '2 usage record(s)')"  "yes"
+    check "social spend B: first record kept"                 "$(has "$B" "$U1")"                "yes"
+    check "social spend B: second record kept"                "$(has "$B" "$U2")"                "yes"
+    # Case C — the real death: tool calls, no terminal emit.
+    C=$(ss_case "$TOOL|" "$TOOL|$TOOL")
+    check "social spend C: no usage -> no_terminal_emit"      "$(has "$C" no_terminal_emit)"     "yes"
+    check "social spend C: absence never rendered as a count" "$(has "$C" 'usage record(s)')"   "no"
+    # Case D — watermark: an earlier run's usage record is not this run's.
+    D=$(ss_case "$TOOL|$U1|" "$TOOL")
+    check "social spend D: pre-watermark usage not reported"  "$(has "$D" "$U1")"                "no"
+    check "social spend D: -> no_terminal_emit"               "$(has "$D" no_terminal_emit)"     "yes"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
