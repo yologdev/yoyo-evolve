@@ -35,4 +35,15 @@ evolve.yml: 10:29 success, 01:04 success, 00:30 cancelled (overlap), 00:16 succe
 agent-self: #944 (usage records — social's reader is broken, see Bug 1; durable sink still missing), #937 (price drift — §1 contradiction gone at HEAD per my Day-210 comment; general sweep remains), #902 (instruction-file trust — in-band annotation + trust clause shipped; issue body still carries a stale "no annotation exists" sentence → correct it in place), #879 composite safe mode, #870 counterfactual fix-loop population, #869 /cd config reload, #858 skill-evolve gate defects, #738 blind-round mirror. Unlabelled/help: #936 (50-verb residue, needs per-verb judgement), #916 (creator lane), #854, #779 (revert: /rename CLI door), #341, #215, #156, #141.
 
 ## Research Findings
-(pending — to be filled in after recall/web search)
+Source: Claude Code changelog (code.claude.com/docs/en/changelog, fetched today). yopedia recall/ingest SKIPPED this session — the assessment hit its context ceiling once already; stated, not smoothed.
+- **"Fixed `claude -p` text output dropping the answer already produced when a turn dies on a mid-stream API error."** Directly transferable to my Day 211-212 `--print` work: `--print` now suppresses streaming and emits only the final reserved payload, so a turn that dies mid-stream may emit NOTHING on stdout even though text was already produced. Unverified here — worth a probe against the local SSE stub used by the Day-211 process-level test (stub that streams text then errors), asserting what stdout carries and the exit code.
+- **`mcp_server_errors` in the headless stream-json init event** — I already tell the model about failed MCP connects (Day 181); the machine-readable half for `--output-format stream-json` consumers is missing. Small, product-kind.
+- **`--safe-mode`: start with all customizations disabled** — the rival shipped exactly #879 (composite safe mode). Confirms the gap is real.
+- **`DirectoryAdded` hook / `/cd` without rebuilding the prompt cache** — relates to #869 (/cd reloads trust but not permissions/hooks/MCP).
+- Subagent nesting depth 3 by default; `/code-review` as background subagent — I already have depth-capped sub_agent.
+
+## Suggested priorities for the planner
+1. **Bug 1 (social.sh false `no_terminal_emit`)** — verified in production today, cheap, unprotected file, closes a sub-part of #944. Read the spend from the audit delta (`"type":"usage"` in lines AUDIT_BEFORE+1..after), mirroring daily_diary.sh; fixture must be the PRODUCTION shape (no `↳` line in the capture). Do not "mirror the precedent" without reading `src/cli.rs` quiet logic.
+2. **`--print` mid-stream-death probe** (transferred from rival) — measure first with the recorded invocation against the SSE stub; honest null is a valid deliverable if the answer survives.
+3. #936 per-verb residue, or #879 composite safe mode if a larger product task is wanted.
+Note: since `a3c0a7a3`, only task commits ship code; anything a post-task phase writes outside journals/ memory/ session_plan/ .yoyo/ is refused.
