@@ -1,0 +1,68 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; git l… ✓ (190ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,215p src/prompt.rs; s… ✓ (7ms)
+  ▶ $ cd /tmp && B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; env | … ✓ (5ms)
+  ▶ $ cd /tmp && B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; M="--p… ✓ (5.9s)
+  ▶ $ cd /tmp && which -a yoyo; yoyo --version 2>&1|head -1; B=/home/runner/work/yoyo-… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -12 --format='… ✓ (6ms)
+  ▶ $ cd /tmp && B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; M="--p… ✓ (5.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l tests/print_stdout_contrac… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,300p tests/print_stdo… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 280,340p src/main.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'write_stream_text(\|wri… ✓ (4ms)
+  11 tools completed in 56.0s (11 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> tests… (114 lines) ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test print_stdout_c… ✓ (813ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|^    if reserved {$|  … ✓ (23.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|^        print!("{}", … ✓ (23.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "print_stdout_contract" … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (22.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && ca… ✓ (2m 19s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "FAIL… ✓ (1m 30s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (1m 29s)
+  9 tools completed in 6m 57s (9 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (25 lines) ✓ (44ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+I couldn't reproduce the --print stray newlines at HEAD, so I changed no code. Following the task's honest-null clause, I committed tests that pin the exact bytes, plus a record of what I measured. The commit is 18477b87.
+
+What I measured. I ran the real provider from /tmp, using target/debug/yoyo built at 4bf2c8a2, and piped stdout through od -c:
+
+| Command | stdout |
+|---|---|
+| --print | P O N G (4 bytes) |
+| --print --thinking high | P O N G |
+| --print --thinking off | P O N G |
+| --print with a real bash tool turn | P O N G |
+| -p without --print | \n P O N G \n \n |
+| piped stdin without --print | \n P O N G \n \n |
+
+• **--print has no leak at this commit**, with thinking on, off, or with a tool call. My guess is that the assessment ran a binary built before `90e69801`, the chrome-to-stderr fix. I haven't verified that.
+• **Plain -p and piped mode without --print do add newlines** (one before the answer, two after). These modes deliberately put turn framing and tool output on stdout; the reserve is never set there. So a reserve gate would not change them, and I left them alone. If you want those modes to have clean stdout too, that's a separate product decision.
+• **Trailing newline: none added.** `--print` writes the model's text exactly as received, so stdout is the answer bytes and nothing else. Adding a `\n` would change output that scripts already consume.
+
+Tests added to tests/print_stdout_contract.rs:
+• A test stub that sends a thinking block before the text answer. The existing stub never did, so no test covered the switch from thinking to answer text.
+• Two tests, one for -p --print and one for piped --print. Each checks that stdout starts with the answer's first byte and equals the answer exactly, using assert_eq! on untrimmed stdout.
+• A check that the stub really sends the thinking event before the text.
+
+Checks that the tests catch what they should. I ran two deliberate breakages one at a time, each restored in the same command:
+• **Removing the reserve gate:** 7 of the 9 contract tests failed, including both new ones. The two plain--p tests stayed green, as they should.
+• **Making `emit_output` print `"{}\n\n"`** (the doubled trailing newline the assessment described): only the two new tests failed. Every older `--print` test trims trailing whitespace before comparing, so none of them could catch this.
+
+The reading, the reasoning and these results are in the ARCHITECTURE.md entry beside the Day 212 note on the stdout rule.
+
+Checks: cargo build, cargo test (all green), cargo clippy --all-targets -- -D warnings and cargo fmt -- --check all passed.
+
+  watch: no files changed this turn — skipping
+

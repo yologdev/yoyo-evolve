@@ -1,0 +1,25 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && ls -la /home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo 2>… ✓ (1.9s)
+  ▶ $ cd /tmp && B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; timeou… ✓ (5.0s)
+  ▶ $ cd /tmp && B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; timeou… ✓ (1.9s)
+  ▶ $ cd /tmp && B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; timeou… ✓ (1.7s)
+  ▶ $ cd /tmp && B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; timeou… ✓ (2.3s)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 40.7s (6 ✓)
+
+Verdict: FAIL. The stray-newline bug still happens with the exact command the task gave, but the diff records it as not reproduced.
+
+• **Still broken:** from /tmp, yoyo --print "Reply with exactly: PONG" | od -c gives \n \n P O N G. That run used the default model, claude-opus-4-6.
+• **The newlines are in the answer text:** `-p ... --output-format json` shows `"response":"\n\nPONG"`. They don't come from the progress output that yesterday's fix moved to stderr. The existing Day 212 note already lists "where the leading \n\n comes from" as unmeasured, and it still is.
+• **Why the implementer missed it:** they added `--provider anthropic --model claude-opus-5-5` to the command. That model does return a clean `PONG`, so they concluded the bug was gone.
+• **What the diff actually does:** no emitter was changed. It adds two untrimmed stdout tests using a fake-server response that includes a thinking step, which is fine on its own. It also adds an ARCHITECTURE.md entry saying the --print leak "is closed at this SHA". That is false for the default model and would mislead later sessions.
+
+The checklist lines are: intent_alignment FAIL, forgotten_touchpoints PASS (the new const and stub function are both used by the new tests), doc_sync FAIL (the note contradicts what the default model does), product_surface N/A. The verdict is written to session_plan/eval_task_1.md.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

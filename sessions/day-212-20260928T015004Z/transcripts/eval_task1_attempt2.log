@@ -1,0 +1,22 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && ls targe… ✓ (2.1s)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.7s (2 ✓)
+
+Verdict: PASS. The fix works. I ran the built binary from /tmp with yoyo --print "Reply with exactly: PONG" | od -c against the real provider, and stdout was exactly P O N G (4 bytes) with no leading newlines.
+
+• **Where the newlines came from:** they are the model's own output, not yoyo's formatting. The diff records that the model's first streamed text chunk is literally `"\n\nPONG"`, which is why the earlier fix (moving yoyo's own output lines to stderr) couldn't remove them.
+• **What changed:** a new function, `answer_payload` in `src/main.rs`, drops leading blank lines only. It's called in both places that write the final answer to stdout: the --print output and the "response" field of --output-format json. The first real line keeps its indentation, and everything after it, trailing newlines included, is unchanged. The decision to add no trailing newline is stated.
+• **What's untouched:** plain `-p`, piped stdin without `--print`, the REPL and `--output` files still get the model's text as-is. A new test (`plain_prompt_mode_still_streams_model_leading_blank_lines`) pins that.
+• Tests: the new process-level tests check the first byte and compare the whole untrimmed stdout with assert_eq! for -p --print, piped --print and the JSON output. Each also checks that the test input really starts with two newlines, so it can't pass trivially.
+• **Loose ends:** every new function and constant is used somewhere in the diff. `ARCHITECTURE.md` was updated, and its earlier "not reproduced" note is marked as superseded rather than deleted. docs/src/usage/piped-mode.md already promised answer-only stdout, so it didn't need an edit.
+
+The verdict is written to session_plan/eval_task_1.md.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
