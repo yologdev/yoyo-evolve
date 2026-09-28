@@ -647,6 +647,67 @@ agent_log_has_api_error() {
     grep -qE $'^(\e\\[[0-9;]*m)?[[:space:]]*error: (API|Auth) error: ' "$1" 2>/dev/null
 }
 
+# ── Scope gate for the two ungated `git add -A` sweeps (#951) ──
+# The wrap-up and pre-push sweeps commit with no build or test. Their job is
+# bookkeeping written after the task gate (journal, learnings, risk ledgers,
+# the session_plan deletions), never code: since 2026-07-01, 445 of 456 bot
+# wrap-ups touched only journals/ memory/ session_plan/ .yoyo/, and all 11
+# exceptions were drift that should not ship unchecked, including the
+# neutered sanitize_for_display that held main red ~22h (804620e4) and the
+# setup-wizard .yoyo.toml clobber (086f9d9f).
+#
+# Any changed path outside $1 (an ERE on the repo-relative path) is refused:
+# listed, its diff saved to $SESSION_STAGING (gitignored, goes to the
+# audit-log branch), then restored to HEAD or removed if new, so no later
+# `git add -A` can pick it up. Paths come from `git status`, so gitignored
+# files (target/, session staging) are never seen, let alone removed.
+# Fail-soft: a gate error must never kill the session.
+commit_scope_gate() { # $1 = allowed-path ERE, $2 = label for messages/files
+    local allowed="$1" label="$2" entry status path src refused=()
+    while IFS= read -r -d '' entry; do
+        status="${entry:0:2}"
+        path="${entry:3}"
+        if [[ "$status" == R* || "$status" == C* ]]; then
+            # A rename/copy carries its source as the next NUL field. Refuse
+            # BOTH halves if EITHER is out of scope: refusing only the new
+            # half would commit the source's deletion and lose the file.
+            IFS= read -r -d '' src || true
+            if ! [[ "$path" =~ $allowed && "$src" =~ $allowed ]]; then
+                refused+=("$path" "$src")
+            fi
+        elif ! [[ "$path" =~ $allowed ]]; then
+            refused+=("$path")
+        fi
+    done < <(git status --porcelain=v1 -z -uall 2>/dev/null)
+    [ "${#refused[@]}" -eq 0 ] && return 0
+
+    echo "  ⚠️ ${label}: refused ${#refused[@]} path(s) outside its scope (not built or tested; kept off main):"
+    printf '    %s\n' "${refused[@]}"
+    local patch="${SESSION_STAGING:-.yoyo/session_staging}/refused_${label}.patch"
+    mkdir -p "$(dirname "$patch")" 2>/dev/null || true
+    # One path at a time: a multi-path `git add`/`git reset` aborts on the
+    # first pathspec it cannot match (e.g. an already-staged deletion), which
+    # would silently skip the rest. Literal pathspecs so a `*` or `[` in a
+    # file name matches only that file.
+    for path in "${refused[@]}"; do
+        GIT_LITERAL_PATHSPECS=1 git add -A -- "$path" 2>/dev/null || true
+    done
+    if GIT_LITERAL_PATHSPECS=1 git diff --cached --binary -- "${refused[@]}" > "$patch" 2>/dev/null; then
+        echo "    diff saved to $patch (audit-log branch)"
+    fi
+    for path in "${refused[@]}"; do
+        GIT_LITERAL_PATHSPECS=1 git reset -q -- "$path" 2>/dev/null || true
+        if git cat-file -e "HEAD:$path" 2>/dev/null; then
+            GIT_LITERAL_PATHSPECS=1 git checkout -q HEAD -- "$path" 2>/dev/null || true
+        else
+            rm -rf -- "$path" 2>/dev/null || true
+        fi
+    done
+    return 0
+}
+WRAPUP_SCOPE='^(journals|memory|session_plan|\.yoyo)/'
+PREPUSH_SCOPE='^\.yoyo/'
+
 # ── Ensure fresh token (retries start with a stale token from job start) ──
 refresh_gh_token
 
@@ -3756,7 +3817,9 @@ if [ -x "$YOYO_BIN" ]; then
     fi
 fi
 
-# Commit any remaining uncommitted changes (journal, etc.)
+# Commit any remaining uncommitted changes (journal, etc.) — bookkeeping
+# only; anything else is refused by the scope gate (#951).
+commit_scope_gate "$WRAPUP_SCOPE" wrapup
 git add -A
 if ! git diff --cached --quiet; then
     git commit -m "Day $DAY ($SESSION_TIME): session wrap-up"
@@ -4002,6 +4065,7 @@ refresh_gh_token
 # is harness state, not agent work: commit it under its own name so the
 # rebase can run, and PRINT the list so any new writer is found in one look
 # rather than by losing a session to it (Day 197, run 34766606687).
+commit_scope_gate "$PREPUSH_SCOPE" prepush
 PREPUSH_LEFTOVERS=$(git status --porcelain 2>/dev/null || echo "?? (git status failed)")
 if [ -n "$PREPUSH_LEFTOVERS" ]; then
     echo "  Tracked files changed after the wrap-up sweep — committing them so the rebase can run:"

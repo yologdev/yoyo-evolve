@@ -706,6 +706,52 @@ for _s in "$SE" "$SCRIPT"; do
 done
 rm -f "$MARKED"
 
+# ── sweep scope gate (#951): the ungated `git add -A` commits bookkeeping only ─
+# Real git. The dirty tree mixes what a wrap-up legitimately commits with the
+# drift it has actually shipped (804620e4's src/ edit, 2c360b4c's stray `bar`),
+# plus the awkward shapes: a deleted tracked file, a space in a path, a rename
+# out of an allowed dir, and a gitignored file that must never be touched.
+GATE_FN=$(awk '/^commit_scope_gate\(\) \{/,/^\}/' "$SCRIPT")
+GATE_VARS=$(grep -E '^(WRAPUP|PREPUSH)_SCOPE=' "$SCRIPT")
+gate_case() { # $1 = "gate" or "nogate" → committed|clean|patch|ignored
+    ( set +e; d=$(mktemp -d); cd "$d" || exit 1
+      git init -q; git config user.email t@t; git config user.name t
+      mkdir -p src tests journals memory .yoyo target "src/sp ace"
+      echo target/ > .gitignore
+      echo a > src/a.rs; echo t > tests/t.rs; echo j > journals/J.md
+      echo m > memory/moved.md; echo x > "src/sp ace/b.rs"
+      git add -A; git commit -qm base
+      echo EDIT >> src/a.rs; echo stray > bar; git rm -q tests/t.rs
+      echo more >> "src/sp ace/b.rs"; git mv memory/moved.md src/moved.md
+      echo entry >> journals/J.md; echo '{}' > .yoyo/new.jsonl
+      echo keep > target/ignored.bin
+      SESSION_STAGING="$(mktemp -d)/stage"  # outside the repo, as the real (gitignored) staging dir is
+      eval "$GATE_VARS"
+      if [ "$1" = gate ]; then eval "$GATE_FN"; commit_scope_gate "$WRAPUP_SCOPE" wrapup >/dev/null; fi
+      git add -A; git commit -qm wrapup
+      committed=$(git show --name-only --format= HEAD | sort | paste -sd, -)
+      clean=$([ -z "$(git status --porcelain)" ] && echo clean || echo dirty)
+      patch=$(grep -c '^diff --git' "$SESSION_STAGING/refused_wrapup.patch" 2>/dev/null || echo 0)
+      ignored=$(cat target/ignored.bin 2>/dev/null)
+      echo "$committed|$clean|$patch|$ignored"
+      cd /; rm -rf "$d" "$(dirname "$SESSION_STAGING")" ) 2>/dev/null | tail -1
+}
+if require "commit_scope_gate extracted" "$GATE_FN" && require "scope vars extracted" "$GATE_VARS"; then
+    # memory/moved.md -> src/moved.md is a rename OUT of scope: both halves are
+    # refused, so moved.md stays where it was and nothing is committed for it.
+    check "scope gate: wrap-up commits only bookkeeping; refused drift restored; ignored file untouched" \
+        "$(gate_case gate)" ".yoyo/new.jsonl,journals/J.md|clean|5|keep"
+    case "$(gate_case nogate)" in
+        *src/a.rs*bar*|*bar*src/a.rs*) ok "scope gate: positive control — the bare sweep commits src/ and the stray file" ;;
+        *) bad "scope gate: positive control" "ungated sweep did not commit the drift" ;;
+    esac
+    # Wired in front of BOTH sweeps, with the right scope each.
+    check "scope gate: wrap-up sweep is gated" \
+        "$(grep -A1 -F 'commit_scope_gate "$WRAPUP_SCOPE" wrapup' "$SCRIPT" | tail -1)" "git add -A"
+    check "scope gate: pre-push sweep is gated" \
+        "$(grep -A1 -F 'commit_scope_gate "$PREPUSH_SCOPE" prepush' "$SCRIPT" | tail -1 | cut -c1-17)" "PREPUSH_LEFTOVERS"
+fi
+
 # ── main push: retry, and never echo a failure into success ────────────────
 PR_FN=$(awk '/^push_main_with_retry\(\) \{/,/^\}/' "$SCRIPT")
 if require "push_main_with_retry extracted" "$PR_FN"; then
@@ -738,14 +784,20 @@ if require "push_main_with_retry extracted" "$PR_FN"; then
     # The pre-push sweep, banner to its `fi`, in a scratch repo: a tracked file
     # dirtied after the wrap-up gets committed by name; a clean tree is untouched.
     PS_BLOCK=$(awk '/^# ── Pre-push sweep/{p=1} p{print} p && /^fi$/{exit}' "$SCRIPT")
-    ps_case() { # $1 = dirty|clean  -> "<commits after> <clean?> <subject>"
+    # The dirtied file is the sweep's one real writer, .yoyo/applied_pattern_keys.txt
+    # (20 of 20 bot pre-push commits). `stray` dirties a file outside .yoyo/,
+    # which the #951 scope gate must refuse rather than commit.
+    ps_case() { # $1 = dirty|clean|stray  -> "<commits after> <clean?> <subject>"
         ( set -uo pipefail
           export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
           d=$(mktemp -d) && cd "$d" || exit 1
           git init -q . && git config user.email t@t && git config user.name t
-          echo keys > handoff && git add handoff && git commit -qm base
-          [ "$1" = dirty ] && : > handoff
-          DAY=197; SESSION_TIME=15:47
+          mkdir -p .yoyo && echo keys > .yoyo/applied_pattern_keys.txt && echo code > handoff
+          git add -A && git commit -qm base
+          [ "$1" = dirty ] && : > .yoyo/applied_pattern_keys.txt
+          [ "$1" = stray ] && echo EDIT >> handoff
+          DAY=197; SESSION_TIME=15:47; SESSION_STAGING=$(mktemp -d)
+          eval "$GATE_FN"; eval "$GATE_VARS"
           eval "$PS_BLOCK" >/dev/null
           printf '%s %s %s' "$(git rev-list --count HEAD)" "$([ -z "$(git status --porcelain)" ] && echo clean || echo dirty)" "$(git log -1 --format=%s | cut -c1-40)"
           cd / && rm -rf "$d"
@@ -754,6 +806,7 @@ if require "push_main_with_retry extracted" "$PR_FN"; then
     if require "pre-push sweep extracted" "$PS_BLOCK"; then
         check "pre-push sweep: dirty tracked file -> committed by name, tree clean" "$(ps_case dirty)" "2 clean Day 197 (15:47): session-end state reset"
         check "pre-push sweep: clean tree -> untouched"                              "$(ps_case clean)" "1 clean base"
+        check "pre-push sweep: file outside .yoyo/ -> refused, not committed"        "$(ps_case stray)" "1 clean base"
     fi
 fi
 
