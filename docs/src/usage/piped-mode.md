@@ -59,7 +59,8 @@ Under `--print` and `--output-format json`, progress output (tool `▶` lines, �
 The `stream-json` stream is the raw yoagent `AgentEvent` serialization —
 internally tagged on a `"type"` field, `camelCase` keys, full fidelity (no
 lossy translation). The first line is always `{"type":"agentStart"}` and the
-last is `{"type":"agentEnd", ...}`. Tool activity appears as
+last yoagent event is `{"type":"agentEnd", ...}` (see below for the one line
+that can follow it). Tool activity appears as
 `toolExecutionStart` / `toolExecutionEnd`, and assistant text arrives as
 `messageStart` / `messageUpdate` / `messageEnd`. Turn boundaries are
 `turnStart` / `turnEnd`.
@@ -77,6 +78,23 @@ echo "list the files" | yoyo --output-format stream-json
 {"type":"messageEnd", ...}
 {"type":"agentEnd", ...}
 ```
+
+**Degraded runs: one `externalServers` line.** If an MCP server or OpenAPI
+spec you configured failed to connect this session, one extra line follows
+the last yoagent event (so it comes after `agentEnd`, and the first line is
+still `agentStart`):
+
+```jsonl
+{"type":"externalServers","mcp_connected":1,"mcp_failed":["npx some-server"],"openapi_connected":0,"openapi_failed":[]}
+```
+
+Its fields are exactly the `external_servers` object that `--output-format json`
+puts in its envelope, plus `"type"`: `*_connected` counts servers that did
+connect, and `*_failed` lists the server command (MCP) or spec path/URL
+(OpenAPI) of each one that did not. The line is **absent** when every
+configured server connected, or when none are configured, so a healthy run's
+stream is unchanged. The run itself is not marked as an error — a script that
+cares must look for this line.
 
 The exact set of fields on each event is defined by yoagent — see its
 [messages & events reference](https://github.com/yologdev/yoagent/blob/main/docs/concepts/messages-events.md)
