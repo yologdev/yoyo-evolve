@@ -1764,6 +1764,37 @@ mod tests {
         assert!(help_mentions("ends with --version", "--version"));
     }
 
+    /// The `-p` entry plus its indented continuation lines, as `--help` prints it.
+    fn help_entry_block(text: &str, head: &str) -> String {
+        let mut lines = text.lines().skip_while(|l| !l.starts_with(head));
+        let mut block: Vec<&str> = lines.next().into_iter().collect();
+        block.extend(lines.take_while(|l| l.starts_with("                    ")));
+        block.join("\n")
+    }
+
+    #[test]
+    fn prompt_help_points_scripters_at_print_for_clean_stdout() {
+        // Plain `-p` passes the model's leading/trailing newlines through to
+        // stdout (deliberately — it is the unreserved path). A scripter
+        // capturing it needs to learn `--print` exists, from `-p`'s own entry.
+        let text = cli_help_text();
+        let p = help_entry_block(&text, "  --prompt, -p <t>");
+        assert!(!p.is_empty(), "`-p` entry not found in --help");
+        assert!(
+            help_mentions(&p, "--print"),
+            "`-p` help must point at --print for clean stdout, got:\n{p}"
+        );
+        let print = help_entry_block(&text, "  --print ");
+        assert!(
+            print.contains("stdout carries only the answer"),
+            "`--print` help must say its stdout carries only the answer, got:\n{print}"
+        );
+        // Near-miss: the `--print` block must not have swallowed
+        // `--print-system-prompt`, and `-p`'s block must stop at the next flag.
+        assert!(!print.contains("--print-system-prompt"));
+        assert!(!p.contains("--image <file>"));
+    }
+
     #[test]
     fn cli_help_documents_every_known_flag() {
         // The flag list `parse_args` accepts is owned by cli.rs; --help is prose
