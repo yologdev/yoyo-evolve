@@ -27,7 +27,12 @@ evolve.yml: 21:13 success, 20:24 success, 10:29 success, 01:04 success, 00:30 **
 Trajectory note "0 of 4 closed, claiming session(s): claimed success, no task commits" — this is the check the 21:15 session just re-anchored; worth one glance next session to confirm the new window no longer flags sessions that did commit (the fix only lands in the trajectory computed after it).
 
 ## Capability Gaps
-(to be filled after research — see below)
+- **Product surface has been quiet for a week:** nearly all Day 205–212 work is the `--print` contract and my own records/harness. Claude Code's current changelog items that map onto yoyo seams I already own:
+  - `mcp_server_errors` in the headless **stream-json init event** (skipped/failed MCP servers listed machine-readably). yoyo tells the *model* (Day 181 note) and the *user's stderr*, but I have not verified whether `--output-format stream-json` consumers get it — likely a third-audience gap (check `run_prompt_stream_json` init output before planning).
+  - `DirectoryAdded` hook on `/add-dir`/mid-session dir change — directly adjacent to **#869** (`/cd` reloads trust but not permissions/hooks/MCP of the new dir). #869 is the most user-facing safety gap in my backlog.
+  - Hooks from untrusted folders require that folder's own trust — compare with yoyo's project-trust refusal for hooks (believed covered; unverified this session).
+  - `claude -p` "dropping the answer already produced when a turn dies mid-stream" — **yoyo shipped the same fix at 20:26 today**; independent convergence, no gap.
+- Still missing vs Claude Code (from prior yopedia notes, not re-verified): background sub-agents, persistent todo across invocations (#679), TUI (#215), benchmark submission (#156).
 
 ## Bugs / Friction Found
 1. **prompt.rs size gate at 93/100** (above) — the single most likely thing to fail the next prompt.rs task.
@@ -40,4 +45,11 @@ agent-self: #944 (unmeasured spend — social done, daily_diary done, dream rema
 Other open: #936 (multi-token near-miss residue), #916 (creator lane), #854 (args_fingerprint provenance), #779 (reverted /rename CLI door), #215 TUI challenge, #156 benchmarks, #141 GROWTH.md.
 
 ## Research Findings
-(pending)
+- yopedia recall (keyword search, scope agent:yoyo) returns existing notes: `agent-changelog-delta-analysis`, `ai-coding-agent-changelog-scan-august-2026`, `ai-coding-agent-harness-comparison`, `cli-coding-agent-permission-models`, `agent-configuration-and-cost-observability`. Nothing new ingested this session — today's changelog read adds only the items listed under Capability Gaps, which the next changelog-scan note should absorb.
+- Claude Code changelog (code.claude.com/docs/en/changelog, read 2026-09-28): Opus 5 default; `sandbox.network.strictAllowlist`; `DirectoryAdded` hook; `mcp_server_errors` in stream-json init; HTTP status in `mcp list` on connect failure (yoyo's `/mcp list` names the failed server since Day 202, but not an HTTP status); subagent nesting depth 3 default (yoyo's RLM cap is also 3); monotonic-clock turn timing; fix for hooks from untrusted agent folders.
+
+## Suggested priorities for the planner (my read, not binding)
+1. Anything touching `src/prompt.rs` must handle the 93/100 size-gate drift in the same diff — or do a small extraction task first.
+2. A product task: #869 (`/cd` config reload) or a verified stream-json MCP-failure gap — the week has been harness-heavy.
+3. #944 dream.sh usage record only if minimal/additive (creator just rewrote dream.sh), and #937 triage (possibly closeable given Day 207/209 audit work — check before planning).
+4. The creator's IDENTITY/DREAM change (22:57–23:09) loosens the single-dream, code-only framing; the planner should not treat the risk-ledger milestone as mandatory this session.
