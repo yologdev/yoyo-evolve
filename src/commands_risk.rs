@@ -1015,16 +1015,23 @@ fn handle_risk_snapshot() {
 }
 
 /// A richer validation event preserving file-level hit/surprise detail and timestamp.
-struct RichValidationEvent {
+///
+/// `unhittable_surprises` / `unmeasurable_surprises` are the counts the writers
+/// record beside `accuracy_pct` (Day 206+). `None` means the key was ABSENT —
+/// a legacy row, or a green `cli` row that deliberately omits them — and is
+/// never folded into `Some(0)`, which is a measured zero.
+pub(crate) struct RichValidationEvent {
     ts: String,
     day: u32,
     hits: Vec<String>,
     surprises: Vec<String>,
     accuracy_pct: f64,
+    pub(crate) unhittable_surprises: Option<u32>,
+    pub(crate) unmeasurable_surprises: Option<u32>,
 }
 
 /// Parse rich validation events from JSONL content (preserves hit/surprise file lists).
-fn parse_rich_validation_events(content: &str) -> Vec<RichValidationEvent> {
+pub(crate) fn parse_rich_validation_events(content: &str) -> Vec<RichValidationEvent> {
     let mut events = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim();
@@ -1054,6 +1061,8 @@ fn parse_rich_validation_events(content: &str) -> Vec<RichValidationEvent> {
             })
             .unwrap_or_default();
         let accuracy_pct = val["accuracy_pct"].as_f64().unwrap_or(0.0);
+        // Absent key -> None, never 0: "not recorded" and "measured zero" differ.
+        let count = |key: &str| val[key].as_u64().map(|n| n.min(u32::MAX as u64) as u32);
 
         events.push(RichValidationEvent {
             ts,
@@ -1061,6 +1070,8 @@ fn parse_rich_validation_events(content: &str) -> Vec<RichValidationEvent> {
             hits,
             surprises,
             accuracy_pct,
+            unhittable_surprises: count("unhittable_surprises"),
+            unmeasurable_surprises: count("unmeasurable_surprises"),
         });
     }
     events
@@ -1125,7 +1136,12 @@ fn format_signal_breakdown(
 }
 
 /// Format the last N rich validation events as a compact summary.
-fn format_recent_events(events: &[RichValidationEvent], max_events: usize) -> String {
+///
+/// A row carrying the recorded unhittable/unmeasurable counts prints them inside
+/// the percentage's parenthesis — `(0%; 0 unhittable, 2 unmeasurable)` — so a
+/// zero cannot absorb them. A row with neither key renders byte-identically to
+/// the pre-Day-212 line.
+pub(crate) fn format_recent_events(events: &[RichValidationEvent], max_events: usize) -> String {
     if events.is_empty() {
         return String::new();
     }
@@ -1140,8 +1156,20 @@ fn format_recent_events(events: &[RichValidationEvent], max_events: usize) -> St
         } else {
             &event.ts
         };
+        let mut recorded: Vec<String> = Vec::new();
+        if let Some(n) = event.unhittable_surprises {
+            recorded.push(format!("{n} unhittable"));
+        }
+        if let Some(n) = event.unmeasurable_surprises {
+            recorded.push(format!("{n} unmeasurable"));
+        }
+        let recorded_suffix = if recorded.is_empty() {
+            String::new()
+        } else {
+            format!("; {}", recorded.join(", "))
+        };
         out.push_str(&format!(
-            "  {DIM}{ts_short}{RESET}  Day {:<4}  {GREEN}{} hit{RESET}  {RED}{} surprise{RESET}  ({:.0}%)\n",
+            "  {DIM}{ts_short}{RESET}  Day {:<4}  {GREEN}{} hit{RESET}  {RED}{} surprise{RESET}  ({:.0}%{recorded_suffix})\n",
             event.day,
             event.hits.len(),
             event.surprises.len(),
