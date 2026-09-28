@@ -177,6 +177,18 @@ fn write_stream_text(s: &str) {
     write_stream_text_with(stdout_reserved(), s, &mut io::stdout());
 }
 
+/// Event-loop chrome (turn boundaries, `▶ tool` progress, ✓/✗, diffs,
+/// previews, batch summaries): stdout normally — byte-identical to the old
+/// `print!`/`println!` — but stderr while `--print` / `--output-format json`
+/// reserve stdout for the payload, so a pipe gets only the answer.
+fn write_chrome(s: &str) {
+    if stdout_reserved() {
+        let _ = io::stderr().write_all(s.as_bytes());
+    } else {
+        let _ = io::stdout().write_all(s.as_bytes());
+    }
+}
+
 /// Pure seam for [`write_stream_text`]: tests pass `reserved` and a buffer
 /// instead of toggling the process global. Returns whether anything was written.
 fn write_stream_text_with(reserved: bool, s: &str, out: &mut impl Write) -> bool {
@@ -619,7 +631,7 @@ impl PromptEventState {
             }
             // Show turn boundary for multi-turn (turn 2+)
             if self.turn_number > 1 && self.had_text {
-                println!("{}", turn_boundary(self.turn_number));
+                write_chrome(&format!("{}\n", turn_boundary(self.turn_number)));
             }
         }
 
@@ -638,12 +650,12 @@ impl PromptEventState {
             // Distinctive header for sub-agent delegation
             eprintln!("\n{DIM}  🐙 Delegating to sub-agent...{RESET}");
         }
-        print!("{YELLOW}  ▶ {summary}{RESET}");
+        write_chrome(&format!("{YELLOW}  ▶ {summary}{RESET}"));
         if is_verbose() {
-            println!();
+            write_chrome("\n");
             let args_str = serde_json::to_string_pretty(&args).unwrap_or_default();
             for line in args_str.lines() {
-                println!("{DIM}    │ {line}{RESET}");
+                write_chrome(&format!("{DIM}    │ {line}{RESET}\n"));
             }
         } else if tool_name == "edit_file" {
             // Show colored diff for edit_file when not in verbose mode
@@ -651,8 +663,8 @@ impl PromptEventState {
             let new_text = args.get("new_text").and_then(|v| v.as_str()).unwrap_or("");
             let diff = format_edit_diff(old_text, new_text);
             if !diff.is_empty() {
-                println!();
-                println!("{diff}");
+                write_chrome("\n");
+                write_chrome(&format!("{diff}\n"));
             }
         } else if tool_name == "write_file" {
             // Show diff when overwriting an existing file
@@ -663,8 +675,8 @@ impl PromptEventState {
                     let diff = format_edit_diff(&old_content, new_content);
                     if !diff.is_empty() {
                         let diff = truncate_diff_preview(&diff, 30);
-                        println!();
-                        println!("{diff}");
+                        write_chrome("\n");
+                        write_chrome(&format!("{diff}\n"));
                     }
                 }
             }
@@ -733,11 +745,11 @@ impl PromptEventState {
 
         if is_error {
             self.batch_failed += 1;
-            println!(" {RED}✗{RESET}{dur_str}");
+            write_chrome(&format!(" {RED}✗{RESET}{dur_str}\n"));
             let preview = tool_result_preview(&result, 200);
             if !preview.is_empty() {
                 // Indent error output under the tool header
-                println!("{}", indent_tool_output(&preview));
+                write_chrome(&format!("{}\n", indent_tool_output(&preview)));
             }
             // Track the last tool error for /retry context (reuse preview)
             if !preview.is_empty() {
@@ -751,7 +763,7 @@ impl PromptEventState {
             self.batch_succeeded += 1;
             self.last_tool_error = None;
             self.last_tool_name = None;
-            println!(" {GREEN}✓{RESET}{dur_str}");
+            write_chrome(&format!(" {GREEN}✓{RESET}{dur_str}\n"));
             // Warn when write_file writes 0 bytes (empty content)
             if tool_name == "write_file" {
                 let wrote_zero = result
@@ -788,7 +800,7 @@ impl PromptEventState {
                 let preview = tool_result_preview(&result, 200);
                 if !preview.is_empty() {
                     // Indent verbose output under the tool header
-                    println!("{}", indent_tool_output(&preview));
+                    write_chrome(&format!("{}\n", indent_tool_output(&preview)));
                 }
             }
         }
@@ -824,8 +836,8 @@ impl PromptEventState {
             if !text.is_empty() {
                 let tail = format_partial_tail(&text, 6);
                 if !tail.is_empty() {
-                    println!();
-                    println!("{tail}");
+                    write_chrome("\n");
+                    write_chrome(&format!("{tail}\n"));
                     io::stdout().flush().ok();
                 }
             }
@@ -1013,7 +1025,7 @@ impl PromptEventState {
             batch_duration,
         );
         if !summary.is_empty() {
-            println!("{summary}");
+            write_chrome(&format!("{summary}\n"));
         }
         // Reset batch tracking
         self.batch_count = 0;
@@ -1122,7 +1134,7 @@ async fn handle_prompt_events(
                             write_stream_text("\n");
                             state.in_text = false;
                         }
-                        println!("{DIM}  {text}{RESET}");
+                        write_chrome(&format!("{DIM}  {text}{RESET}\n"));
                     }
                     AgentEvent::MessageStart { .. } => {
                         // Agent started a new message — stop the spinner
@@ -1179,7 +1191,7 @@ async fn handle_prompt_events(
                 if state.in_text {
                     write_stream_text("\n");
                 }
-                println!("\n{DIM}  (interrupted — press Ctrl+C again to exit){RESET}");
+                write_chrome(&format!("\n{DIM}  (interrupted — press Ctrl+C again to exit){RESET}\n"));
                 return PromptResult::Done {
                     collected_text: state.collected_text,
                     text_since_last_tool: state.text_since_last_tool,
