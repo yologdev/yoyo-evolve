@@ -404,3 +404,114 @@ fn plain_prompt_mode_with_tool_turn_keeps_progress_on_stdout() {
     );
     assert!(stdout.contains(ANSWER), "stdout={stdout:?}");
 }
+
+/// Thinking text the stub streams before the answer. Distinct from `ANSWER`
+/// so a leak of the thinking block itself onto stdout is also caught.
+const THINKING: &str = "stub is thinking about the answer";
+
+/// A turn that streams a THINKING block (index 0) and then the text answer
+/// (index 1) — the shape a real provider sends with thinking on. The
+/// thinking→text transition is where a turn-start or "first delta"
+/// separator newline would sit, and the plain `sse_body()` never crosses it.
+fn sse_thinking_then_text_body() -> String {
+    let thinking = serde_json::to_string(THINKING).unwrap();
+    let text = serde_json::to_string(ANSWER).unwrap();
+    sse_events(vec![
+        (
+            "message_start",
+            r#"{"type":"message_start","message":{"id":"msg_think","type":"message","role":"assistant","model":"claude-stub","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":1}}}"#.to_string(),
+        ),
+        (
+            "content_block_start",
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#.to_string(),
+        ),
+        (
+            "content_block_delta",
+            format!(
+                r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"thinking_delta","thinking":{thinking}}}}}"#
+            ),
+        ),
+        (
+            "content_block_delta",
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"stub-signature"}}"#.to_string(),
+        ),
+        (
+            "content_block_stop",
+            r#"{"type":"content_block_stop","index":0}"#.to_string(),
+        ),
+        (
+            "content_block_start",
+            r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#.to_string(),
+        ),
+        (
+            "content_block_delta",
+            format!(
+                r#"{{"type":"content_block_delta","index":1,"delta":{{"type":"text_delta","text":{text}}}}}"#
+            ),
+        ),
+        (
+            "content_block_stop",
+            r#"{"type":"content_block_stop","index":1}"#.to_string(),
+        ),
+        (
+            "message_delta",
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":9}}"#.to_string(),
+        ),
+        ("message_stop", r#"{"type":"message_stop"}"#.to_string()),
+    ])
+}
+
+/// Day 212 (01:05): the assessment measured `--print` stdout as `\n\nPONG`.
+/// Pin the FIRST byte and the whole buffer, UNTRIMMED, on the stream shape a
+/// real thinking provider sends. `--print` writes the model's text verbatim
+/// (`print!`, no added trailing newline), so stdout must equal `ANSWER`
+/// byte-for-byte — any separator newline before or after it fails here, where
+/// the older tests' `trim_end` would have forgiven the trailing half.
+#[test]
+fn print_mode_stdout_is_exactly_the_answer_bytes_after_a_thinking_block() {
+    let body = sse_thinking_then_text_body();
+    // Anti-vacuous: the stub really streams a thinking block before the text,
+    // so this test crosses the thinking→text transition the plain body skips.
+    assert!(
+        body.contains("\"thinking_delta\"") && body.find("thinking_delta") < body.find("text_delta"),
+        "fixture must stream a thinking delta before the text delta"
+    );
+    let run = run_yoyo_with(
+        &["--no-tools", "--max-turns", "1"],
+        &["--print", "-p", "hi"],
+        None,
+        vec![body],
+    );
+    assert_reached_stub(&run);
+    assert_eq!(
+        run.stdout.first().copied(),
+        ANSWER.as_bytes().first().copied(),
+        "--print stdout must START with the answer's first byte; stdout={:?} stderr={}",
+        String::from_utf8_lossy(&run.stdout),
+        run.stderr
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        ANSWER,
+        "--print stdout must be exactly the answer bytes, untrimmed; stderr={}",
+        run.stderr
+    );
+}
+
+/// Same pin for piped stdin + `--print`: the second door into the reserve.
+#[test]
+fn piped_print_mode_stdout_is_exactly_the_answer_bytes_after_a_thinking_block() {
+    let run = run_yoyo_with(
+        &["--no-tools", "--max-turns", "1"],
+        &["--print"],
+        Some("hi\n"),
+        vec![sse_thinking_then_text_body()],
+    );
+    assert_reached_stub(&run);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        ANSWER,
+        "piped --print stdout must be exactly the answer bytes, untrimmed; stderr={}",
+        run.stderr
+    );
+}
