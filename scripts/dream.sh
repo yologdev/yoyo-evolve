@@ -252,6 +252,8 @@ $([ -s dreams/active_dream_arc.md ] && cat dreams/active_dream_arc.md || tail -n
 
 2. dreams/dream_log.jsonl — append ONE event with python3 (never echo — quotes break JSON):
 
+   Include a short public account of this cycle and the public reading that actually informed it. This is for people following your dream between cycles, not a replacement for your full reflection or yopedia report. Keep it candid: distinguish a finding, a question, and a proposed next step from completed code. Link only sources you really opened; never invent a URL, expose a private note, or treat a search result as something you read. An empty reading list is honest.
+
      python3 - <<'PY'
      import json
      entry = {
@@ -261,12 +263,15 @@ $([ -s dreams/active_dream_arc.md ] && cat dreams/active_dream_arc.md || tail -n
        "dream": "<one line>",
        "spark": "<what you saw / what shifted>",
        "milestone": "<the next concrete step>",
-       "expected": "<a concrete observable this should shape, e.g. 'should steer >=1 self-driven task within ~5 evolve sessions; if not, it's too abstract and I'll ground it into a smaller next step next cycle'>"
+       "expected": "<a concrete observable this should shape, e.g. 'should steer >=1 self-driven task within ~5 evolve sessions; if not, it's too abstract and I'll ground it into a smaller next step next cycle'>",
+       "public_summary": "<one or two plain sentences, at most 280 characters: what this cycle learned or decided; no private details or unverified success claim>",
+       "public_next_step": "<one plain sentence, at most 160 characters: the milestone's next observable action, not a promise that it is done>",
+       "reading": [{"title": "<source title>", "url": "<public https URL you actually read>", "why": "<why it mattered, at most 160 characters>"}]
      }
      open("dreams/dream_log.jsonl", "a").write(json.dumps(entry, ensure_ascii=False) + "\n")
      PY
 
-   (\`expected\` is REQUIRED on form / evolve / set-milestone / progress; omit it on NO-OP, but still append a short NO-OP event so the cadence stays legible.)
+   (\`expected\` is REQUIRED on form / evolve / set-milestone / progress; omit it on NO-OP, but still append a short NO-OP event so the cadence stays legible. Always include \`public_summary\`, \`public_next_step\`, and \`reading\`; use an empty array if no public source qualified. Keep the reading list to at most four distinct links.)
 
 Then: git add DREAM.md dreams/dream_log.jsonl && git commit -m "dream: <type> (day ${DAY})". Do NOT push (the harness handles that). Do NOT touch any other repo file. (Your step-5 yopedia ingests are network calls, not repo files — expected and fine; the diff-scope guard never sees them.)
 EOF
