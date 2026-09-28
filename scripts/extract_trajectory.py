@@ -3124,7 +3124,7 @@ def collect_task_commit_times() -> tuple[list[tuple[str, int, str]] | None, int 
     which the caller would otherwise read as "no commits landed".
     """
     rc, stdout, _ = run_cmd(
-        ["git", "log", "--format=%H%x09%ct%x09%s"], timeout=20
+        ["git", "log", "--format=%H%x09%at%x09%s"], timeout=20
     )
     if rc != 0:
         return None, None
@@ -3156,18 +3156,18 @@ def classify_session_claims(
 ) -> list[SessionClaim]:
     """Pure: what did each session CLAIM, and does its own window corroborate it?
 
-    THE WINDOW IS THE SESSION'S OWN, and it is half-open: `[start, next_start)`.
-    Session directory stamps are written when the session's evidence is pushed,
-    so the NEXT session's stamp is the previous session's closing bound — one
-    session's window ends exactly where the next begins, and a commit can never
-    be counted for two sessions.
+    THE WINDOW IS THE SESSION'S OWN, and it is half-open: `(prev_stamp, stamp]`.
+    A session directory is stamped at the session's END (its wrap-up commit
+    carries the same second), so its task commits lie BEFORE its stamp and the
+    previous session's stamp is its opening bound. Until Day 212 this read
+    `[stamp, next_stamp)`, which credited every session's commits to the NEXT
+    one and flagged a session whose own task commits sat minutes before its
+    stamp. Commit times are AUTHOR times: the push-time rebase restamps the
+    committer date seconds AFTER the directory stamp.
 
-    THE LAST SESSION HAS NO CLOSING BOUND. Its window is OPEN and it is never
-    accused: a session still running has not finished committing, and the
-    absence of its commits is not evidence about it. If its open window already
-    holds a task commit it is CORROBORATED (that is a real observation); if it
-    holds none it is CLAIM_OPEN_WINDOW, which is neither a finding nor a
-    refusal to look.
+    THE OLDEST SESSION HAS NO OPENING BOUND. Its predecessor is outside the
+    window, so a commit before its stamp may be that predecessor's. It is
+    CLAIM_OPEN_WINDOW -- neither credited nor accused.
 
     ANTI-VACUOUS: an empty session list returns an empty list. "No sessions to
     read" is not "every session was fine", and a reader that cannot tell those
@@ -3194,7 +3194,7 @@ def classify_session_claims(
         s.name: compact_utc_epoch(session_dir_stamp(s.name)) for s in sessions
     }
     ladder = sorted(st for st in stamps.values() if st is not None)
-    newest_start = ladder[-1] if ladder else None
+    oldest_end = ladder[0] if ladder else None
 
     states: dict[str, str] = {}
     opens: set[str] = set()
@@ -3202,38 +3202,39 @@ def classify_session_claims(
         if not s.claimed:
             states[s.name] = CLAIM_NO_CLAIM
             continue
-        start = stamps[s.name]
-        if start is None:
-            # A session directory whose stamp will not parse has an
-            # UNRESOLVABLE window. That is a different fact from "it produced
-            # nothing", and silence about a window is not evidence about a
+        end = stamps[s.name]
+        if end is None:
+            # A session directory whose stamp will not parse has no window
+            # at all; "could not check" is the honest reading of that
             # session.
             states[s.name] = CLAIM_COULD_NOT_CHECK
             continue
         if commits is None:
             states[s.name] = CLAIM_COULD_NOT_CHECK
             continue
+        # THE OLDEST SESSION HAS NO LOWER BOUND. Its predecessor is outside
+        # the window this reader was handed, so a commit before its stamp may
+        # belong to that predecessor. Its window is OPEN (at the bottom now,
+        # not the top) and it is refused, never accused and never credited.
+        if end == oldest_end:
+            opens.add(s.name)
+            states[s.name] = CLAIM_OPEN_WINDOW
+            continue
+        start = max(t for t in ladder if t < end)
         # CLONE BOUNDARY. A window that begins before the oldest commit this
-        # clone can see is not checkable: the commits it may have produced are
-        # physically absent, so "zero in the window" would be a statement about
-        # the clone rather than about the session. Refuse, do not accuse.
+        # clone can see holds evidence the clone cannot show, so a zero there
+        # is about the clone rather than about the session. Refuse, do not accuse.
         if oldest_commit_epoch is not None and start < oldest_commit_epoch:
             states[s.name] = CLAIM_COULD_NOT_CHECK
             continue
-        # HALF-OPEN `[start, next_start)`: one session's window ends exactly
-        # where the next begins, so a commit can never count for two sessions.
-        is_open = start == newest_start
-        end = None if is_open else next((t for t in ladder if t > start), None)
-        inside = sum(
-            1
-            for _, epoch, _ in commits
-            if epoch >= start and (end is None or epoch < end)
-        )
-        if is_open:
-            opens.add(s.name)
-            states[s.name] = CLAIM_CORROBORATED if inside else CLAIM_OPEN_WINDOW
-        else:
-            states[s.name] = CLAIM_CORROBORATED if inside else CLAIM_NO_COMMITS
+        # END-ANCHORED `(prev_stamp, stamp]`. The directory stamp is written at
+        # the session's END (measured Day 212: dir `T110922Z` == its own
+        # wrap-up commit 11:09:22Z; its task commits sit 10:43-11:04Z). So a
+        # session's commits lie BEFORE its stamp, and the window closes ON it,
+        # inclusive, because the wrap-up is stamped at that exact second.
+        # Adjacent windows still tile: a commit counts for exactly one session.
+        inside = sum(1 for _, epoch, _ in commits if start < epoch <= end)
+        states[s.name] = CLAIM_CORROBORATED if inside else CLAIM_NO_COMMITS
 
     # Render newest-first, matching the claim rows it is appended to.
     ordered = sorted(sessions, key=lambda s: session_sort_key(s.name), reverse=True)
