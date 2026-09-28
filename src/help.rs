@@ -102,6 +102,10 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "                    stdout may carry the model's blank lines; add --print to capture it"
+    );
+    let _ = writeln!(
+        s,
         "  --image <file>    Attach an image to the prompt (png/jpg/jpeg/gif/webp/bmp;"
     );
     let _ = writeln!(s, "                    requires -p, ignored in REPL mode)");
@@ -165,6 +169,10 @@ pub fn cli_help_text() -> String {
     let _ = writeln!(
         s,
         "                    Implies --yes; suppresses spinners, tool output, and color"
+    );
+    let _ = writeln!(
+        s,
+        "                    stdout carries only the answer, leading blank lines dropped"
     );
     let _ = writeln!(
         s,

@@ -37,6 +37,21 @@ $ yoyo "count the lines of Rust code in this project"
 There are 1,475 lines of Rust code across 1 file (src/main.rs).
 ```
 
+## Capturing the output in a script
+
+Plain `-p` writes the response to stdout as the model streamed it, so it may carry the
+model's own leading and trailing blank lines — `yoyo -p "Reply with exactly: PONG"` can
+print `\nPONG\n\n`. That is deliberate: `-p` is the interactive-looking path.
+
+If you are capturing the answer (`$(...)`, a pipe, a file), use `--print`: its stdout
+carries only the answer text, with no spinners, tool output or color, and with leading
+blank lines dropped. For structured output use `--output-format json` instead.
+
+```bash
+answer=$(yoyo --print -p "Reply with exactly: PONG")
+yoyo -p "summarize this repo" --output-format json | jq -r .response
+```
+
 ## Slash commands are not expanded here
 
 A prompt whose first non-space character is `/` is treated as a REPL command, not as
