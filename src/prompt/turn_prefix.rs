@@ -220,8 +220,11 @@ mod tests {
     /// assertions.
     #[test]
     fn test_apply_effort_hint_wrapper_reads_the_global_level() {
-        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/prompt/turn_prefix.rs"))
-            .expect("read src/prompt/turn_prefix.rs");
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/prompt/turn_prefix.rs"
+        ))
+        .expect("read src/prompt/turn_prefix.rs");
         let body = src
             .split("pub(crate) fn apply_effort_hint(input: &str) -> String {")
             .nth(1)
