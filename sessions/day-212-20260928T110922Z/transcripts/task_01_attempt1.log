@@ -1,0 +1,70 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (30ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1005,1200p src/commands_ris… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "format_recent_events\|par… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "commands_risk_unhittable… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,40p src/commands_risk_unh… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (96 lines) ✓ (37ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^use crate::format\|^use … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> src/com… (73 lines) ✓ (40.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 27s (8 ✓)
+
+Four green. Now the positive control — one atomic mutate→test→restore, serially:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/command… (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/commands_risk.rs /tmp/cr.ba… ✓ (248ms)
+ ✓ (268ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short; ls -la /tmp/cr… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 8.9s (3 ✓)
+
+The tree matches HEAD, so nothing was damaged. I'll use git as the restore (HEAD already has the change committed) and python for the mutation:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (7 lines) ✓ (28.7s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "commands_risk.rs" ARCHITE… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^- \`commands_risk.rs\`" … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (7 lines) ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short; cargo clippy -… ✓ (254ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && echo fmt-o… ✓ (1m 37s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 3m 50s (4 ✓, 1 ✗)
+
+Every test suite passes; the grep matched no FAILED or panicked lines. Clippy and fmt are also clean. Next, a live check on the real ledger, then the commit:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build -q 2>&1|tail -2; ./tar… ✓ (314ms)
+
+/risk accuracy now prints each event's recorded unhittable and unmeasurable counts next to its percentage. The real Day-211 row that used to read (0%) now reads (0%; 0 unhittable, 2 unmeasurable). I checked this with yoyo risk accuracy on the real ledger. Rows that don't have the two keys (old rows and green cli rows) still print exactly as before, e.g. (50%). Build, the full cargo test run, clippy with -D warnings and cargo fmt --check all pass, and it's committed as 739ae958.
+
+Where it was dropped: the writers were already saving both counts, but the reader never picked them up. The struct and its parser are in src/commands_risk.rs, not in commands_risk_parse.rs as the task guessed.
+
+What changed:
+• **Reader:** `RichValidationEvent` has two new fields, `unhittable_surprises` and `unmeasurable_surprises`. A missing key is read as `None`, never as 0, so "not recorded" and "measured zero" stay different.
+• **Printout:** format_recent_events adds the counts inside the percentage's brackets only when they are present. It adds no new colours or glyphs.
+• Tests: there are four new ones in src/commands_risk_unhittable_tests.rs, to keep the growth of commands_risk.rs small. Every fixture is a real JSONL line passed through the parser, never a hand-built struct. They check:
+  • a row without the keys prints the exact same full output as before;
+  • `1 unhittable` appears when recorded;
+  • the real Day-211 row shows 2 unmeasurable;
+  • the parser gives None for a missing key and Some(0) for a recorded zero.
+• **Docs:** I added one ARCHITECTURE.md line under commands_risk.rs. The size gate didn't need changing.
+
+Positive control: my first two attempts didn't actually run. The backup copy to /tmp failed, so the chained command stopped before changing anything. I confirmed the working tree still matched HEAD before retrying. The valid run changed the code, ran the tests and restored the file with git checkout in one command. Forcing the printout to always drop the counts made exactly tests (b) and (c) fail by name, while (a) and (d) stayed green as expected. Afterwards the tree was clean with no NEUTERED marker left.
+
+Not done:
+• I didn't run the second control, which would break the parser instead of the printout.
+• I left an older quirk alone: the date is cut from the timestamp by byte position (&event.ts[..10]), which the project rules forbid. It's outside this task.
+• The two WIP commits are still in history rather than squashed.
+
+  watch: no files changed this turn — skipping
+
