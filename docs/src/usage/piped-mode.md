@@ -50,7 +50,7 @@ Piped and single-prompt modes accept `--output-format <fmt>`:
 
 In `json` mode and with `--print`, the streamed answer text is not echoed to
 stdout: the final payload is written there exactly once, so `| jq` parses it.
-(Tool-progress lines from runs that call tools still print to stdout today.)
+Under `--print` and `--output-format json`, progress output (tool `▶` lines, ✓/✗ results, diffs, turn boundaries) goes to stderr, and stdout carries only the answer.
 - `stream-json` — newline-delimited JSON (NDJSON): one yoagent `AgentEvent`
   per line, emitted in real time as the agent works.
 

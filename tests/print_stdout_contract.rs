@@ -61,9 +61,51 @@ fn sse_body() -> String {
     out
 }
 
-/// Start a stub on 127.0.0.1:0 that answers POSTs with `sse_body()`.
-/// Returns the port and a flag set once a POST has been received.
-fn start_stub() -> (u16, Arc<AtomicBool>) {
+/// Contents of the file the tool turn reads.
+const TOOL_FILE_CONTENTS: &str = "hello world\n";
+
+fn sse_events(events: Vec<(&str, String)>) -> String {
+    let mut out = String::new();
+    for (name, data) in events {
+        out.push_str(&format!("event: {name}\ndata: {data}\n\n"));
+    }
+    out
+}
+
+/// An assistant turn that asks for `read_file` on `a.txt` and stops for the tool.
+fn sse_tool_use_body() -> String {
+    let partial = serde_json::to_string(r#"{"path": "a.txt"}"#).unwrap();
+    sse_events(vec![
+        (
+            "message_start",
+            r#"{"type":"message_start","message":{"id":"msg_tool","type":"message","role":"assistant","model":"claude-stub","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":1}}}"#.to_string(),
+        ),
+        (
+            "content_block_start",
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_stub_1","name":"read_file","input":{}}}"#.to_string(),
+        ),
+        (
+            "content_block_delta",
+            format!(
+                r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"input_json_delta","partial_json":{partial}}}}}"#
+            ),
+        ),
+        (
+            "content_block_stop",
+            r#"{"type":"content_block_stop","index":0}"#.to_string(),
+        ),
+        (
+            "message_delta",
+            r#"{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":7}}"#.to_string(),
+        ),
+        ("message_stop", r#"{"type":"message_stop"}"#.to_string()),
+    ])
+}
+
+/// Start a stub on 127.0.0.1:0 that answers POSTs with SSE bodies: the Nth POST gets `bodies[N]` (the last body
+/// repeats), so a tool turn can be followed by the final answer. Returns the
+/// port and a flag set once a POST has been received.
+fn start_stub_seq(bodies: Vec<String>) -> (u16, Arc<AtomicBool>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub");
     let port = listener.local_addr().unwrap().port();
     let hit = Arc::new(AtomicBool::new(false));
@@ -71,6 +113,7 @@ fn start_stub() -> (u16, Arc<AtomicBool>) {
     thread::spawn(move || {
         // Serve connections until the test process exits; the binary should
         // make exactly one request, but a retry must not hang it.
+        let mut served = 0usize;
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
             let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
@@ -100,7 +143,10 @@ fn start_stub() -> (u16, Arc<AtomicBool>) {
             if request_line.starts_with("POST") {
                 hit_thread.store(true, Ordering::SeqCst);
             }
-            let payload = sse_body();
+            let payload = bodies[served.min(bodies.len() - 1)].clone();
+            if request_line.starts_with("POST") {
+                served += 1;
+            }
             let resp = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 payload.len(),
@@ -123,9 +169,21 @@ struct Run {
 /// Run the real binary against a fresh stub with `extra` args. When `stdin`
 /// is `Some`, it is piped in (piped mode); otherwise stdin is null.
 fn run_yoyo(extra: &[&str], stdin: Option<&str>) -> Run {
-    let (port, hit) = start_stub();
+    run_yoyo_with(
+        &["--no-tools", "--max-turns", "1"],
+        extra,
+        stdin,
+        vec![sse_body()],
+    )
+}
+
+/// General form: `base` replaces the tool/turn flags and the stub serves
+/// `bodies` in order. The cwd holds `a.txt` (`TOOL_FILE_CONTENTS`).
+fn run_yoyo_with(base: &[&str], extra: &[&str], stdin: Option<&str>, bodies: Vec<String>) -> Run {
+    let (port, hit) = start_stub_seq(bodies);
     let home = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();
+    std::fs::write(cwd.path().join("a.txt"), TOOL_FILE_CONTENTS).unwrap();
     let base_url = format!("http://127.0.0.1:{port}/v1");
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_yoyo"));
     cmd.args([
@@ -133,12 +191,10 @@ fn run_yoyo(extra: &[&str], stdin: Option<&str>) -> Run {
         "anthropic",
         "--model",
         "claude-sonnet-4-5",
-        "--no-tools",
-        "--max-turns",
-        "1",
         "--base-url",
         &base_url,
     ])
+    .args(base)
     .args(extra)
     .current_dir(cwd.path())
     .env("HOME", home.path())
@@ -273,4 +329,78 @@ fn plain_prompt_mode_still_streams_the_answer() {
         "plain -p must still stream the answer; stdout={stdout:?} stderr={}",
         run.stderr
     );
+}
+
+/// Run with tools on: turn 1 calls `read_file`, turn 2 answers `ANSWER`.
+fn run_tool_turn(extra: &[&str]) -> Run {
+    run_yoyo_with(
+        &["--max-turns", "4"],
+        extra,
+        None,
+        vec![sse_tool_use_body(), sse_body()],
+    )
+}
+
+/// Anti-vacuous half of the tool-turn tests: the tool really ran and its
+/// progress line was MOVED to stderr, not deleted.
+fn assert_tool_progress_on_stderr(run: &Run) {
+    assert!(
+        run.stderr.contains("\u{25b6} read a.txt"),
+        "anti-vacuous: the read_file progress line must appear on stderr; stderr={}",
+        run.stderr
+    );
+}
+
+/// The Day 212 bug: `--print` with a tool turn wrote `  ▶ read a.txt ✓` to
+/// stdout ahead of the answer. Stdout must be exactly the answer bytes.
+#[test]
+fn print_mode_with_tool_turn_keeps_stdout_to_the_answer() {
+    let run = run_tool_turn(&["--print", "-p", "read a.txt"]);
+    assert_reached_stub(&run);
+    let stdout = String::from_utf8(run.stdout.clone()).expect("utf-8 stdout");
+    assert!(
+        !stdout.contains('\u{25b6}'),
+        "tool progress leaked to stdout: {stdout:?}"
+    );
+    // Whole-stdout equality; only a trailing newline is tolerated, so any
+    // chrome before or after the answer fails.
+    assert_eq!(
+        stdout.trim_end_matches('\n'),
+        ANSWER,
+        "--print stdout must be exactly the answer; stderr={}",
+        run.stderr
+    );
+    assert_tool_progress_on_stderr(&run);
+}
+
+/// Same leak under `--output-format json` would put non-JSON bytes before the
+/// document, so `jq` fails. Stdout must parse as exactly one JSON value.
+#[test]
+fn json_mode_with_tool_turn_emits_exactly_one_value() {
+    let run = run_tool_turn(&["--output-format", "json", "-p", "read a.txt"]);
+    assert_reached_stub(&run);
+    let stdout = String::from_utf8(run.stdout.clone()).expect("utf-8 stdout");
+    let value: Result<serde_json::Value, _> = serde_json::from_str(stdout.trim());
+    assert!(
+        value.is_ok(),
+        "json stdout must be exactly one JSON value: {:?}; stdout={stdout:?} stderr={}",
+        value.err(),
+        run.stderr
+    );
+    assert_tool_progress_on_stderr(&run);
+}
+
+/// Near-miss: without `--print`, the reserve is off and tool progress stays
+/// on stdout exactly as before — the REPL / plain `-p` surface is unchanged.
+#[test]
+fn plain_prompt_mode_with_tool_turn_keeps_progress_on_stdout() {
+    let run = run_tool_turn(&["-p", "read a.txt"]);
+    assert_reached_stub(&run);
+    let stdout = String::from_utf8(run.stdout.clone()).expect("utf-8 stdout");
+    assert!(
+        stdout.contains("\u{25b6} read a.txt"),
+        "plain -p must keep tool progress on stdout; stdout={stdout:?} stderr={}",
+        run.stderr
+    );
+    assert!(stdout.contains(ANSWER), "stdout={stdout:?}");
 }
