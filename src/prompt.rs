@@ -12,6 +12,7 @@ use yoagent::*;
 use crate::prompt_budget::{audit_log_tool_call, is_audit_enabled, session_budget_exhausted};
 use crate::session::{ChangeKind, SessionChanges};
 
+mod stream_external_servers;
 mod turn_prefix;
 pub(crate) use turn_prefix::{
     apply_effort_hint, apply_external_failure_note_with, prepend_external_failure_block_with,
@@ -1788,6 +1789,8 @@ pub async fn run_prompt_stream_json(
 ) -> PromptOutcome {
     let rx = start_prompt(agent, input).await;
     let outcome = handle_stream_json_events(agent, rx, model, changes).await;
+    // After the last yoagent event; only when a configured server failed.
+    stream_external_servers::emit_external_servers_line();
 
     accumulate_usage(session_total, &outcome.1);
 
@@ -1808,6 +1811,8 @@ pub async fn run_prompt_stream_json_with_content(
     })];
     let rx = start_prompt_messages(agent, messages).await;
     let outcome = handle_stream_json_events(agent, rx, model, changes).await;
+    // After the last yoagent event; only when a configured server failed.
+    stream_external_servers::emit_external_servers_line();
 
     accumulate_usage(session_total, &outcome.1);
 
