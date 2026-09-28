@@ -1538,3 +1538,73 @@ mod retrospective_tests {
         assert_eq!(parsed[0].recorded_unmeasurable, hand.recorded_unmeasurable);
     }
 }
+
+/// Day 212 (DREAM): `/risk accuracy`'s "Recent Validation Events" prints each
+/// event's RECORDED unhittable/unmeasurable counts next to its percentage.
+/// Every fixture is built THROUGH `parse_rich_validation_events` from a real
+/// JSONL line — never a struct literal with the counts typed in (Day 210) — so
+/// neutering the parser or the renderer reddens these by name.
+#[cfg(test)]
+mod recent_events_recorded_counts_tests {
+    use crate::commands_risk::{format_recent_events, parse_rich_validation_events};
+    use crate::format::{BOLD, DIM, GREEN, RED, RESET};
+
+    /// A pre-Day-206 row: no recorded keys at all.
+    const LEGACY: &str = r#"{"accuracy_pct":50.0,"day":190,"hits":["src/a.rs"],"surprises":["src/b.rs"],"ts":"2026-09-06T01:02:03Z"}"#;
+    /// The real Day-211 row from `.yoyo/risk_validations.jsonl` (2026-09-28T00:50:43Z).
+    const DAY_211: &str = r#"{"accuracy_pct":0.0,"day":211,"emerging_accuracy_pct":0.0,"hits":[],"predicted_count":10,"severity":"watch_success","snapshot_git_hash":"d650d093","surprises":["src/commands_todo.rs","src/help.rs"],"trigger":"watch_failure","ts":"2026-09-28T00:50:43Z","unhittable_surprises":0,"unmeasurable_surprises":2}"#;
+    /// A row with one unhittable surprise.
+    const ONE_UNHITTABLE: &str = r#"{"accuracy_pct":0.0,"day":203,"hits":[],"surprises":["src/format/highlight/highlight_tests.rs"],"trigger":"watch_failure","ts":"2026-09-19T10:00:00Z","unhittable_surprises":1,"unmeasurable_surprises":0}"#;
+
+    fn render(line: &str) -> String {
+        let events = parse_rich_validation_events(line);
+        assert_eq!(events.len(), 1, "fixture must parse to exactly one event");
+        format_recent_events(&events, 5)
+    }
+
+    /// (a) Both keys absent → byte-identical to the pre-Day-212 output.
+    #[test]
+    fn legacy_row_renders_byte_identically() {
+        let expected = format!(
+            "\n{BOLD}  Recent Validation Events{RESET}\n\
+             \x20 {DIM}2026-09-06{RESET}  Day 190   {GREEN}1 hit{RESET}  {RED}1 surprise{RESET}  (50%)\n\
+             \x20   {DIM}✓ src/a.rs{RESET}\n\
+             \x20   {DIM}✗ src/b.rs{RESET}\n"
+        );
+        assert_eq!(render(LEGACY), expected);
+        assert!(!render(LEGACY).contains("unhittable"));
+        assert!(!render(LEGACY).contains("unmeasurable"));
+    }
+
+    /// (b) A recorded unhittable count is printed inside the percentage's parenthesis.
+    #[test]
+    fn recorded_unhittable_count_is_printed() {
+        let out = render(ONE_UNHITTABLE);
+        assert!(
+            out.contains("(0%; 1 unhittable, 0 unmeasurable)"),
+            "got: {out}"
+        );
+    }
+
+    /// (c) The real Day-211 row: a 0% whose two surprises were unmeasurable.
+    #[test]
+    fn day_211_row_prints_its_unmeasurable_count() {
+        let out = render(DAY_211);
+        assert!(
+            out.contains("(0%; 0 unhittable, 2 unmeasurable)"),
+            "got: {out}"
+        );
+    }
+
+    /// (d) Parser: an absent key is `None`, a recorded zero is `Some(0)`.
+    #[test]
+    fn absent_key_is_none_and_recorded_zero_is_some() {
+        let legacy = parse_rich_validation_events(LEGACY);
+        assert_eq!(legacy[0].unhittable_surprises, None);
+        assert_eq!(legacy[0].unmeasurable_surprises, None);
+        let day211 = parse_rich_validation_events(DAY_211);
+        assert_eq!(day211[0].unhittable_surprises, Some(0));
+        assert_eq!(day211[0].unmeasurable_surprises, Some(2));
+        assert_ne!(day211[0].unhittable_surprises, None);
+    }
+}
