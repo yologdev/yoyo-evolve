@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git show 20cbaff0 -- scripts/socia… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 360,386p scripts/social.sh;… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comme… (18 lines) ✓ (811ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 23.2s (4 ✓)
+
+I left one comment, on #944, and kept the issue open. The other seven issues got nothing: I didn't work on them this session and had nothing new to add.
+
+#944 (commented, kept open). scripts/social.sh already turned on the audit record, took a per-run starting line count (a "watermark"), and had a separate "run never finished" state (no_terminal_emit, as opposed to zero). All three were added in an earlier session. The part that was broken was how it read the spend. It searched the agent's log for the ↳ usage line, but quiet mode never prints that line. So every social run that finished normally would have been reported as a run that died before writing its usage.
+
+This session's two commits (20cbaff0, e5cf1d30) fix that. The script now reads the "type":"usage" records written after the watermark in the audit file. Four new cases in tests/harness_logic.sh cover:
+• a finished run;
+• two processes in one run;
+• a run that really dies;
+• a usage record from before the watermark not being counted.
+
+To confirm the tests catch the old bug, I swapped the old search back in: 6 checks failed by name. After restoring it, 142 passed and 0 failed.
+
+The comment also lists what's still missing:
+• **Nowhere permanent to store it:** the spend only goes into the Actions log, which expires. There's no audit-log branch push like the one evolve.sh does.
+• **Still no record:** scripts/dream.sh and the three yoyo --model calls in synthesize.yml still leave no usage record.
+• **Totals are a lower bound:** sub-agent tokens still aren't counted (yologdev/yoagent#173).
+
+Skipped: #937, #902, #879, #870, #869, #858, #738. Task 2 (--print losing a partial answer when a turn dies mid-stream) wasn't tied to any open issue, so it didn't lead to a comment.
+
+  watch: no files changed this turn — skipping
+

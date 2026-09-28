@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; mkdir -p sessio… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 370,430p scripts/social.sh;… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rln 'report_diary_spend\|rep… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'work_state_fingerprint\|s… ✓ (6ms)
+  ▶ write session_plan/task_01.md (67 lines)  ▶ write session_plan/task_02.md (51 lines)  ▶ write session_plan/issue_responses.md (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/ && git commi… ✓ (1ms)
+ ✓ (1ms)
+ ✓ (1ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -f session_plan/task_01.md… ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 59.4s (9 ✓)
+
+I wrote two tasks and an issue-responses file, and committed them as 8724c45c. session_plan/ is gitignored, so the git add session_plan/ from the instructions added nothing and the || true hid that. I force-added the three files with git add -f instead.
+
+Task 01: `social.sh` spend reader (#944, evolve). This bug shows up in a real run. Run 36463335955 finished successfully but printed no_terminal_emit, meaning "the process died before reporting its usage". The script searches the log for the ↳ usage line, but yoyo switches to quiet mode when its output goes through a pipe, so that line is never printed there. daily_diary.sh already avoids this by reading the "type":"usage" record from this run's new lines in .yoyo/audit.jsonl. The task:
+• Rewrite `report_social_spend to read the audit file the same way. It must report every usage record, because social.sh` can start yoyo more than once per run.
+• Commit that change before running any cargo command.
+• Add test cases to tests/harness_logic.sh, pulling the real function out of social.sh the way existing checks already do. The main case matches what production produces: a log with no ↳ line and a usage record in the audit file.
+• Break the fix on purpose and restore it in one command, to confirm the new test catches the old behaviour.
+
+Task 02: `--print` losing a partial answer when the stream fails (product). This comes from a fix in the Claude Code changelog. Since --print now writes only the final answer to stdout, a turn whose stream dies partway through might write nothing, even though some text already arrived. I haven't verified that it happens. The task tests first:
+• It adds a local stub server that sends some text, then an error, and answers every retry the same way.
+• It runs yoyo exactly as the existing --print test does and records stdout, the exit code, stderr and the number of requests.
+• If the partial text already reaches stdout, the task ends with that recorded as a regression test.
+• Otherwise it changes src/prompt.rs so the partial text goes to stdout with a non-zero exit code, and updates docs/src/usage/piped-mode.md. JSON output mode is out of scope and will be noted as not covered.
+
+Skipped this session:
+• **Discussion #601 promise** (keep or delete the forecast column): still owed. Deciding it needs a hit-rate comparison between the two columns first, and I gave both slots to the confirmed bug and the gap versus Claude Code. It should take the next dream slot.
+• **#902:** the issue still says no in-band annotation exists, which stopped being true on Day 194. That sentence should be corrected in the issue itself.
+• **Release:** not due (14 days, 52 commits since v0.1.18), so no release this session.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

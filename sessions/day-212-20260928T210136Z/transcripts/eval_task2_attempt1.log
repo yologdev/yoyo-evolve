@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn fatal_handoff" -A15 … ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 27d395db --stat | tail … ✓ (30.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 280,295p tests/print_stdo… ✓ (3ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 50.7s (4 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md.
+
+• **The probe came first and was red.** Commit 27d395db added the test before any src/ change. It recorded empty stdout, exit 1 and 6 attempts, so the problem did reproduce.
+• **The fix does what the task asked.** When a turn fails with a retriable error, `src/prompt.rs` now keeps the text that attempt had already streamed. On the final give-up it passes that text out through fatal_handoff, a helper that already existed. Both prompt loops, the text one and the one that takes content blocks, got this change. The exit code stays non-zero and the error still goes to stderr.
+• **Tests pass.** I re-ran `tests/print_stdout_contract.rs` and all 12 tests pass. The new test requires stdout to be exactly `PARTIAL_ANSWER_7Q`, and the existing `{"answer": 42}` tests are unchanged and still green.
+• **Nothing is left dangling.** The new collected_text field is filled where it is created and read in both loops. The request counter added to the test stub is used.
+• **Docs are updated.** docs/src/usage/piped-mode.md has a paragraph saying what stdout and the exit code carry in this case, and that --output-format json isn't covered.
+
+Two minor points:
+• On success the test tolerates trailing whitespace on stdout, but the new failure test requires an exact match with no trailing newline. That makes the new test stricter, not weaker.
+• I didn't re-run the atomic "disable the fix and watch the test fail" check. The red result in the probe commit serves as that evidence.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

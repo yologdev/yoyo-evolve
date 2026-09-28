@@ -1,0 +1,70 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 355,432p scripts/social.sh;… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=359 && NR<=412 {print NR"… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2200,2215p src/cli.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 6.8s (4 ✓)
+
+Now rewrite the function.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (48 lines) ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The header comment at 361–365 also makes the false claim (the ↳ line is teed into the log). Fixing that too.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (20 lines) ✓ (34ms)
+
+Now the harness test. Let me look at the existing extraction pattern and the file's ending.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "awk '/\^" tests/harness_l… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (58 lines) ✓ (2.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; bash tests/harness_logic.sh 2>&1 |… ✓ (1.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 23.1s (3 ✓)
+
+Green. Now the positive control, atomic: swap in the old ↳-grep function from the parent commit, run, restore in the same command.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp scripts/soc… (8 lines) ✓ (3.9s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The positive control worked: the old ↳ grep failed 6 checks, including Case A by name, and once restored the suite was back to 142/0. Next I'll run the cargo gate and commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short; grep -c "NEUTE… ✓ (1m 35s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test -q … (10 lines) ✓ (1m 32s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comme… (7 lines) ✓ (896ms)
+  3 tools completed in 3m 23s (3 ✓)
+
+scripts/social.sh now reads its per-run spend from the usage record in the audit log instead of the ↳ line. In production that line never reaches the log, so every social run, including ones that finished, reported no_terminal_emit.
+
+What was wrong: social.sh captures yoyo's output with 2>&1 | tee. In that setup yoyo switches itself to quiet mode (src/cli.rs), and quiet mode drops the ↳ usage line. The old grep could never match, so every social run reported it had died before finishing. Run 36463335955 did exactly that on a run that completed.
+
+Changes:
+• **`scripts/social.sh** (commit 20cbaff0): the reader looks for "type":"usage"` records among the audit lines written during this run. It prints how many there are and each one, because social.sh can call the binary more than once. It prints no_terminal_emit only when this run wrote no usage record at all. The Spend audit: line is unchanged, byte for byte, and the function still never changes the script's exit status. I also fixed the header comment, which said the ↳ line gets captured into the log.
+• **`tests/harness_logic.sh** (commit e5cf1d30): four new cases, all with no ↳` line in the log, as in production:
+  • **A:** a finished run reports its usage record and does not say no_terminal_emit.
+  • **B:** a run that calls yoyo twice reports both records and a count of 2.
+  • C: a run that died before finishing reports no_terminal_emit.
+  • D: a usage record left by an earlier run is not counted as this run's.
+
+Checks:
+• Positive control: in one command I put the old grep back, ran the harness and restored the file. The old code failed 6 checks, including Case A by name (136 passed, 6 failed). After restoring: 142 passed, 0 failed, and no neutered markers are left.
+• `cargo build, cargo test, cargo clippy --all-targets -- -D warnings and cargo fmt --check` all pass. No Rust code changed.
+
+I commented on #944 with the production run and the fix. The other half of that issue is still open: nothing saves the spend anywhere a later session reads. It is only printed in the run log.
+
+  watch: no files changed this turn — skipping
+

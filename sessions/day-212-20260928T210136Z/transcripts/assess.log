@@ -1,0 +1,58 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git show --stat HEAD~1 HEAD | head… ✓ (352ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh run list --repo yologdev/yoyo-e… ✓ (367ms)
+  ▶ $ cd /tmp; timeout 90 /home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo … ✓ (2.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for n in 916 936 944 937 951; do e… ✓ (1.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 951 --repo yologdev/… ✓ (292ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls src | wc -l; find src -name '*.… ✓ (963ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 scripts/extract_trajectory… ✓ (958ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "YOYO_AUDIT\|usage\|↳" scr… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 380,440p scripts/social.sh;… ✓ (302ms)
+  10 tools completed in 33.7s (10 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh run view 36463335955 --repo yol… ✓ (872ms)
+  ▶ write session_plan/assessment.md (38 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/assessment.md… ✓ (0ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -f session_plan/assessment…  ▶ web search 'Claude Code changelog September 2026 new features' ✓ (2.3s)
+ ✓ (2.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (18 lines) ✓ (27ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 53.5s (6 ✓)
+
+I've written the assessment to session_plan/assessment.md and committed it. The harness had already confirmed the build and tests pass. I didn't re-run the full suite; I only ran the binary directly.
+
+New bug, seen in a real run: every social run reports that the process died before finishing (no_terminal_emit), even when it finished fine. In run 36463335955 (18:10 today, marked success), the report prints "no usage record — the process did not reach its terminal emit", and the very next line shows 20 usage records written for that run.
+• **Cause:** `scripts/social.sh` looks for the `↳` cost line in the captured output. When my output is piped I switch to quiet mode, and quiet mode never prints that line, so the search can't match.
+• **Fix:** read the cost from the usage record in .yoyo/audit.jsonl, the way daily_diary.sh already does.
+• Status: I predicted this yesterday from reading the code; today is the first time it showed up in a real log. social.sh isn't a protected file, so I can fix it myself (it's part of #944).
+
+My earlier fixes hold (checked by running the binary):
+• --print outputs exactly PONG.
+• Plain -p still passes the model's leading blank lines through. That's expected: the help text now says so.
+• `yoyo todo add` at the shell refuses and exits with code 1 instead of printing a green ✓ and forgetting.
+
+Creator changes today:
+• **Wrap-up commits are now restricted** (`a3c0a7a3`). The end-of-session sweep may only commit `journals/`, `memory/`, `session_plan/` and `.yoyo/`. Code written anywhere else outside a task is refused and saved as a patch, not shipped.
+• **Correction to my #951 report:** my example commit `6e79f686` never reached main. It was committed locally and the job was cancelled before pushing. The hole I reported was real; my example of it was wrong.
+• CI now also runs extract_trajectory.py --test.
+
+Research (from Claude Code's changelog):
+• They fixed `claude -p losing an answer it had already produced when a turn dies mid-stream. My --print` now holds back all output until the final answer, so it may have the same problem. I haven't tested this yet.
+• They added a machine-readable list of MCP servers that failed to start to headless JSON output.
+• They shipped a --safe-mode that starts with all customisations off, the same thing #879 asks for.
+• I skipped the yopedia recall and save step this session because I ran out of context once already.
+
+Suggested priorities for the planner:
+1. Fix the `social.sh spend report. The test must use a capture with no ↳` line, which is what a real run produces, not a stand-in that prints it.
+2. Check whether --print loses a partly streamed answer, using the fake local server that yesterday's process-level test already runs against. A clean result is a valid outcome.
+3. Take #936 (the 50 commands that still start a paid session from the shell) or #879 (composite safe mode).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
