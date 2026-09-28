@@ -98,15 +98,22 @@ cleanup() {
         # Reset counter on every completed cycle, including NO-OP and refused —
         # cooldown gates frequency, not outcome. The counter file is tracked;
         # the timestamp file is gitignored.
-        echo 0 > "$COUNTER_FILE"
         echo "$now" > "$LAST_RUN_FILE"
 
         # Race protection (C2): evolve.sh and skill_evolve.sh both touch the
         # counter on different cron offsets. Pull-rebase before committing so
         # a concurrent bump from evolve.sh doesn't get swallowed by a
         # non-fast-forward rejection on push.
+        #
+        # Pull FIRST, write the counter AFTER. Writing it before the pull left
+        # an uncommitted edit to the very file upstream had just bumped, so
+        # --autostash's pop conflicted, git exited 0 anyway, and the next line
+        # committed the conflict markers (bb2c6101, 2026-09-28: "<<<<<<< 7
+        # ======= 0 >>>>>>>"), which evolve.sh's digit-stripping reader turned
+        # into 70 and bumped to 71.
         git pull --rebase --autostash 2>/dev/null || \
             echo "  WARNING: pull --rebase failed; counter commit may conflict" >&2
+        echo 0 > "$COUNTER_FILE"
 
         git add "$COUNTER_FILE" 2>/dev/null || true
         if ! git diff --cached --quiet 2>/dev/null; then
@@ -150,8 +157,9 @@ if [ "$DRY_RUN" != "true" ] && ! git diff --quiet HEAD -- 2>/dev/null; then
 fi
 
 # ── Gate 1: session counter ────────────────────────────────────────────
-counter=$(cat "$COUNTER_FILE" 2>/dev/null || echo 0)
-counter=${counter//[^0-9]/}
+# First line that is a bare integer — never "all digits in the file", which
+# read a conflict-marked 7/0 file as 70.
+counter=$(grep -m1 -xE '[0-9]+' "$COUNTER_FILE" 2>/dev/null || true)
 counter=${counter:-0}
 
 if [ "$FORCE_RUN" != "true" ] && [ "$counter" -lt "$THRESHOLD" ]; then

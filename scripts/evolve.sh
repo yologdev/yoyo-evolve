@@ -3778,8 +3778,9 @@ SESSION_TASKS_ATTEMPTED="${TASK_NUM:-0}"
 SESSION_TASKS_SUCCEEDED=$(( ${TASK_NUM:-0} - ${TASK_FAILURES:-0} ))
 [ "$SESSION_TASKS_SUCCEEDED" -lt 0 ] && SESSION_TASKS_SUCCEEDED=0
 
-skill_counter=$(cat .skill_evolve_counter 2>/dev/null || echo 0)
-skill_counter=${skill_counter//[^0-9]/}
+# First line that is a bare integer — never "all digits in the file": a
+# conflict-marked 7/0 file (bb2c6101) was read as 70 and bumped to 71.
+skill_counter=$(grep -m1 -xE '[0-9]+' .skill_evolve_counter 2>/dev/null || true)
 skill_counter=${skill_counter:-0}
 echo $((skill_counter + 1)) > .skill_evolve_counter
 git add .skill_evolve_counter

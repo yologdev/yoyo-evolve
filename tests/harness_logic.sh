@@ -664,6 +664,48 @@ for _s in evolve.sh social.sh skill_evolve.sh dream.sh; do
         "$(grep -c '^MODEL="${MODEL:-$CONFIG_MODEL}"$' "$ROOT/scripts/$_s")" "1"
 done
 
+# ── skill-evolve counter: a concurrent bump must not commit conflict markers ─
+# bb2c6101 (2026-09-28) committed "<<<<<<< 7 ======= 0 >>>>>>>" because the
+# reset wrote the counter BEFORE `git pull --rebase --autostash`; the pop
+# conflicted, git exited 0, and the markers were committed. evolve.sh's reader
+# then turned them into 70 and bumped to 71. Real git, real race, the real
+# block extracted from skill_evolve.sh.
+SE="$ROOT/scripts/skill_evolve.sh"
+SE_BLOCK=$(awk '/# Race protection \(C2\)/{p=1} p{print} p&&/reset counter \(cycle/{c=1} c&&/^        fi$/{exit}' "$SE")
+counter_race() { # $1 = block to run as the resetting side → final counter file, one line
+    ( set +e; d=$(mktemp -d); cd "$d" || exit 1
+      git init -q --bare remote.git
+      git clone -q remote.git a 2>/dev/null; cd a
+      git config user.email t@t; git config user.name t
+      echo 6 > .skill_evolve_counter; git add .; git commit -qm base; git push -q origin HEAD 2>/dev/null
+      git clone -q ../remote.git ../b 2>/dev/null
+      ( cd ../b && git config user.email t@t && git config user.name t \
+        && echo 7 > .skill_evolve_counter && git commit -qam bump && git push -q origin HEAD 2>/dev/null )
+      COUNTER_FILE=.skill_evolve_counter
+      eval "$1" >/dev/null 2>&1
+      echo "$(tr '\n' '|' < .skill_evolve_counter)bump_kept=$(git log --format=%s | grep -c '^bump$')"
+      cd /; rm -rf "$d" ) 2>/dev/null | tail -1
+}
+if require "skill_evolve.sh reset block extracted" "$SE_BLOCK"; then
+    check "counter race: reset after a concurrent bump is a clean 0" \
+        "$(counter_race "$SE_BLOCK")" "0|bump_kept=1"
+    # Positive control: the pre-fix order (write, then pull) reproduces bb2c6101.
+    OLD_ORDER="echo 0 > \"\$COUNTER_FILE\"
+$(echo "$SE_BLOCK" | grep -v '^        echo 0 > "\$COUNTER_FILE"$')"
+    case "$(counter_race "$OLD_ORDER")" in
+        *"<<<<<<<"*) ok "counter race: positive control — write-then-pull commits conflict markers" ;;
+        *) bad "counter race: positive control" "old order did not reproduce the markers" ;;
+    esac
+fi
+MARKED=$(mktemp); printf '<<<<<<< Updated upstream\n7\n=======\n0\n>>>>>>> Stashed changes\n' > "$MARKED"
+for _s in "$SE" "$SCRIPT"; do
+    check "counter reader: $(basename "$_s") reads a conflict-marked file as 7, not 70" \
+        "$(grep -m1 -xE '[0-9]+' "$MARKED")" "7"
+    check "counter reader: $(basename "$_s") uses the bare-integer reader" \
+        "$(grep -cF "grep -m1 -xE '[0-9]+'" "$_s")" "1"
+done
+rm -f "$MARKED"
+
 # ── main push: retry, and never echo a failure into success ────────────────
 PR_FN=$(awk '/^push_main_with_retry\(\) \{/,/^\}/' "$SCRIPT")
 if require "push_main_with_retry extracted" "$PR_FN"; then
