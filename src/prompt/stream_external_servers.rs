@@ -112,7 +112,10 @@ mod tests {
         let line = external_servers_stream_line(&report).unwrap();
         let mut parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
         let obj = parsed.as_object_mut().unwrap();
-        assert_eq!(obj.remove("type"), Some(serde_json::json!("externalServers")));
+        assert_eq!(
+            obj.remove("type"),
+            Some(serde_json::json!("externalServers"))
+        );
         assert_eq!(parsed, external_servers_json(&report));
     }
 
