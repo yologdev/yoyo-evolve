@@ -473,7 +473,8 @@ fn print_mode_stdout_is_exactly_the_answer_bytes_after_a_thinking_block() {
     // Anti-vacuous: the stub really streams a thinking block before the text,
     // so this test crosses the thinking→text transition the plain body skips.
     assert!(
-        body.contains("\"thinking_delta\"") && body.find("thinking_delta") < body.find("text_delta"),
+        body.contains("\"thinking_delta\"")
+            && body.find("thinking_delta") < body.find("text_delta"),
         "fixture must stream a thinking delta before the text delta"
     );
     let run = run_yoyo_with(
