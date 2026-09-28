@@ -298,7 +298,14 @@ enum PromptResult {
         last_tool_name: Option<String>,
     },
     /// A retriable API error was detected — caller should retry.
-    RetriableError { error_msg: String, usage: Usage },
+    RetriableError {
+        error_msg: String,
+        usage: Usage,
+        /// Text the dying attempt already streamed. Only the LAST attempt's text
+        /// survives (a retried attempt's partial is discarded), so `--print` can
+        /// still emit what was produced when every retry dies mid-stream.
+        collected_text: String,
+    },
     /// A context overflow error — caller should compact and retry.
     ContextOverflow { error_msg: String, usage: Usage },
     /// A fatal, non-retriable turn failure (#646).
@@ -1057,6 +1064,7 @@ impl PromptEventState {
             PromptResult::RetriableError {
                 error_msg: err_msg,
                 usage: self.usage,
+                collected_text: self.collected_text,
             }
         } else {
             PromptResult::Done {
@@ -1313,7 +1321,11 @@ pub async fn run_prompt_with_changes(
                 last_tool_name = tool_nm;
                 break;
             }
-            PromptResult::RetriableError { error_msg, usage } => {
+            PromptResult::RetriableError {
+                error_msg,
+                usage,
+                collected_text: dying_text,
+            } => {
                 accumulate_usage(&mut total_usage, &usage);
 
                 if attempt < MAX_RETRIES {
@@ -1340,7 +1352,7 @@ pub async fn run_prompt_with_changes(
                                 "{YELLOW}  ⏳ {}{RESET}",
                                 rate_limit_giveup_message(retry_after)
                             );
-                            api_error = Some(error_msg);
+                            (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
                             break;
                         }
                     }
@@ -1354,7 +1366,9 @@ pub async fn run_prompt_with_changes(
                             diagnostic.replace('\n', &format!("\n{YELLOW}     {RESET}"))
                         );
                     }
-                    api_error = Some(error_msg);
+                    // A turn that died mid-stream on the last attempt still
+                    // hands its partial answer out, beside the error.
+                    (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
                 }
             }
             PromptResult::ContextOverflow { error_msg, usage } => {
@@ -1404,6 +1418,7 @@ pub async fn run_prompt_with_changes(
                     PromptResult::RetriableError {
                         error_msg: retry_err,
                         usage: retry_usage,
+                        ..
                     }
                     | PromptResult::ContextOverflow {
                         error_msg: retry_err,
@@ -1707,7 +1722,11 @@ pub async fn run_prompt_with_content_and_changes(
                 last_tool_name = tool_nm;
                 break;
             }
-            PromptResult::RetriableError { error_msg, usage } => {
+            PromptResult::RetriableError {
+                error_msg,
+                usage,
+                collected_text: dying_text,
+            } => {
                 accumulate_usage(&mut total_usage, &usage);
 
                 if attempt < MAX_RETRIES {
@@ -1732,7 +1751,7 @@ pub async fn run_prompt_with_content_and_changes(
                                 "{YELLOW}  ⏳ {}{RESET}",
                                 rate_limit_giveup_message(retry_after)
                             );
-                            api_error = Some(error_msg);
+                            (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
                             break;
                         }
                     }
@@ -1745,7 +1764,9 @@ pub async fn run_prompt_with_content_and_changes(
                             diagnostic.replace('\n', &format!("\n{YELLOW}     {RESET}"))
                         );
                     }
-                    api_error = Some(error_msg);
+                    // A turn that died mid-stream on the last attempt still
+                    // hands its partial answer out, beside the error.
+                    (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
                 }
             }
             PromptResult::ContextOverflow { error_msg, usage } => {

@@ -51,6 +51,8 @@ Piped and single-prompt modes accept `--output-format <fmt>`:
 In `json` mode and with `--print`, the streamed answer text is not echoed to
 stdout: the final payload is written there exactly once, so `| jq` parses it.
 Under `--print` and `--output-format json`, progress output (tool `▶` lines, ✓/✗ results, diffs, turn boundaries) goes to stderr, and stdout carries only the answer.
+
+**When a turn dies mid-stream** (the provider errors after text has started arriving, and every retry dies the same way), `--print` still writes the text the last attempt produced to stdout, and yoyo exits **non-zero** with the error on stderr. So stdout carries what was produced and the exit code carries that it failed — check the exit code before trusting the answer as complete. `--output-format json` is not covered by this guarantee: what its envelope carries on a mid-stream failure is not pinned by a test.
 - `stream-json` — newline-delimited JSON (NDJSON): one yoagent `AgentEvent`
   per line, emitted in real time as the agent works.
 
