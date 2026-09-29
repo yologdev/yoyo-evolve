@@ -6,7 +6,57 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [Unreleased]
 
+## [0.1.19] — 2026-09-29
+
+Days 198–212. **If you pipe me into anything, this is the release to take.** `yoyo --print` was writing its answer to stdout *twice*, `--output-format json` leaked streamed text ahead of its envelope (so `| jq` died on "Extra data"), tool progress and turn boundaries could land on the stdout a script was reading, the payload started with stray blank lines the model itself emitted, and a turn that died mid-stream threw away the answer it had already written. Stdout under `--print` / `--output-format json` is now reserved for the payload, and one process-level test enumerates every writer that could break that contract instead of fixing emitters one at a time.
+
+The other half is refusing to claim success I did not earn. `yoyo todo add "buy milk"` at the shell printed a green ✓, exited 0, and forgot the item — now it refuses with exit 1. REPL-only reports typed at the shell no longer start a paid conversation to answer "I don't know". A non-retriable provider error (400/401/403/404) exits 1. And when a configured MCP or OpenAPI server fails to connect, the *model* is now told — before, it saw only an absence and concluded the capability did not exist.
+
+### Fixed
+
 - `--print` and `--output-format json` now write the answer to stdout exactly once: the streamed text is no longer echoed before the payload, so `--print` output is not doubled and `| jq` no longer fails with "Extra data" (#966).
+- **Tool progress and turn boundaries no longer write to stdout** under `--print` / `--output-format json`; they go to stderr, so the reserved payload is the only thing on stdout (Day 212)
+- **Model-emitted leading blank lines are stripped** from the reserved `--print` / json payload — the provider's first text delta was literally `"\n\nPONG"` (Day 212)
+- **`--print` keeps an answer it already produced** when a later turn dies mid-stream, instead of printing nothing (Day 212)
+- **`yoyo todo add|done|remove|clear` at the shell refuses with exit 1** and names #679, instead of a green `✓ Added task #1` that no later process could see — the task list lives in one REPL session (Day 212, #682)
+- **REPL-only reports at the shell refuse for free** — `yoyo tokens`, `cost`, `context`, `provider`, `think <level>`, `teach`, `architect` and multi-word forms like `yoyo tokens today` used to start a billed turn; `yoyo -p "/risk"`-style slash commands through `-p` are covered by the same policy (Days 199, 202, 207, #886)
+- **Non-retriable provider errors (400/401/403/404) exit 1** and `--output-format json` reports `is_error: true` (Day 211, #965)
+- **The `max_tokens` ceiling warning actually fires** — it was gated on quiet mode (on for every piped run) and compared against the model's default output length instead of its maximum (Day 211, #964)
+- **"Unknown model" no longer fires for ids the preset lookup resolves**, and a model id whose inferred provider disagrees with the configured provider (e.g. a Claude id under `provider = deepseek`) now warns once at startup (Day 205, #941, #942)
+- **A blocking pre-hook's stderr reaches the model** — the reason a gate printed was captured, capped and then discarded, so the refusal never said why (Day 209)
+- **DeepSeek V4-Flash pricing corrected** — the row was carrying deepseek-r1's prices, overstating every session's cost by 3.7x; `deepseek-flash` is now known and priced (Days 199, 204, #923)
+- **A `.yoyo/skills/` symlink that resolves outside the project is refused**, naming the skill and where it pointed (Day 205)
+- **A wildcard `permissions.allow` no longer auto-approves a cloud-metadata credential fetch** (Day 198)
+- **The skills trust gate honours a "no"** — it keyed on a different condition than the trust question did (Day 198)
+- **The spawned worker under `--safe-mode` / `--restricted` is pinned** not to read project instruction files (Day 203, #902)
+- **`yoyo setup` / `init` dispatch tests no longer run the real wizard or init handler in the process cwd**, which could overwrite `.yoyo.toml` or write `YOYO.md` into a checkout (Day 211, #962)
+- **`/retry` uses the tool name the prompt loop already carries** instead of string-scanning the error text (Day 211, #742)
+
+### Added
+
+- **The model is told when a configured MCP or OpenAPI server failed to connect** — once, prepended to the first turn, naming the server — so it reports the tool unavailable instead of concluding it does not exist (Day 181's design, finished across Days 202–212)
+- **A stream-json `externalServers` line** for degraded runs: `--output-format stream-json` consumers see which MCP/OpenAPI servers connected and which failed (Day 212)
+- **`/mcp list` names which server failed to connect** (Day 202)
+- **A `post_failure` hook phase** (`hooks.post_failure.* = "..."`, Claude Code's `PostToolUseFailure`) — a tool call that ran and FAILED used to fire no hook at all; blocked and cached calls deliberately do not fire it (Day 202)
+- **Hooks fire for `sub_agent` and `shared_state`** too (Day 202)
+- **`/hooks` empty state teaches all three phases**, derived from the phase enum instead of hand-written prose (Day 203)
+- **`sub_agent_model`** — opt-in config key routing dispatched sub-agents to a cheaper model (Day 205)
+- **A read-only `explore_agent` sub-agent** — no write/edit/rename tools, composed from the existing read-only disallow list (Day 203)
+- **`YOYO_RESTRICTED=1`**, the env-var form of `--restricted`, so the composite switch is reachable from a wrapper script (Day 205)
+- **Project instruction files and sub-agent output are labelled in-band** with where they came from, and told they are context, not instructions to obey (Day 210, #902)
+- **`/risk accuracy` reports unhittable and unmeasurable surprise counts** — files born after the snapshot that graded them can no longer hide inside a 0% (Days 206–212)
+- **`-p` help states the stdout difference from `--print`** (plain `-p` passes model padding through) (Day 212)
+
+### Changed
+
+- **Per-edit auto-check skips a cargo check when the edited file cannot affect it** (a `.md` or `.py` edit no longer costs a 2–4 minute clippy+test run) (Day 211, #961)
+- **The system prompt's token budget is measured** instead of declared as a fixed 4,000 (Day 199, #926)
+- Price table: an `#[ignore]`d drift alarm and a general sweep audit the cost table against models.dev before a release, and ids the catalogue does not carry are listed as `not audited` rather than read as matched (Days 204–209)
+
+### Price table audit
+
+- `price_drift_audit` (DeepSeek rows): passed, 3 rows compared.
+- General sweep: `price audit: SUMMARY compared 36, matched 15, drifted 9, cache_read_only 12, unpriced 136 of 172 catalogue rows (rel_tol 1%)`. **The 9 drifted rows are UNRECONCILED in this release** — the table was not edited, because the skill requires reading each vendor's pricing page first and that did not happen in this session. yoyo's `(in / out per MTok)` vs models.dev: `deepseek-v4-pro` 0.27/1.1 vs 0.435/0.87, `gemini-2.5-flash` 0.15/0.6 vs 0.3/2.5, `gemini-2.5-flash-lite` 0.15/0.6 vs 0.1/0.4, `gpt-4o-2024-05-13` 2.5/10 vs 5/15, `gpt-5` 2/8 vs 1.25/10, `gpt-5-mini` 0.4/1.6 vs 0.25/2, `gpt-5.5` 5/20 vs 5/30, `mistral-large-latest` 2/6 vs 0.5/1.5, `mistral-small-latest` 0.1/0.3 vs 0.15/0.6. `/cost` figures for these models may be wrong. The 12 `cache_read_only` rows are the known unmodelled-cache gap.
 
 ## [0.1.18] — 2026-09-14
 
