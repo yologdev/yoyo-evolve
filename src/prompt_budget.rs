@@ -1481,47 +1481,73 @@ mod tests {
     // `configured_session_budget()` → `session_budget_remaining()` →
     // `session_budget_exhausted()` end-to-end.
     //
-    // This test sets `YOYO_SESSION_BUDGET_SECS=9999` once, calls the
-    // live helpers, and asserts they observe the configured budget.
-    // It uses `serial_test::serial` to avoid racing with other tests
-    // that read the env var.
+    // The live set path runs in a FRESH PROCESS, because the global it
+    // exercises is write-once. `SESSION_BUDGET_SECS` is a process-wide
+    // `OnceLock<Option<u64>>`: the first call to `configured_session_budget()`
+    // anywhere in the test binary freezes it. This test used to be
+    // `test_aaa_session_budget_set_path_live_end_to_end`, setting the env var
+    // in-process and relying on its `aaa` name to run first. That never held:
+    // libtest runs tests on parallel threads ordered by full path, and
+    // `#[serial]` only serialises against other `#[serial]` tests, so any
+    // unserialised test elsewhere (prompt.rs, watch.rs, repl.rs, main.rs all
+    // reach `session_budget_exhausted()`) could freeze the cell at `None`
+    // first. It flaked main red on fc101154 (CI run 36544101687).
     //
-    // OnceLock caveat: `SESSION_BUDGET_SECS` is a process-wide
-    // `OnceLock<Option<u64>>`, so the very first call to
-    // `configured_session_budget()` in the test binary freezes the
-    // value for the lifetime of the process. To make sure that first
-    // call sees our env var, this test must run **before** any other
-    // test that calls `session_budget_remaining()` or
-    // `session_budget_exhausted()` with the env var unset. Cargo's
-    // serialized test order roughly tracks source order within a single
-    // `mod`, but the alphabetical `_aaa_` prefix gives us belt-and-
-    // suspenders: this test sorts first within the `tests` module.
+    // Why a subprocess rather than a `_with(&OnceLock, ..)` seam: a seam would
+    // test the parse, which `parse_session_budget`'s tests already pin. What
+    // this test exists to prove (#262) is that a REAL env var flows through
+    // the REAL global into the live helpers, and only a process whose first
+    // read of the cell happens with the var set can prove that.
     //
-    // After this test runs, the OnceLock holds `Some(9999)` for the
-    // rest of the binary. The existing
-    // `test_session_budget_*_unset_returns_*` tests are already guarded
-    // with `if std::env::var("YOYO_SESSION_BUDGET_SECS").is_err()` and
-    // will gracefully skip their assertions when this test leaves the
-    // env var set, so nothing else in the suite breaks.
-    //
-    // Why we deliberately don't `remove_var` at the end: removing the
-    // env var while the OnceLock still holds `Some(9999)` would put the
-    // process in an inconsistent state (the cache says "configured" but
-    // the env says "unset"), and would actively break the existing
-    // unset tests' skip-guards on subsequent runs. Leaving the env var
-    // set keeps state coherent for the rest of the binary.
+    // The parent re-executes its own test binary, runs exactly the ignored
+    // child below with the env var set, and requires three things: exit
+    // success, libtest's `1 passed` (an `--exact` name typo runs 0 tests and
+    // still exits 0), and the child's own marker printed after its last
+    // assertion (so a child that returned early cannot pass for it).
+    const LIVE_CHILD_NAME: &str = "prompt_budget::tests::session_budget_set_path_live_child";
+    const LIVE_CHILD_SENTINEL: &str = "YOYO_TEST_LIVE_BUDGET_CHILD";
+    const LIVE_CHILD_MARKER: &str = "LIVE_BUDGET_CHILD_ASSERTIONS_RAN";
+
     #[test]
-    #[serial_test::serial]
-    fn test_aaa_session_budget_set_path_live_end_to_end() {
-        // SAFETY: marked #[serial], no concurrent env var access.
-        // We set this *before* any call to the live helpers so the
-        // OnceLock initializes with our value.
-        unsafe {
-            std::env::set_var("YOYO_SESSION_BUDGET_SECS", "9999");
+    fn test_session_budget_set_path_live_end_to_end() {
+        let exe = std::env::current_exe().expect("current_exe of the test binary");
+        let out = std::process::Command::new(exe)
+            .args(["--exact", LIVE_CHILD_NAME, "--ignored", "--nocapture"])
+            .env("YOYO_SESSION_BUDGET_SECS", "9999")
+            .env(LIVE_CHILD_SENTINEL, "1")
+            .output()
+            .expect("re-executing the test binary must spawn");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success(),
+            "live child test failed (status {:?})\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            out.status,
+        );
+        assert!(
+            stdout.contains("1 passed"),
+            "live child must run exactly one test (name typo runs 0 and exits 0)\nstdout:\n{stdout}",
+        );
+        assert!(
+            stdout.contains(LIVE_CHILD_MARKER),
+            "live child must reach the end of its assertions\nstdout:\n{stdout}",
+        );
+    }
+
+    /// Runs only in the fresh process spawned by
+    /// `test_session_budget_set_path_live_end_to_end`; `#[ignore]`d so the
+    /// normal suite never runs it in-process, where the global may already be
+    /// frozen. If run by hand without the parent's sentinel it returns early
+    /// WITHOUT printing the marker, so it can never satisfy the parent.
+    #[test]
+    #[ignore = "spawned in a fresh process by test_session_budget_set_path_live_end_to_end"]
+    fn session_budget_set_path_live_child() {
+        if std::env::var(LIVE_CHILD_SENTINEL).is_err() {
+            return;
         }
 
-        // Set path #1: the live helper should now see the configured
-        // budget instead of returning None.
+        // Set path #1: the live helper should see the configured budget
+        // instead of returning None.
         let remaining = session_budget_remaining()
             .expect("with env var set, session_budget_remaining() must return Some(_)");
         assert!(
@@ -1533,11 +1559,11 @@ mod tests {
             "remaining should never exceed configured budget, got {remaining:?}",
         );
 
-        // Set path #2: with 9000+ seconds left, no grace window we'd
-        // ever pass at the call sites should report exhausted. This is
-        // the predicate the production retry loops actually use
-        // (`session_budget_exhausted(30)` in run_prompt_auto_retry and
-        // the watch-mode fix loop).
+        // Set path #2: with 9000+ seconds left, no grace window we'd ever
+        // pass at the call sites should report exhausted. This is the
+        // predicate the production retry loops actually use
+        // (`session_budget_exhausted(30)` in run_prompt_auto_retry and the
+        // watch-mode fix loop).
         assert!(
             !session_budget_exhausted(30),
             "fresh 9999s budget must not report exhausted with 30s grace",
@@ -1551,19 +1577,14 @@ mod tests {
             "fresh 9999s budget must not report exhausted with 8000s grace",
         );
 
-        // Set path #3: a *huge* grace window — bigger than the budget
-        // itself — should flip the predicate to true even on a fresh
-        // budget. This is the boundary check that proves the predicate
-        // is actually consulting `remaining`, not just returning false.
+        // Set path #3: a grace window bigger than the budget itself flips
+        // the predicate to true even on a fresh budget — proving it consults
+        // `remaining` rather than just returning false.
         assert!(
             session_budget_exhausted(20_000),
             "9999s budget must report exhausted when grace > budget",
         );
 
-        // Note: we intentionally do NOT remove the env var here. See
-        // the long comment above for why — leaving it set keeps the
-        // OnceLock and the env coherent for the rest of the binary,
-        // and the existing unset tests are designed to skip when the
-        // env var is present.
+        println!("{LIVE_CHILD_MARKER}");
     }
 }
