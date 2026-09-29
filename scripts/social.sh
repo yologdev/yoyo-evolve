@@ -62,8 +62,20 @@ fi
 mkdir -p memory
 
 # ── Step 1: Find yoyo binary ──
+# #944: when BOTH profiles exist, take the NEWER one. social.yml restores
+# `target/` from an actions/cache whose primary key only moves with
+# Cargo.lock, then builds DEBUG — so a stale `target/release/yoyo` frozen in
+# that cache (predating the audit usage record) was preferred over the fresh
+# debug build on every run (run 36543733037: "Binary: ./target/release/yoyo",
+# then no_terminal_emit). Release-first was only right when release was fresh.
 YOYO_BIN=""
-if [ -f "./target/release/yoyo" ]; then
+if [ -f "./target/release/yoyo" ] && [ -f "./target/debug/yoyo" ]; then
+    if [ "./target/debug/yoyo" -nt "./target/release/yoyo" ]; then
+        YOYO_BIN="./target/debug/yoyo"
+    else
+        YOYO_BIN="./target/release/yoyo"
+    fi
+elif [ -f "./target/release/yoyo" ]; then
     YOYO_BIN="./target/release/yoyo"
 elif [ -f "./target/debug/yoyo" ]; then
     YOYO_BIN="./target/debug/yoyo"

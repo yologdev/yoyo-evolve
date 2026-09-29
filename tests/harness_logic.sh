@@ -916,5 +916,17 @@ if require "social: report_social_spend extracted" "$SS_FN"; then
     check "social spend D: -> no_terminal_emit"               "$(has "$D" no_terminal_emit)"     "yes"
 fi
 
+# ── social.sh binary selector (#944, Day 213) — block extracted from the shipped script ──
+SEL=$(sed -n '/^YOYO_BIN=""$/,/^fi$/p' scripts/social.sh)
+sel_case() { # $1 = older profile, $2 = newer profile
+    local d; d=$(mktemp -d)
+    ( cd "$d" && mkdir -p target/release target/debug
+      touch -d '2026-01-01' "target/$1/yoyo"; touch -d '2026-02-01' "target/$2/yoyo"
+      eval "$SEL"; echo "$YOYO_BIN" )
+    rm -rf "$d"
+}
+check "social bin: stale release loses to newer debug" "$(sel_case release debug)" "./target/debug/yoyo"
+check "social bin: newer release still wins"          "$(sel_case debug release)" "./target/release/yoyo"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
