@@ -1,0 +1,40 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '^toml' Cargo.toml; sed -n… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1438,1455p src/dispatch.rs;… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1436,1454p src/dispatch.rs … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=1436 && NR<=1453' src/dis… ✓ (5ms)
+  ▶ write session_plan/eval_task_2.md (6 lines)
+  + Verdict: PASS
+  + Reason: New src/cd_config_note.rs names which of [permissions]/[directories]/hooks/MCP servers the new directory's .yoyo.toml sets and says they are NOT applied. It returns None for an absent file or a model-only file, reports an unreadable file separately, and is wired as a single line in the /cd Ok arm after reevaluate_trust_on_cd. The deviations from the task are justified: there is no toml crate in Cargo.toml (I confirmed), so it reuses the startup parsers and "unparseable" became the Unread… [yoyo: 104 more bytes elided — diff lines are capped at 500 bytes]
+  + Checked: intent_alignment: PASS: I read the whole new module and the dispatch.rs call site (lines 1436-1452). The call is placed after the existing DIM line, which is kept. The note is read-only, it sanitizes the path through cli::sanitize_for_display, and plain output uses ':' in place of the em dash. The tests build fixtures through the parser, cover the deny, model-only (assert_eq None), all-four-in-order, unreadable-vs-empty, glyph-free, anti-vacuous and hostile-path cases, and use the real … [yoyo: 46 more bytes elided — diff lines are capped at 500 bytes]
+  + Checked: forgotten_touchpoints: PASS: `mod cd_config_note;` is registered in main.rs. print_cd_config_note is called from dispatch.rs. classify_read and cd_config_note are used by print_cd_config_note. All three CdConfigReading variants are matched in cd_config_note. dispatch.rs gains only one line (2351 lines), and the module_size test passes in the harness.
+  + Checked: doc_sync: PASS: docs/src/usage/commands.md's /cd note gains a sentence about the unapplied .yoyo.toml sections. ARCHITECTURE.md's dispatch.rs entry adds the "disclosure slice of #869; reload still open; not a control" record.
+  + Checked: product_surface: PASS: This is a product-kind task. The only change to the product surface is extra DIM stderr output after /cd, and only when the new directory's .yoyo.toml sets one of the four sections (or cannot be read). No defaults, flags, trust or permissions change, and nothing from the file is applied.
+ ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 23.7s (5 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md. I didn't run the binary to exercise /cd, so I haven't seen the note appear live. The verdict rests on reading the code plus the harness's passing build and tests.
+
+What the diff does:
+• **New module:** `src/cd_config_note.rs` reads the new directory's `.yoyo.toml` and names which of `[permissions]`, `[directories]`, hooks and MCP servers it sets, saying they are NOT applied.
+• **No new output for the usual cases:** a directory with no `.yoyo.toml`, or one that only sets things like `model`, prints nothing. A file that exists but can't be read gets its own message instead of being treated as empty.
+• **Wiring:** `dispatch.rs` gains one line in the `/cd` success path, after the trust check and after the existing DIM line, which is kept. The file is only read; nothing from it is applied, and trust and permissions are untouched.
+• **Safety details:** the path is cleaned through sanitize_for_display before printing, and plain output contains no em dash or bullets.
+• **Tests:** they build their inputs from real TOML text and cover every case the task listed, plus a test for an unknown hook name and one for a hostile path.
+• Docs: `docs/src/usage/commands.md and ARCHITECTURE.md` are both updated.
+
+Where it departs from the task, both acceptable:
+• There is no toml crate in Cargo.toml (I checked). So the module reuses the parsers yoyo runs at startup, and the task's "unparseable" case became the "file can't be read" case. The line-based parser never fails, so there is no separate parse-error case.
+• `cd_config_note` takes a small result type rather than a list of section names, which the task explicitly allowed.
+
+Two things I noticed but didn't fail it for:
+• The existing DIM line goes to stdout and ends with a blank line; the new note goes to stderr straight after it. That's a cosmetic ordering quirk only.
+• The positive control (the deliberate-breakage check) is only claimed in ARCHITECTURE.md; I didn't re-run it.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

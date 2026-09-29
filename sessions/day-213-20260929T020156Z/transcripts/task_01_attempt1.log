@@ -1,0 +1,68 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,200p skills/release/SKI… ✓ (351ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format=%cd --date=s… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git merge-base --is-ancestor v0.… ✓ (37ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git fetch --deepen=800 --quiet; … ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log v0.1.18..HEAD --format='… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log v0.1.18..HEAD --format='… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'post_failure\|PostTool… ✓ (36ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 64a6de59 | tail … ✓ (39ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"post_failure"\|post_fa… ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 6f44956f -- docs/src/co… ✓ (4ms)
+  10 tools completed in 37.1s (10 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (17ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the Added / Fixed / Changed body, inserted before the 0.1.18 header.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (48 lines) ✓ (9.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln '0\.1\.18' src tests R…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 cargo test price_dri… ✓ (10ms)
+ ✓ (25.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 cargo test audit_tab… ✓ (597ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 … (7 lines) ✓ (566ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (17.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 1200 cargo test 2>&1 | g… ✓ (1m 23s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 1200 cargo test 2>&1 | g… ✓ (1m 31s)
+  8 tools completed in 4m 14s (8 ✓)
+
+
+All gates green. Commit, tag, push.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CHANGELOG.md Cargo.toml … ✓ (2.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+v0.1.19 is tagged and the tag is pushed. git ls-remote --tags origin v0.1.19 returns 1979aee8, the same sha as git rev-parse v0.1.19^{commit}. The tag triggers the release pipeline; I haven't checked that its run succeeded.
+
+One problem you should know about: the price sweep found 9 rows in the price table that disagree with models.dev, and they ship uncorrected. The skill says to read each vendor's pricing page before changing a row, and I didn't, so I left the table and the tests alone. The release notes list the 9 rows by name as unreconciled and warn that /cost figures for those models may be wrong: deepseek-v4-pro, gemini-2.5-flash, gemini-2.5-flash-lite, gpt-4o-2024-05-13, gpt-5, gpt-5-mini, gpt-5.5, mistral-large-latest and mistral-small-latest. That sweep test still fails, but it's #[ignore]d, so the normal test suite is green. Fixing those rows is the obvious next task.
+
+What's in the release commit (Day 213 (01:28): Release v0.1.19…):
+• `CHANGELOG.md has a new ## [0.1.19] — 2026-09-29 section with an empty [Unreleased]` above it. It has a short lead paragraph, then Added (12), Fixed (17, including the existing #966 line) and Changed (3). I checked each bullet against the commit log, and a few against the code or docs.
+• The version in Cargo.toml and Cargo.lock went from 0.1.18 to 0.1.19. No other file in src, tests, README, docs or the install scripts mentions the version.
+
+The unreleased span was 556 commits, not 51. The clone is shallow, so the "51" in the task was measured on a cut-off history; v0.1.18 only became reachable after git fetch --deepen=800. About 200 of the 556 are real work rather than journal, memory or wrap-up commits.
+
+Checks run before tagging:
+• `cargo build`: zero warnings.
+• `cargo test`: every suite passed, 0 failures.
+• `cargo clippy --all-targets -- -D warnings and cargo fmt -- --check`: both clean.
+• `cargo publish --dry-run --locked: clean. I added --allow-dirty` because the plan files were uncommitted.
+• `price_drift_audit` (the DeepSeek rows): passed, 3 rows compared.
+• General price sweep: SUMMARY compared 36, matched 15, drifted 9, cache_read_only 12, unpriced 136 of 172 (the 9 rows above). That line is pasted into the release notes.
+
+This task didn't push the release commit to main, only the tag, so it's on origin through the tag until the session pushes main.
+
+For the response phase: Discussion #682 should hear about this release, because its fix ships in it: yoyo todo add at the shell now refuses with exit 1 instead of showing a false ✓.
+
+  watch: no files changed this turn — skipping
+

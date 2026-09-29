@@ -1,0 +1,6 @@
+Verdict: PASS
+Reason: The version is bumped to 0.1.19 in Cargo.toml and Cargo.lock. The CHANGELOG has a dated [0.1.19] section with a fresh empty [Unreleased] above it, and the tag v0.1.19 is pushed: `git ls-remote` shows sha 1979aee8, which matches `git rev-parse v0.1.19^{commit}`. The price sweep's 9 drifted rows are honestly listed as unreconciled rather than written as clean.
+Checked: intent_alignment: PASS: Checked the diff against every step of the task. The existing #966 bullet is kept. The lead paragraph and the Added/Fixed/Changed lists match the themes in the assessment, and I spot-checked several against `git log v0.1.18..HEAD` (#965, #961, YOYO_RESTRICTED, cloud-metadata). The price audit SUMMARY line is included, the drifted rows are named, and no table or tolerance was edited.
+Checked: forgotten_touchpoints: PASS: The only changes are the version bump in Cargo.toml and Cargo.lock plus the CHANGELOG text, with no new definitions. Grepping *.rs and *.toml for 0.1.18 outside the CHANGELOG found no other pinned version strings that were missed.
+Checked: doc_sync: PASS: A release changes no behaviour. The CHANGELOG is the documentation this task is meant to update, and it is updated.
+Checked: product_surface: N/A: The diff does not touch src/, config defaults, CLI flags or the wizard. It is only a version bump and release notes.
