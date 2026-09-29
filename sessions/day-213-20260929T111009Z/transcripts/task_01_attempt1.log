@@ -1,0 +1,90 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (10ms)
+  ▶ read src/prompt_budget.rs:1478..1558 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1557,1569p src/prompt_budge… ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "SESSION_BUDGET\|prompt_bu… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "include-ignored\|-- --ig… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (116 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1472,1486p src/prompt_budge… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=1473 && NR<=1486' src/pro… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 57.4s (8 ✓)
+
+Header flows fine. Build and run the module tests.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo test --bin yoyo… ✓ (30.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control — one atomic command: mutate (marked NEUTERED), run, restore, re-run.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/prompt_… (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo prompt_budge… ✓ (27.9s)
+ ✓ (55.9s)
+  2 tools completed in 55.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -c NEUTERED src/prompt_budget… ✓ (154ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for i in $(seq 1 15); do cargo tes… ✓ (2.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.6s (2 ✓)
+
+15/15 green. I couldn't explain the one failed re-run; I'll include it in the report instead of leaving it out. Now the full gate:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && echo FMT_O… ✓ (2m 49s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "test re… ✓ (3m 57s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6m 51s (2 ✓)
+
+Everything is green, and neutered_guards passes. Now the ARCHITECTURE.md note.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^- \`prompt_budget.rs\`" … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That bullet is a single very long line, so I'll add the Day-213 note to the end of it.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (23 lines) ✓ (48ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Some tests may read ARCHITECTURE.md, so I'll re-run the suite after the doc edit, then commit.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&… (10 lines) ✓ (2m 17s)
+
+I fixed the flaky test that turned main red, and it's committed as 3fd9a287. The full suite passes (5862 passed, 0 failed), and clippy, fmt and tests/neutered_guards.rs are all clean. I didn't manage to reproduce the original CI failure locally, though: the cause below comes from reading the code.
+
+Cause: the diagnosis was right. The budget setting (SESSION_BUDGET_SECS) is stored in a write-once global that locks in whatever it reads first. The old test_aaa_… test set the env var inside the shared test process and counted on its name to make it run first. That never held: tests run in parallel, and #[serial] only orders tests against other #[serial] tests. So any other test that checks the budget could lock the value in as "unset" before the env var was set.
+
+Fix, in `src/prompt_budget.rs`:
+• The new test_session_budget_set_path_live_end_to_end re-runs its own test binary in a fresh process with YOYO_SESSION_BUDGET_SECS=9999. That process runs only session_budget_set_path_live_child, an #[ignore]d test that keeps the original assertions and messages.
+• The parent test passes only if all three hold:
+  • the child exits successfully;
+  • the output says 1 passed (a typo in the test name would run 0 tests and still exit 0);
+  • a marker is printed, which the child writes only after its last assertion.
+• The child does nothing unless the parent has set a flag env var. So running --include-ignored in the normal test process can't break anything, and an early exit can't fake a pass.
+• It still uses a real env var and the real global, which is what the test is for. A test hook that injects the value would only re-test parsing, which other tests already cover.
+• Side effect: the test no longer leaves YOYO_SESSION_BUDGET_SECS set in the shared test process. The tests that skip themselves when the var is set now actually run their assertions.
+
+Positive control: I added an is_none() assertion marked NEUTERED to the child, ran the test and restored the file in one command. The parent failed by name (live child test failed), and passed again after the restore.
+
+One failure I can't explain: right after the restore, one standalone run of the new test failed. The file was byte-identical to the backup, and 15 more runs in a row passed. My guess is a stale build left over from the restore, but I didn't confirm it. If this test fails again on CI, look here first.
+
+I also added a Day-213 note to the prompt_budget.rs entry in ARCHITECTURE.md covering the flake, why I used a fresh process, the control, and that unexplained failure. tests/global_state_races.rs doesn't list this global, so I didn't touch it.
+
+  watch: no files changed this turn — skipping
+

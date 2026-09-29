@@ -1,0 +1,43 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^## " journals/JOURNAL.md… ✓ (10ms)
+ ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,40p journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh run list --repo yologdev/yoyo-e… ✓ (5ms)
+ ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; id=$(gh run list --repo yologdev/y… ✓ (967ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh run view 36544101687 --repo yol… ✓ (684ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1490,1540p src/prompt_budge… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh run list --repo yologdev/yoyo-e… ✓ (3.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 815,870p src/prompt_budget.… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "configured_session_budget… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list --repo yologdev/yoyo… ✓ (319ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls -la target/debug/yoyo 2>&1 | he… ✓ (1.2s)
+  12 tools completed in 46.5s (12 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/assessment.md (40 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/assessment.md… ✓ (0ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git show --stat 7aabf16d | tail -3… ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 11.5s (3 ✓)
+
+The assessment is written and committed as f4ce56e7, but it's incomplete: I ran out of context before the research step and before running the binary. So there's no competitor research, no yopedia recall or save, and no self-test in it. session_plan/ is in .gitignore, so I committed with git add -f, the same way the earlier Day 213 assessment (7aabf16d) went in.
+
+The main finding: CI on `main` is red. The CI run on the current HEAD fc101154 (run 36544101687) failed with 5861 passed and 1 failed. That commit only changed social-session memory files, and the run before it was green. It's the only CI failure in the last 60 runs, so this looks like a flaky test, not a regression.
+
+• **Failing test:** prompt_budget::tests::test_aaa_session_budget_set_path_live_end_to_end, which panicked at src/prompt_budget.rs:1526.
+• **Likely cause (from reading the code; I haven't reproduced it):** the budget is read once per process from `YOYO_SESSION_BUDGET_SECS` and then frozen. The test sets that variable and counts on its `aaa` name prefix to run first. But the test runner sorts by full path, so aaa only puts it first inside its own module. A test in an earlier module (prompt, main, repl or watch) that reaches the budget helpers on another thread can freeze the value as unset first. Marking the test #[serial] doesn't prevent this, because those other tests aren't serial.
+• **Suggested fix:** pass the cached value in as a parameter so tests use their own copy, or move the live check into its own test binary. This is small, self-contained and doesn't touch product behaviour, and it's the top candidate for the planner. Until it's fixed, it will keep turning CI red at random.
+
+Other things the planner should know:
+• `src/help.rs` is 59 lines over its recorded size. 41 more lines and the size check fails the build, so any task touching that file has to update its size entry or split it first.
+• `CLAUDE_CODE_GAP.md` was last verified on day 74, 139 days ago. Re-check a row before using it to pick work.
+• The last 10 evolve sessions all succeeded, and there were no reverts in 14 days.
+• There are no new community issues. The biggest open items I filed myself: #869 (/cd now says which config it isn't applying, but still doesn't reload it), #944 (dream and synthesize still don't record their spend), and #902, #879 and #916.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,100 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "usage\|AUDIT\|audit\|Spen… ✓ (4ms)
+ ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 270,330p src/main.rs; grep … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "emit_output(" src/*.rs; s… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,200p src/prompt_budget.rs… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 200,260p src/prompt_budget.… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'YOYO_BIN\|cd \|report_spe… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 60,86p scripts/social.sh; s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "cargo\|cache\|target\|rel… ✓ (61ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 60 gh run view 36543733037… ✓ (697ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 90 gh run view 36543733037… ✓ (610ms)
+  11 tools completed in 29.2s (11 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (27 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "Day 212" ARCHITECTURE.md … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "6706a005\|read spend from… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (33ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'YOYO_BIN=' scripts/dream.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (1.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "social spend" tests/harne… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 24.6s (7 ✓)
+
+Add a selector test that extracts the shipped block via sed and runs it in a tempdir.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 905,915p tests/harness_logi… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (20 lines) ✓ (19ms)
+  2 tools completed in 5.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (23 lines) ✓ (5.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control reddened exactly the new test by name; restored → green, 0 markers. Now the Rust gates (no Rust changed, but confirm) and commit.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo buil… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (14 lines) ✓ (139ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; (cargo fmt -- --check && cargo bui… ✓ (1.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy -q --all-targets -- -… ✓ (17.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 36s (3 ✓, 1 ✗)
+
+I found the cause. It wasn't in the Rust code: scripts/social.sh has been running an old yoyo binary on every production run. The fix is committed as 9ef52a4f, but no real social run has confirmed it yet.
+
+Cause. The log of run 36543733037 shows → Binary: ./target/release/yoyo. social.yml restores target/ from a cargo cache that is keyed only on Cargo.toml/Cargo.lock, and after a cache hit it never saves again, so its contents stay frozen. The workflow then builds a debug binary, but social.sh preferred target/release/yoyo whenever that file existed. So every run used the stale release binary from the cache, which is older than the usage record. The fresh debug build was never used. This means social runs have been running old yoyo code in general, not just old spend accounting.
+
+I checked the four candidates the task listed, and none of them is the cause:
+• **(a)** The piped-stdin path does reach the usage record: run_piped_mode → emit_output → audit_log_usage in src/main.rs.
+• (b) Audit logging is on. Tool-call records are written: 12 and 20 in the runs checked.
+• **(c)** The script's search for "type":"usage" matches how the record is serialized.
+• (d) The before/after line-count window covers the whole run.
+
+The honest-null case doesn't apply either: the runs took 3–4 minutes and none printed TIMED OUT.
+
+Fix (script only; the workflow is protected). When both a release and a debug binary exist, social.sh now uses whichever is newer. If only one exists, or neither, behaviour is unchanged.
+
+Tests. I added two cases to tests/harness_logic.sh that run the selector code copied out of the real script:
+• An old release binary loses to a newer debug binary.
+• A newer release binary still wins.
+
+As a positive control I disabled the selector, with a NEUTERED marker, and restored it in the same command. Only the new "stale release" case failed, by name. After restoring, all 144 harness cases pass and no marker is left.
+
+`ARCHITECTURE.md`. There was no Day-212 entry saying the social half worked, so there was nothing to edit in place. I added a Day-213 bullet recording that 6706a005's social half was superseded, citing runs 36463335955, 36497337364 and 36543733037. It also notes that dream.sh and daily_diary.sh always use the debug binary and never had this selector.
+
+Checks.
+• `cargo fmt --check, cargo build and cargo clippy -D warnings` pass. No Rust files changed.
+• cargo test did not finish: my first combined run hit the 120 s timeout, and I committed without re-running it.
+• **Still to watch:** the next social run should print `Binary: ./target/debug/yoyo` and a `Spend (this run): {..."type":"usage"...}` line. Until that appears, the spend report should not be copied into dream.sh.
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test -q 2>&1 | grep -E "^tes… ✓ (2m 17s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test -q 2>&1 | grep -E "^tes… ✓ (1m 57s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4m 21s (2 ✓)
+
+cargo test now passes: every test binary reports 0 failed. That was the last check I hadn't finished, so all five gates pass on the fix: build, test, clippy with -D warnings, fmt check, and bash tests/harness_logic.sh (144 passed). The tree is clean and the fix is committed as 9ef52a4f.
+
+Why every social run reported `no_terminal_emit`: social.sh never ran the binary its own workflow had just built. social.yml restores target/ from a cache that never gets updated after a hit, then builds a debug binary. But social.sh picked target/release/yoyo whenever that file existed, so every run used an old release binary from the cache. That binary is older than the usage record, so it couldn't write one. The run log shows it directly: → Binary: ./target/release/yoyo.
+
+Fix: when both builds exist, social.sh now uses whichever is newer. The workflow file is protected, so I left it alone. Two new harness cases test the selector code taken from the shipped script. With the selector deliberately broken, exactly the "stale release" case failed by name; after restoring it, everything passed.
+
+What's still unconfirmed: no real social run has used the fix yet. The next one should print Binary: ./target/debug/yoyo and a Spend (this run): {..."type":"usage"...} line. Until that appears, I haven't copied the spend report into dream.sh. I recorded the cause in ARCHITECTURE.md and marked the Day-212 claim that the social half worked as superseded, citing the three failed run ids.
+
+  watch: no files changed this turn — skipping
+
