@@ -1,0 +1,154 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 280,390p scripts/dream.sh; … ✓ (6ms)
+ ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 860,932p tests/harness_logi… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'YOYO_BIN' scripts/dream.s… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '^#\|^- `scripts/\|^### \|… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'scripts/dream.sh\|scripts… ✓ (5ms)
+  ▶ edit scripts/dream.sh (3 → 62 lines)
+    HEAD_BEFORE=$(git rev-parse HEAD)
+  + 
+  + # ── #944: this run's own spend, reported on STDERR ──
+  + # Mirrors scripts/social.sh's block, which has emitted a non-empty reading in
+  + # production (run 36598386115, 2026-09-29: "Spend (this run): 1 usage record(s)").
+  + # The `↳` usage line cannot be scraped from the tee'd log: piped stdin+stdout
+  + # puts yoyo in quiet mode, which suppresses it. The audit record is emitted
+  + # before any mode branch, so read the spend from there. .yoyo/audit.jsonl is
+  + # gitignored, so the agent's `git add` cannot sweep it into the dream commit.
+  + # Everything below is fail-soft and never changes the script's exit status.
+  + export YOYO_AUDIT=1
+  + DREAM_AUDIT_FILE=".yoyo/audit.jsonl"
+  + # Per-run watermark: the file is append-only and survives between runs on a
+  + # persistent checkout, so the delta, not the total, is "what this run spent".
+  + DREAM_AUDIT_BEFORE=0
+  + if [ -f "$DREAM_AUDIT_FILE" ]; then
+  +     DREAM_AUDIT_BEFORE=$(wc -l < "$DREAM_AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+  +     case "$DREAM_AUDIT_BEFORE" in '' | *[!0-9]*) DREAM_AUDIT_BEFORE=0 ;; esac
+  + fi
+  + 
+  ... (42 more lines)
+  ▶ edit scripts/dream.sh (1 → 4 lines)
+    echo "dream: agent exit=$exit_code"
+  + # Called on every path (success, failure, timeout): the invocation above never
+  + # exits the script (`|| exit_code=$?`), and every later branch follows this line.
+  + report_dream_spend || true
+ ✓ (0ms)
+    HEAD_BEFORE=$(git rev-parse HEAD)
+  + 
+  + # ── #944: this run's own spend, reported on STDERR ──
+  + # Mirrors scripts/social.sh's block, which has emitted a non-empty reading in
+  + # production (run 36598386115, 2026-09-29: "Spend (this run): 1 usage record(s)").
+  + # The `↳` usage line cannot be scraped from the tee'd log: piped stdin+stdout
+  + # puts yoyo in quiet mode, which suppresses it. The audit record is emitted
+  + # before any mode branch, so read the spend from there. .yoyo/audit.jsonl is
+  ... (13 more lines)
+ ✓ (1ms)
+    echo "dream: agent exit=$exit_code"
+  + # Called on every path (success, failure, timeout): the invocation above never
+  + # exits the script (`|| exit_code=$?`), and every later branch follows this line.
+  + report_dream_spend || true
+  ▶ edit tests/harness_logic.sh (2 → 48 lines)
+        check "social spend D: -> no_terminal_emit"               "$(has "$D" no_terminal_emit)"     "yes"
+  + fi
+  + 
+  + # dream.sh's spend reader (#944, Day 213). Same shape as social's: the function
+  + # is extracted from the shipped script, never transcribed. Output is stderr.
+  + DREAM_SH="$(cd "$(dirname "$0")/.." && pwd)/scripts/dream.sh"
+  + DS_FN=$(awk '/^report_dream_spend\(\) \{/,/^\}/' "$DREAM_SH")
+  + ds_case() { # $1=pre-existing lines (watermark), '|'-separated, or MISSING  $2=lines appended this run
+  +     ( set -euo pipefail
+  +       d=$(mktemp -d) && cd "$d" || exit 1
+  +       DREAM_AUDIT_FILE="$d/audit.jsonl"
+  +       if [ "$1" = MISSING ]; then
+  +           DREAM_AUDIT_BEFORE=0
+  +       else
+  +           printf '%s' "$1" | tr '|' '\n' > "$DREAM_AUDIT_FILE"
+  +           DREAM_AUDIT_BEFORE=$(wc -l < "$DREAM_AUDIT_FILE" | tr -d '[:space:]')
+  +           [ -n "$2" ] && printf '%s\n' "$2" | tr '|' '\n' >> "$DREAM_AUDIT_FILE"
+  +       fi
+  +       eval "$DS_FN"
+  +       report_dream_spend 2>&1; echo "rc=$?"
+  ... (28 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; bash -n scripts/dream.sh && bash t… ✓ (1ms)
+        check "social spend D: -> no_terminal_emit"               "$(has "$D" no_terminal_emit)"     "yes"
+  + fi
+  + 
+  + # dream.sh's spend reader (#944, Day 213). Same shape as social's: the function
+  + # is extracted from the shipped script, never transcribed. Output is stderr.
+  + DREAM_SH="$(cd "$(dirname "$0")/.." && pwd)/scripts/dream.sh"
+  + DS_FN=$(awk '/^report_dream_spend\(\) \{/,/^\}/' "$DREAM_SH")
+  + ds_case() { # $1=pre-existing lines (watermark), '|'-separated, or MISSING  $2=lines appended this run
+  ... (13 more lines)
+ ✓ (1.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk '/^report_dream_spend\(\) \{/,… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'report_dream_spend\|DREAM… ✓ (7ms)
+  12 tools completed in 49.1s (12 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'HEAD_BEFORE=\$(git rev-pa… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/dre… (57 lines) ✓ (1.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.3s (2 ✓)
+
+Harness is green. Now the positive control: break the watermark comparison, serially and atomically, then restore it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp scripts/dream.sh /tmp/dream.bak… ✓ (3.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Case (c) failed by name under the sabotage, and the suite went back to 157/157 once the file was restored. Next, the ARCHITECTURE.md entry, which goes beside the other #944 bullets:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1182,1183p ARCHITECTURE.md … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/arc… (4 lines) ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; bash -n scripts/dream.sh && bash t… ✓ (2m 2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -cE 'FAILED… ✓ (2m 30s)
+  4 tools completed in 4m 50s (4 ✓)
+
+All checks pass. Committing.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && git commit -q -m "Da… ✓ (64ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+scripts/dream.sh now reports what each dream run spent, and it's committed as 05317a97. The tests pass, but nothing has run in production yet: the next dream run is at least 7 days away, so it's unknown whether a real run will print a usage line.
+
+What changed in `scripts/dream.sh`:
+• Before the agent runs, the script turns on the audit log (YOYO_AUDIT=1) and notes how many lines .yoyo/audit.jsonl already has (0 if the file doesn't exist).
+• Right after the `dream: agent exit= line, a new function report_dream_spend` prints to stderr what this run added to the log:
+  • **A usage record appeared:** it prints that record. If there are two (possible with --fallback), it prints both with a count.
+  • **No usage record appeared:** it prints `no_terminal_emit`, never zero. This is what a run killed by `timeout` should show, because yoyo doesn't catch that signal and never writes its final record.
+  • **Always:** a line with how many records this run added and the file's total size, or a WARNING line if the file is missing.
+• The report can't change the script's exit status. Success, failure and timeout all pass through it before the diff-scope check.
+• `.yoyo/audit.jsonl is in .gitignore`, so the dream's own commit can't pick it up.
+
+Tests: tests/harness_logic.sh pulls the real function out of dream.sh and runs it against fake audit files in five cases:
+• a usage record added this run is printed;
+• only tool-call lines → no_terminal_emit;
+• usage records only from earlier runs → still no_terminal_emit;
+• missing file → the WARNING line;
+• two records → both printed.
+
+To check the tests can actually catch a bug, I broke the line-count comparison on purpose. Three checks failed, including both for the earlier-runs case, and the suite went back to 157/157 after I restored the file.
+
+One hiccup: my first edit to dream.sh reported success but never landed; only the call to the function was written. The new test caught it because it couldn't find the function. I re-inserted the block and confirmed it with grep before going on.
+
+Checks run: bash -n scripts/dream.sh, the harness, cargo build, cargo test (no failures), cargo clippy --all-targets -- -D warnings and cargo fmt --check all pass.
+
+Documented in ARCHITECTURE.md, next to the social and diary entries:
+• The dream reading is unobserved in production until the next dream run.
+• Sub-agent tokens are still not counted (yoagent#173), so every figure is a floor.
+• The three yoyo calls in synthesize.yml are left alone because workflow files are protected.
+• #944 stays open.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
