@@ -1449,6 +1449,7 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                                 "{DIM}  (project context was loaded from the original \
                                  directory and is not reloaded — use /context to review){RESET}\n"
                             );
+                            crate::cd_config_note::print_cd_config_note(&target);
                         }
                         Err(e) => {
                             eprintln!("{RED}  ✗ cannot cd to {}: {e}{RESET}\n", target.display())

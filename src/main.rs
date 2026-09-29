@@ -38,6 +38,7 @@
 mod agent_builder;
 mod auto_check_scope;
 mod banner;
+mod cd_config_note;
 mod cli;
 mod cli_config;
 mod commands;
