@@ -58,6 +58,9 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 Note: `/cd` changes the directory used for subsequent commands and tool calls,
 but project context (YOYO.md, CLAUDE.md, etc.) loaded at startup is **not**
 reloaded — use `/context` to review what was loaded.
+If the new directory has its own `.yoyo.toml` that sets `[permissions]`,
+`[directories]`, hooks or MCP servers, `/cd` names them and says they are **not**
+applied: the launch directory's settings stay in force until you restart yoyo there.
 
 ## Conversation
 
