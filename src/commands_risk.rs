@@ -2813,7 +2813,9 @@ fn handle_risk_harvest() {
             Some(run.run_id),
             Some(unhittable.unhittable), // measured from this snapshot's own ts, not guessed
             Some(unhittable.unmeasurable), // its denominator, recorded beside it
-            Some(crate::commands_risk_snapshots::GitUnhittableReading::of(&unhittable)),
+            Some(crate::commands_risk_snapshots::GitUnhittableReading::of(
+                &unhittable,
+            )),
         ) {
             skipped += 1;
             eprintln!(
@@ -2996,7 +2998,9 @@ fn handle_risk_validate() {
             None,                                                 // not a CI-harvest event
             Some(unhittable.unhittable), // measured against this snapshot's own ts
             Some(unhittable.unmeasurable), // its denominator, recorded beside it
-            Some(crate::commands_risk_snapshots::GitUnhittableReading::of(&unhittable)),
+            Some(crate::commands_risk_snapshots::GitUnhittableReading::of(
+                &unhittable,
+            )),
         ) {
             eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
         }

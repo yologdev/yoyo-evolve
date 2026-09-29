@@ -1579,11 +1579,12 @@ mod recent_events_recorded_counts_tests {
     }
 
     /// (b) A recorded unhittable count is printed inside the percentage's parenthesis.
+    /// Day 213: this row predates the git keys, so it also says `git: not recorded`.
     #[test]
     fn recorded_unhittable_count_is_printed() {
         let out = render(ONE_UNHITTABLE);
         assert!(
-            out.contains("(0%; 1 unhittable, 0 unmeasurable)"),
+            out.contains("(0%; 1 unhittable, 0 unmeasurable, git: not recorded)"),
             "got: {out}"
         );
     }
@@ -1593,7 +1594,7 @@ mod recent_events_recorded_counts_tests {
     fn day_211_row_prints_its_unmeasurable_count() {
         let out = render(DAY_211);
         assert!(
-            out.contains("(0%; 0 unhittable, 2 unmeasurable)"),
+            out.contains("(0%; 0 unhittable, 2 unmeasurable, git: not recorded)"),
             "got: {out}"
         );
     }
@@ -1608,5 +1609,132 @@ mod recent_events_recorded_counts_tests {
         assert_eq!(day211[0].unhittable_surprises, Some(0));
         assert_eq!(day211[0].unmeasurable_surprises, Some(2));
         assert_ne!(day211[0].unhittable_surprises, None);
+    }
+}
+
+/// Day 213 (DREAM): the git instrument's reading, which every recall-side
+/// caller computed and `write_validation_event` used to discard, is now
+/// persisted as `git_born_after` / `git_unmeasured` and printed by
+/// `/risk accuracy`. The round-trip goes through the REAL writer into the
+/// REAL parser and renderer: no value on the asserted path is typed here
+/// except the writer's inputs. Three states are pinned apart — keys absent
+/// (`not recorded`), a measured zero, and a positive count.
+#[cfg(test)]
+mod git_reading_persisted_tests {
+    use crate::commands_risk::{
+        format_recent_events, git_reading_clause, parse_rich_validation_events,
+    };
+    use crate::commands_risk_snapshots::{write_validation_event, GitUnhittableReading};
+
+    fn write(path: &std::path::Path, git: Option<GitUnhittableReading>) {
+        let surprises = vec!["src/born.rs".to_string(), "src/other.rs".to_string()];
+        write_validation_event(
+            path,
+            213,
+            "watch_failure",
+            &[],
+            &surprises,
+            0.0,
+            None,
+            Some("test_failure"),
+            Some("bf8beaf6"),
+            None,
+            Some(0),
+            Some(2),
+            git,
+        )
+        .expect("write event");
+    }
+
+    #[test]
+    fn git_reading_round_trips_through_the_real_writer_and_parser() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("v.jsonl");
+        write(
+            &path,
+            Some(GitUnhittableReading {
+                born_after: 2,
+                unmeasured: 1,
+            }),
+        );
+        let content = std::fs::read_to_string(&path).expect("read back");
+        let events = parse_rich_validation_events(&content);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].git_born_after, Some(2));
+        assert_eq!(events[0].git_unmeasured, Some(1));
+        let out = format_recent_events(&events, 5);
+        assert!(
+            out.contains(
+                "(0%; 0 unhittable, 2 unmeasurable, git: 2 born after snapshot, 1 git-unmeasured)"
+            ),
+            "got: {out}"
+        );
+    }
+
+    /// Near-miss: a writer that made no git reading writes NO keys, and the
+    /// row reads `not recorded` — never `0`.
+    #[test]
+    fn absent_git_reading_is_not_written_and_reads_not_recorded() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("v.jsonl");
+        write(&path, None);
+        let content = std::fs::read_to_string(&path).expect("read back");
+        assert!(!content.contains("git_born_after"), "{content}");
+        assert!(!content.contains("git_unmeasured"), "{content}");
+        let events = parse_rich_validation_events(&content);
+        assert_eq!(events[0].git_born_after, None);
+        assert_eq!(events[0].git_unmeasured, None);
+        let out = format_recent_events(&events, 5);
+        assert!(out.contains("git: not recorded"), "got: {out}");
+        assert!(!out.contains("git: 0"), "got: {out}");
+    }
+
+    /// A measured zero is written as a real `0` and renders as one.
+    #[test]
+    fn measured_zero_is_written_and_reads_zero() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("v.jsonl");
+        write(
+            &path,
+            Some(GitUnhittableReading {
+                born_after: 0,
+                unmeasured: 0,
+            }),
+        );
+        let content = std::fs::read_to_string(&path).expect("read back");
+        let events = parse_rich_validation_events(&content);
+        assert_eq!(events[0].git_born_after, Some(0));
+        let out = format_recent_events(&events, 5);
+        assert!(
+            out.contains("git: 0 born after snapshot, 0 git-unmeasured"),
+            "got: {out}"
+        );
+    }
+
+    /// Back-compat. This row is typed by hand on purpose: it represents
+    /// history (a Day-211 line) that the writer no longer produces, so there
+    /// is no producer to route it through.
+    #[test]
+    fn old_row_without_git_keys_parses_and_reads_not_recorded() {
+        const OLD: &str = r#"{"accuracy_pct":0.0,"day":211,"hits":[],"surprises":["src/cd_config_note.rs"],"trigger":"watch_failure","ts":"2026-09-28T00:50:43Z","unhittable_surprises":0,"unmeasurable_surprises":1}"#;
+        let events = parse_rich_validation_events(OLD);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].git_born_after, None);
+        assert_eq!(events[0].git_unmeasured, None);
+        assert!(format_recent_events(&events, 5).contains("git: not recorded"));
+    }
+
+    /// The pure clause, all three states side by side.
+    #[test]
+    fn git_reading_clause_keeps_three_states_apart() {
+        assert_eq!(git_reading_clause(None, None), "git: not recorded");
+        assert_eq!(
+            git_reading_clause(Some(0), Some(0)),
+            "git: 0 born after snapshot, 0 git-unmeasured"
+        );
+        assert_eq!(
+            git_reading_clause(Some(1), Some(3)),
+            "git: 1 born after snapshot, 3 git-unmeasured"
+        );
     }
 }

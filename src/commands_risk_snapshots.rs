@@ -925,7 +925,9 @@ pub(crate) fn auto_validate_after_failure_to(
         None,                 // not a CI-harvested event — no run id
         Some(unhittable.unhittable), // measured here: a real 0 is a reading, not an absence
         Some(unhittable.unmeasurable), // and the denominator it was divided out of
-        Some(crate::commands_risk_snapshots::GitUnhittableReading::of(&unhittable)),
+        Some(crate::commands_risk_snapshots::GitUnhittableReading::of(
+            &unhittable,
+        )),
     ) {
         eprintln!("  {DIM}(warning: could not write risk validation entry: {e}){RESET}");
     }
@@ -1531,8 +1533,7 @@ mod tests {
         let hits = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
         let surprises = vec!["src/prompt.rs".to_string()];
         write_validation_event(
-            &path, 129, "cli", &hits, &surprises, 66.7, None, None, None, None, None, None,
-            None,
+            &path, 129, "cli", &hits, &surprises, 66.7, None, None, None, None, None, None, None,
         )
         .expect("write validation event");
 
@@ -1599,13 +1600,11 @@ mod tests {
         let hits = vec!["src/main.rs".to_string()];
         let surprises: Vec<String> = vec![];
         write_validation_event(
-            &path, 1, "cli", &hits, &surprises, 100.0, None, None, None, None, None, None,
-            None,
+            &path, 1, "cli", &hits, &surprises, 100.0, None, None, None, None, None, None, None,
         )
         .expect("first write");
         write_validation_event(
-            &path, 2, "cli", &hits, &surprises, 100.0, None, None, None, None, None, None,
-            None,
+            &path, 2, "cli", &hits, &surprises, 100.0, None, None, None, None, None, None, None,
         )
         .expect("second write");
 
