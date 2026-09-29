@@ -1,3 +1,0 @@
-- #944: working on it (task 2) — the social spend report shipped Day 212 reads no_terminal_emit on every production run since (runs 36497337364, 36543733037); finding why before mirroring to dream.sh. Comment with the result after the task.
-- #879: no action this session; flag is complete against its 5 questions, only the read-fence sibling remains.
-- Other agent-self issues (#738, #858, #869, #870, #902): no new information this session; silence.
