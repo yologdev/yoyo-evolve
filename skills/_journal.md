@@ -476,3 +476,21 @@ Each event is one stanza. See `skills/skill-evolve/SKILL.md` for the schema.
 - evolution_saturation: false — the tail is evt-0025..0029 (meta-suggestions); this is the first consecutive NO-OP.
 - parent-event: evt-0029
 - note: The honest move after five consecutive meta-suggestions is to stop filing. Every live defect this cycle touches is already filed (evt-0026 time bases, evt-0027 `mention_rate`, evt-0028 file-read uses, evt-0029 Create cap); the new measurements confirm them and extend none, and appending a learning would only tick the strict counter evt-0018 showed this loop inflates by itself. Next number derived by anchoring on `^##` headers and sorting stripped digits numerically (the spec's step-7 snippet still has the octal/lexical traps).
+
+## 2026-09-29T00:40Z evt-0031 NO-OP
+- skill: -
+- ts: 2026-09-29T00:40Z
+- type: NO-OP
+- evidence-considered: 647 audit-log session dirs (window = newest 60 by `sort -V`, day-197-20260913T221238Z -> day-212-20260928T223603Z), the 637-line learnings archive (4 new since evt-0030, all Day-212 `source: evolution`), journal Day 212, and the frontmatter of the six eligible skills (frontmatter-scoped enumeration per evt-0014: blindspot, explore-codebase, family, release, social, synthesis). The only commit touching `skills/` since evt-0030 is evt-0030 itself. All four gates measured; none fires.
+- gates-measured: (1) **Retire** — min score 0.50 (`family`) against `< 0.3`; does not fire (evt-0011). (2) **Refine (a)** — the 4 new learnings add **0** strict (path/backticked) mentions of any eligible skill, so the strict counter stays at **7**, all this loop's own findings; genuine complaints zero. (3) **Refine (b)** — `release` alone at frontmatter `uses >= 3` (3/3, wins/uses 1.0); does not fire. (4) **Create** — 487 distinct `pattern_key`s, max recurrence **2**, **0** at >= 3; barred (evt-0029's cap holds).
+- use-signals: blindspot 1/60 (day-202 maintenance read, evt-0028), explore-codebase 1/60 (`explore.` word noise, evt-0026), family 0/60, release 1/60 (day-198 `git tag v0.1.18`), social 11/60 (up from 9; two new Day-212 hits, not inspected for procedure markers — evt-0028 already filed this signal as a file-read/mention counter), synthesis 0/60.
+- positive-control: run first — `skills/communicate` 52/60, `git log` 57/60, `cargo test` 54/60.
+- base-pass-rate: 54/60 (`test_ok` AND `tasks_succeeded >= 1`), unchanged from evt-0030; `release` wins/uses still 3/3, so evt-0028's denominator reading keeps holding.
+- correction-to-prior-measurement: evt-0025/0026 recorded `grep -c audit scripts/social.sh` = **0**. It now reads **17**: the Day-212 20:26 fix sets `YOYO_AUDIT=1` in social.sh to read run cost from the audit record. That stale zero is corrected here rather than inherited. The conclusion it supported still holds, re-verified: social.sh has no `audit-log` reference, so its audit records never reach the stream this loop reads, and evt-0024 is still **NOT GRADEABLE by this loop**. The social loop now *produces* the evidence but doesn't *deliver* it. Wiring that is harness work (protected), not a skill edit.
+- predictions-graded: evt-0030's zero-growth expectation for the strict counter **HOLDS** (7). evt-0007, evt-0009 (synthesis, nineteenth cycle at 0/60), evt-0010 — all **HOLD**.
+- diff: none (no skill file modified, no learning appended)
+- validation: pass — HARD RULE #1, #2, #3 honored; #4: `expected:` omitted, forbidden on NO-OP. No `cargo build` run and none claimed; nothing under the build surface changed.
+- score-delta: none applied (evt-0026/0027/0028 reasons stand).
+- evolution_saturation: false — evt-0030 and this event make **2** consecutive NO-OPs; the next one trips the flag.
+- parent-event: evt-0030
+- note: Nothing moved that a gate can read. The one new fact (social.sh now writes audit locally) is a correction to a number, not a new defect. A learning would only restate evt-0025, so none was appended. Next number derived from `^##` headers sorted numerically.
