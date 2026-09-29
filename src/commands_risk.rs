@@ -1028,6 +1028,11 @@ pub(crate) struct RichValidationEvent {
     accuracy_pct: f64,
     pub(crate) unhittable_surprises: Option<u32>,
     pub(crate) unmeasurable_surprises: Option<u32>,
+    /// Day 213: the git instrument's persisted reading (`git_born_after` /
+    /// `git_unmeasured`). `None` on every row written before Day 213 and on
+    /// rows whose writer made no git reading — "not recorded", never zero.
+    pub(crate) git_born_after: Option<u32>,
+    pub(crate) git_unmeasured: Option<u32>,
 }
 
 /// Parse rich validation events from JSONL content (preserves hit/surprise file lists).
@@ -1072,6 +1077,8 @@ pub(crate) fn parse_rich_validation_events(content: &str) -> Vec<RichValidationE
             accuracy_pct,
             unhittable_surprises: count("unhittable_surprises"),
             unmeasurable_surprises: count("unmeasurable_surprises"),
+            git_born_after: count("git_born_after"),
+            git_unmeasured: count("git_unmeasured"),
         });
     }
     events
@@ -1135,6 +1142,24 @@ fn format_signal_breakdown(
     out
 }
 
+/// The git instrument's clause for one validation row (Day 213). Three states,
+/// kept apart on purpose: keys absent (every row before Day 213) render
+/// `git: not recorded`; a measured zero renders `git: 0 born after snapshot`;
+/// a positive count renders the count. "Could not check" never reads as zero.
+pub(crate) fn git_reading_clause(born_after: Option<u32>, unmeasured: Option<u32>) -> String {
+    match (born_after, unmeasured) {
+        (None, None) => "git: not recorded".to_string(),
+        (b, u) => {
+            let show = |v: Option<u32>| v.map_or("not recorded".to_string(), |n| n.to_string());
+            format!(
+                "git: {} born after snapshot, {} git-unmeasured",
+                show(b),
+                show(u)
+            )
+        }
+    }
+}
+
 /// Format the last N rich validation events as a compact summary.
 ///
 /// A row carrying the recorded unhittable/unmeasurable counts prints them inside
@@ -1162,6 +1187,15 @@ pub(crate) fn format_recent_events(events: &[RichValidationEvent], max_events: u
         }
         if let Some(n) = event.unmeasurable_surprises {
             recorded.push(format!("{n} unmeasurable"));
+        }
+        // Day 213: the git reading sits beside the ledger's, on any row that
+        // carries a reading at all. A row with neither stays byte-identical.
+        if !recorded.is_empty() || event.git_born_after.is_some() || event.git_unmeasured.is_some()
+        {
+            recorded.push(git_reading_clause(
+                event.git_born_after,
+                event.git_unmeasured,
+            ));
         }
         let recorded_suffix = if recorded.is_empty() {
             String::new()
@@ -2779,6 +2813,7 @@ fn handle_risk_harvest() {
             Some(run.run_id),
             Some(unhittable.unhittable), // measured from this snapshot's own ts, not guessed
             Some(unhittable.unmeasurable), // its denominator, recorded beside it
+            Some(crate::commands_risk_snapshots::GitUnhittableReading::of(&unhittable)),
         ) {
             skipped += 1;
             eprintln!(
@@ -2961,6 +2996,7 @@ fn handle_risk_validate() {
             None,                                                 // not a CI-harvest event
             Some(unhittable.unhittable), // measured against this snapshot's own ts
             Some(unhittable.unmeasurable), // its denominator, recorded beside it
+            Some(crate::commands_risk_snapshots::GitUnhittableReading::of(&unhittable)),
         ) {
             eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
         }
@@ -6023,6 +6059,7 @@ src/commands_bg.rs
             // Absent (not Some(0)) — exactly what a legacy line looks like.
             None,
             // Same reason for the denominator: absent, like every legacy line.
+            None,
             None,
         )
         .expect("write validation event");

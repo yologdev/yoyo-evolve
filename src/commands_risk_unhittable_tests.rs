@@ -1411,6 +1411,7 @@ mod retrospective_tests {
             None,
             Some(4),
             Some(144),
+            None,
         )
         .expect("write paired event");
         crate::commands_risk_snapshots::write_validation_event(
@@ -1420,6 +1421,7 @@ mod retrospective_tests {
             &[],
             &surprises,
             0.0,
+            None,
             None,
             None,
             None,

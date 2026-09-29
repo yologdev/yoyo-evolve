@@ -449,6 +449,26 @@ fn auto_risk_snapshot_to(path: &std::path::Path) {
 /// Default path for risk validation JSONL file.
 pub(crate) const RISK_VALIDATION_PATH: &str = ".yoyo/risk_validations.jsonl";
 
+/// The git instrument's reading of one validation event's surprises, copied
+/// out of an [`UnhittableCount`](crate::commands_risk_unhittable::UnhittableCount)
+/// so [`write_validation_event`] can persist it without recomputing anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GitUnhittableReading {
+    /// Surprises that did not exist at the snapshot's own git hash.
+    pub(crate) born_after: u32,
+    /// Surprises git could not check (unresolvable or `unknown` hash).
+    pub(crate) unmeasured: u32,
+}
+
+impl GitUnhittableReading {
+    pub(crate) fn of(count: &crate::commands_risk_unhittable::UnhittableCount) -> Self {
+        Self {
+            born_after: count.git_born_after,
+            unmeasured: count.git_unmeasured,
+        }
+    }
+}
+
 /// Append a validation event to the given JSONL path. Reused by both the
 /// watch-failure auto-validate path (`trigger: "watch_failure"`) and the CLI
 /// `/risk validate` path (`trigger: "cli"`), so both accumulate the validation
@@ -483,6 +503,11 @@ pub(crate) const RISK_VALIDATION_PATH: &str = ".yoyo/risk_validations.jsonl";
 /// later reader can tell a clean `4` from an absorbed `4` of 144 without
 /// re-running the join. Optional exactly like the fields above — `None`
 /// omits the key, so every legacy line and legacy reader stays valid.
+///
+/// `git_reading` (Day 213) persists the git instrument's two fields from the
+/// [`UnhittableCount`](crate::commands_risk_unhittable::UnhittableCount) the
+/// caller already holds, as `git_born_after` / `git_unmeasured`. `None` omits
+/// both keys — absent means "no git reading was made", never zero.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_validation_event(
     validation_path: &std::path::Path,
@@ -497,6 +522,7 @@ pub(crate) fn write_validation_event(
     ci_run_id: Option<u64>,
     unhittable_surprises: Option<u32>,
     unmeasurable_surprises: Option<u32>,
+    git_reading: Option<GitUnhittableReading>,
 ) -> std::io::Result<()> {
     let ts = utc_timestamp();
 
@@ -563,6 +589,26 @@ pub(crate) fn write_validation_event(
     if let Some(n) = unmeasurable_surprises {
         if let Some(obj) = event.as_object_mut() {
             obj.insert("unmeasurable_surprises".to_string(), serde_json::json!(n));
+        }
+    }
+
+    // Day 213 (DREAM): the git instrument's reading, which every recall-side
+    // caller already computed via `count_unhittable_surprises_with_git` and
+    // used to throw away. It is the only leg that can see a file born in the
+    // same session — the ledger's birthday row is written at the NEXT
+    // snapshot, after this verdict. `None` (the green path, which makes no
+    // reading) omits BOTH keys: "could not check" must never read as
+    // "checked; zero".
+    if let Some(git) = git_reading {
+        if let Some(obj) = event.as_object_mut() {
+            obj.insert(
+                "git_born_after".to_string(),
+                serde_json::json!(git.born_after),
+            );
+            obj.insert(
+                "git_unmeasured".to_string(),
+                serde_json::json!(git.unmeasured),
+            );
         }
     }
 
@@ -751,6 +797,7 @@ pub(crate) fn record_green_validation_to(
         // Same absence, same reason: no reading was made, so there is no
         // denominator to record either. Omitted, not zero.
         None,
+        None,
     )?;
 
     Ok(GreenGrade::Recorded {
@@ -878,6 +925,7 @@ pub(crate) fn auto_validate_after_failure_to(
         None,                 // not a CI-harvested event — no run id
         Some(unhittable.unhittable), // measured here: a real 0 is a reading, not an absence
         Some(unhittable.unmeasurable), // and the denominator it was divided out of
+        Some(crate::commands_risk_snapshots::GitUnhittableReading::of(&unhittable)),
     ) {
         eprintln!("  {DIM}(warning: could not write risk validation entry: {e}){RESET}");
     }
@@ -1484,6 +1532,7 @@ mod tests {
         let surprises = vec!["src/prompt.rs".to_string()];
         write_validation_event(
             &path, 129, "cli", &hits, &surprises, 66.7, None, None, None, None, None, None,
+            None,
         )
         .expect("write validation event");
 
@@ -1523,6 +1572,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .expect("write validation event");
 
@@ -1550,10 +1600,12 @@ mod tests {
         let surprises: Vec<String> = vec![];
         write_validation_event(
             &path, 1, "cli", &hits, &surprises, 100.0, None, None, None, None, None, None,
+            None,
         )
         .expect("first write");
         write_validation_event(
             &path, 2, "cli", &hits, &surprises, 100.0, None, None, None, None, None, None,
+            None,
         )
         .expect("second write");
 
@@ -1649,6 +1701,7 @@ mod tests {
             50.0,
             Some(75.0),
             Some("watch_failure"),
+            None,
             None,
             None,
             None,
@@ -1845,6 +1898,7 @@ mod tests {
             Some("ci_failure"),
             None,
             Some(30051449447),
+            None,
             None,
             None,
         )
