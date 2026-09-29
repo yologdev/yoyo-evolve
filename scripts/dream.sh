@@ -312,6 +312,60 @@ gasp_session_start "${GASP_DAY:-0}" "dream_day" "dream cycle (reflect on the lon
 
 HEAD_BEFORE=$(git rev-parse HEAD)
 
+# ── #944: this run's own spend, reported on STDERR ──
+# Mirrors scripts/social.sh, whose block has emitted a non-empty reading in
+# production (run 36598386115, 2026-09-29). The `↳` line cannot be scraped from
+# the tee'd log (piped stdin+stdout puts yoyo in quiet mode); the audit usage
+# record is emitted before any mode branch. .yoyo/audit.jsonl is gitignored,
+# so the dream commit cannot sweep it in. Fail-soft; never changes exit status.
+export YOYO_AUDIT=1
+DREAM_AUDIT_FILE=".yoyo/audit.jsonl"
+# Per-run watermark: the file is append-only, so the delta is this run.
+DREAM_AUDIT_BEFORE=0
+if [ -f "$DREAM_AUDIT_FILE" ]; then
+    DREAM_AUDIT_BEFORE=$(wc -l < "$DREAM_AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+    case "$DREAM_AUDIT_BEFORE" in '' | *[!0-9]*) DREAM_AUDIT_BEFORE=0 ;; esac
+fi
+
+report_dream_spend() {
+    local usage_recs="" usage_count=0 audit_after=0 delta=0 size=0
+    if [ -f "$DREAM_AUDIT_FILE" ]; then
+        audit_after=$(wc -l < "$DREAM_AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+        case "$audit_after" in '' | *[!0-9]*) audit_after=0 ;; esac
+        delta=$((audit_after - DREAM_AUDIT_BEFORE))
+        if [ "$delta" -lt 0 ]; then
+            delta=0
+        fi
+        if [ "$delta" -gt 0 ]; then
+            usage_recs=$(tail -n "$delta" "$DREAM_AUDIT_FILE" 2>/dev/null | grep -a '"type":"usage"' || true)
+        fi
+    fi
+    if [ -n "$usage_recs" ]; then
+        # --fallback can mean two terminal emits: print every record, with the count.
+        usage_count=$(printf '%s\n' "$usage_recs" | grep -c . || true)
+        if [ "$usage_count" = "1" ]; then
+            echo "dream: Spend (this run): $usage_recs" >&2
+        else
+            echo "dream: Spend (this run): ${usage_count} usage record(s)" >&2
+            printf '%s\n' "$usage_recs" | while IFS= read -r rec; do
+                echo "    $rec" >&2
+            done
+        fi
+    else
+        # Absent is NOT zero: a run killed by `timeout` (SIGTERM, no handler)
+        # never reaches its terminal emit. extract_trajectory.py's wording.
+        echo "dream: Spend (this run): no usage record — the process did not reach its terminal emit (no_terminal_emit)" >&2
+    fi
+    if [ -f "$DREAM_AUDIT_FILE" ]; then
+        size=$(wc -c < "$DREAM_AUDIT_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+        case "$size" in '' | *[!0-9]*) size=0 ;; esac
+        echo "dream: Spend audit: ${delta} record(s) this run (line ${DREAM_AUDIT_BEFORE} → ${audit_after}); ${size} bytes cumulative in ${DREAM_AUDIT_FILE}" >&2
+    else
+        echo "dream: Spend audit: WARNING — no ${DREAM_AUDIT_FILE}; audit records were not written this run (cumulative size unknown)" >&2
+    fi
+    return 0
+}
+
 echo "dream: invoking agent (timeout=${TIMEOUT}s)..."
 TIMEOUT_CMD=""
 command -v timeout &>/dev/null && TIMEOUT_CMD="timeout"
@@ -329,6 +383,9 @@ ${TIMEOUT_CMD:+$TIMEOUT_CMD "$TIMEOUT"} "$YOYO_BIN" \
     < "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE" || exit_code=$?
 
 echo "dream: agent exit=$exit_code"
+# Called on every path (success, failure, timeout): the invocation above never
+# exits the script (`|| exit_code=$?`), and every later branch follows this line.
+report_dream_spend || true
 
 # ── Diff-scope guard: a dream may touch ONLY DREAM.md + dreams/dream_log.jsonl ──
 # This is the sole safety belt. Anything else the agent committed gets reverted.

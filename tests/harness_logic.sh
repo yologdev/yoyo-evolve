@@ -916,6 +916,52 @@ if require "social: report_social_spend extracted" "$SS_FN"; then
     check "social spend D: -> no_terminal_emit"               "$(has "$D" no_terminal_emit)"     "yes"
 fi
 
+# dream.sh's spend reader (#944, Day 213). Same shape as social's: the function
+# is extracted from the shipped script, never transcribed. Output is stderr.
+DREAM_SH="$(cd "$(dirname "$0")/.." && pwd)/scripts/dream.sh"
+DS_FN=$(awk '/^report_dream_spend\(\) \{/,/^\}/' "$DREAM_SH")
+ds_case() { # $1=pre-existing lines (watermark), '|'-separated, or MISSING  $2=lines appended this run
+    ( set -euo pipefail
+      d=$(mktemp -d) && cd "$d" || exit 1
+      DREAM_AUDIT_FILE="$d/audit.jsonl"
+      if [ "$1" = MISSING ]; then
+          DREAM_AUDIT_BEFORE=0
+      else
+          printf '%s' "$1" | tr '|' '\n' > "$DREAM_AUDIT_FILE"
+          DREAM_AUDIT_BEFORE=$(wc -l < "$DREAM_AUDIT_FILE" | tr -d '[:space:]')
+          [ -n "$2" ] && printf '%s\n' "$2" | tr '|' '\n' >> "$DREAM_AUDIT_FILE"
+      fi
+      eval "$DS_FN"
+      report_dream_spend 2>&1; echo "rc=$?"
+      cd / && rm -rf "$d"
+    ) 2>/dev/null
+}
+if require "dream: report_dream_spend extracted" "$DS_FN"; then
+    # (a) a usage record after the watermark is reported.
+    DA=$(ds_case "$TOOL|$TOOL|" "$TOOL|$U1")
+    check "dream spend a: usage record reported"               "$(has "$DA" "Spend (this run): $U1")" "yes"
+    check "dream spend a: not no_terminal_emit"                "$(has "$DA" no_terminal_emit)"     "no"
+    check "dream spend a: delta line"                          "$(has "$DA" '2 record(s) this run (line 2 → 4)')" "yes"
+    check "dream spend a: fail-soft rc"                        "$(has "$DA" 'rc=0')"               "yes"
+    # (b) only tool-call lines this run -> no_terminal_emit, never a zero.
+    DB=$(ds_case "$TOOL|" "$TOOL|$TOOL")
+    check "dream spend b: tool calls only -> no_terminal_emit" "$(has "$DB" no_terminal_emit)"     "yes"
+    check "dream spend b: absence never rendered as a record"  "$(has "$DB" '"type":"usage"')"     "no"
+    # (c) the watermark: an earlier run's usage record is not this run's.
+    DC=$(ds_case "$TOOL|$U1|$U2|" "$TOOL")
+    check "dream spend c: pre-watermark usage not reported"    "$(has "$DC" "$U1")"                "no"
+    check "dream spend c: pre-watermark usage -> no_terminal_emit" "$(has "$DC" no_terminal_emit)" "yes"
+    # (d) missing file -> WARNING line, and still no_terminal_emit.
+    DD=$(ds_case MISSING "")
+    check "dream spend d: missing file -> WARNING"             "$(has "$DD" 'Spend audit: WARNING')" "yes"
+    check "dream spend d: missing file -> no_terminal_emit"    "$(has "$DD" no_terminal_emit)"     "yes"
+    check "dream spend d: fail-soft rc"                        "$(has "$DD" 'rc=0')"               "yes"
+    # Two processes (--fallback): both records, never only the last.
+    DE=$(ds_case "$TOOL|" "$U1|$TOOL|$U2")
+    check "dream spend e: count 2"                             "$(has "$DE" '2 usage record(s)')"  "yes"
+    check "dream spend e: first record kept"                   "$(has "$DE" "$U1")"                "yes"
+fi
+
 # ── social.sh binary selector (#944, Day 213) — block extracted from the shipped script ──
 SEL=$(sed -n '/^YOYO_BIN=""$/,/^fi$/p' scripts/social.sh)
 sel_case() { # $1 = older profile, $2 = newer profile
