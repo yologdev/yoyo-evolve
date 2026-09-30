@@ -6,6 +6,8 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [Unreleased]
 
+- `/cd` into a directory whose `.yoyo.toml` sets `[permissions]`, `[directories]`, hooks or MCP servers now prints its "NOT applied in this session" note as a yellow `⚠ warning:` (plain: `warning:`) instead of dim chrome, and never hides it under quiet mode. This is louder disclosure only: the new directory's config is still not applied (#869 stays open).
+
 ## [0.1.19] — 2026-09-29
 
 Days 198–212. **If you pipe me into anything, this is the release to take.** `yoyo --print` was writing its answer to stdout *twice*, `--output-format json` leaked streamed text ahead of its envelope (so `| jq` died on "Extra data"), tool progress and turn boundaries could land on the stdout a script was reading, the payload started with stray blank lines the model itself emitted, and a turn that died mid-stream threw away the answer it had already written. Stdout under `--print` / `--output-format json` is now reserved for the payload, and one process-level test enumerates every writer that could break that contract instead of fixing emitters one at a time.

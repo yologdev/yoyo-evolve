@@ -138,9 +138,7 @@ pub(crate) enum NoteVolume {
 /// before; raising it would warn on content we have not seen.
 pub(crate) fn note_volume(reading: &CdConfigReading) -> NoteVolume {
     match reading {
-        CdConfigReading::Sets(sections)
-            if sections.iter().any(|s| SAFETY_SECTIONS.contains(s)) =>
-        {
+        CdConfigReading::Sets(sections) if sections.iter().any(|s| SAFETY_SECTIONS.contains(s)) => {
             NoteVolume::Warning
         }
         _ => NoteVolume::Chrome,
@@ -170,7 +168,10 @@ pub(crate) fn print_cd_config_note(target: &Path) {
     // the reason the max_tokens ceiling warning was un-gated on Day 211 (#964).
     // (The DIM note was never quiet-gated either; it stays as it was.)
     if let Some(note) = note {
-        eprintln!("{}", render_cd_config_note(&note, note_volume(&reading), plain));
+        eprintln!(
+            "{}",
+            render_cd_config_note(&note, note_volume(&reading), plain)
+        );
     }
 }
 
@@ -285,5 +286,105 @@ mod tests {
         assert!(hostile.as_bytes().contains(&0x1b)); // anti-vacuous
         let note = cd_config_note(hostile, &sets(PERMS_TOML), false).unwrap();
         assert!(!note.as_bytes().contains(&0x1b), "{note:?}");
+    }
+    // --- Day 214: volume follows severity (#869) ---
+
+    /// One fixture per safety section, each parsed through the real detector.
+    const SAFETY_FIXTURES: [&str; 4] = [
+        PERMS_TOML,
+        "[directories]\ndeny = [\"secrets\"]\n",
+        "hooks.pre.bash = \"echo hi\"\n",
+        "[mcp_servers.fs]\ncommand = \"npx\"\n",
+    ];
+
+    #[test]
+    fn every_safety_section_is_detected_and_warns() {
+        assert!(!SAFETY_SECTIONS.is_empty()); // anti-vacuous
+        let mut seen = Vec::new();
+        for text in SAFETY_FIXTURES {
+            let reading = sets(text);
+            let CdConfigReading::Sets(found) = &reading else {
+                panic!("{text:?} did not read as Sets");
+            };
+            assert_eq!(found.len(), 1, "{text:?} -> {found:?}"); // anti-vacuous
+            seen.push(found[0]);
+            assert_eq!(note_volume(&reading), NoteVolume::Warning, "{text:?}");
+        }
+        // The fixtures cover the whole list, derived from the detector's output.
+        assert_eq!(seen, SAFETY_SECTIONS.to_vec());
+    }
+
+    #[test]
+    fn safety_note_renders_as_yellow_warning_not_dim() {
+        let reading = sets(PERMS_TOML);
+        let note = cd_config_note("/repo", &reading, false).unwrap();
+        let out = render_cd_config_note(&note, note_volume(&reading), false);
+        assert!(
+            out.starts_with("\x1b[33m⚠ warning: /repo/.yoyo.toml sets [permissions]"),
+            "{out:?}"
+        );
+        assert!(out.ends_with("\x1b[0m"), "{out:?}");
+        assert!(!out.contains("\x1b[2m"), "{out:?}");
+    }
+
+    #[test]
+    fn safety_note_plain_is_glyph_and_escape_free() {
+        let reading = sets(PERMS_TOML);
+        let note = cd_config_note("/repo", &reading, true).unwrap();
+        let out = render_cd_config_note(&note, note_volume(&reading), true);
+        assert!(
+            out.starts_with("warning: /repo/.yoyo.toml sets [permissions]"),
+            "{out:?}"
+        );
+        assert!(!out.as_bytes().contains(&0x1b), "{out:?}");
+        assert!(!out.contains('⚠') && !out.contains('—'), "{out:?}");
+    }
+
+    #[test]
+    fn unreadable_note_stays_dim_and_byte_identical() {
+        // Near-miss: the one note that names no safety section. Full-string
+        // assert_eq against the Day-213 rendering, in both plain modes.
+        let reading = CdConfigReading::Unreadable;
+        assert_eq!(note_volume(&reading), NoteVolume::Chrome);
+        let note = cd_config_note("/repo", &reading, false).unwrap();
+        assert_eq!(
+            render_cd_config_note(&note, note_volume(&reading), false),
+            "\x1b[2m  /repo/.yoyo.toml exists but could not be read, and NONE of it is applied \
+             in this session — the launch directory's settings stay in force. Restart yoyo here \
+             to use it (#869).\x1b[0m"
+        );
+        let plain = cd_config_note("/repo", &reading, true).unwrap();
+        assert_eq!(
+            render_cd_config_note(&plain, note_volume(&reading), true),
+            "\x1b[2m  /repo/.yoyo.toml exists but could not be read, and NONE of it is applied \
+             in this session: the launch directory's settings stay in force. Restart yoyo here \
+             to use it (#869).\x1b[0m"
+        );
+    }
+
+    #[test]
+    fn empty_and_absent_readings_are_chrome_and_print_nothing() {
+        let model_only = sets("model = \"x\"\n");
+        for r in [model_only, CdConfigReading::Absent] {
+            assert_eq!(note_volume(&r), NoteVolume::Chrome);
+            assert_eq!(cd_config_note("/repo", &r, false), None);
+        }
+    }
+
+    /// Deliberately WEAK source guard: proves the print site does not consult
+    /// quiet mode, never that the line reaches a terminal. A warning is not
+    /// chrome and must not vanish under the auto-quiet of piped runs.
+    #[test]
+    fn print_site_is_not_quiet_gated() {
+        let src = include_str!("cd_config_note.rs");
+        let start = src.find("pub(crate) fn print_cd_config_note").unwrap();
+        let end = start + src[start..].find("#[cfg(test)]").unwrap();
+        let body = &src[start..end];
+        assert!(body.contains("render_cd_config_note(")); // anti-vacuous
+        let needle = ["is_", "quiet"].concat();
+        assert!(
+            !body.contains(&needle),
+            "print_cd_config_note must not gate on quiet"
+        );
     }
 }
