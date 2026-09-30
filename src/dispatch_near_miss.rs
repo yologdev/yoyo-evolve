@@ -267,6 +267,11 @@ pub fn repl_only_multi_token_verb(args: &[String]) -> Option<&str> {
     if REPL_ONLY_MULTI_TOKEN_VERBS.contains(&verb) {
         return Some(verb);
     }
+    // A flag in `args[2]` never fires the gate, even when a completion vocabulary
+    // lists it (`spawn`'s `--bg`): flags are the flag parser's business.
+    if args[2].starts_with('-') {
+        return None;
+    }
     for (gated_verb, vocabulary) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
         if *gated_verb == verb && vocabulary.contains(&args[2].as_str()) {
             return Some(verb);
@@ -682,6 +687,91 @@ mod tests {
             &["yoyo", "architect", "claude-opus-4-6"][..],
             // The hatch the refusal message itself names must reach the model.
             &["yoyo", "-p", "teach on"][..],
+        ];
+        for parts in prompts {
+            assert_eq!(
+                repl_only_multi_token_refusal(&argv(parts)),
+                None,
+                "{parts:?} must reach the prompt path unchanged"
+            );
+        }
+    }
+
+    /// #936 slice 1 — the residue verbs gated on their OWN `*_SUBCOMMANDS` const.
+    /// Every non-flag vocabulary word of every new verb is refused, and each
+    /// refusal quotes the `yoyo -p "..."` hatch (bound 4 in #936).
+    #[test]
+    fn arg_gated_subcommand_vocabularies_stop_billing_at_the_shell() {
+        let new_verbs = [
+            "checkpoint",
+            "fork",
+            "bg",
+            "revisit",
+            "spawn",
+            "history",
+            "stash",
+            "pr",
+            "git",
+        ];
+        let mut fired = 0usize;
+        for verb in new_verbs {
+            let vocabulary = REPL_ONLY_MULTI_TOKEN_ARG_GATED
+                .iter()
+                .find(|(v, _)| *v == verb)
+                .map(|(_, vocab)| *vocab)
+                .unwrap_or_else(|| panic!("{verb} is missing from the arg-gated table"));
+            // ANTI-VACUOUS, first: an empty (or flags-only) vocabulary makes the
+            // loop below a silent pass.
+            let words: Vec<&str> = vocabulary
+                .iter()
+                .copied()
+                .filter(|w| !w.starts_with('-'))
+                .collect();
+            assert!(
+                !words.is_empty(),
+                "the vocabulary for {verb} has no non-flag word — the gate can never \
+                 fire and `yoyo {verb} <subcommand>` still bills"
+            );
+            for word in words {
+                let msg = repl_only_multi_token_refusal(&argv(&["yoyo", verb, word]))
+                    .unwrap_or_else(|| {
+                        panic!("`yoyo {verb} {word}` is a command shape but still bills")
+                    });
+                assert!(
+                    msg.contains(&format!("yoyo -p \"{verb} {word}\"")),
+                    "the -p hatch must name the whole invocation: {msg}"
+                );
+                assert!(
+                    msg.contains(&format!("/{verb}")),
+                    "the refusal must say where the command lives: {msg}"
+                );
+                fired += 1;
+            }
+        }
+        assert!(fired >= new_verbs.len(), "the loop did not iterate: {fired}");
+    }
+
+    /// NEAR MISS for #936 slice 1, one prose row per new verb, plus the excluded
+    /// prose-risky verbs and a flag in `args[2]`: all reach the prompt path.
+    #[test]
+    fn arg_gated_subcommand_vocabularies_leave_prose_untouched() {
+        let prompts = [
+            &["yoyo", "checkpoint", "the", "work", "so", "far"][..],
+            &["yoyo", "fork", "the", "session", "here"][..],
+            &["yoyo", "bg", "how", "do", "I", "use", "this"][..],
+            &["yoyo", "revisit", "the", "auth", "module"][..],
+            &["yoyo", "spawn", "a", "worker", "to", "fix", "tests"][..],
+            &["yoyo", "history", "of", "this", "file"][..],
+            &["yoyo", "stash", "how", "do", "I", "recover", "it"][..],
+            &["yoyo", "pr", "the", "fix", "please"][..],
+            &["yoyo", "git", "how", "do", "I", "rebase"][..],
+            // Excluded verbs: their vocabulary words open real English prompts.
+            &["yoyo", "plan", "on", "migrating", "the", "auth", "layer"][..],
+            &["yoyo", "refactor", "extract", "the", "parser"][..],
+            &["yoyo", "copy", "code", "from", "a.rs", "into", "b.rs"][..],
+            &["yoyo", "web", "search", "for", "the", "tokio", "docs"][..],
+            // A flag the completion list carries does not fire the gate.
+            &["yoyo", "spawn", "--bg", "fix", "the", "tests"][..],
         ];
         for parts in prompts {
             assert_eq!(
