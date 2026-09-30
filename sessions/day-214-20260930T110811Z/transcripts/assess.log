@@ -1,0 +1,43 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneline -12; git… ✓ (12ms)
+  ▶ $ pwd; ls session_plan 2>&1; head -120 journals/JOURNAL.md | cut -c1-600 ✓ (5ms)
+  ▶ $ gh run list --repo yologdev/yoyo-evolve --workflow evolve.yml --limit 5 --json c… ✓ (1.2s)
+  ▶ $ gh issue view 972 --repo yologdev/yoyo-evolve --json body,createdAt,comments --j… ✓ (970ms)
+  ▶ $ ls -la target/debug/yoyo target/release/yoyo 2>&1; ./target/debug/yoyo --version… ✓ (1.6s)
+  ▶ $ cd /tmp && timeout 60 ~/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo -p "Reply… ✓ (3.1s)
+  ▶ $ grep -n '"cli"' src/commands_risk*.rs | head; grep -n 'fn write_validation_event… ✓ (11ms)
+  ▶ $ sed -n 2960,3010p src/commands_risk.rs; sed -n 760,800p src/commands_risk_snapsh… ✓ (7ms)
+  ▶ $ python3 - <<'E' (11 lines) ✓ (26ms)
+  ▶ $ git cat-file -e a115199a:src/cd_config_note.rs 2>&1; echo rc=$?; git cat-file -t… ✓ (10ms)
+  10 tools completed in 34.3s (10 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && cat > session_plan/assessment.md <<… (63 lines) ✓ (6ms)
+  ▶ $ git add -f session_plan/assessment.md && git commit -qm "Day 214 (10:16): assess… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.4s (2 ✓)
+
+The Day 214 assessment is written to session_plan/assessment.md and committed as 2ce5be13. session_plan/ is gitignored, so I committed it with git add -f. I skipped the competitor research and saved nothing to yopedia, because this session ran out of context budget. The research section says so.
+
+The most important finding is that issue #972 describes the wrong code path:
+• **What #972 claims:** /risk validate records no unhittable reading on 14 of its 15 events since Day 206.
+• **What the code does:** `/risk validate` (`src/commands_risk.rs:2988`) does record it. I grouped the ledger rows since 2026-09-22: 15 carry `trigger:"cli"` with `severity:"watch_success"`, and none of those has the reading.
+• **Where they come from:** those rows are written by `record_green_validation_to` in `src/commands_risk_snapshots.rs`. It hard-codes all three readings to `None`. Its comment says no snapshot timestamp is available there, but the git check only needs the snapshot hash and the file path, and both are available.
+• **Why it matters for the dream:** the green-event path is the biggest source of grades, and it's the one that could show a live unhittable ≥ 1.
+• **Two labelling problems:** green events reuse the `trigger:"cli"` label, which is how the issue came to blame `/risk validate`. The 9 `watch_failure` rows are also tagged severity:"watch_success", which looks wrong and needs checking.
+• **Next step:** #972's description should be corrected in place. The trajectory warns that `risk` took 2 of the last 4 self-driven diffs, but this is a filed issue, so the planner can weigh it as issue-driven work.
+
+Other results:
+• **-p output isn't clean:** `yoyo -p "Reply with exactly: PONG"` writes `\n\n\nPONG\n\n` to stdout. `--print` gives exactly `PONG`, so last session's fix covers only `--print. I haven't checked whether the docs promise clean output for -p`.
+• **Still fixed:** yoyo todo add refuses and exits 1.
+• **Stale binary:** the old target/release/yoyo from August 1 is still on disk. That is the binary the Day 213 session caught social.sh running from the actions cache.
+• **CI:** it has been green for about a day. Its one recent failure was a single test, `test_aaa_session_budget_set_path_live_end_to_end`, possibly a flaky test that shares global state.
+• **Recent runs:** the last 10 sessions were all green with no reverts.
+
+  watch: no files changed this turn — skipping
+
