@@ -1,0 +1,81 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (11ms)
+  ▶ read scripts/extract_trajectory.py:2990..3310 ✓ (3ms)
+  ▶ read scripts/extract_trajectory.py:3088..3260 ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "claim_corroboration_lines…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 7100,7300p scripts/extract_… ✓ (5ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 7300,7400p scripts/extract_… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "AUDIT\|environ" scripts/e… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 470,485p scripts/evolve.sh;… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 26.1s (8 ✓)
+
+Now measure the real per-session reasons with the real classifier inputs.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; rm -rf /tmp/tr… (20 lines) ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git worktree a… (20 lines) ✓ (928ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "claimed success, no task… ✓ (48.6s)
+  3 tools completed in 1m 9s (2 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (116 lines) ✓ (46ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 scripts/extract_trajectory… ✓ (97ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 scripts/extract_trajectory… ✓ (96ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (77 lines) ✓ (122ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 26.2s (4 ✓)
+
+Green. Now the positive control, atomic, marked NEUTERED, then restored:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp scripts/ext… (9 lines) ✓ (215ms)
+
+Control reddened 5 tests by name, and the restore is back to green with no marker left. Now the real render, and the ARCHITECTURE entry:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (828ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (34ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; (bash tests/harness_logic.sh 2>&1 … ✓ (1m 59s)
+  3 tools completed in 2m 16s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test -q 2>&1 | grep -cE "FAI… ✓ (2m 2s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The line now says what it found and gives a reason for every session it couldn't check. Committed as 76c0cb13 (the earlier WIP checkpoint is squashed into that history). The classifier's verdicts are unchanged.
+
+What the real run showed. The null clause applied: the resolver is fine and I didn't touch its logic. I ran the extractor's own functions over the real audit-log data (10 sessions in the window, 13 task commits). All 6 unchecked sessions are clone-boundary refusals. The clone's oldest commit is 2026-09-28 22:06:25, and each of those 6 windows opens earlier than that. The task expected about 1 unchecked session, but that estimate left out the shallow clone: fetch --depth 50 keeps only about a day of history, which is less than the ~10-session window. There was also a seventh unchecked session the old line never showed at all: the oldest session read (day-211-20260927T235245Z), which has no earlier session to open its window.
+
+The rendered output now:
+```
+Claim corroboration: 0 of 3 checkable claiming sessions claimed success with no task commits.
+7 further claiming session(s) could NOT be checked — NOT counted above: 6 window opens before this shallow clone's oldest commit; 1 oldest session read, no predecessor to open its window.
+```
+
+Changes (in `scripts/extract_trajectory.py`):
+• `SessionClaim has one new field, reason. Each branch of classify_session_claims` that refuses a session sets it to one of four named values: before the clone, no predecessor, git unavailable, or unparseable stamp. The rendered line counts per reason from that field.
+• The session with no predecessor is now counted in the unchecked line instead of disappearing.
+• For a non-zero result, the flagged sessions are still named one per line with ⚠.
+
+Tests:
+• Four existing self-tests now check the new wording by exact string.
+• A new fixture uses the real Day-214 session stamps. Commits sit 20 minutes before each end stamp, by author time, and the clone boundary falls between two stamps. It checks that both reasons are recorded, that checked sessions carry no reason, and the whole two-line output. The breakdown has at least 2 distinct reasons and they add up to the total.
+• Positive control: I put the old headline back (marked NEUTERED) in one command, and 5 self-tests failed by name. After restoring it they all pass, and no marker is left.
+
+Checks: the self-tests pass, bash tests/harness_logic.sh shows 157 passed and 0 failed, and cargo build && cargo test has no failures. I didn't see clean output from cargo fmt --check or clippy: the chained command's exit code 1 came from my final grep finding no failure lines, which also hides whether those two steps printed anything. No Rust files changed, so they aren't affected.
+
+ARCHITECTURE.md has a new Day 214 entry after the Day-212 one, with the per-session measurements copied word for word.
+
+One consequence to know about: with a clone about one day deep and a window of about 10 sessions, most claiming sessions will stay unchecked until the harness fetches deeper history. That's outside this task. The line now names the cause instead of hiding it.
+
+  watch: no files changed this turn — skipping
+

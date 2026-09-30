@@ -1,0 +1,60 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,20p src/cd_config_note.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1430,1460p src/dispatch.rs;… ✓ (9ms)
+ ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1440,1456p src/dispatch.rs … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1436,1456p src/dispatch.rs;… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=1436 && NR<=1456 {print N… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn color_enabled\b\|fn co… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 288,296p src/format/mod.rs;… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (71 lines) ✓ (10.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy --all-targets -- -D w… ✓ (17.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (102 lines) ✓ (29.0s)
+  11 tools completed in 2m 11s (11 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/cd_conf… (8 lines) ✓ (54.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control reddened exactly the three warning tests by name. The near-miss tests stayed green, and the restore brought all 16 back. Now the docs, then the full gate.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/cd_c… (13 lines) ✓ (55ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (2m 27s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&… (11 lines) ✓ (2m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4m 40s (3 ✓)
+
+After /cd, the note saying the new directory's .yoyo.toml is not applied is now printed as a yellow ⚠ warning: instead of dim text. The config itself is still not applied, so the user is no safer in the new directory, and #869 stays open. The commit message says both.
+
+What changed (all in src/cd_config_note.rs):
+• **How loud it is:** a note that names `[permissions]`, `[directories]`, hooks or MCP servers is a warning. It is printed as `⚠ warning: …` in yellow, or `warning: …` with no symbol or colour codes under plain output. The list of those sections is built from the file's own four label constants rather than typed out again.
+• **The one note that stays dim:** "the file exists but could not be read" names no section, and we can't tell what the file sets. Its output is byte-for-byte the same as before.
+• **Quiet mode:** neither version of the note is hidden by `--quiet`, and a comment at the print site says why: quiet turns on automatically for piped runs, which nobody watches live (the same reason as the max_tokens warning, #964).
+
+Two premises in the task didn't hold:
+• **No "non-safety" note exists.** A config that only sets `model` or `provider` already prints nothing, and all four sections the file detects count as safety sections. So every note about sections the file sets is now a warning, and the near-miss test uses the "could not be read" note instead.
+• **There was no quiet gating to keep.** The Day-213 note was never hidden under `--quiet`, and ARCHITECTURE.md already said so. Adding gating to the dim note would have changed its behaviour, so I didn't.
+
+Tests: 6 new, 16 in the module.
+• The fixtures go through the real section detector, and one test checks that what the detector finds across them equals the full safety list.
+• The warning's exact output is checked with and without plain output (in plain, no escape bytes and no symbol). The dim note is checked with full-string equality in both modes.
+• The quiet decision is covered only by a deliberately weak test: it proves is_quiet doesn't appear in the print function, not that the line reaches a terminal.
+
+Positive control: I forced the severity check to always return "dim" in one command, marked NEUTERED. Exactly the three warning tests failed by name and the near-miss tests stayed green. After restoring it, all 16 passed and no NEUTERED marker is left in the file.
+
+Checks: cargo fmt --check, cargo clippy --all-targets -D warnings and the full cargo test all passed with 0 failures. The file is 390 lines, well under the size limit.
+
+Docs: I added an ARCHITECTURE.md bullet under the Day-213 entry and an Unreleased line in the CHANGELOG. dispatch.rs is untouched.
+
+There are two commits: c1b4aeb6 (a work-in-progress commit made as soon as it built, as the task asked) and a9793993 (tests and docs).
+
+  watch: no files changed this turn — skipping
+
