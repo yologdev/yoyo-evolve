@@ -146,6 +146,8 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // the next task that grows this file by more than REGISTER_DRIFT_GRACE_LINES
     // is reverted by the overshoot rather than by anything it did, so the
     // readers-versus-writers split is the way back down, not a nicety.
+    // Day 214 (20:31): the gate printed "grew to 2258 lines, 78 past its
+    // recorded 2180" after the watch-trigger fix (+24 net) — 22 lines of grace left.
     ("src/commands_risk_snapshots.rs", 2180),
     // Day 163 (#715): +4 lines — parent-side SharedStateTool so the documented RLM
     // store-then-reference step is executable.

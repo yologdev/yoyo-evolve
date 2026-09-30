@@ -470,9 +470,11 @@ impl GitUnhittableReading {
 }
 
 /// Append a validation event to the given JSONL path. Reused by both the
-/// watch-failure auto-validate path (`trigger: "watch_failure"`) and the CLI
-/// `/risk validate` path (`trigger: "cli"`), so both accumulate the validation
-/// half of the prediction meter in the same shape.
+/// watch auto-validate path (`trigger: "watch"`) and the CLI `/risk validate`
+/// path (`trigger: "cli"`), so both accumulate the validation half of the
+/// prediction meter in the same shape. `trigger` names the SOURCE, `severity`
+/// the OUTCOME; rows written before Day 214 carry `trigger: "watch_failure"`
+/// for green AND red watch cycles, so read their outcome from `severity`.
 ///
 /// The JSON line carries `ts`, `day`, `trigger`, `hits`, `surprises`,
 /// `predicted_count` (always 10), `accuracy_pct`, and — when emerging data is
@@ -824,7 +826,8 @@ pub(crate) fn record_green_validation_to(
 /// - Appends a validation event to `.yoyo/risk_validations.jsonl`.
 /// - Prints a brief 2-3 line stderr summary when there are results.
 ///
-/// `severity` tags what kind of outcome the predictions are graded against:
+/// `severity` tags what kind of outcome the predictions are graded against
+/// (the row's `trigger` is always `"watch"`, the source, whatever the outcome):
 /// `"watch_failure"` for a red watch cycle (the lower-severity feed that lets
 /// the meter accumulate without a catastrophe), `"watch_success"` for a clean
 /// green cycle, `"revert"` reserved for full reverts.
@@ -922,7 +925,7 @@ pub(crate) fn auto_validate_after_failure_to(
     if let Err(e) = write_validation_event(
         validation_path,
         day,
-        "watch_failure",
+        "watch", // trigger = SOURCE; the outcome lives in `severity`
         &hits,
         &surprises,
         accuracy_pct_rounded,
@@ -1461,7 +1464,7 @@ mod tests {
 
         let parsed: serde_json::Value =
             serde_json::from_str(contents.lines().next().unwrap()).expect("valid JSON");
-        assert_eq!(parsed["trigger"], "watch_failure");
+        assert_eq!(parsed["trigger"], "watch");
         assert_eq!(parsed["predicted_count"], 10);
 
         let hits = parsed["hits"].as_array().unwrap();
@@ -1481,6 +1484,27 @@ mod tests {
             (accuracy - 60.0).abs() < 0.1,
             "accuracy should be ~60%, got {accuracy}"
         );
+    }
+
+    /// trigger = SOURCE, severity = OUTCOME: a green watch cycle must not be
+    /// stamped `trigger: "watch_failure"` (76 such rows predate this fix).
+    #[test]
+    fn test_auto_validate_trigger_is_source_not_outcome() {
+        for severity in ["watch_success", "watch_failure"] {
+            let dir = tempfile::tempdir().expect("create temp dir");
+            let snap_path = dir.path().join("snapshots.jsonl");
+            let val_path = dir.path().join("validations.jsonl");
+            let snapshot = serde_json::json!({"ts": "2025-01-15T12:00:00Z", "day": 100,
+                "git_hash": "abc1234", "top_10": [{"path": "src/main.rs", "score": 0.9}]});
+            std::fs::write(&snap_path, snapshot.to_string()).expect("write snapshot");
+            let changed = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
+            auto_validate_after_failure_to(&changed, severity, &snap_path, &val_path);
+            let contents = std::fs::read_to_string(&val_path).expect("row written");
+            let row: serde_json::Value =
+                serde_json::from_str(contents.lines().next().unwrap()).expect("valid JSON");
+            assert_eq!(row["trigger"], "watch", "severity {severity}");
+            assert_eq!(row["severity"], severity);
+        }
     }
 
     #[test]
