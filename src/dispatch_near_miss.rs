@@ -220,6 +220,20 @@ pub const REPL_ONLY_MULTI_TOKEN_ARG_GATED: &[(&str, &[&str])] = &[
     ("think", crate::commands::THINKING_LEVELS),
     ("teach", crate::commands_config::TEACH_ARGS),
     ("architect", crate::commands_config::ARCHITECT_ARGS),
+    // #936 slice 1 (Day 214): gated on each handler's own `*_SUBCOMMANDS` const.
+    // Excluded as prose-risky: `plan` (protects `yoyo plan on migrating the auth
+    // layer`), `refactor` (`yoyo refactor extract the parser`), `copy` (`yoyo copy
+    // code from a.rs into b.rs`), `web` (`yoyo web search for the tokio docs`).
+    // Routed verbs (goal, watch, skill, lint, config) are never listed here.
+    ("checkpoint", crate::commands_fork::CHECKPOINT_SUBCOMMANDS),
+    ("fork", crate::commands_fork::FORK_SUBCOMMANDS),
+    ("bg", crate::commands::BG_SUBCOMMANDS),
+    ("revisit", crate::commands_revisit::REVISIT_SUBCOMMANDS),
+    ("spawn", crate::commands_spawn::SPAWN_SUBCOMMANDS),
+    ("history", crate::commands::HISTORY_SUBCOMMANDS),
+    ("stash", crate::git::STASH_SUBCOMMANDS),
+    ("pr", crate::commands::PR_SUBCOMMANDS),
+    ("git", crate::commands::GIT_SUBCOMMANDS),
 ];
 
 /// Compose the "that command lives in the REPL" refusal.
@@ -266,11 +280,6 @@ pub fn repl_only_multi_token_verb(args: &[String]) -> Option<&str> {
     }
     if REPL_ONLY_MULTI_TOKEN_VERBS.contains(&verb) {
         return Some(verb);
-    }
-    // A flag in `args[2]` never fires the gate, even when a completion vocabulary
-    // lists it (`spawn`'s `--bg`): flags are the flag parser's business.
-    if args[2].starts_with('-') {
-        return None;
     }
     // A flag in `args[2]` never fires the gate, even when a completion list
     // carries it (`spawn`'s `--bg`): flags are the flag parser's business.
