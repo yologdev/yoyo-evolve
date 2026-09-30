@@ -301,7 +301,9 @@ pub(crate) fn git_born_after_in_dir(
     hash: &str,
     surprises: &[String],
 ) -> LedgerBornAfter {
-    git_born_after_probing(hash, surprises, &|a| crate::git::run_git_in_dir(dir, a).is_ok())
+    git_born_after_probing(hash, surprises, &|a| {
+        crate::git::run_git_in_dir(dir, a).is_ok()
+    })
 }
 
 fn git_born_after_probing(

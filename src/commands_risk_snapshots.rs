@@ -1741,8 +1741,16 @@ mod tests {
         let top_10 = vec!["src/main.rs".to_string(), "src/prompt.rs".to_string()];
         let emerging = vec!["src/cli.rs".to_string()];
 
-        let grade = record_green_validation_to(&path, std::path::Path::new("."), 140, "abc1234", &changed, &top_10, &emerging)
-            .expect("record green validation");
+        let grade = record_green_validation_to(
+            &path,
+            std::path::Path::new("."),
+            140,
+            "abc1234",
+            &changed,
+            &top_10,
+            &emerging,
+        )
+        .expect("record green validation");
 
         // 2 src files changed; 1 (main.rs) was in top_10 → 50% reactive;
         // 1 (cli.rs) was in emerging → 50% anticipatory.
@@ -1785,14 +1793,29 @@ mod tests {
         let top_10 = vec!["src/main.rs".to_string()];
         let emerging: Vec<String> = vec![];
 
-        let first = record_green_validation_to(&path, std::path::Path::new("."), 140, "abc1234", &changed, &top_10, &emerging)
-            .expect("first green validation");
+        let first = record_green_validation_to(
+            &path,
+            std::path::Path::new("."),
+            140,
+            "abc1234",
+            &changed,
+            &top_10,
+            &emerging,
+        )
+        .expect("first green validation");
         assert!(matches!(first, GreenGrade::Recorded { .. }));
 
         // Second run against the SAME snapshot hash → deduped, nothing written.
-        let second =
-            record_green_validation_to(&path, std::path::Path::new("."), 140, "abc1234", &changed, &top_10, &emerging)
-                .expect("second green validation");
+        let second = record_green_validation_to(
+            &path,
+            std::path::Path::new("."),
+            140,
+            "abc1234",
+            &changed,
+            &top_10,
+            &emerging,
+        )
+        .expect("second green validation");
         assert_eq!(second, GreenGrade::Deduped);
 
         let contents = std::fs::read_to_string(&path).expect("read validation file");
@@ -1803,8 +1826,16 @@ mod tests {
         );
 
         // A DIFFERENT snapshot hash is not deduped.
-        let third = record_green_validation_to(&path, 141, "def5678", &changed, &top_10, &emerging)
-            .expect("third green validation");
+        let third = record_green_validation_to(
+            &path,
+            std::path::Path::new("."),
+            141,
+            "def5678",
+            &changed,
+            &top_10,
+            &emerging,
+        )
+        .expect("third green validation");
         assert!(matches!(third, GreenGrade::Recorded { .. }));
         let contents = std::fs::read_to_string(&path).expect("read validation file");
         assert_eq!(
@@ -1820,8 +1851,16 @@ mod tests {
         let path = dir.path().join("validations.jsonl");
 
         let changed = vec!["README.md".to_string(), "docs/src/intro.md".to_string()];
-        let grade = record_green_validation_to(&path, std::path::Path::new("."), 140, "abc1234", &changed, &[], &[])
-            .expect("green validation with no src changes");
+        let grade = record_green_validation_to(
+            &path,
+            std::path::Path::new("."),
+            140,
+            "abc1234",
+            &changed,
+            &[],
+            &[],
+        )
+        .expect("green validation with no src changes");
         assert_eq!(grade, GreenGrade::NoSrcChanges);
         assert!(
             !path.exists(),
@@ -1840,8 +1879,16 @@ mod tests {
         let changed = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
         let top_10 = vec!["src/main.rs".to_string()];
         let emerging = vec!["src/cli.rs".to_string()];
-        record_green_validation_to(&path, std::path::Path::new("."), 140, "abc1234", &changed, &top_10, &emerging)
-            .expect("record green validation");
+        record_green_validation_to(
+            &path,
+            std::path::Path::new("."),
+            140,
+            "abc1234",
+            &changed,
+            &top_10,
+            &emerging,
+        )
+        .expect("record green validation");
 
         let contents = std::fs::read_to_string(&path).expect("read validation file");
         let events = parse_validation_events(&contents);

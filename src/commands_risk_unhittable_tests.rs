@@ -1738,3 +1738,97 @@ mod git_reading_persisted_tests {
         );
     }
 }
+
+/// #972: the GREEN door (`record_green_validation_to`, `trigger: "cli"` +
+/// `severity: "watch_success"`) records the git reading. Every value asserted
+/// here is produced by real git in a temp repo, written by the real writer and
+/// read back by the real parser — nothing on the asserted path is typed in.
+#[cfg(test)]
+mod green_door_git_reading_tests {
+    use crate::commands_risk::parse_rich_validation_events;
+    use crate::commands_risk_snapshots::{record_green_validation_to, GreenGrade};
+    use crate::git::run_git_in_dir;
+
+    /// A temp repo whose one commit holds `src/old.rs` only; returns its hash.
+    fn repo_with_old_only(dir: &std::path::Path) -> String {
+        let g = |a: &[&str]| run_git_in_dir(dir, a).expect("git in temp repo");
+        g(&["init", "-q"]);
+        g(&["config", "user.email", "t@t"]);
+        g(&["config", "user.name", "t"]);
+        std::fs::create_dir_all(dir.join("src")).expect("mkdir src");
+        std::fs::write(dir.join("src/old.rs"), "// old\n").expect("write old.rs");
+        g(&["add", "src/old.rs"]);
+        g(&["commit", "-q", "-m", "snapshot"]);
+        g(&["rev-parse", "HEAD"])
+    }
+
+    fn green_row(
+        repo: &std::path::Path,
+        hash: &str,
+        changed: &[&str],
+    ) -> (Option<u32>, Option<u32>, String) {
+        let ledger = tempfile::tempdir().expect("ledger dir");
+        let path = ledger.path().join("v.jsonl");
+        let changed: Vec<String> = changed.iter().map(|s| s.to_string()).collect();
+        let grade = record_green_validation_to(&path, repo, 214, hash, &changed, &[], &[])
+            .expect("green write");
+        assert!(matches!(grade, GreenGrade::Recorded { .. }), "{grade:?}");
+        let content = std::fs::read_to_string(&path).expect("read back");
+        let events = parse_rich_validation_events(&content);
+        assert_eq!(events.len(), 1, "{content}");
+        (events[0].git_born_after, events[0].git_unmeasured, content)
+    }
+
+    #[test]
+    fn green_door_counts_a_file_born_after_its_snapshot() {
+        let repo = tempfile::tempdir().expect("repo dir");
+        let hash = repo_with_old_only(repo.path());
+        // Anti-vacuous: the fixture really lacks new.rs at the hash and has old.rs.
+        assert!(run_git_in_dir(
+            repo.path(),
+            &["cat-file", "-e", &format!("{hash}:src/new.rs")]
+        )
+        .is_err());
+        assert!(run_git_in_dir(
+            repo.path(),
+            &["cat-file", "-e", &format!("{hash}:src/old.rs")]
+        )
+        .is_ok());
+        let (born, unmeasured, content) =
+            green_row(repo.path(), &hash, &["src/new.rs", "src/old.rs"]);
+        assert_eq!(born, Some(1), "{content}");
+        assert_eq!(unmeasured, Some(0), "{content}");
+        // The ledger-join fields stay omitted on this door: no timestamp in scope.
+        assert!(!content.contains("unhittable_surprises"), "{content}");
+        assert!(
+            content.contains("\"severity\":\"watch_success\""),
+            "{content}"
+        );
+    }
+
+    #[test]
+    fn green_door_writes_a_present_zero_when_every_surprise_existed() {
+        let repo = tempfile::tempdir().expect("repo dir");
+        let hash = repo_with_old_only(repo.path());
+        let (born, unmeasured, content) = green_row(repo.path(), &hash, &["src/old.rs"]);
+        assert_eq!(born, Some(0), "a measured zero is PRESENT: {content}");
+        assert_eq!(unmeasured, Some(0), "{content}");
+        assert!(content.contains("\"git_born_after\":0"), "{content}");
+    }
+
+    #[test]
+    fn green_door_unresolvable_hash_reads_unmeasured_never_zero_born() {
+        let repo = tempfile::tempdir().expect("repo dir");
+        repo_with_old_only(repo.path());
+        let absent = "0000000000000000000000000000000000000001";
+        assert!(run_git_in_dir(repo.path(), &["cat-file", "-t", absent]).is_err());
+        let (born, unmeasured, content) =
+            green_row(repo.path(), absent, &["src/new.rs", "src/old.rs"]);
+        assert_eq!(unmeasured, Some(2), "{content}");
+        assert_eq!(
+            born,
+            Some(0),
+            "unresolvable is unmeasured, not born-after: {content}"
+        );
+    }
+}
