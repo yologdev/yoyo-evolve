@@ -711,6 +711,10 @@ pub(crate) struct GitCensus {
     /// and `RetrospectiveCount::tied_rows`, so the three intersect meaningfully;
     /// the same limit holds — two rows sharing a second are one member here.
     pub(crate) uncheckable_rows: BTreeSet<String>,
+    /// Day 214: rows whose PERSISTED `unhittable_surprises` is `Some(0)` while
+    /// this census counts them born-after — a recorded zero git contradicts.
+    /// `None` (not recorded) is never a member: absent is not zero.
+    pub(crate) recorded_zero_contradicted: BTreeSet<String>,
     /// Surprises not probed because their row's hash did not resolve. This is
     /// the "skipped" count the task asks to be printed rather than folded away.
     pub(crate) skipped_surprises: u32,
@@ -765,6 +769,9 @@ pub(crate) fn retrospective_git_census(
         if unhittable {
             out.with_unhittable += 1;
             out.unhittable_rows.insert(row.ts.clone());
+            if row.recorded_unhittable == Some(0) {
+                out.recorded_zero_contradicted.insert(row.ts.clone());
+            }
         }
         if unmeasurable {
             out.with_unmeasurable += 1;
@@ -1126,6 +1133,16 @@ pub(crate) fn retrospective_note(reading: &RetrospectiveReading, plain: bool) ->
                             }
                         }
                     }
+                }
+                // Day 214 (DREAM): the record's own zero, contradicted by git.
+                // Absent when empty, so every other ledger reads byte-identically.
+                let z = &git.recorded_zero_contradicted;
+                if !z.is_empty() {
+                    let joined = z.iter().map(String::as_str).collect::<Vec<_>>().join(", ");
+                    note.push_str(&format!(
+                        "\n  recorded 0 contradicted by git: {} row(s): {joined}",
+                        z.len()
+                    ));
                 }
             }
             note

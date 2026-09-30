@@ -649,6 +649,79 @@ mod retrospective_tests {
         assert!(note.is_ascii(), "plain mode stays glyph-free: {note}");
     }
 
+    /// **Day 214 (DREAM, second signal): a recorded zero that git contradicts
+    /// is NAMED.** Driven through the real reader — ledger JSON lines in,
+    /// `parse_surprise_rows` → `retrospective_git_census` → the note out — so
+    /// the set is derived, never typed as an answer key. Four rows, one named:
+    /// recorded `0` + git born-after (the bf8beaf6/45fb1800 shape) is named;
+    /// recorded `0` + git present is the near-miss; an ABSENT record (pre-Day
+    /// 209) is not "recorded 0"; a recorded `1` is not contradicted.
+    #[test]
+    fn a_recorded_zero_that_git_contradicts_is_named_by_ts() {
+        let line = |ts: &str, hash: &str, rec: &str| {
+            format!(
+                "{{\"ts\":\"{ts}\",\"hits\":[],\"surprises\":[\"src/born.rs\"],\
+                 \"snapshot_git_hash\":\"{hash}\"{rec}}}\n"
+            )
+        };
+        let rec = |n: u32| format!(",\"unhittable_surprises\":{n},\"unmeasurable_surprises\":1");
+        let text = [
+            line("2026-09-28T10:00:00Z", "bbbbbbb1", &rec(0)),
+            line("2026-09-28T11:00:00Z", "bbbbbbb2", &rec(0)),
+            line("2026-09-28T12:00:00Z", "bbbbbbb3", ""),
+            line("2026-09-28T13:00:00Z", "bbbbbbb4", &rec(1)),
+        ]
+        .concat();
+        let rows = parse_surprise_rows(&text);
+        assert_eq!(rows.len(), 4, "every fixture line is a real event");
+        assert_eq!(rows[2].recorded_unhittable, None, "absent stays absent");
+        let p = probes(
+            &[
+                ("bbbbbbb1", true),
+                ("bbbbbbb2", true),
+                ("bbbbbbb3", true),
+                ("bbbbbbb4", true),
+            ],
+            &[
+                ("bbbbbbb1:src/born.rs", false),
+                ("bbbbbbb2:src/born.rs", true),
+                ("bbbbbbb3:src/born.rs", false),
+                ("bbbbbbb4:src/born.rs", false),
+            ],
+        );
+        let git = retrospective_git_census(&rows, Some("2026-08-22T15:40:02Z"), &p);
+        // Anti-vacuous: git really fires on three rows, so naming only one is
+        // the recorded-zero filter at work, not a census that saw nothing.
+        assert_eq!(git.with_unhittable, 3, "{git:?}");
+        assert_eq!(
+            git.recorded_zero_contradicted,
+            ts_set(&["2026-09-28T10:00:00Z"]),
+            "only the recorded 0 that git contradicts: {git:?}"
+        );
+        let count = RetrospectiveCount {
+            population: 4,
+            git: Some(git),
+            ..RetrospectiveCount::default()
+        };
+        let note = retrospective_note(&RetrospectiveReading::Counted(count), true).expect("note");
+        assert!(
+            note.contains("\n  recorded 0 contradicted by git: 1 row(s): 2026-09-28T10:00:00Z"),
+            "{note}"
+        );
+        assert!(note.is_ascii(), "plain mode stays glyph-free: {note}");
+        // Near-miss at the emission point: no contradicted row, no line at all.
+        let mut quiet = retrospective_git_census(&rows[1..2], None, &p);
+        assert!(quiet.recorded_zero_contradicted.is_empty(), "{quiet:?}");
+        quiet.recorded_zero_contradicted.clear();
+        let c = RetrospectiveCount {
+            population: 1,
+            git: Some(quiet),
+            ..RetrospectiveCount::default()
+        };
+        let n = retrospective_note(&RetrospectiveReading::Counted(c), true).expect("note");
+        assert!(!n.contains("recorded 0 contradicted"), "{n}");
+    }
+
     /// **The `None` regression surface, at the emission point.** With no git
     /// reading the note is byte-identical to the ledger-only note this pass has
     /// always printed — which is every user whose events carry no snapshot hash
@@ -695,6 +768,7 @@ mod retrospective_tests {
                 // The row the git check could not evaluate at all: the ledger-only
                 // direction's second cause (day 206's real shape).
                 uncheckable_rows: ts_set(&["2026-09-03T17:23:00Z"]),
+                recorded_zero_contradicted: ts_set(&[]),
                 skipped_surprises: 2,
             }),
             dropped: 0,
@@ -745,6 +819,7 @@ mod retrospective_tests {
                 with_unmeasurable: 1,
                 unresolvable: 1,
                 uncheckable_rows: ts_set(&["2026-09-26T07:34:00Z"]),
+                recorded_zero_contradicted: ts_set(&[]),
                 skipped_surprises: 1,
             }),
             dropped: 0,
@@ -872,6 +947,7 @@ mod retrospective_tests {
                 with_unmeasurable: 0,
                 unresolvable: 0,
                 uncheckable_rows: ts_set(&[]),
+                recorded_zero_contradicted: ts_set(&[]),
                 skipped_surprises: 0,
             }),
             dropped: 0,
@@ -918,6 +994,7 @@ mod retrospective_tests {
                 with_unmeasurable: 1,
                 unresolvable: 1,
                 uncheckable_rows: ts_set(&[unchecked_row]),
+                recorded_zero_contradicted: ts_set(&[]),
                 skipped_surprises: 1,
             }),
             dropped: 0,
@@ -978,6 +1055,7 @@ mod retrospective_tests {
                 with_unmeasurable: 0,
                 unresolvable: 0,
                 uncheckable_rows: ts_set(&[]),
+                recorded_zero_contradicted: ts_set(&[]),
                 skipped_surprises: 0,
             }),
             dropped: 0,
@@ -1021,6 +1099,7 @@ mod retrospective_tests {
                 with_unmeasurable: 0,
                 unresolvable: 0,
                 uncheckable_rows: ts_set(&[]),
+                recorded_zero_contradicted: ts_set(&[]),
                 skipped_surprises: 0,
             }),
             dropped: 0,
@@ -1061,6 +1140,7 @@ mod retrospective_tests {
                 with_unmeasurable: 0,
                 unresolvable: 0,
                 uncheckable_rows: ts_set(&[]),
+                recorded_zero_contradicted: ts_set(&[]),
                 skipped_surprises: 0,
             }),
             dropped: 0,
