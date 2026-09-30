@@ -1,0 +1,122 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (20ms)
+  ▶ $ grep -rn 'trigger' src/*.rs scripts/*.py | grep -iv 'r#\|^\s*//' | grep -n '\.tr… ✓ (16ms)
+  ▶ $ grep -rn 'trigger' src/commands_risk*.rs | grep -v '^\S*:\s*///' | grep -v 'r#\|… ✓ (13ms)
+  ▶ $ sed -n 470,500p src/commands_risk_snapshots.rs; sed -n 822,832p src/commands_ris… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 8.9s (4 ✓)
+
+Output is being truncated; let me read the doc regions directly.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk_snapshots.rs:472..502  ▶ read src/commands_risk_snapshots.rs:818..832 ✓ (1ms)
+ ✓ (1ms)
+  2 tools completed in 1.1s (2 ✓)
+
+Now edit: test first (update assertion + add new test), then the fix, then docs.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (2 → 2 lines)
+  -         assert_eq!(parsed["trigger"], "watch_failure");
+  +         assert_eq!(parsed["trigger"], "watch");
+            assert_eq!(parsed["predicted_count"], 10);
+  ▶ read src/commands_risk_snapshots.rs:1480..1500 ✓ (0ms)
+ ✓ (2m 18s)
+  -         assert_eq!(parsed["trigger"], "watch_failure");
+  +         assert_eq!(parsed["trigger"], "watch");
+            assert_eq!(parsed["predicted_count"], 10);
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1470,1500p src/commands_ris… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_risk_snapshots.rs (2 → 23 lines)
+  +     /// trigger = SOURCE, severity = OUTCOME: a green watch cycle must not be
+  +     /// stamped `trigger: "watch_failure"` (76 such rows predate this fix).
+  +     #[test]
+  +     fn test_auto_validate_trigger_is_source_not_outcome() {
+  +         for severity in ["watch_success", "watch_failure"] {
+  +             let dir = tempfile::tempdir().expect("create temp dir");
+  +             let snap_path = dir.path().join("snapshots.jsonl");
+  +             let val_path = dir.path().join("validations.jsonl");
+  +             let snapshot = serde_json::json!({"ts": "2025-01-15T12:00:00Z", "day": 100,
+  +                 "git_hash": "abc1234", "top_10": [{"path": "src/main.rs", "score": 0.9}]});
+  +             std::fs::write(&snap_path, snapshot.to_string()).expect("write snapshot");
+  +             let changed = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
+  +             auto_validate_after_failure_to(&changed, severity, &snap_path, &val_path);
+  +             let contents = std::fs::read_to_string(&val_path).expect("row written");
+  +             let row: serde_json::Value =
+  +                 serde_json::from_str(contents.lines().next().unwrap()).expect("valid JSON");
+  +             assert_eq!(row["trigger"], "watch", "severity {severity}");
+  +             assert_eq!(row["severity"], severity);
+  +         }
+  +     }
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test commands_risk_snapshots… ✓ (2m 18s)
+  +     /// trigger = SOURCE, severity = OUTCOME: a green watch cycle must not be
+  +     /// stamped `trigger: "watch_failure"` (76 such rows predate this fix).
+  +     #[test]
+  +     fn test_auto_validate_trigger_is_source_not_outcome() {
+  +         for severity in ["watch_success", "watch_failure"] {
+  +             let dir = tempfile::tempdir().expect("create temp dir");
+  +             let snap_path = dir.path().join("snapshots.jsonl");
+  +             let val_path = dir.path().join("validations.jsonl");
+  ... (13 more lines)
+ ✓ (2m 18s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 4m 46s (5 ✓)
+
+Red for the right reason. Now the fix and doc comments.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (28 lines) ✓ (32.5s)
+
+Now the positive control, as one atomic mutate→run→restore command.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; F=src/commands_risk_snapshots.rs; … ✓ (1m 5s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'Open, not fixed here' ARC… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (18 lines) ✓ (205ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -B4 'commands_risk_snapsho… ✓ (3ms)
+  ▶ edit tests/module_size.rs (2 → 4 lines)
+        // readers-versus-writers split is the way back down, not a nicety.
+  +     // Day 214 (20:31): the gate printed "grew to 2258 lines, 78 past its
+  +     // recorded 2180" after the watch-trigger fix (+24 net) — 22 lines of grace left.
+        ("src/commands_risk_snapshots.rs", 2180),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo build 2>&1 | ta… ✓ (3m 0s)
+        // readers-versus-writers split is the way back down, not a nicety.
+  +     // Day 214 (20:31): the gate printed "grew to 2258 lines, 78 past its
+  +     // recorded 2180" after the watch-trigger fix (+24 net) — 22 lines of grace left.
+        ("src/commands_risk_snapshots.rs", 2180),
+ ✓ (5m 17s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short; grep -c NEUTER… ✓ (53ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 5m 43s (6 ✓)
+
+Watch-validation rows now say where they came from, and the outcome lives only in severity. Committed as 09640667. Build, the full test suite, clippy with -D warnings and the fmt check all pass.
+
+What was wrong: auto_validate_after_failure_to always wrote trigger: "watch_failure", including after a green watch cycle. So every watch row claimed a failure whatever actually happened. The planner counted 76 rows that say watch_failure in trigger but watch_success in severity; I didn't recount them. The cli and ci_harvest writers already follow the rule this breaks: trigger names the source and severity names the outcome.
+
+Changes:
+• **Fix (src/commands_risk_snapshots.rs):** the path now writes trigger: "watch". I updated the doc comments to state the source/outcome rule.
+• Tests:
+  • New test test_auto_validate_trigger_is_source_not_outcome. It runs the real writer through the existing temp-directory seam, once with watch_success and once with watch_failure, and checks that trigger is "watch" both times and severity matches what was passed in.
+  • The existing exact check in test_auto_validate_with_synthetic_snapshot now expects "watch". It's still an exact match, not a looser one.
+• **Tests failed before the fix:** before the fix both tests failed, on the trigger value.
+• **Positive control:** in one command, I put `"watch_failure"` back with a `NEUTERED` marker. Both tests failed by name. I then restored the line and they passed again. Afterwards NEUTERED appears 0 times in the file.
+• **`ARCHITECTURE.md:** the "Open, not fixed here" line now says the defect is fixed. It warns that rows written before this commit say watch_failure for both outcomes, so their outcome has to be read from severity`. Old rows are left unchanged because the ledger is append-only.
+
+No counts or verdicts changed. Before editing I searched src/ and scripts/. Nothing in production reads the trigger string; it appears only in the writer and in test data. (scripts/skill_evolve_report.py reads a field called trigger, but from a different file.)
+
+File size: the size gate printed that commands_risk_snapshots.rs "grew to 2258 lines, 78 past its recorded 2180". That leaves 22 lines of the 100-line allowance, so the next small change to this file could fail the gate. The net addition was 24 lines, under the task's ~40 limit. I copied the printed message into the comment in tests/module_size.rs and left the recorded size at 2180, since this is a warning and not a failure.
+
+One thing outside this task: the same gate also warns that src/commands_risk.rs is 1 line over its recorded 6601. I didn't touch that file or its entry.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/commands_risk_snapshots.rs
+
