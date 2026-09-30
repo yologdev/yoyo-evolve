@@ -7325,12 +7325,9 @@ src/commands_config.rs
         any(S_DAY_A_2 in ln and "⚠" in ln for ln in lines),
     )
     assert_true(
-        "the summary names the population it counted over, and says CLOSED",
-        any(
-            "1 of 3 closed, claiming session(s): claimed success, no task commits"
-            in ln
-            for ln in lines
-        ),
+        "non-zero: the summary names the population it counted over",
+        "Claim corroboration: 1 of 3 checkable claiming sessions claimed "
+        "success with no task commits." in lines,
     )
     assert_true(
         "the open-window session is NOT in the denominator the summary names",
@@ -7353,8 +7350,8 @@ src/commands_config.rs
     )
     assert_true(
         "an all-corroborated window still prints its zero, with its population",
-        zero_lines == ["0 of 2 closed, claiming session(s): claimed success, "
-                       "no task commits"],
+        zero_lines == ["Claim corroboration: 0 of 2 checkable claiming sessions "
+                       "claimed success with no task commits."],
     )
     # Unresolvable windows are named SEPARATELY, so an unknown can never be
     # read as a corroborated one. A closed, corroborated session plus ONE
@@ -7376,10 +7373,58 @@ src/commands_config.rs
         "an unresolved window gets its own line and is NOT in the denominator",
         mixed
         == [
-            "0 of 1 closed, claiming session(s): claimed success, no task commits",
-            "1 further claiming session(s) could NOT be checked (window "
-            "unresolved) — NOT counted above.",
+            "Claim corroboration: 0 of 1 checkable claiming session claimed "
+            "success with no task commits.",
+            "1 further claiming session(s) could NOT be checked — NOT counted "
+            f"above: 1 {CLAIM_REASON_BAD_STAMP}.",
         ],
+    )
+
+    # DAY 214: THE UNRESOLVED LINE NAMES ITS CAUSES, AND THEY SUM. Fixture is
+    # the real Day-214 window's shape: end-stamped dirs, author-time commits
+    # minutes BEFORE each stamp, a clone whose oldest commit falls between
+    # stamps -- so windows opening before it are refused by the CLONE, and the
+    # oldest session read is refused for having NO PREDECESSOR.
+    r214 = ["day-211-20260927T235245Z", "day-212-20260928T005727Z",
+            "day-212-20260928T223603Z", "day-213-20260929T020156Z",
+            "day-213-20260929T111009Z"]
+    t214 = [compact_utc_epoch(session_dir_stamp(n)) for n in r214]
+    clone_oldest = compact_utc_epoch("2026-09-28T22:06:25Z")
+    assert_true(
+        "anti-vacuous: the clone boundary really sits inside the ladder",
+        t214[1] < clone_oldest < t214[2],
+    )
+    c214 = classify_session_claims(
+        [ClaimSession(n, True) for n in r214],
+        [commit_at(t - 20 * 60, "%08x" % i) for i, t in enumerate(t214)],
+        clone_oldest,
+    )
+    by214 = {c.name: c for c in c214}
+    assert_eq("before-clone reason is carried on the verdict",
+              [by214[n].reason for n in r214[1:3]],
+              [CLAIM_REASON_BEFORE_CLONE] * 2)
+    assert_eq("no-predecessor reason is carried on the open-window verdict",
+              (by214[r214[0]].state, by214[r214[0]].reason),
+              (CLAIM_OPEN_WINDOW, CLAIM_REASON_NO_PREDECESSOR))
+    assert_eq("a checked verdict carries no reason",
+              [by214[n].reason for n in r214[3:]], ["", ""])
+    lines214 = claim_corroboration_lines(c214)
+    assert_eq(
+        "per-reason breakdown: whole render, reasons named, zero headline exact",
+        lines214,
+        [
+            "Claim corroboration: 0 of 2 checkable claiming sessions claimed "
+            "success with no task commits.",
+            "3 further claiming session(s) could NOT be checked — NOT counted "
+            f"above: 2 {CLAIM_REASON_BEFORE_CLONE}; 1 {CLAIM_REASON_NO_PREDECESSOR}.",
+        ],
+    )
+    unchecked214 = [c for c in c214 if c.reason]
+    assert_true(
+        "anti-vacuous: >=2 distinct reasons, and their counts sum to the total",
+        len({c.reason for c in unchecked214}) >= 2
+        and len(unchecked214) == 3
+        and all(c.reason in CLAIM_UNCHECKED_REASONS for c in unchecked214),
     )
 
     # --- THE NEAR-MISS GUARD, AND THE ONE PLACE ITS TWO REQUIREMENTS MEET.
@@ -7423,7 +7468,8 @@ src/commands_config.rs
         "producing no false alarm line",
         render_outcomes(GREEN_OUTCOMES, all_corr),
         pre_change_rows
-        + "\n0 of 2 closed, claiming session(s): claimed success, no task commits",
+        + "\nClaim corroboration: 0 of 2 checkable claiming sessions claimed "
+        "success with no task commits.",
     )
     assert_true(
         "near-miss: and that render carries no ⚠ accusation anywhere",
