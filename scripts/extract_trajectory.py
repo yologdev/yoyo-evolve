@@ -3038,6 +3038,23 @@ CLAIM_COULD_NOT_CHECK = "claim-could-not-check"
 # be a false alarm on the one signal whose whole value is that it fires rarely.
 CLAIM_OPEN_WINDOW = "claim-open-window"
 
+# WHY A CLAIMING SESSION COULD NOT BE CHECKED -- one value per refusing branch
+# of `classify_session_claims`, carried on the verdict it already returns so the
+# render names the cause from the classifier's OWN state rather than from prose
+# re-derived at the print site. Measured Day 214 (01:02) over the real window:
+# 6 of 7 refusals were CLAIM_REASON_BEFORE_CLONE, 1 CLAIM_REASON_NO_PREDECESSOR.
+# The order here is the render order, so the breakdown is deterministic.
+CLAIM_REASON_BEFORE_CLONE = "window opens before this shallow clone's oldest commit"
+CLAIM_REASON_NO_PREDECESSOR = "oldest session read, no predecessor to open its window"
+CLAIM_REASON_NO_GIT = "git history unavailable"
+CLAIM_REASON_BAD_STAMP = "session stamp unparseable"
+CLAIM_UNCHECKED_REASONS = (
+    CLAIM_REASON_BEFORE_CLONE,
+    CLAIM_REASON_NO_PREDECESSOR,
+    CLAIM_REASON_NO_GIT,
+    CLAIM_REASON_BAD_STAMP,
+)
+
 
 @dataclass
 class ClaimSession:
@@ -3065,6 +3082,9 @@ class SessionClaim:
     # "N of M closed, claiming session(s)" count a session that has not
     # finished, which is the same defect one level up.
     window_open: bool = False
+    # Set exactly when the session could not be checked (COULD_NOT_CHECK or
+    # OPEN_WINDOW): one of CLAIM_UNCHECKED_REASONS. Empty for every verdict.
+    reason: str = ""
 
 
 def load_claim_sessions(audit_dir: Path) -> list[ClaimSession]:
@@ -3197,6 +3217,7 @@ def classify_session_claims(
     oldest_end = ladder[0] if ladder else None
 
     states: dict[str, str] = {}
+    reasons: dict[str, str] = {}
     opens: set[str] = set()
     for s in sessions:
         if not s.claimed:
@@ -3208,9 +3229,11 @@ def classify_session_claims(
             # at all; "could not check" is the honest reading of that
             # session.
             states[s.name] = CLAIM_COULD_NOT_CHECK
+            reasons[s.name] = CLAIM_REASON_BAD_STAMP
             continue
         if commits is None:
             states[s.name] = CLAIM_COULD_NOT_CHECK
+            reasons[s.name] = CLAIM_REASON_NO_GIT
             continue
         # THE OLDEST SESSION HAS NO LOWER BOUND. Its predecessor is outside
         # the window this reader was handed, so a commit before its stamp may
@@ -3219,6 +3242,7 @@ def classify_session_claims(
         if end == oldest_end:
             opens.add(s.name)
             states[s.name] = CLAIM_OPEN_WINDOW
+            reasons[s.name] = CLAIM_REASON_NO_PREDECESSOR
             continue
         start = max(t for t in ladder if t < end)
         # CLONE BOUNDARY. A window that begins before the oldest commit this
@@ -3226,6 +3250,7 @@ def classify_session_claims(
         # is about the clone rather than about the session. Refuse, do not accuse.
         if oldest_commit_epoch is not None and start < oldest_commit_epoch:
             states[s.name] = CLAIM_COULD_NOT_CHECK
+            reasons[s.name] = CLAIM_REASON_BEFORE_CLONE
             continue
         # END-ANCHORED `(prev_stamp, stamp]`. The directory stamp is written at
         # the session's END (measured Day 212: dir `T110922Z` == its own
@@ -3239,7 +3264,12 @@ def classify_session_claims(
     # Render newest-first, matching the claim rows it is appended to.
     ordered = sorted(sessions, key=lambda s: session_sort_key(s.name), reverse=True)
     return [
-        SessionClaim(name=s.name, state=states[s.name], window_open=s.name in opens)
+        SessionClaim(
+            name=s.name,
+            state=states[s.name],
+            window_open=s.name in opens,
+            reason=reasons.get(s.name, ""),
+        )
         for s in ordered
     ]
 
@@ -3270,19 +3300,32 @@ def claim_corroboration_lines(claims: list[SessionClaim]) -> list[str]:
         for c in claims
         if not c.window_open and c.state in (CLAIM_CORROBORATED, CLAIM_NO_COMMITS)
     ]
-    unchecked = [c for c in claims if c.state == CLAIM_COULD_NOT_CHECK]
+    # THE UNCHECKED POPULATION INCLUDES THE OPEN-WINDOW SESSION. Before Day 214
+    # it was in neither the denominator nor the unresolved line, so it vanished.
+    unchecked = [
+        c for c in claims if c.state in (CLAIM_COULD_NOT_CHECK, CLAIM_OPEN_WINDOW)
+    ]
     lines = [
         f"⚠ {c.name}: claimed success, 0 task commits in this session's window"
         for c in flagged
     ]
+    # THE HEADLINE IS A SENTENCE WITH A SUBJECT AND A VERB. Until Day 214 it
+    # read "0 of 3 closed, claiming session(s): claimed success, no task
+    # commits" -- a clean result in the grammar of a warning banner, which
+    # trains the reader to skim the one line whose value is that it fires rarely.
+    noun = "session" if len(closed) == 1 else "sessions"
     lines.append(
-        f"{len(flagged)} of {len(closed)} closed, claiming session(s): "
-        f"claimed success, no task commits"
+        f"Claim corroboration: {len(flagged)} of {len(closed)} checkable claiming "
+        f"{noun} claimed success with no task commits."
     )
     if unchecked:
+        counts = {r: 0 for r in CLAIM_UNCHECKED_REASONS}
+        for c in unchecked:
+            counts[c.reason] = counts.get(c.reason, 0) + 1
+        parts = [f"{n} {r}" for r, n in counts.items() if n]
         lines.append(
             f"{len(unchecked)} further claiming session(s) could NOT be checked "
-            f"(window unresolved) — NOT counted above."
+            f"— NOT counted above: {'; '.join(parts)}."
         )
     return lines
 
