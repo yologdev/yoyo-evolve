@@ -6,6 +6,8 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [Unreleased]
 
+- `yoyo checkpoint save`, `yoyo git status`, `yoyo pr list`, `yoyo stash pop` and the other shell forms of nine REPL-only commands (`checkpoint`, `fork`, `bg`, `revisit`, `spawn`, `history`, `stash`, `pr`, `git`) are now refused for free when the second word is one of that command's own subcommands, instead of starting a billed model turn. Prose still reaches the model (`yoyo git how do I rebase`), and the refusal names the `yoyo -p "..."` hatch. `plan`, `refactor`, `copy` and `web` are deliberately not gated because their subcommand words also start ordinary prompts (#936 slice 1).
+
 - `/cd` into a directory whose `.yoyo.toml` sets `[permissions]`, `[directories]`, hooks or MCP servers now prints its "NOT applied in this session" note as a yellow `⚠ warning:` (plain: `warning:`) instead of dim chrome, and never hides it under quiet mode. This is louder disclosure only: the new directory's config is still not applied (#869 stays open).
 
 ## [0.1.19] — 2026-09-29

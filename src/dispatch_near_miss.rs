@@ -762,7 +762,10 @@ mod tests {
                 fired += 1;
             }
         }
-        assert!(fired >= new_verbs.len(), "the loop did not iterate: {fired}");
+        assert!(
+            fired >= new_verbs.len(),
+            "the loop did not iterate: {fired}"
+        );
     }
 
     /// NEAR MISS for #936 slice 1, one prose row per new verb, plus the excluded
