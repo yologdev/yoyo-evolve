@@ -291,6 +291,24 @@ pub(crate) fn git_born_after_by_check(
 /// as an unresolvable hash — the honest answer, and the one that keeps a
 /// non-git project from reading as "no file was born late".
 pub(crate) fn git_born_after_at(hash: &str, surprises: &[String]) -> LedgerBornAfter {
+    git_born_after_probing(hash, surprises, &|a| crate::git::run_git(a).is_ok())
+}
+
+/// [`git_born_after_at`] against an explicit repository (`git -C dir`), so the
+/// green door's tests can drive a temp repo. Same probes, same decision.
+pub(crate) fn git_born_after_in_dir(
+    dir: &std::path::Path,
+    hash: &str,
+    surprises: &[String],
+) -> LedgerBornAfter {
+    git_born_after_probing(hash, surprises, &|a| crate::git::run_git_in_dir(dir, a).is_ok())
+}
+
+fn git_born_after_probing(
+    hash: &str,
+    surprises: &[String],
+    probe: &dyn Fn(&[&str]) -> bool,
+) -> LedgerBornAfter {
     if hash.is_empty() || hash == "unknown" {
         // A sentinel is not a hash, so there is nothing to ask git — but the
         // members are still *unmeasured*, not absent from the answer: a
@@ -298,12 +316,12 @@ pub(crate) fn git_born_after_at(hash: &str, surprises: &[String]) -> LedgerBornA
         let members: Vec<(String, bool)> = surprises.iter().map(|p| (p.clone(), false)).collect();
         return git_born_after_by_check(false, &members);
     }
-    let resolves = crate::git::run_git(&["cat-file", "-t", hash]).is_ok();
+    let resolves = probe(&["cat-file", "-t", hash]);
     let mut members: Vec<(String, bool)> = Vec::new();
     if resolves {
         for path in surprises {
             let spec = format!("{hash}:{path}");
-            let exists = crate::git::run_git(&["cat-file", "-e", &spec]).is_ok();
+            let exists = probe(&["cat-file", "-e", &spec]);
             members.push((path.clone(), exists));
         }
     } else {

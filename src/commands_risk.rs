@@ -3029,6 +3029,7 @@ fn handle_risk_validate() {
         let emerging = emerging_paths_from_snapshot(&snapshot);
         match crate::commands_risk_snapshots::record_green_validation_to(
             std::path::Path::new(RISK_VALIDATION_PATH),
+            std::path::Path::new("."),
             day as u32,
             &git_hash,
             &changed,

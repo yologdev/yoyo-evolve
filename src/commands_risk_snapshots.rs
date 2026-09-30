@@ -736,6 +736,7 @@ pub(crate) enum GreenGrade {
 /// as a false-positive rate, which is the meter's other half.
 pub(crate) fn record_green_validation_to(
     validation_path: &std::path::Path,
+    repo_dir: &std::path::Path,
     day: u32,
     snapshot_git_hash: &str,
     changed_files: &[String],
@@ -776,6 +777,11 @@ pub(crate) fn record_green_validation_to(
         }
     }
     let total = src_files.len();
+    let git = crate::commands_risk_unhittable::git_born_after_in_dir(
+        repo_dir,
+        snapshot_git_hash,
+        &surprises,
+    );
 
     write_validation_event(
         validation_path,
@@ -788,16 +794,17 @@ pub(crate) fn record_green_validation_to(
         Some("watch_success"),
         Some(snapshot_git_hash),
         None, // green event — not a CI harvest
-        // #DREAM: no snapshot *timestamp* is in scope here — this site is
-        // handed a git hash, not the snapshot line — so the unhittable join
-        // (which compares timestamps, never hashes) passes None rather than
-        // guessing. Named limit, not an oversight: green events carry no 0%
-        // recall figure, so no unhittable zero can hide inside one.
-        None,
-        // Same absence, same reason: no reading was made, so there is no
-        // denominator to record either. Omitted, not zero.
+        // #DREAM: no snapshot *timestamp* is in scope here, so the first-scored
+        // LEDGER JOIN cannot run and its two fields stay omitted, not zero.
         None,
         None,
+        // #972: the GIT check needs only the snapshot's hash and the surprise
+        // paths, both in scope — so this door records it. An unresolvable hash
+        // lands in `git_unmeasured`, never in `git_born_after`.
+        Some(GitUnhittableReading {
+            born_after: git.files.len() as u32,
+            unmeasured: git.unmeasured.len() as u32,
+        }),
     )?;
 
     Ok(GreenGrade::Recorded {
@@ -1734,7 +1741,7 @@ mod tests {
         let top_10 = vec!["src/main.rs".to_string(), "src/prompt.rs".to_string()];
         let emerging = vec!["src/cli.rs".to_string()];
 
-        let grade = record_green_validation_to(&path, 140, "abc1234", &changed, &top_10, &emerging)
+        let grade = record_green_validation_to(&path, std::path::Path::new("."), 140, "abc1234", &changed, &top_10, &emerging)
             .expect("record green validation");
 
         // 2 src files changed; 1 (main.rs) was in top_10 → 50% reactive;
@@ -1778,13 +1785,13 @@ mod tests {
         let top_10 = vec!["src/main.rs".to_string()];
         let emerging: Vec<String> = vec![];
 
-        let first = record_green_validation_to(&path, 140, "abc1234", &changed, &top_10, &emerging)
+        let first = record_green_validation_to(&path, std::path::Path::new("."), 140, "abc1234", &changed, &top_10, &emerging)
             .expect("first green validation");
         assert!(matches!(first, GreenGrade::Recorded { .. }));
 
         // Second run against the SAME snapshot hash → deduped, nothing written.
         let second =
-            record_green_validation_to(&path, 140, "abc1234", &changed, &top_10, &emerging)
+            record_green_validation_to(&path, std::path::Path::new("."), 140, "abc1234", &changed, &top_10, &emerging)
                 .expect("second green validation");
         assert_eq!(second, GreenGrade::Deduped);
 
@@ -1813,7 +1820,7 @@ mod tests {
         let path = dir.path().join("validations.jsonl");
 
         let changed = vec!["README.md".to_string(), "docs/src/intro.md".to_string()];
-        let grade = record_green_validation_to(&path, 140, "abc1234", &changed, &[], &[])
+        let grade = record_green_validation_to(&path, std::path::Path::new("."), 140, "abc1234", &changed, &[], &[])
             .expect("green validation with no src changes");
         assert_eq!(grade, GreenGrade::NoSrcChanges);
         assert!(
@@ -1833,7 +1840,7 @@ mod tests {
         let changed = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
         let top_10 = vec!["src/main.rs".to_string()];
         let emerging = vec!["src/cli.rs".to_string()];
-        record_green_validation_to(&path, 140, "abc1234", &changed, &top_10, &emerging)
+        record_green_validation_to(&path, std::path::Path::new("."), 140, "abc1234", &changed, &top_10, &emerging)
             .expect("record green validation");
 
         let contents = std::fs::read_to_string(&path).expect("read validation file");
