@@ -272,6 +272,11 @@ pub fn repl_only_multi_token_verb(args: &[String]) -> Option<&str> {
     if args[2].starts_with('-') {
         return None;
     }
+    // A flag in `args[2]` never fires the gate, even when a completion list
+    // carries it (`spawn`'s `--bg`): flags are the flag parser's business.
+    if args[2].starts_with('-') {
+        return None;
+    }
     for (gated_verb, vocabulary) in REPL_ONLY_MULTI_TOKEN_ARG_GATED {
         if *gated_verb == verb && vocabulary.contains(&args[2].as_str()) {
             return Some(verb);
