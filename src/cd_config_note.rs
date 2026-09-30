@@ -34,6 +34,12 @@ const DIRECTORIES: &str = "[directories]";
 const HOOKS: &str = "hooks";
 const MCP: &str = "MCP servers";
 
+/// Every section this module can name. All four decide what the session may do
+/// (what is denied, where it may write, what runs around a tool call, which
+/// external tools exist), so a note naming any of them is a WARNING, not chrome.
+/// Read by `note_volume`; built from the constants above, never re-spelled.
+const SAFETY_SECTIONS: [&str; 4] = [PERMISSIONS, DIRECTORIES, HOOKS, MCP];
+
 /// Which safety-relevant sections `toml_text` sets, in a fixed order:
 /// `[permissions]` (allow/deny), `[directories]` (allow/deny), `hooks.<phase>.<tool>`
 /// keys, and MCP servers (`mcp = [...]` or `[mcp_servers.*]`).
@@ -115,16 +121,56 @@ pub(crate) fn cd_config_note(
     }
 }
 
-/// Read `<target>/.yoyo.toml` and print the note to stderr in DIM. Read-only.
+/// How loud the note is. Chosen from the note's own severity, never copied from
+/// the DIM "project context is not reloaded" line printed just above it (#869,
+/// Day 214): DIM reads as "skip this", and "your deny list is not in force"
+/// is the one thing on that screen a user must not skip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoteVolume {
+    /// Names at least one of `SAFETY_SECTIONS`: yellow, `warning:`-prefixed.
+    Warning,
+    /// Everything else: DIM, byte-identical to the Day-213 rendering.
+    Chrome,
+}
+
+/// `Warning` iff the reading names a safety section. `Unreadable` names none —
+/// we cannot tell what the file sets — so it stays `Chrome`, byte-identical to
+/// before; raising it would warn on content we have not seen.
+pub(crate) fn note_volume(reading: &CdConfigReading) -> NoteVolume {
+    match reading {
+        CdConfigReading::Sets(sections)
+            if sections.iter().any(|s| SAFETY_SECTIONS.contains(s)) =>
+        {
+            NoteVolume::Warning
+        }
+        _ => NoteVolume::Chrome,
+    }
+}
+
+/// The exact bytes written to stderr for `note` at `volume`. Pure apart from
+/// the colour constants' own NO_COLOR handling. Under `plain` a warning carries
+/// no glyph and no escape bytes; chrome is rendered exactly as Day 213 did.
+pub(crate) fn render_cd_config_note(note: &str, volume: NoteVolume, plain: bool) -> String {
+    use crate::format::{DIM, RESET, YELLOW};
+    match volume {
+        NoteVolume::Chrome => format!("{DIM}{note}{RESET}"),
+        NoteVolume::Warning if plain => format!("warning: {}", note.trim_start()),
+        NoteVolume::Warning => format!("{YELLOW}⚠ warning: {}{RESET}", note.trim_start()),
+    }
+}
+
+/// Read `<target>/.yoyo.toml` and print the note to stderr. Read-only.
 pub(crate) fn print_cd_config_note(target: &Path) {
     let reading = classify_read(std::fs::read_to_string(target.join(".yoyo.toml")));
-    let note = cd_config_note(
-        &target.display().to_string(),
-        &reading,
-        crate::format::is_plain_output(),
-    );
+    let plain = crate::format::is_plain_output();
+    let note = cd_config_note(&target.display().to_string(), &reading, plain);
+    // Deliberately NOT gated on quiet mode, for either volume. A warning is not
+    // chrome: `--quiet` is auto-on whenever stdin and stdout are both piped, so a
+    // quiet-gated warning is silent for exactly the runs nobody watches live —
+    // the reason the max_tokens ceiling warning was un-gated on Day 211 (#964).
+    // (The DIM note was never quiet-gated either; it stays as it was.)
     if let Some(note) = note {
-        eprintln!("{}{note}{}", crate::format::DIM, crate::format::RESET);
+        eprintln!("{}", render_cd_config_note(&note, note_volume(&reading), plain));
     }
 }
 
