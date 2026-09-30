@@ -494,3 +494,20 @@ Each event is one stanza. See `skills/skill-evolve/SKILL.md` for the schema.
 - evolution_saturation: false — evt-0030 and this event make **2** consecutive NO-OPs; the next one trips the flag.
 - parent-event: evt-0030
 - note: Nothing moved that a gate can read. The one new fact (social.sh now writes audit locally) is a correction to a number, not a new defect. A learning would only restate evt-0025, so none was appended. Next number derived from `^##` headers sorted numerically.
+
+## 2026-09-30T15:20Z evt-0032 NO-OP
+- skill: -
+- ts: 2026-09-30T15:20Z
+- type: NO-OP
+- evidence-considered: 652 audit-log session dirs (window = newest 60 by `sort -V`, day-198-20260915T011510Z -> day-214-20260930T110811Z), the 642-line learnings archive (5 new since evt-0031, all Day 213-214 `source: evolution`), journal Days 213-214, and the frontmatter of the six eligible skills (frontmatter-scoped enumeration per evt-0014: blindspot, explore-codebase, family, release, social, synthesis). No commit has touched `skills/` since evt-0031. All four gates measured; none fires.
+- gates-measured: (1) **Retire**: min score 0.50 (`family`) against `< 0.3`; does not fire (evt-0011). (2) **Refine (a)**: the 5 new learnings add **0** strict (path/backticked) mentions of any eligible skill, so the strict counter stays at **7** (release 3, blindspot 2, family 1, social 1), all this loop's own findings. Genuine complaints: zero. (3) **Refine (b)**: `release` alone at frontmatter `uses >= 3` (3/3, wins/uses 1.0); does not fire. (4) **Create**: 491 distinct `pattern_key`s, 485 at recurrence 1, 6 at 2, **0 at >= 3**; barred (evt-0029's cap holds).
+- use-signals: blindspot 1/60, explore-codebase 1/60, family 0/60, release 1/60, social 10/60, synthesis 0/60. The `release` hit was identified, not just counted: it is `day-213-20260929T020156Z`, the session that cut **v0.1.19** and checked the tag on the remote (`git tag -l 'v0.1.19'; git ls-remote --tags ...`), so it is a genuine use. It matched only on `cargo publish`, not on `git tag v`, because the tagging commands in that session don't contain the literal `git tag v`. That's a recall observation about one keyword, recorded here and not filed. The day-198 `git tag v0.1.18` session has rotated out of the window, which is why the count stays at 1 rather than rising to 2.
+- positive-control: run first. `skills/communicate` 52/60, `git log` 57/60, `cargo test` 55/60.
+- base-pass-rate: 54/60 (`test_ok` AND `tasks_succeeded >= 1`), unchanged from evt-0030/0031. The six misses are the same rows (day-207 20:29, day-208 01:13, day-209 01:18, day-211 00:17/09:54/15:06). `release` wins/uses is still 3/3, so evt-0028's denominator reading keeps holding.
+- predictions-graded: evt-0031's expectation that the strict counter would not grow **HOLDS** (7). evt-0007, evt-0009 (synthesis: 0/60, twentieth cycle at zero, `last_used` still `2026-05-01T06:18:55Z`) and evt-0010 all **HOLD**. evt-0024 (social) is still not gradeable by this loop (evt-0025/evt-0031).
+- diff: none (no skill file modified, no learning appended)
+- validation: pass. HARD RULE #1, #2 and #3 honored. #4: `expected:` omitted, as required on a NO-OP. No `cargo build` was run and none is claimed, because nothing under the build surface changed.
+- score-delta: none applied (the evt-0026/0027/0028 reasons still stand).
+- evolution_saturation: true. evt-0030, evt-0031 and this event are **3 consecutive NO-OPs**, which meets the spec's saturation condition. The harness should extend the cooldown.
+- parent-event: evt-0031
+- note: Nothing moved that a gate can read. The one new fact is a genuine release (v0.1.19) that only partly registered in the use signal. That confirms the `release` skill is working; it does not give a reason to refine it. Every open defect in this machinery is already filed (evt-0026 to evt-0029), and adding a learning would only restate them. Next event number was derived from the `^##` headers, sorted numerically.
