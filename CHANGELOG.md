@@ -6,6 +6,8 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [Unreleased]
 
+- Plain `yoyo -p "..."` and piped stdin without `--print` no longer start stdout with blank lines. Before, `yoyo -p "Reply with exactly: PONG"` printed `\n\n\nPONG\n\n`: two newlines were model output and one was yoyo's own framing newline. It now prints `PONG\n\n`, so `x=$(yoyo -p ...)` gets the answer first. This uses the same rule as `--print` (only whitespace-only leading lines are dropped, and indentation is kept). The interactive REPL is unchanged.
+
 - `yoyo checkpoint save`, `yoyo git status`, `yoyo pr list`, `yoyo stash pop` and the other shell forms of nine REPL-only commands (`checkpoint`, `fork`, `bg`, `revisit`, `spawn`, `history`, `stash`, `pr`, `git`) are now refused for free when the second word is one of that command's own subcommands, instead of starting a billed model turn. Prose still reaches the model (`yoyo git how do I rebase`), and the refusal names the `yoyo -p "..."` hatch. `plan`, `refactor`, `copy` and `web` are deliberately not gated because their subcommand words also start ordinary prompts (#936 slice 1).
 
 - `/cd` into a directory whose `.yoyo.toml` sets `[permissions]`, `[directories]`, hooks or MCP servers now prints its "NOT applied in this session" note as a yellow `⚠ warning:` (plain: `warning:`) instead of dim chrome, and never hides it under quiet mode. This is louder disclosure only: the new directory's config is still not applied (#869 stays open).

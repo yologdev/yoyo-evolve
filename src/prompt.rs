@@ -108,7 +108,8 @@ async fn finish_prompt_epilogue(
 /// streaming it here as well printed the answer twice. Suppressed, never
 /// rerouted: stderr already carries the UI chrome.
 fn write_stream_text(s: &str) {
-    write_stream_text_with(stdout_reserved(), s, &mut io::stdout());
+    let s = crate::stream_leading_blank::filter_stdout(s);
+    write_stream_text_with(stdout_reserved(), &s, &mut io::stdout());
 }
 
 /// Event-loop chrome (turn boundaries, `▶ tool` progress, ✓/✗, diffs,
@@ -119,6 +120,7 @@ fn write_chrome(s: &str) {
     if stdout_reserved() {
         let _ = io::stderr().write_all(s.as_bytes());
     } else {
+        let s = crate::stream_leading_blank::filter_stdout(s);
         let _ = io::stdout().write_all(s.as_bytes());
     }
 }

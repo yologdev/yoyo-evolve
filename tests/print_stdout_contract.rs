@@ -598,8 +598,12 @@ fn print_mode_strips_model_emitted_leading_blank_lines() {
     assert_eq!(v["response"], ANSWER);
 }
 
-/// Near-miss: plain `-p` (no reserve) streams the model's bytes as before —
-/// the leading blank lines still reach stdout there, untouched by this fix.
+/// Day 215: plain `-p` (no reserve) streams too, and its stdout no longer
+/// leads with blank lines — the model's `\n\n` and yoyo's own first-text
+/// framing newline are both dropped, so the FIRST stdout byte is the answer's.
+/// (Superseded pin, recorded rather than erased: until Day 215 this test was
+/// `plain_prompt_mode_still_streams_model_leading_blank_lines` and asserted the
+/// leading blank lines reached stdout verbatim.)
 #[test]
 fn plain_prompt_mode_still_streams_model_leading_blank_lines() {
     let run = run_yoyo_with(
@@ -611,9 +615,15 @@ fn plain_prompt_mode_still_streams_model_leading_blank_lines() {
     assert_reached_stub(&run);
     let out = String::from_utf8_lossy(&run.stdout);
     assert!(
-        out.contains(&format!("{LEADING_BLANK_LINES}{ANSWER}")),
-        "unreserved -p must stream the model bytes verbatim; stdout={out:?}"
+        LEADING_BLANK_LINES.starts_with('\n'),
+        "anti-vacuous: the fixture must open with a blank line"
     );
+    assert!(
+        out.starts_with(ANSWER),
+        "plain -p stdout must start with the answer; stdout={out:?}"
+    );
+    // Still streamed (not reserved): trailing framing newlines are unchanged.
+    assert_eq!(out, format!("{ANSWER}\n\n"), "stdout={out:?}");
 }
 
 /// Distinctive partial answer the broken stream delivers before it dies.

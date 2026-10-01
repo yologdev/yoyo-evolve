@@ -135,6 +135,7 @@ mod safety;
 mod session;
 mod setup;
 mod smart_edit;
+mod stream_leading_blank;
 mod symbols;
 mod sync_util;
 mod tool_truncate;
@@ -350,14 +351,8 @@ fn reserves_stdout(print_mode: bool, json_output: bool) -> bool {
 /// is byte-identical. The streamed (unreserved) surface and `--output` files
 /// are deliberately untouched.
 fn answer_payload(text: &str) -> &str {
-    let mut out = text;
-    while let Some((line, after)) = out.split_once('\n') {
-        if !line.trim().is_empty() {
-            break;
-        }
-        out = after;
-    }
-    out
+    // Day 215: one statement of the rule, shared with the streamed `-p` door.
+    stream_leading_blank::strip_leading_blank_lines(text)
 }
 
 /// #965: `--output-format json` set only `output_format`, while `emit_output`
@@ -1236,6 +1231,9 @@ async fn main() {
         // #966: stdout carries only the final payload in --print / json.
         if reserves_stdout(print_mode, json_output) {
             format::reserve_stdout_for_payload();
+        } else {
+            // Day 215: the streamed non-interactive stdout drops leading blank lines.
+            stream_leading_blank::arm();
         }
         // Slash commands need REPL state, so `-p` can't dispatch them either.
         // Refuse at the dispatch site — before `run_single_prompt` builds an
@@ -1267,6 +1265,9 @@ async fn main() {
         }
         if reserves_stdout(print_mode, json_output) {
             format::reserve_stdout_for_payload();
+        } else {
+            // Day 215: the streamed non-interactive stdout drops leading blank lines.
+            stream_leading_blank::arm();
         }
         run_piped_mode(
             &mut agent_config,

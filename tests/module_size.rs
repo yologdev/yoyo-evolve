@@ -481,7 +481,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // hide the enumeration this task exists to make checkable.
     // Day 174: +429 absorbed since Day 166 — second-worst on the register, and
     // 429 lines of ratchet slack the warning branch never got anyone to close.
-    ("src/prompt.rs", 3790),
+    // Day 215: 3790 -> 3792 (+2, the two stdout writes now pass through
+    // `stream_leading_blank::filter_stdout`; the logic lives in its own module).
+    ("src/prompt.rs", 3792),
     // Day 183: first entry for this file — 2042, i.e. 42 past MAX_MODULE_LINES and
     // so inside OVERSHOOT_GRACE_LINES, which is why it warned instead of failing.
     // Registering it is this gate's OWN stated remedy for a grace-band overshoot
