@@ -1,0 +1,311 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 3015,3360p scripts/extract_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2930,3014p scripts/extract_… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 3128,3260p scripts/extract_… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 150,180p scripts/extract_tr… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 21.2s (5 ✓)
+
+Now look at the Day-214 self-test fixture I'll build on.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 7380,7440p scripts/extract_… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^def run_cmd" -A12 script… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.7s (2 ✓)
+
+Now the implementation: a CloneDepth carrier, a collector, and a pure line composer.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (1 → 89 lines)
+  - def claim_corroboration_lines(claims: list[SessionClaim]) -> list[str]:
+  + @dataclass
+  + class CloneDepth:
+  +     """What this clone can see: its commit count and its oldest commit's time.
+  + 
+  +     `commit_count is None` means `git rev-list --count HEAD` FAILED -- the
+  +     renderer prints a could-not-check clause for it, never a plausible number.
+  +     `oldest_epoch` is the value `collect_task_commit_times` already measured,
+  +     carried here rather than re-read so the boundary the refusals were decided
+  +     against and the boundary the mismatch line names are one measurement.
+  +     """
+  + 
+  +     commit_count: int | None
+  +     oldest_epoch: int | None
+  + 
+  + 
+  + def collect_clone_depth(oldest_epoch: int | None) -> CloneDepth:
+  +     """`git rev-list --count HEAD`, plus the already-measured oldest commit."""
+  +     rc, stdout, _ = run_cmd(["git", "rev-list", "--count", "HEAD"], timeout=10)
+  +     count: int | None = None
+  ... (70 more lines)
+  ▶ edit scripts/extract_trajectory.py (3 → 6 lines)
+                f"— NOT counted above: {'; '.join(parts)}."
+            )
+  +     mismatch = clone_window_mismatch_line(claims, clone)
+  +     if mismatch is not None:
+  +         lines.append(mismatch)
+        return lines
+  ▶ edit scripts/extract_trajectory.py (1 → 1 lines)
+  - def render_outcomes(outcomes: list[dict], session_claims=None) -> str:
+  + def render_outcomes(outcomes: list[dict], session_claims=None, clone=None) -> str:
+  ▶ edit scripts/extract_trajectory.py (1 → 1 lines)
+  -     lines.extend(claim_corroboration_lines(session_claims or []))
+  +     lines.extend(claim_corroboration_lines(session_claims or [], clone))
+  ▶ edit scripts/extract_trajectory.py (3 → 10 lines)
+            claim_sessions, task_commit_times, oldest_commit_epoch
+  +     )
+  +     # No boundary means no before-clone refusal can exist, so the mismatch
+  +     # line cannot fire -- skip the extra git call rather than spend it.
+  +     clone_depth = (
+  +         collect_clone_depth(oldest_commit_epoch)
+  +         if oldest_commit_epoch is not None
+  +         else None
+        )
+        provider_scan = (
+  ▶ edit scripts/extract_trajectory.py (1 → 1 lines)
+  -     s = render_outcomes(outcomes, session_claims)
+  +     s = render_outcomes(outcomes, session_claims, clone_depth)
+ ✓ (6ms)
+  - def claim_corroboration_lines(claims: list[SessionClaim]) -> list[str]:
+  + @dataclass
+  + class CloneDepth:
+  +     """What this clone can see: its commit count and its oldest commit's time.
+  + 
+  +     `commit_count is None` means `git rev-list --count HEAD` FAILED -- the
+  +     renderer prints a could-not-check clause for it, never a plausible number.
+  +     `oldest_epoch` is the value `collect_task_commit_times` already measured,
+  ... (13 more lines)
+ ✓ (6ms)
+                f"— NOT counted above: {'; '.join(parts)}."
+            )
+  +     mismatch = clone_window_mismatch_line(claims, clone)
+  +     if mismatch is not None:
+  +         lines.append(mismatch)
+        return lines
+ ✓ (7ms)
+  - def render_outcomes(outcomes: list[dict], session_claims=None) -> str:
+  + def render_outcomes(outcomes: list[dict], session_claims=None, clone=None) -> str:
+ ✓ (6ms)
+  -     lines.extend(claim_corroboration_lines(session_claims or []))
+  +     lines.extend(claim_corroboration_lines(session_claims or [], clone))
+ ✓ (7ms)
+            claim_sessions, task_commit_times, oldest_commit_epoch
+  +     )
+  +     # No boundary means no before-clone refusal can exist, so the mismatch
+  +     # line cannot fire -- skip the extra git call rather than spend it.
+  +     clone_depth = (
+  +         collect_clone_depth(oldest_commit_epoch)
+  +         if oldest_commit_epoch is not None
+  +         else None
+        )
+        provider_scan = (
+ ✓ (7ms)
+  -     s = render_outcomes(outcomes, session_claims)
+  +     s = render_outcomes(outcomes, session_claims, clone_depth)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/extract_trajectory.py (2 → 67 lines)
+            and all(c.reason in CLAIM_UNCHECKED_REASONS for c in unchecked214),
+  +     )
+  + 
+  +     # DAY 215: WHEN BEFORE-CLONE REFUSALS ARE THE MAJORITY, NAME THE SHAPE.
+  +     # Same ladder as Day 214, boundary moved up one rung so sessions 1-3 open
+  +     # before the clone (3 of 5 claiming >= half) and only session 4 is checked.
+  +     # Built through classify_session_claims, never a typed list of verdicts.
+  +     major_oldest = compact_utc_epoch("2026-09-29T00:00:00Z")
+  +     assert_true(
+  +         "anti-vacuous: majority boundary sits between ladder rungs 2 and 3",
+  +         t214[2] < major_oldest < t214[3],
+  +     )
+  +     c215 = classify_session_claims(
+  +         [ClaimSession(n, True) for n in r214],
+  +         [commit_at(t - 20 * 60, "%08x" % i) for i, t in enumerate(t214)],
+  +         major_oldest,
+  +     )
+  +     assert_eq(
+  +         "anti-vacuous: the majority fixture really is 3 before-clone of 5",
+  +         sum(1 for c in c215 if c.reason == CLAIM_REASON_BEFORE_CLONE),
+  ... (47 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 scripts/extract_trajectory… ✓ (2ms)
+            and all(c.reason in CLAIM_UNCHECKED_REASONS for c in unchecked214),
+  +     )
+  + 
+  +     # DAY 215: WHEN BEFORE-CLONE REFUSALS ARE THE MAJORITY, NAME THE SHAPE.
+  +     # Same ladder as Day 214, boundary moved up one rung so sessions 1-3 open
+  +     # before the clone (3 of 5 claiming >= half) and only session 4 is checked.
+  +     # Built through classify_session_claims, never a typed list of verdicts.
+  +     major_oldest = compact_utc_epoch("2026-09-29T00:00:00Z")
+  ... (13 more lines)
+ ✓ (480ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 7215,7240p scripts/extract_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "CloneDepth\b" scripts/ext… ✓ (4ms)
+  10 tools completed in 25.3s (10 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "def clone_window_mismatch… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git diff --stat; git diff | grep "… ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.7s (2 ✓)
+
+Four of my edits didn't persist. Re-applying them now, one at a time, and checking each one.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (1 → 1 lines)
+  - def render_outcomes(outcomes: list[dict], session_claims=None) -> str:
+  + def render_outcomes(outcomes: list[dict], session_claims=None, clone=None) -> str:
+  ▶ edit scripts/extract_trajectory.py (1 → 1 lines)
+  -     lines.extend(claim_corroboration_lines(session_claims or []))
+  +     lines.extend(claim_corroboration_lines(session_claims or [], clone))
+  ▶ edit scripts/extract_trajectory.py (3 → 10 lines)
+            claim_sessions, task_commit_times, oldest_commit_epoch
+  +     )
+  +     # No boundary means no before-clone refusal can exist, so the mismatch
+  +     # line cannot fire -- skip the extra git call rather than spend it.
+  +     clone_depth = (
+  +         collect_clone_depth(oldest_commit_epoch)
+  +         if oldest_commit_epoch is not None
+  +         else None
+        )
+        provider_scan = (
+  ▶ edit scripts/extract_trajectory.py (3 → 6 lines)
+                f"— NOT counted above: {'; '.join(parts)}."
+            )
+  +     mismatch = clone_window_mismatch_line(claims, clone)
+  +     if mismatch is not None:
+  +         lines.append(mismatch)
+        return lines
+ ✓ (3ms)
+  - def render_outcomes(outcomes: list[dict], session_claims=None) -> str:
+  + def render_outcomes(outcomes: list[dict], session_claims=None, clone=None) -> str:
+ ✓ (3ms)
+  -     lines.extend(claim_corroboration_lines(session_claims or []))
+  +     lines.extend(claim_corroboration_lines(session_claims or [], clone))
+ ✓ (4ms)
+            claim_sessions, task_commit_times, oldest_commit_epoch
+  +     )
+  +     # No boundary means no before-clone refusal can exist, so the mismatch
+  +     # line cannot fire -- skip the extra git call rather than spend it.
+  +     clone_depth = (
+  +         collect_clone_depth(oldest_commit_epoch)
+  +         if oldest_commit_epoch is not None
+  +         else None
+        )
+        provider_scan = (
+ ✓ (4ms)
+                f"— NOT counted above: {'; '.join(parts)}."
+            )
+  +     mismatch = clone_window_mismatch_line(claims, clone)
+  +     if mismatch is not None:
+  +         lines.append(mismatch)
+        return lines
+  4 tools completed in 1.2s (4 ✓)
+
+Now the big definition block, which I'll write with a Python script so I can confirm it actually lands:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/blo… (100 lines) ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "clone_depth\|session_clai… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.9s (2 ✓)
+
+Some edit_file writes aren't landing in this checkout, so I'll make the remaining edits with Python and check each one:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls -la "$PWD/s… (28 lines) ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "clone_depth\|, clone))\|s… ✓ (3ms)
+  2 tools completed in 2m 3s (1 ✓, 1 ✗)
+
+The find / hung before the Python script could run. Running the script on its own:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (28 lines) ✓ (106ms)
+
+Self-tests all pass. I'll commit now (Day-209 rule), then run the positive control as one atomic mutate→run→restore command.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -c "Day 215\|majority refusal… ✓ (17ms)
+
+
+Positive control, in one atomic command (neuter → run → restore → verify):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; F=scripts/extr… (3 lines) ✓ (108ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control turns exactly the three majority-path tests red by name. The file is restored, with no diff and no NEUTERED marker left. Now the real run:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n '/^USAGE = /,/^"""/p' scrip… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls -d /tmp/*/sessions ../*/session… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p /tmp/al && timeout 90 sh … ✓ (523ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; YOYO_AUDIT_DIR=/tmp/al/sessions YO… ✓ (932ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 10.9s (4 ✓)
+
+The line fires on real data. Its commit count (55) matches git rev-list --count HEAD. Next, the ARCHITECTURE.md entry:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "extract_trajectory" ARCHI… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^#\+ .*extract_trajectory… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n '1186,1200p' ARCHITECTURE.m… ✓ (9ms)
+  3 tools completed in 5.2s (3 ✓)
+
+
+I'm inserting the entry right after the Day-214 claim-corroboration bullet (line 1186):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (16 lines) ✓ (48ms)
+
+Next, the commit, then the cargo gates. The commit comes first because the cargo run is long.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A scripts/extract_traject… ✓ (37ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; (cargo fmt -- --check && cargo bui… ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test -q > /tmp/c… ✓ (1m 43s)
+  3 tools completed in 1m 50s (3 ✓)
+
+cargo test passed (rc=0, no failures). The harness logic check is quick, so I'll run it too, then squash the two WIP commits into the final commit:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 200 bash tests/harness_log… ✓ (1.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git reset --so… (25 lines) ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.3s (2 ✓)
+
+I've added the change and committed it as 78e45157. When most of the sessions this check reads can't be checked, the trajectory now says the instrument itself is the cause and names the two settings that collide.
+
+First real run, against the actual audit-log sessions:
+```
+Shape, not a per-run accident: 6 of 10 claiming sessions open before the clone. Window = last 10 sessions; clone = 55 commits, oldest 2026-09-29 20:32 UTC; 3 of the 10 sessions read open their window after it. The window is this script's; the fetch depth is set in .github/workflows/evolve.yml (protected).
+```
+The 55-commit figure matches git rev-list --count HEAD.
+
+What changed, in `scripts/extract_trajectory.py`:
+• **When it fires:** the new line `clone_window_mismatch_line` is added to the block only when sessions refused for starting before the clone are at least half of the sessions that claimed success.
+• **Numbers are measured, not typed:** the window size, the clone's commit count, the oldest commit's date, and how many sessions start after that date. If git fails, the line says the count "could NOT be checked" rather than printing a number. The oldest-commit date is the same value the refusals were decided against.
+• **Nothing else moved:** WINDOW_SESSIONS and every existing count and verdict are unchanged.
+• **Self-tests:**
+  • The majority case is built with the real classifier and must render the exact expected line, including through render_outcomes.
+  • The git-failure case must use the "could NOT be checked" wording.
+  • When refusals are a minority (Day 214's 2 of 5 case) or there are none, the output must match today's exactly.
+• **Positive control:** I forced the threshold to always fire, marked `NEUTERED`, then ran and restored it in one command. Exactly the three majority-case tests failed by name. The file is restored with no marker left.
+
+`ARCHITECTURE.md`: a Day-215 entry under the extract_trajectory section. It says this line only reports the problem. The real fix is fetching more history, which belongs to whoever owns the protected workflow. The one lever this script has, shrinking the window, was deliberately not used because it would change what every count means.
+
+Checks: --test all passed, cargo fmt --check, build, clippy (-D warnings) and cargo test passed, and tests/harness_logic.sh reported 157 passed, 0 failed.
+
+Process problem you should know about: in this checkout, several of my edit_file calls reported success but the changes never reached the file. I caught it with grep, redid those edits with Python, and checked each one before committing. I don't know the cause. The final commit contains every change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

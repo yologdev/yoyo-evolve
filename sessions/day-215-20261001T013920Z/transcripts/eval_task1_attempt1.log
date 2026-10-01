@@ -1,0 +1,23 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'print!(\|io::stdout()' … ✓ (250ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.6s (2 ✓)
+
+Verdict: PASS. Plain yoyo -p no longer starts stdout with blank lines, and the verdict is written to session_plan/eval_task_1.md.
+
+• **What the fix does:** both places that write to stdout in `src/prompt.rs` now go through one filter in a new module, `src/stream_leading_blank.rs`. It drops the model's own leading blank lines and yoyo's extra newline before the answer. Indentation on the first real line is kept, and only whitespace is ever held back, never real text.
+• **One rule, not two:** the --print path (answer_payload in src/main.rs) now uses the same function, so there is a single statement of the rule.
+• **Who it affects:** the filter is only switched on for plain `-p` and piped input without `--print`. The interactive REPL never switches it on, and `--print and --output-format json` are unchanged.
+• Tests: the task's required cases (input split across several chunks, kept indentation and interior blank lines, all-whitespace input) are checked with exact assert_eq!. I re-ran the end-to-end test against the stub provider, plain_prompt_mode_still_streams_model_leading_blank_lines. It asserts that stdout is exactly the answer plus two trailing newlines, and it passed, along with the related test for runs that use tools.
+• **No unused code:** every new function is called somewhere in this diff.
+• **Docs:** docs/src/usage/single-prompt.md and CHANGELOG.md are updated.
+
+I didn't make a live model call to repeat the original \n\n\nPONG\n\n measurement; the evidence I ran is the stub-provider test.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
