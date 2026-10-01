@@ -1,0 +1,137 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (10ms)
+  ▶ read tests/print_stdout_contract.rs:100..280  ▶ read tests/print_stdout_contract.rs:630..730  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git log --oneline -8; git log -S'p… ✓ (2ms)
+ ✓ (3ms)
+ ✓ (111ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 8.3s (4 ✓)
+
+The test this task asks for already exists in the tree. Let me check its provenance and whether it passes.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git rev-parse --is-shallow-reposit… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,140p src/stream_leading_b… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,40p src/stream_leading_bl… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "stream_leading_blank::ar…  ▶ read src/stream_leading_blank.rs (42 lines) ✓ (0ms)
+ ✓ (25ms)
+  ▶ read tests/print_stdout_contract.rs:280..355  ▶ read tests/print_stdout_contract.rs:540..632 ✓ (0ms)
+ ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 28.1s (7 ✓)
+
+Now write the probe: the armed-filter doors (plain -p and piped without --print), partial text that ends in \n so the trailing hold is in play.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit tests/print_stdout_contract.rs (2 → 7 lines)
+    fn sse_dies_mid_stream_body() -> String {
+  -     let text = serde_json::to_string(PARTIAL).unwrap();
+  +     sse_dies_mid_stream_body_with(PARTIAL)
+  + }
+  + 
+  + /// [`sse_dies_mid_stream_body`] with an arbitrary partial text delta.
+  + fn sse_dies_mid_stream_body_with(partial: &str) -> String {
+  +     let text = serde_json::to_string(partial).unwrap();
+  ▶ edit tests/print_stdout_contract.rs (4 → 81 lines)
+            "--print stdout must carry the partial answer already produced; stderr={}",
+            run.stderr
+  +     );
+  + }
+  + 
+  + /// Partial answer ending in a line terminator, so the armed stdout filter's
+  + /// trailing-whitespace HOLD (`src/stream_leading_blank.rs`, Day 215) is in
+  + /// play when the stream dies. `PARTIAL` alone has no trailing whitespace and
+  + /// only reaches the reserved `--print` door, which bypasses that filter.
+  + const PARTIAL_LINE: &str = "PARTIAL_ANSWER_7Q\n";
+  + 
+  + /// The unreserved, filter-ARMED doors (plain `-p`, piped stdin without
+  + /// `--print`) when the stream dies mid-turn after `PARTIAL_LINE`. Day 212's
+  + /// test above covers only `--print`, whose payload never passes through the
+  + /// streaming filter, so the hold-back added on Day 215 had never met an error
+  + /// path. Asserts: the streamed text survives on stdout (the filter may drop
+  + /// only trailing whitespace, never text), the dead turn exits nonzero, and the
+  + /// error is on stderr, not stdout.
+  + #[test]
+  + fn armed_doors_keep_streamed_partial_answer_when_turn_dies_mid_stream() {
+  ... (61 more lines)
+ ✓ (16.5s)
+    fn sse_dies_mid_stream_body() -> String {
+  -     let text = serde_json::to_string(PARTIAL).unwrap();
+  +     sse_dies_mid_stream_body_with(PARTIAL)
+  + }
+  + 
+  + /// [`sse_dies_mid_stream_body`] with an arbitrary partial text delta.
+  + fn sse_dies_mid_stream_body_with(partial: &str) -> String {
+  +     let text = serde_json::to_string(partial).unwrap();
+ ✓ (16.8s)
+            "--print stdout must carry the partial answer already produced; stderr={}",
+            run.stderr
+  +     );
+  + }
+  + 
+  + /// Partial answer ending in a line terminator, so the armed stdout filter's
+  + /// trailing-whitespace HOLD (`src/stream_leading_blank.rs`, Day 215) is in
+  + /// play when the stream dies. `PARTIAL` alone has no trailing whitespace and
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 632,670p tests/print_stdout… ✓ (6ms)
+  3 tools completed in 19.0s (3 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+The first edit didn't stick, so I'm applying it again.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (57.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "stream_leading_blank" ARC… ✓ (411ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (15 lines) ✓ (33ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 18s (3 ✓)
+
+I'll add a comment in the test about the duplication, then run the full gate.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (12 lines) ✓ (2m 50s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -cE "FAILED… ✓ (4m 54s)
+  2 tools completed in 7m 48s (2 ✓)
+
+All green: fmt, clippy -D warnings, and every test result shows 0 failed. Committing.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (25 lines) ✓ (42ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll file the two defects the probe found, so they aren't left only in prose.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue creat… (11 lines) ✓ (1.0s)
+
+The probe found no loss. When the stream dies mid-turn, -p keeps the answer it already streamed, so I made no code change and committed the test as a regression guard (commit 2dd9f632).
+
+The task's premise was partly out of date. A Day-212 test already covered this case and the CHANGELOG already mentioned it. But that test only drives --print, which never passes through the stdout filter. Its partial text also had no trailing whitespace, so the hold-back added this morning had never been tested on an error path. That was the real gap.
+
+The new test: armed_doors_keep_streamed_partial_answer_when_turn_dies_mid_stream runs the real binary through both doors that use the filter: plain -p, and piped stdin without --print. The local stub streams PARTIAL_ANSWER_7Q\n, then sends an overloaded_error with no end-of-message. Both doors gave the same readings:
+• exit code: non-zero (all 6 attempts died)
+• **stderr:** error: API error: {...overloaded_error...}, then (failed after 6 attempts) and API error with no fallback configured. Exiting.
+• stdout: contains the partial text, and no error text
+
+I also added a check that the normal path is unchanged: the same text on a stream that finishes normally comes out as exactly PARTIAL_ANSWER_7Q\n.
+
+Two other bugs show up in that stdout, and I didn't fix them here:
+• **Repeated answer:** every retry streams the partial answer again, so a pipe gets 6 copies with blank lines between them.
+• **Bell characters:** two BEL bytes (\x07) end up on stdout.
+
+I filed both as #976 and wrote them into ARCHITECTURE.md, so this reading isn't recorded as clean. The new test only checks that the partial text is present, not how many times. Once #976 is fixed, it should be tightened to check the exact output.
+
+fmt, clippy (-D warnings) and the full cargo test all pass. I didn't touch the docs or CHANGELOG because behaviour didn't change.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
