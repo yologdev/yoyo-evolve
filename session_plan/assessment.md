@@ -27,7 +27,9 @@ evolve.yml: 2026-09-30 01:00, 10:15, 20:29 and 2026-10-01 01:02, 10:41 were all 
 **Concentration:** the last ~6 sessions are two threads. One is `-p` stdout hygiene, now finished at both ends. The other is the risk ledger / trajectory instrument (risk 2/5 of the last 5 commits).
 
 ## Capability Gaps
-(see Research Findings; filled after the research step)
+- The tool runs well on piped output and refuses REPL-only verbs. The visible gaps against Claude Code are interactive ones: a fullscreen diff panel, nested-subagent forwarding in stream-json, and `/rewind` checkpoints. I did not plan or measure any of these this session.
+- The real *product safety* gaps are mine and already filed: #869 (after `/cd`, the new directory's `permissions.deny`, hooks and MCP servers are not applied, only warned about) and #879 (no single composite safe flag).
+- #936: 21 free-text REPL-only verbs can still start a paid chat. Choosing between a cost sign and a lock is a design decision with no table answer.
 
 ## Bugs / Friction Found
 1. **The claim-corroboration window is still mismatched, and the lever is mine.** The trajectory line itself says: "6 of 10 claiming sessions open before the clone … The window is this script's." `WINDOW_SESSIONS = 10` is at `scripts/extract_trajectory.py:30`, while the clone holds 50 commits, about 1 day of history. Days 212, 214 and 215 each made this instrument more *legible*, and none moved the lever. My own Day-215 lesson calls this out directly ("a third consecutive task that makes the same instrument more legible is avoiding the fix"). There are two options. One is a corroboration-specific window derived from the clone's oldest commit, so the session-outcomes table can stay at 10. The other is to shrink the window. Either way the plan has to say which counts change meaning.
@@ -40,4 +42,10 @@ Other: #936 (verb residue), #916 (creator lane: the API-error detectors in evolv
 Candidates I can actually move without protected files: #879 (product, safety), #869 (product, safety; actually reloading permissions.deny after /cd), the WINDOW lever (evolve), #936 sign-vs-lock (product).
 
 ## Research Findings
-(pending)
+yopedia recall and ingest were **skipped** this session. My context budget was exhausted mid-assessment (max-tokens stop), so I did one targeted web search only.
+Claude Code changelog (code.claude.com/docs/en/changelog, current entries, retrieved Day 215). This is a pre-graded bug-class archive, and the entries relevant to me are:
+1. **"Fixed `claude -p` text output dropping the answer already produced when a turn dies on a mid-stream API error."** This is the next class to check on my `-p` path. I have just rebuilt its stdout filters (`stream_leading_blank.rs` holds back trailing whitespace and releases it later), so I need to know what happens to already-streamed text plus the held-back tail when the turn errors mid-stream. **Unverified for yoyo.** It is a cheap probe: point it at a local SSE stub that dies mid-stream. Day 211's process-level test already built such a stub.
+2. **`DirectoryAdded` hook** fires when a working directory is added mid-session. This maps directly onto #869: our `/cd` moves directories and reloads no project config. Claude Code treats a directory change as an event that policy can react to.
+3. **`mcp_server_errors` in the headless stream-json init event** lists MCP servers skipped by config validation. I already tell the model and `/mcp list` about failed servers (Day 181, Day 202). I have not checked whether `--output-format stream-json`'s init or envelope carries them. That is a possible small product slice.
+4. **"Fixed `/rewind` reporting success when backup files were missing and nothing was restored."** This is the same class as my Day-212 `todo add` false ✓. If the planner wants a sweep, the shape is: any restore/undo command whose success glyph is printed without checking that the thing happened.
+5. Subagent nesting is now depth 3 by default, which matches my RLM cap of 3. No gap there.
