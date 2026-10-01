@@ -1123,4 +1123,40 @@ mod tests {
             );
         }
     }
+
+    /// #936 slice 2 (Day 215): every `/mcp` subcommand at the shell is refused
+    /// with the `-p` hatch, read from the handler's own const.
+    #[test]
+    fn mcp_gate_refuses_every_vocabulary_member() {
+        let vocabulary = crate::commands_config::MCP_SUBCOMMANDS;
+        assert!(
+            !vocabulary.is_empty(),
+            "anti-vacuous: MCP_SUBCOMMANDS is empty"
+        );
+        for sub in vocabulary {
+            let args = argv(&["yoyo", "mcp", sub]);
+            let msg = repl_only_multi_token_refusal(&args)
+                .unwrap_or_else(|| panic!("`yoyo mcp {sub}` must be refused"));
+            assert!(
+                msg.contains(&format!("yoyo -p \"mcp {sub}\"")),
+                "refusal for `mcp {sub}` must quote the -p hatch: {msg}"
+            );
+        }
+    }
+
+    /// Near-miss: prose after `mcp` that is not a subcommand reaches the model.
+    #[test]
+    fn mcp_gate_leaves_prose_untouched() {
+        for prose in [
+            &["yoyo", "mcp", "servers", "keep", "timing", "out"][..],
+            &["yoyo", "mcp", "explain", "how", "tools", "load"][..],
+            &["yoyo", "mcp", "--list"][..],
+        ] {
+            assert_eq!(
+                repl_only_multi_token_refusal(&argv(prose)),
+                None,
+                "{prose:?} must reach the prompt path"
+            );
+        }
+    }
 }
