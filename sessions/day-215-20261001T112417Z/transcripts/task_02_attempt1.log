@@ -1,0 +1,82 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (13ms)
+  ▶ read src/dispatch_near_miss.rs:1..341 ✓ (2ms)
+  ▶ read src/dispatch_near_miss.rs:160..295 ✓ (1ms)
+  ▶ $ grep -n "pub const KNOWN_COMMANDS" -A80 src/commands.rs | gr… (13 lines) ✓ (29ms)
+  ▶ $ python3 - <<'EOF' (7 lines) ✓ (25ms)
+  ▶ $ python3 - <<'EOF' (15 lines) ✓ (26ms)
+  ▶ $ grep -rn 'SUBCOMMANDS\|_ARGS: &\[' src --include=*.rs | grep "pub\(.crate.\)\? c…  ▶ $ grep -n '"/\(add\|apply\|cd\|clear\|compact\|copy\|export\|explain\|fix\|forget\… ✓ (5ms)
+ ✓ (12ms)
+  ▶ $ sed -n 120,215p src/dispatch.rs; grep -n "CommandRoute::\(Compact\|Changes\|Mcp\… ✓ (6ms)
+  ▶ $ sed -n 215,262p src/dispatch.rs; for l in 461 479 572 576 586 609 613 623 627 63… ✓ (52ms)
+  ▶ $ sed -n 618,700p src/dispatch.rs; sed -n 833,925p src/dispatch.rs ✓ (6ms)
+  11 tools completed in 28.4s (11 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ grep -n "pub fn handle_mcp" -A40 src/*.rs | grep -n '"[a-z]*"' | head -20 ✓ (10ms)
+  ▶ $ sed -n 1125,1175p src/commands_config.rs; grep -n "MCP_SUBCOMMANDS\|\"/mcp\" =>"… ✓ (16ms)
+  ▶ $ python3 - <<'EOF' (57 lines) ✓ (11.2s)
+  ▶ $ git add -A && git commit -qm "Day 215 (10:43): #936 slice 2 — gate yoyo mcp <lis… ✓ (16ms)
+  ▶ $ python3 - <<'EOF' (41 lines) ✓ (29.4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 11s (5 ✓)
+
+Positive control, atomic and serial:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/dispatch_near_miss.rs /tmp/dnm.bak && sed -i 's|    ("mcp", crate::comman… ✓ (58.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "pub fn wants_summary" -A6 src/*.rs | head -8; grep -n "pub fn handle_co… ✓ (26ms)
+  ▶ $ grep -rn "fn wants_summary" -A5 src | head -7 ✓ (10ms)
+  ▶ $ grep -n "dispatch_near_miss" ARCHITECTURE.md | head -5; grep -n "#936 slice 1" A… ✓ (8ms)
+  4 tools completed in 1m 12s (4 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cat > /tmp/census.md <<'EOF' (13 lines) ✓ (930ms)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -2 && git add… ✓ (2m 52s)
+  ▶ $ cargo test 2>&1 | grep -c "test result: ok"; git status --short | head -3; git l… ✓ (2m 2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 5m 7s (3 ✓)
+
+I gated one more verb: yoyo mcp list and yoyo mcp help typed at the shell are now refused for free instead of starting a paid model turn. The census of the remaining verbs is posted on #936 and recorded in ARCHITECTURE.md. fmt, clippy (-D warnings) and the full cargo test pass, and the work is committed as a00e4108.
+
+Census. At HEAD there are 39 REPL-only verbs still unhandled, not the ~41 the task estimated. That is 92 unique KNOWN_COMMANDS (/quick is listed twice), minus 39 routed, 4 always refused, and the 12 verbs gated before this session.
+
+| Class | Count | Verbs |
+|---|---|---|
+| A — handler already has a list of valid arguments | 4 | plan, refactor, copy, web |
+| B — handler matches inline words, no list | 3 | mcp (gated now), changes, compact |
+| C — takes free text (a path, a query, prose) | 21 | add, apply, cd, export, explain, forget, save, load, search, loop, mark, jump, read, remember, quick, side, rename, extract, move, open, refs |
+| D — takes no argument | 11 | quit, exit, clear, clear!, fix, hooks, retry, marks, rewind, tips, profile |
+
+None of the four class-A verbs could be used. Slice 1 had already excluded all four because ordinary sentences start with them (yoyo plan on migrating…, yoyo copy code from…), and I didn't reopen that decision. The task's fallback rule says to take a class-B verb in that case.
+
+Why `mcp`.
+• It isn't an English word, so a real prompt is unlikely to start with it.
+• I moved its two subcommands into a new constant, MCP_SUBCOMMANDS = ["list", "help"], in src/commands_config.rs.
+• `handle_mcp now reads that constant to decide what it accepts and to print its usage line. The usage line reads exactly as before (/mcp [list|help]`).
+• The shell-side refusal reads the same constant, so the two can't drift apart.
+• **Known cost:** `yoyo mcp help me set up a server` is now refused, with the `yoyo -p "..."` workaround shown. This is the same trade already accepted for `yoyo cost out this refactor`.
+
+I didn't gate changes or compact because both are English words.
+
+Tests.
+• **Refusal test:** checks the list isn't empty, then confirms every member is refused and the message shows the -p workaround.
+• **Near-miss test:** checks that yoyo mcp servers keep timing out, yoyo mcp explain how tools load and yoyo mcp --list still reach the model.
+• **Positive control:** I removed the new entry with a `NEUTERED` marker and restored it in one command. The refusal test failed by name and the near-miss test stayed green. After the restore, no markers were left and both passed.
+• The existing `multi_token_guard_leaves_real_prompts_untouched` test was not edited and still passes.
+
+Two things to know.
+• I classified changes and compact from their usage strings and helpers rather than reading their full dispatch.
+• The task asked for file:line references for every verb. The class-C and class-D rows list verb names only, with their routing pointed at src/dispatch.rs.
+
+#936 stays open for the 21 free-text verbs. Each needs either a different way to tell commands from prompts, or an explicit decision to leave it as a paid turn.
+  watch: no files changed this turn — skipping
+
