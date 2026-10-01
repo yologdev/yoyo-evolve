@@ -580,7 +580,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // pin the two child sets, the refusal stem, the parent-facing description
     // and the fold. Number pasted from what the gate itself printed (line
     // count after `cargo fmt`; the gate ran on 4655 pre-fmt).
-    ("src/tools.rs", 4940), // Day 210 (Task 2): 4931 -> 4940 (+9) — the outermost `SubAgentOutputMarkerTool` wrap at `dispatch_tool_with_fallback`, plus the import; the marker must be applied at the seam both dispatch doors leave through, not inside a decorator only one of them reaches. Day 205: +32 for the single child-model resolution that both dispatch doors read, and the label that must name it.
+    ("src/tools.rs", 4975), // Day 215 (Task 2): 4940 -> 4975 (+35) — `StreamingBashTool::user_deny` plus `build_bash_tool`, so a user deny pattern blocks bash under --yes and after "always"; its tests live in src/tools_user_deny_tests.rs. Day 210 (Task 2): 4931 -> 4940 (+9) — the outermost `SubAgentOutputMarkerTool` wrap at `dispatch_tool_with_fallback`, plus the import; the marker must be applied at the seam both dispatch doors leave through, not inside a decorator only one of them reaches. Day 205: +32 for the single child-model resolution that both dispatch doors read, and the label that must name it.
     // Day 163 (#726): -58 lines — emerging-risk annotation removed from
     // build_watch_fix_prompt, with its own test; see #724.
     ("src/watch.rs", 4418),

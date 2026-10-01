@@ -77,6 +77,11 @@ pub struct StreamingBashTool {
     pub max_output_bytes: usize,
     /// Commands/patterns that are always blocked (e.g., "rm -rf /")
     pub deny_patterns: Vec<String>,
+    /// The user's own deny patterns (`--deny` / `.yoyo.toml [permissions] deny`),
+    /// glob-matched against the raw command. Checked in `execute` before ANY
+    /// approval path — `--yes`, a prior "always", and the analyzer's warning
+    /// prompt all pass through here, so this is the one place user deny lives.
+    pub user_deny: Vec<String>,
     /// Optional callback for confirming dangerous commands
     pub confirm_fn: Option<ConfirmFn>,
     /// How often to emit streaming updates
@@ -102,6 +107,7 @@ impl Default for StreamingBashTool {
                 "dd if=".into(),
                 ":(){:|:&};:".into(), // fork bomb
             ],
+            user_deny: Vec::new(),
             confirm_fn: None,
             update_interval: Duration::from_millis(500),
             lines_per_update: 20,
@@ -371,6 +377,18 @@ impl AgentTool for StreamingBashTool {
                     pattern
                 )));
             }
+        }
+
+        // User deny patterns — hard block, checked on the raw command before
+        // any confirm path, so `--yes` and "always" cannot skip it.
+        if let Some(pattern) = self
+            .user_deny
+            .iter()
+            .find(|p| crate::config::glob_match(p, command))
+        {
+            return Err(ToolError::Failed(format!(
+                "Command blocked by your permission rules: matches deny pattern '{pattern}'."
+            )));
         }
 
         // Safety analysis — soft warning that routes through confirmation
@@ -1111,36 +1129,31 @@ pub fn build_tools(
     )
 }
 
-/// Build the tool set against a caller-owned hook registry.
-///
-/// This is `build_tools`' body with the registry construction lifted out, so a
-/// caller can build the SAME registry once and share it with tools it pushes
-/// itself (`agent_builder.rs` wraps `sub_agent` and `shared_state` with it).
-/// An empty registry is the default population — no `[hooks.*]` configured —
-/// and then every `maybe_hook` returns its tool unwrapped, so the resulting
-/// tool vector is byte-identical to what `build_tools` produced before this
-/// seam existed.
-pub fn build_tools_with_hooks(
+/// Build the bash tool for one session. User `deny` patterns are installed on
+/// the tool itself (`StreamingBashTool::user_deny`, checked in `execute`), so
+/// they bind on every path: `--yes` gets no confirm closure at all, and a prior
+/// "always" short-circuits the closure. The closure therefore receives an
+/// allow-only copy of the permissions — one home for deny, not two.
+pub(crate) fn build_bash_tool(
     auto_approve: bool,
     permissions: &cli::PermissionConfig,
-    dir_restrictions: &cli::DirectoryRestrictions,
-    max_tool_output: usize,
-    hooks: &Arc<HookRegistry>,
+    always_approved: &Arc<AtomicBool>,
     bash_cwd: Option<String>,
-) -> Vec<Box<dyn AgentTool>> {
-    // Shared flag: when any tool gets "always", all tools skip prompts
-    let always_approved = Arc::new(AtomicBool::new(false));
-
-    let base_bash = match bash_cwd {
+) -> StreamingBashTool {
+    let mut base_bash = match bash_cwd {
         Some(cwd) => StreamingBashTool::default().with_cwd(cwd),
         None => StreamingBashTool::default(),
     };
-    let bash = if auto_approve {
-        base_bash
-    } else {
-        let flag = Arc::clone(&always_approved);
-        let perms = permissions.clone();
-        base_bash.with_confirm(move |cmd: &str| {
+    base_bash.user_deny = permissions.deny.clone();
+    if auto_approve {
+        return base_bash;
+    }
+    let flag = Arc::clone(always_approved);
+    let perms = cli::PermissionConfig {
+        allow: permissions.allow.clone(),
+        deny: Vec::new(),
+    };
+    base_bash.with_confirm(move |cmd: &str| {
             // If user previously chose "always", skip the prompt
             if flag.load(Ordering::Relaxed) {
                 eprintln!(
@@ -1189,7 +1202,29 @@ pub fn build_tools_with_hooks(
             }
             approved
         })
-    };
+}
+
+/// Build the tool set against a caller-owned hook registry.
+///
+/// This is `build_tools`' body with the registry construction lifted out, so a
+/// caller can build the SAME registry once and share it with tools it pushes
+/// itself (`agent_builder.rs` wraps `sub_agent` and `shared_state` with it).
+/// An empty registry is the default population — no `[hooks.*]` configured —
+/// and then every `maybe_hook` returns its tool unwrapped, so the resulting
+/// tool vector is byte-identical to what `build_tools` produced before this
+/// seam existed.
+pub fn build_tools_with_hooks(
+    auto_approve: bool,
+    permissions: &cli::PermissionConfig,
+    dir_restrictions: &cli::DirectoryRestrictions,
+    max_tool_output: usize,
+    hooks: &Arc<HookRegistry>,
+    bash_cwd: Option<String>,
+) -> Vec<Box<dyn AgentTool>> {
+    // Shared flag: when any tool gets "always", all tools skip prompts
+    let always_approved = Arc::new(AtomicBool::new(false));
+
+    let bash = build_bash_tool(auto_approve, permissions, &always_approved, bash_cwd);
 
     // Build write_file and edit_file with optional confirmation prompts.
     // In auto_edit mode, file operations are auto-approved but bash still confirms.

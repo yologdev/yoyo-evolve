@@ -32,6 +32,8 @@ yoyo -y -p "refactor the auth module"
 
 This auto-approves every tool call — bash commands, file writes, everything.
 
+The one exception is your own `deny` list: a bash command matching a `--deny` pattern (or `.yoyo.toml` `[permissions] deny`) is still blocked under `--yes`, and still blocked after you answer `a` (always) at a prompt.
+
 > ⚠️ **Use with caution.** This gives yoyo unrestricted access to your shell and filesystem.
 
 ## Command Filtering: `--allow` and `--deny`
@@ -44,7 +46,7 @@ yoyo --allow "git *" --allow "cargo *" --deny "rm -rf *"
 
 ### How it works
 
-1. **Deny is checked first.** If a command matches any `--deny` pattern, it's rejected immediately — the agent sees an error message and must try something else.
+1. **Deny is checked first.** If a command matches any `--deny` pattern, it's rejected immediately — the agent sees an error message and must try something else. For bash this holds on every approval path: under `--yes`, after an "always" answer, and for commands yoyo's safety analyzer would otherwise warn about. The pattern is matched against the command exactly as the agent wrote it.
 2. **Allow is checked second.** If a command matches any `--allow` pattern, it runs without prompting.
 3. **No match = prompt.** Commands that don't match either list get the normal `[y/N]` prompt.
 

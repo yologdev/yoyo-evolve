@@ -6,6 +6,8 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [Unreleased]
 
+- A user `deny` pattern (`--deny`, `.yoyo.toml` `[permissions] deny`) now blocks bash on every approval path. Before, `yoyo --yes --deny "echo BLOCKED_ZZ"` ran `echo BLOCKED_ZZ` (measured: `Exit code: 0`). Answering `a` (always) once also skipped every later deny check. And a command the safety analyzer flags (e.g. `git push --force`) was matched against the decorated warning text instead of the command, so `deny = ["git push --force*"]` prompted instead of refusing. Deny is now checked once, on the raw command, inside the bash tool, before any prompt or auto-approval. `allow` and `--yes` behave as before for commands no deny pattern matches. File-path deny for `write_file`/`edit_file` is unchanged.
+
 - Plain `yoyo -p "..."` and piped stdin without `--print` no longer end stdout with a blank line. Measured before: `yoyo -p "Reply with exactly: PONG"` printed `PONG\n\n` (both newlines were yoyo's own end-of-turn framing, not model text), so `> file` and `| wc -l` saw an extra blank line. It now prints `PONG\n`: the answer ends with exactly one newline, and blank lines inside the answer are kept byte-for-byte. The REPL, `--print` and `--output-format json`/`stream-json` are unchanged.
 
 - Plain `yoyo -p "..."` and piped stdin without `--print` no longer start stdout with blank lines. Before, `yoyo -p "Reply with exactly: PONG"` printed `\n\n\nPONG\n\n`: two newlines were model output and one was yoyo's own framing newline. It now prints `PONG\n\n`, so `x=$(yoyo -p ...)` gets the answer first. This uses the same rule as `--print` (only whitespace-only leading lines are dropped, and indentation is kept). The interactive REPL is unchanged.

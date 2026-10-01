@@ -103,6 +103,8 @@ mod docs;
 mod format;
 #[cfg(feature = "gasp")]
 mod gasp;
+#[cfg(test)]
+mod tools_user_deny_tests;
 // Unconditional: the argument contract in here is compiled and table-tested by a
 // plain `cargo test`, which compiles none of `gasp` above. Only the half that
 // touches the store is behind the feature.
