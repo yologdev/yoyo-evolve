@@ -230,7 +230,7 @@ def session_row_note(o: dict) -> tuple[str, str]:
     return "⚠️", ", ".join(issues) or "partial"
 
 
-def render_outcomes(outcomes: list[dict], session_claims=None) -> str:
+def render_outcomes(outcomes: list[dict], session_claims=None, clone=None) -> str:
     """One line per session's CLAIM, plus — when `session_claims` is supplied —
     the SESSION-level corroboration beside it (Receipt #912).
 
@@ -252,7 +252,7 @@ def render_outcomes(outcomes: list[dict], session_claims=None) -> str:
         icon, note = session_row_note(o)
 
         lines.append(f"day-{day} ({ts}): tasks {succeeded}/{attempted} {icon} — {note}")
-    lines.extend(claim_corroboration_lines(session_claims or []))
+    lines.extend(claim_corroboration_lines(session_claims or [], clone))
     return "\n".join(lines)
 
 
@@ -3274,7 +3274,95 @@ def classify_session_claims(
     ]
 
 
-def claim_corroboration_lines(claims: list[SessionClaim]) -> list[str]:
+@dataclass
+class CloneDepth:
+    """What this clone can see: its commit count and its oldest commit's time.
+
+    `commit_count is None` means `git rev-list --count HEAD` FAILED -- the
+    renderer prints a could-not-check clause for it, never a plausible number.
+    `oldest_epoch` is the value `collect_task_commit_times` already measured,
+    carried here rather than re-read, so the boundary the refusals were decided
+    against and the boundary the mismatch line names are one measurement.
+    """
+
+    commit_count: int | None
+    oldest_epoch: int | None
+
+
+def collect_clone_depth(oldest_epoch: int | None) -> CloneDepth:
+    """`git rev-list --count HEAD`, plus the already-measured oldest commit."""
+    rc, stdout, _ = run_cmd(["git", "rev-list", "--count", "HEAD"], timeout=10)
+    count: int | None = None
+    if rc == 0:
+        try:
+            count = int(stdout.strip())
+        except ValueError:
+            count = None
+    return CloneDepth(commit_count=count, oldest_epoch=oldest_epoch)
+
+
+def clone_window_mismatch_line(
+    claims: list[SessionClaim], clone: CloneDepth | None
+) -> str | None:
+    """Day 215: name the SHAPE when before-clone refusals are the majority.
+
+    Each before-clone refusal is individually honest, and the per-reason line
+    says so. But when they are at least HALF of the claiming sessions, the
+    instrument is structurally shaped to see a minority of its population:
+    WINDOW_SESSIONS (this script's) spans more history than the harness's
+    fetch depth (.github/workflows/evolve.yml, protected). That mismatch is a
+    property of two parameters with two owners, and no single refusal is where
+    it shows up, so it gets its own line with MEASURED values.
+
+    Returns None (no line at all) when the refusals are a minority, when no
+    session claimed, or when no clone shape was supplied, so every such render
+    is byte-identical to the pre-Day-215 output. It never changes a count or
+    verdict: it makes the shape readable, it does not move a number.
+    """
+    if clone is None:
+        return None
+    claiming = [c for c in claims if c.state != CLAIM_NO_CLAIM]
+    before = [c for c in claiming if c.reason == CLAIM_REASON_BEFORE_CLONE]
+    if not claiming or 2 * len(before) < len(claiming):
+        return None
+    if clone.oldest_epoch is None:
+        # Unreachable through classify_session_claims (a before-clone refusal
+        # needs a boundary), but a caller that drops it gets a refusal, not a
+        # fabricated date.
+        oldest_clause = "oldest commit could NOT be read"
+        after_clause = "how many sessions open after it could NOT be checked"
+    else:
+        oldest = datetime.fromtimestamp(clone.oldest_epoch, tz=timezone.utc)
+        oldest_clause = f"oldest {oldest.strftime('%Y-%m-%d %H:%M')} UTC"
+        # A session's window OPENS at its predecessor's stamp, so the opening
+        # bounds are every stamp but the newest: the same ladder that
+        # classify_session_claims refuses against, derived the same way.
+        stamps = sorted(
+            st
+            for st in (compact_utc_epoch(session_dir_stamp(c.name)) for c in claims)
+            if st is not None
+        )
+        after = sum(1 for t in stamps[:-1] if t >= clone.oldest_epoch)
+        after_clause = (
+            f"{after} of the {len(claims)} sessions read open their window after it"
+        )
+    count_clause = (
+        f"{clone.commit_count} commits"
+        if clone.commit_count is not None
+        else "commit count could NOT be checked (git rev-list failed)"
+    )
+    return (
+        f"Shape, not a per-run accident: {len(before)} of {len(claiming)} claiming "
+        f"sessions open before the clone. Window = last {WINDOW_SESSIONS} sessions; "
+        f"clone = {count_clause}, {oldest_clause}; {after_clause}. "
+        f"The window is this script's; the fetch depth is set in "
+        f".github/workflows/evolve.yml (protected)."
+    )
+
+
+def claim_corroboration_lines(
+    claims: list[SessionClaim], clone: CloneDepth | None = None
+) -> list[str]:
     """The flagged sessions, one line each, plus the count over the population
     they were drawn from.
 
@@ -3327,6 +3415,9 @@ def claim_corroboration_lines(claims: list[SessionClaim]) -> list[str]:
             f"{len(unchecked)} further claiming session(s) could NOT be checked "
             f"— NOT counted above: {'; '.join(parts)}."
         )
+    mismatch = clone_window_mismatch_line(claims, clone)
+    if mismatch is not None:
+        lines.append(mismatch)
     return lines
 
 
@@ -3847,6 +3938,13 @@ def main() -> int:
     session_claims = classify_session_claims(
         claim_sessions, task_commit_times, oldest_commit_epoch
     )
+    # No boundary means no before-clone refusal can exist, so the mismatch
+    # line cannot fire -- skip the extra git call rather than spend it.
+    clone_depth = (
+        collect_clone_depth(oldest_commit_epoch)
+        if oldest_commit_epoch is not None
+        else None
+    )
     provider_scan = (
         collect_provider_errors(audit_dir) if audit_dir is not None else ProviderScan()
     )
@@ -3867,7 +3965,7 @@ def main() -> int:
     )
 
     sections: list[str] = []
-    s = render_outcomes(outcomes, session_claims)
+    s = render_outcomes(outcomes, session_claims, clone_depth)
     if s:
         sections.append(s)
     s = render_task_success(tasks)
@@ -7425,6 +7523,71 @@ src/commands_config.rs
         len({c.reason for c in unchecked214}) >= 2
         and len(unchecked214) == 3
         and all(c.reason in CLAIM_UNCHECKED_REASONS for c in unchecked214),
+    )
+
+    # DAY 215: WHEN BEFORE-CLONE REFUSALS ARE THE MAJORITY, NAME THE SHAPE.
+    # Same ladder as Day 214, boundary moved up one rung so sessions 1-3 open
+    # before the clone (3 of 5 claiming >= half) and only session 4 is checked.
+    # Built through classify_session_claims, never a typed list of verdicts.
+    major_oldest = compact_utc_epoch("2026-09-29T00:00:00Z")
+    assert_true(
+        "anti-vacuous: majority boundary sits between ladder rungs 2 and 3",
+        t214[2] < major_oldest < t214[3],
+    )
+    c215 = classify_session_claims(
+        [ClaimSession(n, True) for n in r214],
+        [commit_at(t - 20 * 60, "%08x" % i) for i, t in enumerate(t214)],
+        major_oldest,
+    )
+    assert_eq(
+        "anti-vacuous: the majority fixture really is 3 before-clone of 5",
+        sum(1 for c in c215 if c.reason == CLAIM_REASON_BEFORE_CLONE),
+        3,
+    )
+    expected_shape = (
+        "Shape, not a per-run accident: 3 of 5 claiming sessions open before "
+        f"the clone. Window = last {WINDOW_SESSIONS} sessions; clone = 50 "
+        "commits, oldest 2026-09-29 00:00 UTC; 1 of the 5 sessions read open "
+        "their window after it. The window is this script's; the fetch depth "
+        "is set in .github/workflows/evolve.yml (protected)."
+    )
+    assert_eq(
+        "majority refusals: mismatch line appended last, with fixture numbers",
+        claim_corroboration_lines(c215, CloneDepth(50, major_oldest)),
+        claim_corroboration_lines(c215) + [expected_shape],
+    )
+    assert_true(
+        "mismatch line reaches the rendered outcomes block",
+        render_outcomes([], c215, CloneDepth(50, major_oldest)) == ""
+        and render_outcomes(
+            [{"day": 213, "ts": "2026-09-29T11:10:09Z", "tasks_attempted": 1,
+              "tasks_succeeded": 1, "build_ok": True, "test_ok": True,
+              "reverted": False}],
+            c215,
+            CloneDepth(50, major_oldest),
+        ).endswith(expected_shape),
+    )
+    assert_eq(
+        "git rev-list failure: could-not-check wording, never a fake count",
+        clone_window_mismatch_line(c215, CloneDepth(None, major_oldest)),
+        "Shape, not a per-run accident: 3 of 5 claiming sessions open before "
+        f"the clone. Window = last {WINDOW_SESSIONS} sessions; clone = commit "
+        "count could NOT be checked (git rev-list failed), oldest 2026-09-29 "
+        "00:00 UTC; 1 of the 5 sessions read open their window after it. The "
+        "window is this script's; the fetch depth is set in "
+        ".github/workflows/evolve.yml (protected).",
+    )
+    # NEAR-MISS: a minority of before-clone refusals (Day 214's 2 of 5) and a
+    # zero-refusal population both render byte-identically to no clone shape.
+    assert_eq(
+        "near-miss: minority refusals render byte-identically (no shape line)",
+        claim_corroboration_lines(c214, CloneDepth(50, clone_oldest)),
+        lines214,
+    )
+    assert_eq(
+        "near-miss: zero refusals render byte-identically (no shape line)",
+        claim_corroboration_lines(disc, CloneDepth(50, T_A_0 - 10)),
+        claim_corroboration_lines(disc),
     )
 
     # --- THE NEAR-MISS GUARD, AND THE ONE PLACE ITS TWO REQUIREMENTS MEET.
