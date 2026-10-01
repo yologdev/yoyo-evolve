@@ -636,7 +636,12 @@ const PARTIAL: &str = "PARTIAL_ANSWER_7Q";
 /// `error` event (`overloaded_error`) — no `content_block_stop`, no
 /// `message_stop`. Served to EVERY request, so every retry dies the same way.
 fn sse_dies_mid_stream_body() -> String {
-    let text = serde_json::to_string(PARTIAL).unwrap();
+    sse_dies_mid_stream_body_with(PARTIAL)
+}
+
+/// [`sse_dies_mid_stream_body`] with an arbitrary partial text delta.
+fn sse_dies_mid_stream_body_with(partial: &str) -> String {
+    let text = serde_json::to_string(partial).unwrap();
     sse_events(vec![
         (
             "message_start",
@@ -695,6 +700,91 @@ fn print_mode_keeps_partial_answer_when_turn_dies_mid_stream() {
         "--print stdout must carry the partial answer already produced; stderr={}",
         run.stderr
     );
+}
+
+/// Partial answer ending in a line terminator, so the armed stdout filter's
+/// trailing-whitespace HOLD (`src/stream_leading_blank.rs`, Day 215) is in
+/// play when the stream dies. `PARTIAL` alone has no trailing whitespace and
+/// only reaches the reserved `--print` door, which bypasses that filter.
+const PARTIAL_LINE: &str = "PARTIAL_ANSWER_7Q\n";
+
+/// The unreserved, filter-ARMED doors (plain `-p`, piped stdin without
+/// `--print`) when the stream dies mid-turn after `PARTIAL_LINE`. Day 212's
+/// test above covers only `--print`, whose payload never passes through the
+/// streaming filter, so the hold-back added on Day 215 had never met an error
+/// path. Asserts: the streamed text survives on stdout (the filter may drop
+/// only trailing whitespace, never text), the dead turn exits nonzero, and the
+/// error is on stderr, not stdout.
+///
+/// Measured Day 215 (20:47): this already holds (probed, no code change).
+/// The same reading shows two OTHER defects this test deliberately does not
+/// pin: each retry re-streams the partial (one copy per attempt on stdout),
+/// and two BEL bytes reach stdout. Hence `contains`, not a count or `assert_eq!`.
+#[test]
+fn armed_doors_keep_streamed_partial_answer_when_turn_dies_mid_stream() {
+    let body = sse_dies_mid_stream_body_with(PARTIAL_LINE);
+    // Anti-vacuous: the fixture really streams text ending in a newline,
+    // then dies with no message_stop.
+    assert!(body.contains(r#""text":"PARTIAL_ANSWER_7Q\n""#));
+    assert!(body.contains("event: error") && !body.contains("message_stop"));
+
+    let doors: [(&str, &[&str], Option<&str>); 2] = [
+        ("plain -p", &["-p", "hi"], None),
+        ("piped, no --print", &[], Some("hi\n")),
+    ];
+    for (door, extra, stdin) in doors {
+        let run = run_yoyo_within(
+            &["--no-tools", "--max-turns", "1"],
+            extra,
+            stdin,
+            vec![body.clone()],
+            Duration::from_secs(120),
+        );
+        let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
+        eprintln!(
+            "PROBE [{door}]: stdout={stdout:?} success={} requests={} stderr_tail={:?}",
+            run.success,
+            run.requests,
+            run.stderr.lines().rev().take(4).collect::<Vec<_>>()
+        );
+        assert!(
+            run.stub_hit,
+            "[{door}] anti-vacuous: stub never received a POST"
+        );
+        assert!(
+            !run.success,
+            "[{door}] a dead turn must exit nonzero; stderr={}",
+            run.stderr
+        );
+        assert!(
+            stdout.contains(PARTIAL_LINE.trim_end()),
+            "[{door}] stdout must keep the text already streamed; stdout={stdout:?} stderr={}",
+            run.stderr
+        );
+        assert!(
+            run.stderr.contains("Overloaded") || run.stderr.to_lowercase().contains("error"),
+            "[{door}] stderr must carry the failure; stderr={}",
+            run.stderr
+        );
+        assert!(
+            !stdout.contains("Overloaded") && !stdout.to_lowercase().contains("error"),
+            "[{door}] the error must not land on stdout; stdout={stdout:?}"
+        );
+    }
+}
+
+/// Near-miss for the test above: the same partial text on a stream that
+/// finishes normally stays byte-identical on the armed door.
+#[test]
+fn armed_door_completed_stream_of_partial_line_is_byte_identical() {
+    let run = run_yoyo_with(
+        &["--no-tools", "--max-turns", "1"],
+        &["-p", "hi"],
+        None,
+        vec![sse_text_body(PARTIAL_LINE)],
+    );
+    assert_reached_stub(&run);
+    assert_eq!(String::from_utf8_lossy(&run.stdout), PARTIAL_LINE);
 }
 
 // ── The whole contract in one scenario ───────────────────────────────────
