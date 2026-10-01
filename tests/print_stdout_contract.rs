@@ -622,8 +622,11 @@ fn plain_prompt_mode_still_streams_model_leading_blank_lines() {
         out.starts_with(ANSWER),
         "plain -p stdout must start with the answer; stdout={out:?}"
     );
-    // Still streamed (not reserved): trailing framing newlines are unchanged.
-    assert_eq!(out, format!("{ANSWER}\n\n"), "stdout={out:?}");
+    // Day 215 (trailing mirror): the stdout ends with exactly ONE newline.
+    // Superseded pin, recorded rather than erased: this was
+    // `format!("{ANSWER}\n\n")` — yoyo's two end-of-turn framing writes —
+    // a scope decision of the leading-blank task, not a want.
+    assert_eq!(out, format!("{ANSWER}\n"), "stdout={out:?}");
 }
 
 /// Distinctive partial answer the broken stream delivers before it dies.

@@ -41,8 +41,9 @@ There are 1,475 lines of Rust code across 1 file (src/main.rs).
 
 Plain `-p` writes the response to stdout as the model streams it. Leading blank lines
 (the model's own, plus yoyo's framing newline) are dropped, so stdout starts with the
-first real line of the answer, with its indentation kept. Trailing newlines are still
-written: `yoyo -p "Reply with exactly: PONG"` prints `PONG\n\n`. Tool progress may also
+first real line of the answer, with its indentation kept. Trailing blank lines are
+dropped too: the answer ends with exactly one newline, so `yoyo -p "Reply with exactly: PONG"`
+prints `PONG\n` (blank lines *inside* the answer are kept). Tool progress may also
 appear on stdout, because `-p` is the interactive-looking path.
 
 If you are capturing the answer (`$(...)`, a pipe, a file), use `--print`: its stdout
