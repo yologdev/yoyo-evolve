@@ -1128,6 +1128,12 @@ pub(crate) fn mcp_not_connected_message(total: usize) -> String {
     s
 }
 
+/// The closed argument vocabulary of `/mcp` — the authority `handle_mcp` itself
+/// reads to accept a subcommand and to print its usage line, and the vocabulary
+/// `dispatch_near_miss` gates `yoyo mcp <sub>` on (#936 slice 2, Day 215).
+/// Order is the usage order: `/mcp [list|help]`.
+pub(crate) const MCP_SUBCOMMANDS: &[&str] = &["list", "help"];
+
 /// Handle the `/mcp` command: list configured MCP servers and show help.
 pub fn handle_mcp(
     input: &str,
@@ -1136,6 +1142,15 @@ pub fn handle_mcp(
     mcp_count: u32,
 ) {
     let arg = input.strip_prefix("/mcp").unwrap_or("").trim();
+
+    // `MCP_SUBCOMMANDS` is the accept set: anything outside it (and not empty,
+    // which means `list`) is refused here, so the arms below cannot drift from
+    // the vocabulary the shell-side near-miss guard reads.
+    if !arg.is_empty() && !MCP_SUBCOMMANDS.contains(&arg) {
+        println!("{DIM}  Unknown /mcp subcommand: {arg}");
+        println!("  Usage: /mcp [{}]{RESET}\n", MCP_SUBCOMMANDS.join("|"));
+        return;
+    }
 
     match arg {
         "help" => {
@@ -1156,9 +1171,10 @@ pub fn handle_mcp(
             );
             print!("{DIM}{text}{RESET}");
         }
+        // Unreachable for any arg outside `MCP_SUBCOMMANDS` (refused above); a
+        // member added to the const without an arm lands here and says so.
         _ => {
-            println!("{DIM}  Unknown /mcp subcommand: {arg}");
-            println!("  Usage: /mcp [list|help]{RESET}\n");
+            println!("{DIM}  /mcp {arg}: no handler arm yet{RESET}\n");
         }
     }
 }

@@ -234,6 +234,11 @@ pub const REPL_ONLY_MULTI_TOKEN_ARG_GATED: &[(&str, &[&str])] = &[
     ("stash", crate::git::STASH_SUBCOMMANDS),
     ("pr", crate::commands::PR_SUBCOMMANDS),
     ("git", crate::commands::GIT_SUBCOMMANDS),
+    // #936 slice 2 (Day 215): the only residue verb with a closed vocabulary
+    // that is not prose-risky. `mcp` is not an English word, and its handler
+    // reads `MCP_SUBCOMMANDS` as its accept set. Accepted cost, like `cost`:
+    // `yoyo mcp help me set up a server` is refused, with the `-p` hatch.
+    ("mcp", crate::commands_config::MCP_SUBCOMMANDS),
 ];
 
 /// Compose the "that command lives in the REPL" refusal.
