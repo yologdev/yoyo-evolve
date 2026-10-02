@@ -1,0 +1,240 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0: reproduce with the test as it exists (it already has a PROBE eprintln).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test print_stdout_con… ✓ (1m 2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reproduced: six copies, no \u{7} in the bytes. Now the retry loops.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 225,260p src/prompt.rs; ech…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1517,1700p src/prompt.rs | … ✓ (6ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 95,135p src/prompt.rs; echo… ✓ (7ms)
+  ▶ read src/prompt.rs:1258..1310 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 19.3s (4 ✓)
+
+Now the shared helper, placed beside fatal_handoff.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:172..184 ✓ (0ms)
+  ▶ edit src/prompt.rs (2 → 27 lines)
+        (collected_text, Some(error_msg))
+  + }
+  + 
+  + /// #976: may a turn that died with a retriable error be re-run?
+  + ///
+  + /// Only `(false, true)` says no: stdout is not a terminal AND the dying attempt
+  + /// already streamed answer text to it. Bytes on a pipe cannot be retracted, so a
+  + /// retry there writes the partial answer a second (third, sixth…) time and the
+  + /// reader cannot tell copy 1 from copy 6. A terminal is unchanged (a human can
+  + /// see the restart), and an attempt that died before writing anything — the
+  + /// common overload-at-request-start case — retries exactly as before.
+  + /// This only ever narrows retries, and only where retrying corrupts the output.
+  + fn should_retry_after_partial(stdout_is_terminal: bool, streamed_this_attempt: bool) -> bool {
+  +     stdout_is_terminal || !streamed_this_attempt
+  + }
+  + 
+  + /// The one stderr line printed when [`should_retry_after_partial`] refuses.
+  + const RETRY_SKIPPED_AFTER_PARTIAL_NOTE: &str = "(not retrying: part of the answer was already \
+  + written to stdout, which is not a terminal, and a retry would print it again; rerun the command)";
+  + 
+  ... (7 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^use std::io\|IsTerminal"… ✓ (14.4s)
+        (collected_text, Some(error_msg))
+  + }
+  + 
+  + /// #976: may a turn that died with a retriable error be re-run?
+  + ///
+  + /// Only `(false, true)` says no: stdout is not a terminal AND the dying attempt
+  + /// already streamed answer text to it. Bytes on a pipe cannot be retracted, so a
+  + /// retry there writes the partial answer a second (third, sixth…) time and the
+  ... (13 more lines)
+ ✓ (14.4s)
+  3 tools completed in 23.1s (3 ✓)
+
+Expected — consumers next. First loop:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (49 → 20 lines)
+                    accumulate_usage(&mut total_usage, &usage);
+    
+  -                 if attempt < MAX_RETRIES {
+  +                 if attempt < MAX_RETRIES && retry_blocked_by_streamed_partial(&dying_text) {
+  +                     // #976: a pipe already holds this attempt's partial answer;
+  +                     // a retry would write it again. Stop with the real error.
+  +                     eprintln!("\n{RED}  error: {error_msg}{RESET}");
+  +                     eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
+  +                     (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
+  +                 } else if attempt < MAX_RETRIES {
+                        // One decision, both retry loops (the other is in
+                        // `run_prompt_auto_retry_with_content`) — a per-token pass
+                        // is not a per-entry-point pass.
+  ···
+                            RetryWait::Wait(delay) => {
+                                let delay_secs = delay.as_secs();
+                                let next = attempt + 2; // human-readable attempt number
+  -                             eprintln!(
+  -                                 "{DIM}  ⚡ retrying (attempt {next}/{}, waiting {delay_secs}s)...{RESET}",
+  -                                 MAX_RETRIES + 1
+  ... (32 more lines)
+ ✓ (925ms)
+                    accumulate_usage(&mut total_usage, &usage);
+    
+  -                 if attempt < MAX_RETRIES {
+  +                 if attempt < MAX_RETRIES && retry_blocked_by_streamed_partial(&dying_text) {
+  +                     // #976: a pipe already holds this attempt's partial answer;
+  +                     // a retry would write it again. Stop with the real error.
+  +                     eprintln!("\n{RED}  error: {error_msg}{RESET}");
+  +                     eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I truncated my replacement text — lost the tail. The file was clean before me, so restore it and redo both edits carefully.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git diff --sta… (57 lines) ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One site matched; the content loop's comment differs. Also lines 1437/1762 are retry sites too (malformed tool-call resample) — let me read them.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1405,1470p src/prompt.rs; e… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The malformed-tool-call resample re-runs the same prompt too, so it can re-stream a partial the same way. It's a retry site; the rule applies there as well. Reading it in full:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1435..1465 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+Picking up at sites 2–4: the content loop's RetriableError arm, plus the malformed-resample block in both loops. I'll do this as one scripted edit with exact-count asserts.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (39 lines) ✓ (8.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Builds. Before adding tests I'll check whether src/prompt.rs sits under the module-size gate.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "prompt.rs" tests/module_s… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 440,500p tests/module_size.… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.2s (2 ✓)
+
+I'll run the gate itself and read its verdict rather than guess its tolerance.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test module_size 2>&1… ✓ (124ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Growth here only warns, but I'd still keep prompt.rs lean. The pure helper, the note and their tests go into a new src/prompt/retry_after_partial.rs, following the turn_prefix pattern.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; head -20 src/prompt/turn_prefix.rs… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (91 lines) ✓ (23.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 70,80p src/prompt/retry_aft… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 42.3s (3 ✓)
+
+The needle also matched the overflow path's inner arm (error_msg: retry_err). That arm doesn't retry; it only handles the single overflow retry's result. Tightening the needle to error_msg,:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (22.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Helper wired and green. Next, the integration test: look at the stub's per-request bodies and the available SSE helpers for the near-miss.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^fn \|^const \|bodies\|re… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 650,740p tests/print_stdout… ✓ (3ms)
+  2 tools completed in 1.5s (2 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+Budget is tight, so the remaining work goes in one pass: tighten the test to an exact assert_eq!, add the near-miss, then run it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (58 lines) ✓ (10.6s)
+
+Green. Next, the positive control as one atomic command: neuter the helper, run, restore.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; f=src/prompt/retry_after_partial.r… ✓ (40.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control went red by name, and after the restore the marker count is 0 and the test is green. Now the docs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "retr\|exit\|terminal" doc… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^- \`prompt.rs\`\|^- \`sr… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (2m 27s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 43s (4 ✓)
+
+Clippy and fmt are clean. The grep found no failing lines; let me confirm that's because everything passed, not because nothing ran.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "test re… ✓ (1m 36s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (25 lines) ✓ (44ms)
+  2 tools completed in 1m 50s (2 ✓)
+
+I fixed it, and it's committed as 96e4c1f9. When stdout is a pipe, a turn that dies after it has started printing now leaves exactly one copy of its partial text instead of six. Build, clippy, fmt and the full test suite all pass (6195 tests, 0 failed).
+
+Reproduced first, with the test unchanged. On both plain -p and piped stdin, stdout was "PARTIAL_ANSWER_7Q\n\n\n" five times and then "PARTIAL_ANSWER_7Q\n": six requests, six copies, nonzero exit. There was no BEL byte (0x07) in the output, so this morning's bell fix holds.
+
+The rule. If stdout is not a terminal and the attempt that died has already written text to it, yoyo doesn't retry. It exits nonzero with the original error and adds one stderr line saying why, and that the user should rerun the command. Three cases retry exactly as before:
+• a terminal (a person can see the restart);
+• --print / json output, where stdout is held back for the final answer, so a retry is safe;
+• an attempt that died before writing anything (the usual "overloaded" at request start).
+
+Where it applies. One pure function, should_retry_after_partial, in a new small file src/prompt/retry_after_partial.rs, makes the decision. I kept it out of prompt.rs because that file is already over its size limit. Four retry sites call it, not the two the plan named. The two retry arms in the main loop and the image/file loop are the expected ones. The other two are the malformed-tool-call resamples in those same loops: they re-run the same prompt, so they would print the partial text again in the same way.
+
+Tests.
+• The existing test now checks the exact stdout bytes (one copy), exactly one request, and the skip line on stderr.
+• New near-miss test: the stub server can return a different response per request, so it fails the first request before any text, then succeeds. It confirms the retry still happens, exit is 0, and the answer appears once.
+• A 4-row table covers every input combination, and a check on the source confirms all four retry sites call the shared function. That check only proves the calls are there, not that they fire.
+• Positive control, run as one command: with the function forced to always allow retries, the exact-output test failed by name. After restoring it, the test passed and no sabotage marker was left in the code.
+
+Not covered:
+• **Retry after the context window overflows:** that error is rejected when the request starts and never carries text.
+• **Retry after a tool error:** it sends a new follow-up prompt rather than re-running the dead one.
+
+Both are recorded in the new ARCHITECTURE.md entry under prompt.rs. docs/src/usage/piped-mode.md now has a paragraph explaining the no-retry behaviour and why.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/prompt.rs

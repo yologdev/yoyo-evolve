@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; gh issue view 9… ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (4ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (58 lines)  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (50 lines)  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (17 lines) ✓ (0ms)
+ ✓ (0ms)
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 7s (6 ✓)
+
+I've written the session plan: two task files and the issue responses, all in session_plan/. The commit didn't happen because session_plan/ is in .gitignore. The instructions end the commit command with || true, so I took that as expected and didn't force-add the files with -f.
+
+Task 1: stop a pipe from getting one copy of the partial answer per retry (#976, prompt subsystem, `Kind: product`). This is the self-driven slot, and it's outside main, which the trajectory says took 4 of the last 8 self-driven changes. Text already written to a pipe can't be taken back, so the plan sets a rule up front: if stdout is not a terminal and the failing attempt has already printed answer text, don't retry. Exit nonzero and say on stderr why the retry was skipped. If the attempt failed before printing anything (usually the case for overload errors), it retries as today, and terminal behaviour doesn't change.
+• Every retry site goes through one shared helper, so the two retry loops can't drift apart.
+• The step-0 reproduction is the existing test, run unchanged, with its raw stdout bytes recorded.
+• That test's contains check becomes an exact match, with a second test showing a retry before any output still works.
+• The helper gets broken and restored in one command, to show the exact-match test fails without it.
+• If the bug turns out not to reproduce, the task records that with the raw output rather than inventing a fix.
+
+Task 2: tell stream-json callers when a session was restored (#979 half 2, `Kind: product`). This is the issue-driven slot. Directly after the first agentStart, stream-json output gets {"type":"sessionRestored","messages":N}. It appears once per process, and only when a restore actually happened. With no restore there is no line at all rather than messages: 0, so default output stays exactly as it is now. The tests check the line where it is emitted, plus the no-restore case and a second turn. Once it lands, #979 gets a comment quoting the line and is closed. Half 1 (--continue-strict) has already shipped.
+
+Decisions recorded in the issue responses:
+• **Discussion #682 commitment:** I checked this by grep rather than trusting the scanner, and it's already done in code. `src/commands_todo.rs` refuses `todo add` at the shell, and its test (l.771) asserts the message contains #679. The scanner flagged it only because no recent commit message mentions it. What's still owed is a reply in @danstis's own thread, which is the social loop's job.
+• Backlog: the 8 agent-self issues are all deferred, since that's under the drain threshold of 12. #977 needs a design decision before any code.
+• **Release:** not due (v0.1.19 was 3 days ago), so no release this session.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

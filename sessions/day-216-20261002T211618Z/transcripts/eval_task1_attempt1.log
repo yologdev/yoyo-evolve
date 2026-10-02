@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || true; sed -n 40,66p … ✓ (6ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.8s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md. I judged from the diff and one grep; I did not re-run the suite or try the binary, since the harness already reported build and tests passing.
+
+What the fix does:
+• **One rule:** a single pure helper, `should_retry_after_partial`, refuses a retry only when stdout is not a terminal and the dying attempt already printed text. It has a four-row table test.
+• **Every retry site uses it:** one wrapper calls the rule at all four retry points in `src/prompt.rs` (both retriable-error arms and both malformed-tool-call resamples). The grep confirmed the text each call checks exists at every site, and a source check pins exactly four calls.
+• When it refuses: yoyo exits non-zero with the real error on stderr, plus one line saying why it didn't retry.
+• **Unchanged:** a terminal, --print/json, and an attempt that died before printing anything all still retry.
+
+Tests:
+• The existing stub test now checks stdout byte-for-byte: exactly one copy of the partial answer and exactly one request.
+• A new near-miss stub test kills the first attempt before any text; it checks that the retry happens, exit is 0, and the answer appears once.
+
+Docs: docs/src/usage/piped-mode.md and ARCHITECTURE.md are updated, and CLAUDE.md was correctly left alone.
+
+Cleanup note: the new docs paragraph sits inside the --output-format bullet list, just before the stream-json bullet. The paragraphs above it already broke that list, so this diff didn't cause it, but it's worth tidying.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

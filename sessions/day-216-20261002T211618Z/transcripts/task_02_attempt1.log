@@ -1,0 +1,155 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (22ms)
+  ▶ $ pwd; sed -n 1040,1180p src/main.rs; grep -n "restore_session\|continue_strict\|f… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+Now the stream-json emission path.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "agentStart\|fn handle_stream_json_events\|fn emit_agent_event\|fn run_p… ✓ (4ms)
+  ▶ $ sed -n 1780,1960p src/prompt.rs; sed -n 2580,2640p src/prompt.rs; cat src/prompt… ✓ (7ms)
+  ▶ $ sed -n 1880,1960p src/prompt.rs; sed -n 2560,2640p src/prompt.rs ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -rln "stream-json\|stream_json" tests/ | head; grep -n "prompt.rs\|prompt/"… ✓ (12ms)
+  ▶ $ sed -n 470,500p tests/module_size.rs; grep -n "fn \|stream-json" tests/print_std… ✓ (5ms)
+  ▶ $ sed -n 1,30p tests/print_stdout_contract.rs; sed -n 110,300p tests/print_stdout_…  ▶ $ sed -n 1055,1195p tests/print_stdout_contract.rs ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ sed -n 375,430p src/main.rs; sed -n 710,740p src/main.rs; sed -n 1300,1330p src/… ✓ (5ms)
+  ▶ $ sed -n 1,30p src/prompt/stream_external_servers.rs; sed -n 1,30p src/prompt.rs |… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 30.7s (9 ✓)
+
+Writing the module first, test included.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ write src/prompt/stream_session_restored.rs (152 lines)  ▶ $ grep -n "lock_or_recover" src/sync_util.rs | head -3; grep -n "emit_agent_event"… ✓ (1m 35s)
+ ✓ (1m 35s)
+  2 tools completed in 1m 36s (2 ✓)
+
+Now wire emit_agent_event to the new writer and record in main.rs.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (29 lines) ✓ (19ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && cargo buil… ✓ (29.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo stream_ses… ✓ (101ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/prompt/stream_session_restored.rs (4 → 7 lines)
+  - /// The exact NDJSON line (no trailing newline).
+  + /// The exact NDJSON line (no trailing newline). Built with `format!` rather
+  + /// than `serde_json::json!`, whose map sorts keys and would put `messages`
+  + /// before `type`; every other stream-json line leads with `type`. A `usize`
+  + /// is always a valid JSON number, so nothing needs escaping.
+    pub(crate) fn session_restored_line(n: usize) -> String {
+  -     serde_json::json!({ "type": "sessionRestored", "messages": n }).to_string()
+  +     format!(r#"{{"type":"sessionRestored","messages":{n}}}"#)
+    }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo stream_ses… ✓ (2m 44s)
+  - /// The exact NDJSON line (no trailing newline).
+  + /// The exact NDJSON line (no trailing newline). Built with `format!` rather
+  + /// than `serde_json::json!`, whose map sorts keys and would put `messages`
+  + /// before `type`; every other stream-json line leads with `type`. A `usize`
+  + /// is always a valid JSON number, so nothing needs escaping.
+    pub(crate) fn session_restored_line(n: usize) -> String {
+  -     serde_json::json!({ "type": "sessionRestored", "messages": n }).to_string()
+  +     format!(r#"{{"type":"sessionRestored","messages":{n}}}"#)
+    }
+ ✗ (2m 44s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo stream_ses… ✓ (120ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 3m 24s (4 ✓, 1 ✗)
+
+Unit tests pass. Next is the process-level test against the real binary, so I need the path that --continue reads from.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn continue_session_pat… ✓ (4ms)
+
+Adding the process test: save through the real writer (--save-session), seed those exact bytes into run 2, then compare against a run with no restore.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> tests… (95 lines) ✓ (594ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both pass. Now the positive control, run as one atomic command: neuter the emission, run the tests, restore.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && F=src/prompt/stream_session_rest… ✓ (51.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && F=src/prompt/stream_session_rest… ✓ (30.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && F=src/prompt/stream_session_rest… ✓ (30.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 59s (3 ✓)
+
+The tool collapsed the output, so I'll print only the names of the failing tests.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -E "FAILED|ok$" /tmp/pc.txt | sed 's/^test //' | tr '\n' ';' ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "continue-strict\|extern… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 80,100p docs/src/usage/pi… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.0s (2 ✓)
+
+The main.rs entry in ARCHITECTURE.md is one very long bullet, so I'll add a separate short entry immediately after it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>255 && /^- `/ {print NR"… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (29ms)
+  2 tools completed in 6.6s (2 ✓)
+
+Now the two user docs.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (24 lines) ✓ (15.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 cargo test 2>&1 | gr… ✓ (2m 24s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 43s (2 ✓)
+
+No failures were printed. I'll confirm the suite actually finished rather than hitting the timeout.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 cargo test 2>&1 | gr… ✓ (1m 50s)
+
+All 18 test binaries pass, and build, clippy and fmt are green. Committing, then closing out #979.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "NEUTERED POSITIVE" src/… ✓ (61ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (14 lines) ✓ (2.3s)
+  2 tools completed in 7.0s (2 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+Both halves of #979 are now shipped. With --output-format stream-json, a run that really restored a saved session now prints {"type":"sessionRestored","messages":N} directly after the first agentStart line. Build, tests (all 18 test binaries), clippy and fmt pass. It's committed as 3c2c3591, and I commented on #979 with the exact line and closed it.
+
+When the line appears:
+• **When:** once per process, only if --continue or --continue-strict actually restored a session. N is the count of restored messages.
+• **When it's absent:** no `--continue` flag, or a plain `--continue` whose restore failed. A failed restore never prints `messages: 0`, which would look like an empty session was restored.
+• **Other modes:** text, json and --print output are unchanged, and so is a stream-json run without --continue.
+
+How it's built:
+• **New `src/prompt/stream_session_restored.rs:** the stream-json writer now goes through this module. On a successful restore, main.rs records the message count once; the writer prints the line after the first agentStart` and then clears it, so later turns don't repeat it.
+• **Key order:** the line is built by hand because the JSON library sorts keys and would have put messages before type. That broke my first version of the test.
+
+Tests:
+• **Unit tests, writing into a buffer:** the line's exact text and position after `agentStart`; output identical to before when nothing was restored; no repeat on a second turn; only agentStart triggers it.
+• **Two tests in tests/print_stdout_contract.rs that run the real binary:** the saved session they load comes from a real `--save-session` run, not hand-written JSON. They check both `--continue` and `--continue-strict`, a run with no --continue, and a failed plain --continue.
+• **Positive control (break → run → restore in one command):** with the emission disabled, the four tests that expect the line failed by name. The tests that expect no line still passed. The file was restored and no `NEUTERED` marker is left.
+
+Docs: the line, its exact shape and when it's absent are in docs/src/usage/piped-mode.md and docs/src/features/sessions.md. I also added a short entry next to the src/main.rs bullet in ARCHITECTURE.md.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/prompt/stream_session_restored.rs
