@@ -740,6 +740,7 @@ fn test_config() -> Config {
         temperature: None,
         max_turns: None,
         continue_session: false,
+        continue_strict: false,
         output_path: None,
         prompt_arg: None,
         image_path: None,
@@ -1538,4 +1539,38 @@ fn json_response_drops_leading_blank_lines() {
     );
     let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(parsed["response"], "PONG");
+}
+
+// #979: the restore seam, in a tempdir (never the repo's real `.yoyo/`).
+#[test]
+fn restore_session_result_distinguishes_missing_unparsable_and_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = test_agent_config("anthropic", "claude-sonnet-4-5").build_agent();
+    let missing = dir.path().join("nope.json");
+    let err = restore_session_result(&mut agent, &missing).unwrap_err();
+    assert!(matches!(err, RestoreError::Unreadable(_)), "{err:?}");
+    let msg = continue_strict_refusal(&missing.display().to_string(), &err);
+    assert!(
+        msg.starts_with("error: --continue-strict: could not restore "),
+        "{msg}"
+    );
+    assert!(msg.contains("nope.json"), "{msg}");
+    let bad = dir.path().join("bad.json");
+    std::fs::write(&bad, "{ not json").unwrap();
+    let err = restore_session_result(&mut agent, &bad).unwrap_err();
+    assert!(matches!(err, RestoreError::Unparsable(_)), "{err:?}");
+    let good = dir.path().join("good.json");
+    let msgs = vec![
+        yoagent::AgentMessage::Llm(yoagent::Message::user("one")),
+        yoagent::AgentMessage::Llm(yoagent::Message::user("two")),
+    ];
+    std::fs::write(&good, serde_json::to_string(&msgs).unwrap()).unwrap();
+    assert_eq!(restore_session_result(&mut agent, &good).unwrap(), 2);
+}
+
+#[test]
+fn continue_strict_refusal_escapes_control_bytes() {
+    let msg = continue_strict_refusal("a\x1b[31mb", &RestoreError::Unparsable("x\x1by".into()));
+    assert!(!msg.as_bytes().contains(&0x1b), "{msg:?}");
+    assert!("a\x1b[31mb".as_bytes().contains(&0x1b), "anti-vacuous");
 }

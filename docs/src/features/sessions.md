@@ -21,6 +21,8 @@ yoyo --continue
 yoyo -c
 ```
 
+`--continue-strict` behaves like `--continue`, but if the session file is missing or can't be parsed it prints `error: --continue-strict: could not restore <path>: <reason>` and exits 1 **before any model call**. Plain `--continue` only warns and starts a fresh conversation (exit 0), so scripts that need to know a run really continued should use the strict flag.
+
 When `--continue` is used:
 1. **On startup**, yoyo loads from `.yoyo/last-session.json` (preferred) or `yoyo-session.json` (legacy fallback)
 2. **On exit**, the conversation is auto-saved as usual

@@ -330,6 +330,10 @@ pub fn cli_help_text() -> String {
     let _ = writeln!(s, "  --continue, -c    Resume last saved session");
     let _ = writeln!(
         s,
+        "  --continue-strict  Like --continue, but exit non-zero (before any model call) if the session can't be restored"
+    );
+    let _ = writeln!(
+        s,
         "  --fallback <prov> Fallback provider if primary fails (e.g. --fallback google)"
     );
     let _ = writeln!(

@@ -198,9 +198,26 @@ fn run_yoyo_within(
     bodies: Vec<String>,
     budget: Duration,
 ) -> Run {
+    run_yoyo_seeded(&[], base, extra, stdin, bodies, budget)
+}
+
+/// `run_yoyo_within` with extra `(relative path, contents)` files seeded in the cwd.
+fn run_yoyo_seeded(
+    files: &[(&str, &str)],
+    base: &[&str],
+    extra: &[&str],
+    stdin: Option<&str>,
+    bodies: Vec<String>,
+    budget: Duration,
+) -> Run {
     let (port, hit) = start_stub_seq(bodies);
     let home = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();
+    for (rel, contents) in files {
+        let path = cwd.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
     std::fs::write(cwd.path().join("a.txt"), TOOL_FILE_CONTENTS).unwrap();
     let base_url = format!("http://127.0.0.1:{port}/v1");
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_yoyo"));
@@ -986,5 +1003,54 @@ fn json_mode_whole_contract_stdout_is_exactly_one_value() {
     assert_eq!(
         values[0]["response"], CONTRACT_ANSWER,
         "envelope response must be the answer, internal blank line intact"
+    );
+}
+
+/// #979: `--continue-strict` on a corrupt session refuses BEFORE any model call.
+/// This is the file's one deliberate exception to "every test hits the stub":
+/// zero POSTs is the claim. Its anti-vacuous half is the paired lenient run
+/// on the same corrupt file, which must reach the stub and exit 0.
+#[test]
+fn continue_strict_refuses_corrupt_session_before_any_model_call() {
+    let files = [(".yoyo/last-session.json", "{ not json")];
+    let base = ["--no-tools", "--max-turns", "1"];
+    let budget = Duration::from_secs(20);
+    let strict = run_yoyo_seeded(
+        &files,
+        &base,
+        &["-p", "x", "--continue-strict"],
+        None,
+        vec![sse_body()],
+        budget,
+    );
+    assert!(
+        !strict.success,
+        "#979: strict must exit non-zero; stderr={}",
+        strict.stderr
+    );
+    assert!(
+        strict.stderr.contains("--continue-strict"),
+        "stderr={}",
+        strict.stderr
+    );
+    assert_eq!(
+        strict.requests, 0,
+        "#979: no model call may be made; stderr={}",
+        strict.stderr
+    );
+
+    let lenient = run_yoyo_seeded(
+        &files,
+        &base,
+        &["-p", "x", "--continue"],
+        None,
+        vec![sse_body()],
+        budget,
+    );
+    assert_reached_stub(&lenient);
+    assert!(
+        lenient.stderr.contains("Failed to restore session"),
+        "stderr={}",
+        lenient.stderr
     );
 }

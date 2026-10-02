@@ -1006,18 +1006,62 @@ fn apply_bedrock_credentials(agent_config: &mut AgentConfig) {
     }
 }
 
-/// Restore a previously-saved session into the agent.
-fn restore_session(agent: &mut Agent) {
+/// Why a `--continue` restore did not happen (#979).
+#[derive(Debug)]
+enum RestoreError {
+    /// The session file could not be read (usually: it does not exist).
+    Unreadable(String),
+    /// The file was read but is not a session the agent accepts.
+    Unparsable(String),
+}
+
+/// Pure-ish seam: load `path` into `agent`, returning the restored message count.
+fn restore_session_result(
+    agent: &mut Agent,
+    path: &std::path::Path,
+) -> Result<usize, RestoreError> {
+    let json =
+        std::fs::read_to_string(path).map_err(|e| RestoreError::Unreadable(e.to_string()))?;
+    agent
+        .restore_messages(&json)
+        .map_err(|e| RestoreError::Unparsable(e.to_string()))?;
+    Ok(agent.messages().len())
+}
+
+/// The `--continue-strict` refusal (#979). Both strings are sanitized: the
+/// path can be repo-influenced and the reason quotes file contents.
+fn continue_strict_refusal(path: &str, err: &RestoreError) -> String {
+    let reason = match err {
+        RestoreError::Unreadable(e) => format!("no session file ({e})"),
+        RestoreError::Unparsable(e) => format!("unparsable session ({e})"),
+    };
+    format!(
+        "error: --continue-strict: could not restore {}: {}",
+        cli::sanitize_for_display(path),
+        cli::sanitize_for_display(&reason)
+    )
+}
+
+/// Restore a previously-saved session into the agent. Lenient: a failure
+/// is a stderr note and the run continues (byte-identical to pre-#979).
+/// Under `strict`, any failure exits 1 before a model call is made.
+fn restore_session(agent: &mut Agent, strict: bool) {
     let session_path = commands_session::continue_session_path();
-    match std::fs::read_to_string(session_path) {
-        Ok(json) => match agent.restore_messages(&json) {
-            Ok(_) => {
-                let summary = commands_session::session_resume_summary(agent.messages());
-                eprint!("{DIM}{summary}{RESET}");
-            }
-            Err(e) => eprintln!("{YELLOW}warning:{RESET} Failed to restore session: {e}"),
-        },
-        Err(_) => eprintln!("{DIM}  no previous session found ({session_path}){RESET}"),
+    match restore_session_result(agent, std::path::Path::new(session_path)) {
+        Ok(_) => {
+            let summary = commands_session::session_resume_summary(agent.messages());
+            eprint!("{DIM}{summary}{RESET}");
+        }
+        Err(e) if strict => {
+            eprintln!("{}", continue_strict_refusal(session_path, &e));
+            std::process::exit(1);
+        }
+        Err(RestoreError::Unparsable(e)) => {
+            eprintln!("{YELLOW}warning:{RESET} Failed to restore session: {e}")
+        }
+        Err(RestoreError::Unreadable(_)) => {
+            eprintln!("{DIM}  no previous session found ({session_path}){RESET}")
+        }
     }
 }
 
@@ -1221,7 +1265,7 @@ async fn main() {
     };
 
     if continue_session {
-        restore_session(&mut agent);
+        restore_session(&mut agent, config.continue_strict);
     }
 
     // --prompt / -p: single-shot mode

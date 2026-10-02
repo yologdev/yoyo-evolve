@@ -691,6 +691,7 @@ pub(crate) const KNOWN_FLAGS: &[&str] = &[
     "--yes",
     "-y",
     "--continue",
+    "--continue-strict",
     "-c",
     "--fallback",
     "--audit",
@@ -2703,7 +2704,8 @@ directory ({e}); this run is trusted, later runs will not be."
         .or_else(|| file_config.get("thinking").map(|s| parse_thinking_level(s)))
         .unwrap_or(ThinkingLevel::Off);
 
-    let continue_session = args.iter().any(|a| a == "--continue" || a == "-c");
+    let continue_strict = args.iter().any(|a| a == "--continue-strict");
+    let continue_session = continue_strict || args.iter().any(|a| a == "--continue" || a == "-c");
 
     let max_tokens = parse_numeric_flag::<u32>(args, "--max-tokens", &file_config, "max_tokens");
 
@@ -2832,6 +2834,7 @@ directory ({e}); this run is trusted, later runs will not be."
         temperature,
         max_turns,
         continue_session,
+        continue_strict,
         output_path,
         prompt_arg,
         image_path,

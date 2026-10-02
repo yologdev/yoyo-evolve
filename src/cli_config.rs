@@ -201,6 +201,8 @@ pub struct Config {
     pub temperature: Option<f32>,
     pub max_turns: Option<usize>,
     pub continue_session: bool,
+    /// `--continue-strict` (#979): refuse to run if the restore fails.
+    pub continue_strict: bool,
     pub output_path: Option<String>,
     pub prompt_arg: Option<String>,
     pub image_path: Option<String>,
