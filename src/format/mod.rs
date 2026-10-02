@@ -65,16 +65,56 @@ pub fn bell_enabled() -> bool {
 /// terminal bell and the user-configured `notify_command`.
 const LONG_PROMPT_THRESHOLD_SECS: u64 = 3;
 
+/// Where the terminal bell (BEL, `0x07`) may be written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BellTarget {
+    Stdout,
+    Stderr,
+}
+
+/// Pure decision: which stream, if any, gets the bell byte.
+///
+/// The bell is chrome for a human at a terminal, never payload. stdout is
+/// the payload channel, so it only gets the bell when it is a tty and not
+/// reserved for the payload (#966). Otherwise (a pipe, a file, `-p` into
+/// another program, #976) the bell moves to stderr if stderr is a tty, and
+/// is dropped when neither stream is a terminal. A tty, unreserved stdout,
+/// which is every interactive REPL user, stays on stdout as before.
+pub(crate) fn bell_destination(
+    stdout_tty: bool,
+    stdout_reserved: bool,
+    stderr_tty: bool,
+) -> Option<BellTarget> {
+    if stdout_tty && !stdout_reserved {
+        Some(BellTarget::Stdout)
+    } else if stderr_tty {
+        Some(BellTarget::Stderr)
+    } else {
+        None
+    }
+}
+
 /// Ring the terminal bell if enabled and elapsed time exceeds threshold.
 /// The bell character (\x07) causes most terminal emulators to flash the tab
 /// or play a sound, alerting multitasking developers.
 /// Also sends a desktop notification for genuinely long waits (≥10s), and
 /// runs the user-configured `notify_command` (if any) at the bell threshold.
 pub fn maybe_ring_bell(elapsed: Duration) {
-    // #966: the BEL byte is not part of the payload, so a reserved stdout skips it.
-    if bell_enabled() && !stdout_reserved() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
-        let _ = io::stdout().write_all(b"\x07");
-        let _ = io::stdout().flush();
+    // #966 / #976: the BEL byte is never payload; `bell_destination` keeps it
+    // off a reserved or non-tty stdout.
+    if bell_enabled() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
+        let stdout_tty = io::IsTerminal::is_terminal(&io::stdout());
+        match bell_destination(stdout_tty, stdout_reserved(), stderr_is_terminal()) {
+            Some(BellTarget::Stdout) => {
+                let _ = io::stdout().write_all(b"\x07");
+                let _ = io::stdout().flush();
+            }
+            Some(BellTarget::Stderr) => {
+                let _ = io::stderr().write_all(b"\x07");
+                let _ = io::stderr().flush();
+            }
+            None => {}
+        }
     }
     if notify_enabled() && should_send_notification(elapsed) {
         send_desktop_notification(elapsed);
@@ -1831,6 +1871,32 @@ mod tests {
         // Since OnceLock is global, the value depends on test ordering and env,
         // but the function itself should never panic.
         let _result = bell_enabled();
+    }
+
+    #[test]
+    fn bell_destination_keeps_bel_off_a_payload_stdout() {
+        use BellTarget::{Stderr, Stdout};
+        // (stdout_tty, stdout_reserved, stderr_tty) -> destination
+        let table: [((bool, bool, bool), Option<BellTarget>); 8] = [
+            // Near-miss: every interactive REPL user. Unchanged: stdout.
+            ((true, false, true), Some(Stdout)),
+            ((true, false, false), Some(Stdout)),
+            // #966: a reserved stdout (--print / json) never gets it.
+            ((true, true, true), Some(Stderr)),
+            ((true, true, false), None),
+            // #976: a piped stdout (-p | file, piped stdin) never gets it.
+            ((false, false, true), Some(Stderr)),
+            ((false, false, false), None),
+            ((false, true, true), Some(Stderr)),
+            ((false, true, false), None),
+        ];
+        for ((out_tty, reserved, err_tty), want) in table {
+            assert_eq!(
+                bell_destination(out_tty, reserved, err_tty),
+                want,
+                "stdout_tty={out_tty} reserved={reserved} stderr_tty={err_tty}"
+            );
+        }
     }
 
     #[test]

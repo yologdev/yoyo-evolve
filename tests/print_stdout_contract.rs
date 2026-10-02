@@ -770,6 +770,23 @@ fn armed_doors_keep_streamed_partial_answer_when_turn_dies_mid_stream() {
             !stdout.contains("Overloaded") && !stdout.to_lowercase().contains("error"),
             "[{door}] the error must not land on stdout; stdout={stdout:?}"
         );
+        // #976 half 1 (BEL): the terminal bell is chrome for a human at a
+        // tty, never payload. A retried turn is slow enough to cross the
+        // bell threshold, and it used to write two 0x07 bytes here.
+        // Anti-vacuous: stdout really carries the streamed answer, so an
+        // empty buffer cannot pass the byte check by having nothing in it.
+        assert!(
+            !run.stdout.is_empty() && stdout.contains("PARTIAL_ANSWER_7Q"),
+            "[{door}] anti-vacuous: stdout must carry the partial answer; stdout={stdout:?}"
+        );
+        assert!(
+            !run.stdout.contains(&0x07),
+            "[{door}] #976: no BEL byte may land on stdout (a pipe); stdout={stdout:?}"
+        );
+        // #976 half 2 (the partial answer re-streamed once per retry) is
+        // still OPEN and deliberately not pinned here: it needs a design
+        // decision (suppress, de-duplicate or refuse a retry after streamed
+        // output). Only the BEL half above is pinned.
     }
 }
 
