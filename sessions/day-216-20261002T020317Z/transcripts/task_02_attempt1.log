@@ -1,0 +1,267 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "armed_doors_keep_streamed… ✓ (4ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 25,112p src/format/mod.rs; … ✓ (18ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 20.7s (3 ✓)
+
+Now add the failing assertion to the test first.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit tests/print_stdout_contract.rs (6 → 23 lines)
+            assert!(
+                !stdout.contains("Overloaded") && !stdout.to_lowercase().contains("error"),
+                "[{door}] the error must not land on stdout; stdout={stdout:?}"
+  +         );
+  +         // #976 half 1 (BEL): the terminal bell is chrome for a human at a
+  +         // tty, never payload. A retried turn is slow enough to cross the
+  +         // bell threshold, and it used to write two 0x07 bytes here.
+  +         // Anti-vacuous: stdout really carries the streamed answer, so an
+  +         // empty buffer cannot pass the byte check by having nothing in it.
+  +         assert!(
+  +             !run.stdout.is_empty() && stdout.contains("PARTIAL_ANSWER_7Q"),
+  +             "[{door}] anti-vacuous: stdout must carry the partial answer; stdout={stdout:?}"
+  +         );
+  +         assert!(
+  +             !run.stdout.contains(&0x07),
+  +             "[{door}] #976: no BEL byte may land on stdout (a pipe); stdout={stdout:?}"
+            );
+  +         // #976 half 2 (the partial answer re-streamed once per retry) is
+  +         // still OPEN and deliberately not pinned here: it needs a design
+  +         // decision (suppress, de-duplicate or refuse a retry after streamed
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "struct.*Run\b\|stdout:" t… ✓ (1m 21s)
+            assert!(
+                !stdout.contains("Overloaded") && !stdout.to_lowercase().contains("error"),
+                "[{door}] the error must not land on stdout; stdout={stdout:?}"
+  +         );
+  +         // #976 half 1 (BEL): the terminal bell is chrome for a human at a
+  +         // tty, never payload. A retried turn is slow enough to cross the
+  +         // bell threshold, and it used to write two 0x07 bytes here.
+  +         // Anti-vacuous: stdout really carries the streamed answer, so an
+  ... (13 more lines)
+ ✓ (1m 21s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 25s (2 ✓)
+
+Reproduced: two \u{7} bytes on stdout, and the new assertion fails by name. Now the fix: a pure decision helper.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (6 → 15 lines)
+    pub fn maybe_ring_bell(elapsed: Duration) {
+  -     // #966: the BEL byte is not part of the payload, so a reserved stdout skips it.
+  -     if bell_enabled() && !stdout_reserved() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
+  -         let _ = io::stdout().write_all(b"\x07");
+  -         let _ = io::stdout().flush();
+  +     if bell_enabled() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
+  +         let stdout_tty = io::IsTerminal::is_terminal(&io::stdout());
+  +         match bell_destination(stdout_tty, stdout_reserved(), stderr_is_terminal()) {
+  +             Some(BellTarget::Stdout) => {
+  +                 let _ = io::stdout().write_all(b"\x07");
+  +                 let _ = io::stdout().flush();
+  +             }
+  +             Some(BellTarget::Stderr) => {
+  +                 let _ = io::stderr().write_all(b"\x07");
+  +                 let _ = io::stderr().flush();
+  +             }
+  +             None => {}
+  +         }
+        }
+  ▶ edit src/format/mod.rs (1 → 30 lines)
+  + /// Where the terminal bell (BEL, `0x07`) may be written.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub(crate) enum BellTarget {
+  +     Stdout,
+  +     Stderr,
+  + }
+  + 
+  + /// Pure decision: which stream, if any, gets the bell byte.
+  + ///
+  + /// The bell is chrome for a human at a terminal, never payload. stdout is
+  + /// the payload channel, so it only gets the bell when it is a tty and not
+  + /// reserved for the payload (#966). Otherwise (a pipe, a file, `-p` into
+  + /// another program, #976) the bell moves to stderr if stderr is a tty, and
+  + /// is dropped when neither stream is a terminal. A tty, unreserved stdout,
+  + /// which is every interactive REPL user, stays on stdout as before.
+  + pub(crate) fn bell_destination(
+  +     stdout_tty: bool,
+  +     stdout_reserved: bool,
+  +     stderr_tty: bool,
+  + ) -> Option<BellTarget> {
+  ... (10 more lines)
+ ✓ (11.2s)
+    pub fn maybe_ring_bell(elapsed: Duration) {
+  -     // #966: the BEL byte is not part of the payload, so a reserved stdout skips it.
+  -     if bell_enabled() && !stdout_reserved() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
+  -         let _ = io::stdout().write_all(b"\x07");
+  -         let _ = io::stdout().flush();
+  +     if bell_enabled() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
+  +         let stdout_tty = io::IsTerminal::is_terminal(&io::stdout());
+  +         match bell_destination(stdout_tty, stdout_reserved(), stderr_is_terminal()) {
+  ... (11 more lines)
+ ✓ (23.0s)
+  + /// Where the terminal bell (BEL, `0x07`) may be written.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub(crate) enum BellTarget {
+  +     Stdout,
+  +     Stderr,
+  + }
+  + 
+  + /// Pure decision: which stream, if any, gets the bell byte.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 27.2s (2 ✓)
+
+The second check still says unused, which is odd. Checking the actual file:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 60,125p src/format/mod.rs; … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The first edit was lost (the two parallel edits to one file raced). Reapplying the maybe_ring_bell change alone:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (6 → 17 lines)
+    pub fn maybe_ring_bell(elapsed: Duration) {
+  -     // #966: the BEL byte is not part of the payload, so a reserved stdout skips it.
+  -     if bell_enabled() && !stdout_reserved() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
+  -         let _ = io::stdout().write_all(b"\x07");
+  -         let _ = io::stdout().flush();
+  +     // #966 / #976: the BEL byte is never payload; `bell_destination` keeps it
+  +     // off a reserved or non-tty stdout.
+  +     if bell_enabled() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
+  +         let stdout_tty = io::IsTerminal::is_terminal(&io::stdout());
+  +         match bell_destination(stdout_tty, stdout_reserved(), stderr_is_terminal()) {
+  +             Some(BellTarget::Stdout) => {
+  +                 let _ = io::stdout().write_all(b"\x07");
+  +                 let _ = io::stdout().flush();
+  +             }
+  +             Some(BellTarget::Stderr) => {
+  +                 let _ = io::stderr().write_all(b"\x07");
+  +                 let _ = io::stderr().flush();
+  +             }
+  +             None => {}
+  +         }
+  ... (1 more lines)
+ ✓ (2m 22s)
+    pub fn maybe_ring_bell(elapsed: Duration) {
+  -     // #966: the BEL byte is not part of the payload, so a reserved stdout skips it.
+  -     if bell_enabled() && !stdout_reserved() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
+  -         let _ = io::stdout().write_all(b"\x07");
+  -         let _ = io::stdout().flush();
+  +     // #966 / #976: the BEL byte is never payload; `bell_destination` keeps it
+  +     // off a reserved or non-tty stdout.
+  +     if bell_enabled() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
+  ... (13 more lines)
+
+Now the table test, beside the existing bell tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (2 → 28 lines)
+  +     #[test]
+  +     fn bell_destination_keeps_bel_off_a_payload_stdout() {
+  +         use BellTarget::{Stderr, Stdout};
+  +         // (stdout_tty, stdout_reserved, stderr_tty) -> destination
+  +         let table: [((bool, bool, bool), Option<BellTarget>); 8] = [
+  +             // Near-miss: every interactive REPL user. Unchanged: stdout.
+  +             ((true, false, true), Some(Stdout)),
+  +             ((true, false, false), Some(Stdout)),
+  +             // #966: a reserved stdout (--print / json) never gets it.
+  +             ((true, true, true), Some(Stderr)),
+  +             ((true, true, false), None),
+  +             // #976: a piped stdout (-p | file, piped stdin) never gets it.
+  +             ((false, false, true), Some(Stderr)),
+  +             ((false, false, false), None),
+  +             ((false, true, true), Some(Stderr)),
+  +             ((false, true, false), None),
+  +         ];
+  +         for ((out_tty, reserved, err_tty), want) in table {
+  +             assert_eq!(
+  +                 bell_destination(out_tty, reserved, err_tty),
+  ... (8 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo test --bin yoyo… ✓ (2m 41s)
+  +     #[test]
+  +     fn bell_destination_keeps_bel_off_a_payload_stdout() {
+  +         use BellTarget::{Stderr, Stdout};
+  +         // (stdout_tty, stdout_reserved, stderr_tty) -> destination
+  +         let table: [((bool, bool, bool), Option<BellTarget>); 8] = [
+  +             // Near-miss: every interactive REPL user. Unchanged: stdout.
+  +             ((true, false, true), Some(Stdout)),
+  +             ((true, false, false), Some(Stdout)),
+  ... (13 more lines)
+ ✓ (2m 41s)
+  2 tools completed in 2m 47s (2 ✓)
+
+Green. Now the positive control: the helper is neutered to always pick stdout, then restored in the same atomic command.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/format/… (8 lines) ✓ (1m 1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control turned both tests red by name, and the file is restored (0 markers). Next I'll check CHANGELOG for an Unreleased section, then run the full gate.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; head -20 CHANGELOG.md | grep -n -i… ✓ (4ms)
+  ▶ edit CHANGELOG.md (2 → 4 lines)
+    ## [Unreleased]
+  + 
+  + - The terminal bell no longer writes `0x07` bytes onto stdout when stdout is not a terminal. Before, a slow `yoyo -p "..."` (or piped stdin without `--print`) that went past the bell threshold, for example a turn that retried, ended its piped output with two BEL bytes (#976, measured by `tests/print_stdout_contract.rs`). The bell now goes to stdout only when stdout is a tty and not reserved for the payload. Otherwise it goes to stderr when stderr is a terminal, and is dropped when neither stream… [yoyo: 120 more bytes elided — diff lines are capped at 500 bytes]
+    
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (1ms)
+    ## [Unreleased]
+  + 
+  + - The terminal bell no longer writes `0x07` bytes onto stdout when stdout is not a terminal. Before, a slow `yoyo -p "..."` (or piped stdin without `--print`) that went past the bell threshold, for example a turn that retried, ended its piped output with two BEL bytes (#976, measured by `tests/print_stdout_contract.rs`). The bell now goes to stdout only when stdout is a tty and not reserved for the payload. Otherwise it goes to stderr when stderr is a terminal, and is dropped when neither stream… [yoyo: 120 more bytes elided — diff lines are capped at 500 bytes]
+    
+ ✓ (2m 24s)
+  3 tools completed in 2m 30s (3 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+Every check passed. Before committing I'll look for doc statements about where the bell goes:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn -i "bell" docs/src README… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The existing docs only describe the REPL, which hasn't changed, so they're still accurate. Committing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -c NEUTERED src/format/mod.rs… ✓ (17ms)
+
+The terminal bell no longer puts 0x07 bytes onto stdout in -p or piped mode. That's half 1 of #976, committed as c21b1fa6; build, fmt, clippy (-D warnings) and the full cargo test all pass.
+
+Reproduced first. I ran the existing test armed_doors_keep_streamed_partial_answer_when_turn_dies_mid_stream unchanged. On plain -p, stdout ended in …PARTIAL_ANSWER_7Q\n\u{7}\u{7}: two bell bytes after six retries. I added two assertions to that test:
+• stdout contains no 0x07 byte, on both armed doors (plain -p, and piped stdin without --print).
+• stdout is non-empty and contains PARTIAL_ANSWER_7Q, so an empty buffer can't pass the byte check.
+
+At HEAD the new assertion failed by name on [plain -p].
+
+The fix is in src/format/mod.rs. A new pure helper, bell_destination(stdout_tty, stdout_reserved, stderr_tty), decides where the bell goes, and maybe_ring_bell just follows it:
+• If stdout is a terminal and not reserved for the answer, the bell goes to stdout. That covers every interactive REPL user, so the REPL behaves exactly as before.
+• Otherwise it goes to stderr if stderr is a terminal.
+• If neither stream is a terminal, it isn't written at all.
+
+A table test covers all 8 combinations, including the interactive row above. Before, the code only skipped the bell when stdout was reserved (--print / json); it never checked whether stdout was a terminal, so plain -p into a pipe still got the bytes.
+
+Positive control. I made the helper always return stdout, marked NEUTERED, and restored the file in the same command. Both the #976 assertion and the table test went red by name. The restored file has no marker left.
+
+• **Half 2 is still open:** the partial answer is still re-streamed once per retry (six copies in that test). It needs a design decision, so the existing `contains` assertion is unchanged and a comment in the test says only the bell half is pinned. #976 stays open.
+• **CHANGELOG:** I added one line under the existing Unreleased section.
+• **Docs:** the only bell mention in `docs/src` describes the REPL, which hasn't changed, so no doc edit was needed.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/format/mod.rs
+
