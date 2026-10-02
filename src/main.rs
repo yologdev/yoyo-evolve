@@ -1098,7 +1098,9 @@ fn continue_strict_refusal(path: &str, err: &RestoreError) -> String {
 fn restore_session(agent: &mut Agent, strict: bool) {
     let session_path = commands_session::continue_session_path();
     match restore_session_result(agent, std::path::Path::new(session_path)) {
-        Ok(_) => {
+        Ok(n) => {
+            // #979: stream-json acknowledges the restore after agentStart.
+            prompt::record_session_restored(n);
             let summary = commands_session::session_resume_summary(agent.messages());
             eprint!("{DIM}{summary}{RESET}");
         }

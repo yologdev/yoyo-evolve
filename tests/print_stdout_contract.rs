@@ -1193,3 +1193,95 @@ fn save_session_written_after_a_failed_turn() {
     );
     assert_saved_session(&path, &run);
 }
+
+/// stdout split into NDJSON lines, each parsed (panics on a non-JSON line).
+fn ndjson_lines(run: &Run) -> Vec<serde_json::Value> {
+    String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("non-JSON line {l:?}: {e}")))
+        .collect()
+}
+
+/// #979 half 2: stream-json acknowledges a restored session with
+/// `{"type":"sessionRestored","messages":N}` directly after `agentStart`.
+/// The seeded session is produced by the REAL writer (`--save-session` in a
+/// first run), never a typed JSON literal, and N is read back from it.
+#[test]
+fn stream_json_continue_emits_session_restored_after_agent_start() {
+    let out = tempfile::tempdir().unwrap();
+    let saved = out.path().join("s.json");
+    let p = saved.to_str().unwrap();
+    let first = run_yoyo(&["-p", "x", "--save-session", p], None);
+    assert_reached_stub(&first);
+    let session = std::fs::read_to_string(&saved).expect("real writer saved a session");
+    let n = serde_json::from_str::<serde_json::Value>(&session)
+        .unwrap()
+        .as_array()
+        .map(|a| a.len())
+        .unwrap();
+    assert!(n >= 1, "anti-vacuous: the seeded session must be non-empty");
+
+    let files = [(".yoyo/last-session.json", session.as_str())];
+    let base = ["--no-tools", "--max-turns", "1"];
+    let budget = Duration::from_secs(20);
+    for flag in ["--continue", "--continue-strict"] {
+        let run = run_yoyo_seeded(
+            &files,
+            &base,
+            &["--output-format", "stream-json", "-p", "x", flag],
+            None,
+            vec![sse_body()],
+            budget,
+        );
+        assert_reached_stub(&run);
+        let raw = String::from_utf8_lossy(&run.stdout).into_owned();
+        let lines: Vec<&str> = raw.lines().collect();
+        assert_eq!(lines[0], r#"{"type":"agentStart"}"#, "{flag}: stdout={raw}");
+        assert_eq!(
+            lines[1],
+            format!(r#"{{"type":"sessionRestored","messages":{n}}}"#),
+            "{flag}: stdout={raw}"
+        );
+        assert_eq!(
+            occurrences(&raw, "sessionRestored"),
+            1,
+            "{flag}: exactly once; stdout={raw}"
+        );
+    }
+
+    // Near-miss: the same stream-json run without --continue emits no such line.
+    let fresh = run_yoyo_seeded(
+        &files,
+        &base,
+        &["--output-format", "stream-json", "-p", "x"],
+        None,
+        vec![sse_body()],
+        budget,
+    );
+    assert_reached_stub(&fresh);
+    let lines = ndjson_lines(&fresh);
+    assert_eq!(lines[0]["type"], "agentStart");
+    assert!(
+        lines.iter().all(|v| v["type"] != "sessionRestored"),
+        "no restore -> no sessionRestored line"
+    );
+}
+
+/// #979 half 2 near-miss: a lenient `--continue` whose restore FAILED emits no
+/// `sessionRestored` (never `messages: 0`, which would read as an empty session).
+#[test]
+fn stream_json_failed_lenient_continue_emits_no_session_restored() {
+    let files = [(".yoyo/last-session.json", "{ not json")];
+    let run = run_yoyo_seeded(
+        &files,
+        &["--no-tools", "--max-turns", "1"],
+        &["--output-format", "stream-json", "-p", "x", "--continue"],
+        None,
+        vec![sse_body()],
+        Duration::from_secs(20),
+    );
+    assert_reached_stub(&run);
+    let lines = ndjson_lines(&run);
+    assert_eq!(lines[0]["type"], "agentStart");
+    assert!(lines.iter().all(|v| v["type"] != "sessionRestored"));
+}

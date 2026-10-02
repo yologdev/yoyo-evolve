@@ -81,6 +81,21 @@ echo "list the files" | yoyo --output-format stream-json
 {"type":"agentEnd", ...}
 ```
 
+**Continued runs: one `sessionRestored` line.** When `--continue` or
+`--continue-strict` actually restored a saved session, the line right after
+the first `agentStart` reports how many messages were restored:
+
+```jsonl
+{"type":"agentStart"}
+{"type":"sessionRestored","messages":4}
+```
+
+It appears once per process. It is **absent** when no session was restored:
+with no `--continue` flag, or with a lenient `--continue` whose restore failed.
+A failed restore never shows up as `messages: 0`. `--continue-strict` exits 1
+in that case instead. A run without `--continue` streams exactly what it did
+before this line existed.
+
 **Degraded runs: one `externalServers` line.** If an MCP server or OpenAPI
 spec you configured failed to connect this session, one extra line follows
 the last yoagent event (so it comes after `agentEnd`, and the first line is

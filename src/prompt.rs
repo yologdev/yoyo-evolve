@@ -14,6 +14,8 @@ use crate::session::{ChangeKind, SessionChanges};
 
 mod retry_after_partial;
 mod stream_external_servers;
+mod stream_session_restored;
+pub(crate) use stream_session_restored::record_session_restored;
 mod turn_prefix;
 use retry_after_partial::{should_retry_after_partial, RETRY_SKIPPED_AFTER_PARTIAL_NOTE};
 pub(crate) use turn_prefix::{
@@ -1811,9 +1813,8 @@ pub async fn run_prompt_with_content_and_changes(
 /// camelCase wire contract (`#[serde(tag = "type", rename_all = "camelCase", ...)]`),
 /// so serializing it directly IS the stream-json output shape. No lossy translation.
 fn emit_agent_event(event: &AgentEvent) {
-    if let Ok(json) = serde_json::to_string(event) {
-        println!("{json}");
-    }
+    // #979: also writes `sessionRestored` after the first agentStart.
+    stream_session_restored::write_stream_event(event);
 }
 
 /// Run a prompt in streaming JSON mode: emit NDJSON events to stdout as they arrive.
