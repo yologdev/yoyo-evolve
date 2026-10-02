@@ -12,8 +12,10 @@ use yoagent::*;
 use crate::prompt_budget::{audit_log_tool_call, is_audit_enabled, session_budget_exhausted};
 use crate::session::{ChangeKind, SessionChanges};
 
+mod retry_after_partial;
 mod stream_external_servers;
 mod turn_prefix;
+use retry_after_partial::{should_retry_after_partial, RETRY_SKIPPED_AFTER_PARTIAL_NOTE};
 pub(crate) use turn_prefix::{
     apply_effort_hint, apply_external_failure_note_with, prepend_external_failure_block_with,
 };
@@ -178,6 +180,14 @@ pub struct PromptOutcome {
 /// for `external_servers` one subsystem over).
 fn fatal_handoff(collected_text: String, error_msg: String) -> (String, Option<String>) {
     (collected_text, Some(error_msg))
+}
+
+/// Live-state wrapper both retry loops call: one condition, never two copies.
+/// The dying attempt's text reached stdout only when stdout is NOT reserved for
+/// a final payload (`--print`/json hold it back, so they retry safely).
+fn retry_blocked_by_streamed_partial(dying_text: &str) -> bool {
+    let streamed = !stdout_reserved() && !dying_text.is_empty();
+    !should_retry_after_partial(io::stdout().is_terminal(), streamed)
 }
 
 /// Assemble the value a caller of the two prompt loops actually receives.
@@ -1264,7 +1274,14 @@ pub async fn run_prompt_with_changes(
             } => {
                 accumulate_usage(&mut total_usage, &usage);
 
-                if attempt < MAX_RETRIES {
+                if attempt < MAX_RETRIES && retry_blocked_by_streamed_partial(&dying_text) {
+                    // #976: a pipe already holds this attempt's partial answer;
+                    // a retry would write it again. Stop with the real error.
+                    eprintln!("\n{RED}  error: {error_msg}{RESET}");
+                    eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
+                    (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
+                    break;
+                } else if attempt < MAX_RETRIES {
                     // One decision, both retry loops (the other is in
                     // `run_prompt_auto_retry_with_content`) — a per-token pass
                     // is not a per-entry-point pass.
@@ -1408,6 +1425,13 @@ pub async fn run_prompt_with_changes(
                         malformed_retries,
                     )
                 {
+                    // #976: a resample re-runs the same prompt, so it would
+                    // re-stream this attempt's partial onto a pipe too.
+                    if retry_blocked_by_streamed_partial(&fatal_text) {
+                        eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
+                        (collected_text, api_error) = fatal_handoff(fatal_text, error_msg);
+                        break;
+                    }
                     malformed_retries += 1;
                     if !crate::format::is_quiet() {
                         eprintln!(
@@ -1665,7 +1689,13 @@ pub async fn run_prompt_with_content_and_changes(
             } => {
                 accumulate_usage(&mut total_usage, &usage);
 
-                if attempt < MAX_RETRIES {
+                if attempt < MAX_RETRIES && retry_blocked_by_streamed_partial(&dying_text) {
+                    // #976: same shared rule as `run_prompt_auto_retry` above.
+                    eprintln!("\n{RED}  error: {error_msg}{RESET}");
+                    eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
+                    (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
+                    break;
+                } else if attempt < MAX_RETRIES {
                     // Same shared decision as `run_prompt_auto_retry` above.
                     match retry_wait_decision(
                         attempt + 1,
@@ -1733,6 +1763,13 @@ pub async fn run_prompt_with_content_and_changes(
                         malformed_retries,
                     )
                 {
+                    // #976: a resample re-runs the same prompt, so it would
+                    // re-stream this attempt's partial onto a pipe too.
+                    if retry_blocked_by_streamed_partial(&fatal_text) {
+                        eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
+                        (collected_text, api_error) = fatal_handoff(fatal_text, error_msg);
+                        break;
+                    }
                     malformed_retries += 1;
                     if !crate::format::is_quiet() {
                         eprintln!(

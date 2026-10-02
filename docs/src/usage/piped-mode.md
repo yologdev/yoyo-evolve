@@ -53,6 +53,8 @@ stdout: the final payload is written there exactly once, so `| jq` parses it.
 Under `--print` and `--output-format json`, progress output (tool `▶` lines, ✓/✗ results, diffs, turn boundaries) goes to stderr, and stdout carries only the answer.
 
 **When a turn dies mid-stream** (the provider errors after text has started arriving, and every retry dies the same way), `--print` still writes the text the last attempt produced to stdout, and yoyo exits **non-zero** with the error on stderr. So stdout carries what was produced and the exit code carries that it failed — check the exit code before trusting the answer as complete. `--output-format json` is not covered by this guarantee: what its envelope carries on a mid-stream failure is not pinned by a test.
+
+Without `--print` (plain `-p`, or piped stdin), text streams to stdout as it arrives. When stdout is **not a terminal**, a turn that dies **after** it has started printing is **not retried**: bytes already written to a pipe cannot be taken back, so a retry would print the partial answer a second time and the reader could not tell the copies apart. yoyo exits non-zero with the error on stderr, plus a line saying the retry was skipped. Rerun the command. A turn that dies before printing anything (the usual overloaded-at-start case) is still retried, and a terminal still retries as before.
 - `stream-json` — newline-delimited JSON (NDJSON): one yoagent `AgentEvent`
   per line, emitted in real time as the agent works.
 

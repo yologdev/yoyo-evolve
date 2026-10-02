@@ -736,7 +736,7 @@ const PARTIAL_LINE: &str = "PARTIAL_ANSWER_7Q\n";
 /// Measured Day 215 (20:47): this already holds (probed, no code change).
 /// The same reading shows two OTHER defects this test deliberately does not
 /// pin: each retry re-streams the partial (one copy per attempt on stdout),
-/// and two BEL bytes reach stdout. Hence `contains`, not a count or `assert_eq!`.
+/// and two BEL bytes reach stdout. Day 216 (#976 half 2): now one copy, pinned by `assert_eq!`.
 #[test]
 fn armed_doors_keep_streamed_partial_answer_when_turn_dies_mid_stream() {
     let body = sse_dies_mid_stream_body_with(PARTIAL_LINE);
@@ -800,11 +800,61 @@ fn armed_doors_keep_streamed_partial_answer_when_turn_dies_mid_stream() {
             !run.stdout.contains(&0x07),
             "[{door}] #976: no BEL byte may land on stdout (a pipe); stdout={stdout:?}"
         );
-        // #976 half 2 (the partial answer re-streamed once per retry) is
-        // still OPEN and deliberately not pinned here: it needs a design
-        // decision (suppress, de-duplicate or refuse a retry after streamed
-        // output). Only the BEL half above is pinned.
+        // #976 half 2: the partial answer used to be re-streamed once per
+        // retry (six copies, Day 216). A non-terminal stdout that already
+        // holds text is not retried, so a pipe gets exactly ONE copy.
+        assert_eq!(
+            stdout, PARTIAL_LINE,
+            "[{door}] #976: exactly one copy of the partial; stderr={}",
+            run.stderr
+        );
+        assert_eq!(
+            run.requests, 1,
+            "[{door}] #976: no retry after streamed text"
+        );
+        assert!(
+            run.stderr
+                .contains("not retrying: part of the answer was already written"),
+            "[{door}] #976: stderr must say why the retry was skipped; stderr={}",
+            run.stderr
+        );
     }
+}
+
+/// #976 near-miss: an attempt that dies BEFORE writing any text (overloaded at
+/// request start) must still retry on a pipe, and the successful answer lands
+/// exactly once with exit 0.
+#[test]
+fn armed_door_retries_when_turn_dies_before_any_text() {
+    let early_death = sse_events(vec![
+        (
+            "message_start",
+            r#"{"type":"message_start","message":{"id":"msg_die0","type":"message","role":"assistant","model":"claude-stub","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":1}}}"#.to_string(),
+        ),
+        (
+            "error",
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#.to_string(),
+        ),
+    ]);
+    assert!(!early_death.contains("text_delta"), "anti-vacuous: no text");
+    let run = run_yoyo_within(
+        &["--no-tools", "--max-turns", "1"],
+        &["-p", "hi"],
+        None,
+        vec![early_death, sse_text_body(PARTIAL_LINE)],
+        Duration::from_secs(120),
+    );
+    assert_eq!(
+        run.requests, 2,
+        "the early death must be retried; stderr={}",
+        run.stderr
+    );
+    assert!(
+        run.success,
+        "retry succeeded, exit 0; stderr={}",
+        run.stderr
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), PARTIAL_LINE);
 }
 
 /// Near-miss for the test above: the same partial text on a stream that
