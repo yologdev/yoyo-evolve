@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo >/dev/null … ✓ (16ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.6s (2 ✓)
+
+Verdict: PASS. The diff does what task 2 (#978) asked: --save-session <path> now works for both -p runs and piped runs, including after a failed turn. The verdict is in session_plan/eval_task_2.md.
+
+What I checked beyond reading the diff:
+
+• **The flag is in the help text.** Running yoyo --help shows --save-session <path> right after --continue-strict.
+• **It reuses the existing save format.** The new code writes agent.save_messages(), the same call /save uses in src/commands_session.rs, so there is no second serialiser.
+
+From the diff itself:
+
+• **Both run modes are covered by one helper.** `save_session_after_turn` is called at every exit after a turn has run, six places in total across `-p` and piped mode. It calls `agent.finish().await` before reading the messages.
+• **Exit codes are honest.** A failed save turns exit 0 into 1, but a turn that already failed keeps its own code. The error line sanitizes both the path and the reason.
+• **Missing parent directories are not created.** Both the unit test and the process test assert this.
+• **Tests:** five process tests (the `-p` door, the piped door, a missing parent directory, a turn that dies mid-stream, and a run without the flag). A unit test checks the file round-trips through restore_session_result with the same message count.
+• **Housekeeping:** the src/cli.rs size-register row moved from 7587 to 7591 with a note. The docs, CHANGELOG and ARCHITECTURE.md are updated.
+• **Default behaviour:** without the flag, nothing changes.
+
+One limit: the test for the no-flag case is weak, as its own comment says. It confirms exit 0 and no --save-session message, but not that no file was written anywhere.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

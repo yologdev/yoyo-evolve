@@ -1,0 +1,62 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneline -15; git…  ▶ $ grep -n "^## Day" journals/JOURNAL.md | head -10 ✓ (3ms)
+ ✓ (13ms)
+  ▶ $ sed -n 1,40p journals/JOURNAL.md; ls journals; tail -5 journals/llm-wiki.md | cu…  ▶ $ gh issue list --repo yologdev/yoyo-evolve --state open --limit 40 --json number,…  ▶ $ gh run list --repo yologdev/yoyo-evolve --workflow evolve.yml --limit 5 --json c… ✓ (11ms)
+ ✓ (341ms)
+ ✓ (823ms)
+  ▶ $ for n in 979 978 976 977; do echo "=== #$n"; gh issue view $n --repo yologdev/yo… ✓ (1.2s)
+  ▶ $ grep -n "restore_session\|fn auto_save_on_exit\|auto_save_on_exit(\|last-session… ✓ (32ms)
+  ▶ $ grep -n "fn restore_session\|restore_session(\|auto_save_on_exit\|Failed to rest… ✓ (20ms)
+  ▶ $ sed -n 1000,1035p src/main.rs; sed -n 1210,1240p src/main.rs; sed -n 390,440p sr… ✓ (8ms)
+  ▶ $ grep -n "const .*CAP\|MAX_LINES\|(\"src/main.rs\|(\"src/cli.rs\|(\"src/commands_… ✓ (24ms)
+  ▶ $ grep -n "^const\|^pub const\|^static" tests/module_size.rs | head; grep -n "stre… ✓ (17ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 19.7s (11 ✓)
+
+Now try the binary briefly and look at the build.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ ls -la target/debug/yoyo 2>&1 | head -2; cd /tmp && rm -rf probe216 && mkdir pro… ✓ (2.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/probe216 && cat .yoyo/last-session.json; rm .yoyo/last-session.json; tim… ✓ (5.2s)
+  2 tools completed in 11.3s (2 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ write session_plan/assessment.md (52 lines)  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.md && git c… ✓ (0ms)
+ ✓ (3ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && git show --stat f5a3fcb0 | tail -3 ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3.6s (3 ✓)
+
+Earlier sessions committed this file even though session_plan/ is gitignored, so I'll force-add it the same way:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/assessment.md && gi… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The assessment is written and committed at cbbe515b (session_plan/assessment.md). I skipped the competitor research and the yopedia recall because I ran out of context during the survey, and the assessment says so.
+
+State:
+• **Health:** The build and tests are green, and the last 10 sessions each finished 2/2 with no reverts. CI is green, and the latest evolve runs succeeded.
+• **Live checks:** I ran the binary from an empty folder with no config. `-p` and piped input both print exactly `PONG\n`, so the blank-line fixes from Day 215 hold outside the tests.
+
+I reproduced the two issues the creator filed today:
+• **#979:** I put a corrupted `.yoyo/last-session.json` in place and ran `-p … --continue`. It printed a warning, started a fresh conversation, called the model and exited 0, which is the silent restart the issue describes. The fix point is restore_session (src/main.rs:1010). It runs before the -p branch, so a strict mode can exit before any model call is made.
+• #978: After a -p run, .yoyo/ holds only audit.jsonl, so no session is saved. The REPL is the only thing that calls auto_save_on_exit (repl.rs:1492), though that function already takes the target folder as a parameter.
+
+Constraints for the planner:
+• `cli.rs is registered at exactly its current length (7584) in tests/module_size.rs. Adding a flag means updating that entry or putting the logic in commands_session.rs`, which has room (1754 lines against the 2000 cap).
+• New flags also have to be added to the known-flags list at cli.rs:693 and to help.rs.
+• For #978, the agent has to call agent.finish().await before save_messages(), or the saved history is stale.
+• The stream-json acknowledgement #979 asks for has to be printed by yoyo itself, because yoagent has no such event.
+
+Suggested order: #979 first. Its key check is that plain --continue stays byte-for-byte unchanged. Then #978, which has to cover both -p and piped input. If either turns out too big, the fallback is the second half of #976: after a mid-stream failure, each retry re-prints the partial answer, so a pipe gets six copies.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

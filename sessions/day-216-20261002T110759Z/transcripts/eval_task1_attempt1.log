@@ -1,0 +1,23 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && rm -rf cs && mkdir -p cs/.yoyo && cd cs && printf '{ not json' > .yoy… ✓ (39ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.9s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+I ran the built binary as well as reading the diff. --continue-strict behaves as the task asked:
+• **Corrupt session file** (`{ not json`): it prints `error: --continue-strict: could not restore .yoyo/last-session.json: unparsable session (...)` and exits 1, with no model call made.
+• Missing session file: it prints the same error with the reason no session file (...) and exits 1.
+• **Help text:** --help lists the new flag right under --continue, -c.
+
+The four checklist lines in the verdict all pass:
+• **Intent alignment:** the restore logic now returns a result with two error cases (unreadable, unparsable). The strict exit happens before the `-p` branch, so no model call is made. The path and reason in the error are sanitized. Unit tests cover a missing, a corrupt and a valid file, all in a temp directory.
+• **Forgotten touchpoints:** the new `continue_strict` field is set when arguments are parsed, read in `main.rs`, and added to the test config. Both error cases are handled everywhere they're matched. The size limit for src/cli.rs was updated to the new line count (7587) in tests/module_size.rs.
+• **Docs:** docs/src/features/sessions.md, CHANGELOG.md (noting #979 stays open) and ARCHITECTURE.md are updated; CLAUDE.md is untouched, as the task asked.
+• Product surface: the flag is new and opt-in. Plain --continue keeps its old messages and exit code 0, and the process test checks that by requiring the plain run to still reach the stub.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

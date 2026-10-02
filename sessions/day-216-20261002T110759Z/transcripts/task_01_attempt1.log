@@ -1,0 +1,72 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 995,1050p src/main.rs; sed … ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "continue_session" src/*.r… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 455,480p src/commands_sessi… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "const .*CAP\|MAX_LINES\|2… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 100,330p tests/print_stdout… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 194,235p tests/print_stdout… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/main_tests.rs; grep -n "… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 160,200p src/main_tests.rs;… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "build_agent()" src/main_t… ✓ (11ms)
+  10 tools completed in 40.3s (10 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (111 lines) ✓ (11.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (53 lines) ✓ (12.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 36.5s (2 ✓)
+
+Positive control (atomic, serial), then unit tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/main.rs /tmp/main.bak; sed … ✓ (46.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's|            std::process… ✓ (5.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "process::exit(1);" src/ma… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i '1057s|std::process::exit(1… ✓ (11.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 16s (4 ✓)
+
+Control reddened by name and restored. Now docs + size gate, then full checks.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "\-\-continue" docs/src/fe… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 15,30p docs/src/features/se… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (11 lines) ✗ (2m 0s)
+    │ Command timed out after 120s
+  3 tools completed in 2m 13s (2 ✓, 1 ✗)
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy --all-targets -- -D w… ✓ (155ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 580 cargo test 2>&1 | grep… ✓ (2m 33s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 300 cargo test --test modu… ✓ (182ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's|    ("src/cli.rs", 7584)… ✓ (2m 25s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && git add -A… ✓ (1.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 5m 33s (5 ✓)
+
+yoyo --continue-strict now refuses to run when the saved session is missing or can't be parsed. It prints error: --continue-strict: could not restore <path>: <reason> and exits 1 before any model call is made. Plain --continue behaves exactly as before. All 6,185 tests pass, clippy and fmt are clean, and it's committed as 2c312c18.
+
+What changed:
+• **`src/main.rs:** the restore logic now lives in restore_session_result`, which returns either the number of restored messages or one of two errors: the file couldn't be read, or it couldn't be parsed. With the strict flag, either error prints the refusal and exits 1. This check runs before the -p branch, so the model is never called. The file path and error text are sanitized before printing. Without the flag, the warning and "no previous session found" lines print the same text as before.
+• **`src/cli.rs and src/cli_config.rs:** --continue-strict turns on --continue as well as the strict check. cli.rs grew 3 lines, to 7587, so I updated its entry in tests/module_size.rs` and added a note.
+• **`src/help.rs:** the flag is listed in the help text right after --continue`.
+
+Tests:
+• **Unit tests** (in a temp directory, never the repo's real `.yoyo/`): a missing file and `{ not json` each give the right error, a valid two-message session restores 2 messages, and control bytes are stripped from the refusal text.
+• Process test (tests/print_stdout_contract.rs): with a corrupt session file, --continue-strict exits non-zero, mentions the flag in stderr, and the stub server receives 0 requests. The same corrupt file with plain --continue must still reach the stub and exit 0. That paired run is what stops the zero-request test from passing for the wrong reason, since every other test in that file requires a request. A comment explains the exception.
+• **Positive control:** with the strict exit(1) commented out, the process test failed by name. I restored it and checked that no NEUTERED marker is left.
+
+The docs are updated in docs/src/features/sessions.md, CHANGELOG.md (Unreleased) and the main.rs entry in ARCHITECTURE.md.
+
+#979 is still open: the second half, a `sessionRestored` line in stream-json output, is not done.
+  watch: no files changed this turn — skipping
