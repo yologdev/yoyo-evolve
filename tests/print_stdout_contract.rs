@@ -1054,3 +1054,92 @@ fn continue_strict_refuses_corrupt_session_before_any_model_call() {
         lenient.stderr
     );
 }
+
+/// #978: assert `path` holds a session that parses as a non-empty message list.
+fn assert_saved_session(path: &std::path::Path, run: &Run) {
+    let raw = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("#978: no session at {path:?} ({e}); stderr={}", run.stderr));
+    let v: serde_json::Value = serde_json::from_str(&raw).expect("session must be JSON");
+    let n = v.as_array().map(|a| a.len()).unwrap_or(0);
+    assert!(n >= 1, "#978: saved session must carry the turn; got {raw}");
+}
+
+/// #978 door 1: `-p` with `--save-session` writes a resumable session.
+#[test]
+fn save_session_prompt_door_writes_the_session() {
+    let out = tempfile::tempdir().unwrap();
+    let path = out.path().join("s.json");
+    let p = path.to_str().unwrap();
+    let run = run_yoyo(&["-p", "x", "--save-session", p], None);
+    assert_reached_stub(&run);
+    assert_saved_session(&path, &run);
+}
+
+/// #978 door 2: the piped-stdin door is wired too (two doors, one policy).
+#[test]
+fn save_session_piped_door_writes_the_session() {
+    let out = tempfile::tempdir().unwrap();
+    let path = out.path().join("s.json");
+    let p = path.to_str().unwrap();
+    let run = run_yoyo(&["--save-session", p], Some("x"));
+    assert_reached_stub(&run);
+    assert_saved_session(&path, &run);
+}
+
+/// #978: a missing parent dir is never created; the run fails and says why.
+#[test]
+fn save_session_missing_parent_dir_fails_loudly() {
+    let out = tempfile::tempdir().unwrap();
+    let path = out.path().join("no/such/dir/s.json");
+    let p = path.to_str().unwrap();
+    let run = run_yoyo(&["-p", "x", "--save-session", p], None);
+    assert!(run.stub_hit, "anti-vacuous: the turn must have run");
+    assert!(!run.success, "#978: a failed save must exit non-zero");
+    assert!(
+        run.stderr
+            .contains("error: --save-session: could not write"),
+        "stderr={}",
+        run.stderr
+    );
+    assert!(
+        !out.path().join("no").exists(),
+        "parent dir must not be created"
+    );
+}
+
+/// #978 near-miss: without the flag, a `-p` run exits 0 and says nothing about
+/// saving. (Weak by design: the run's cwd is a dropped tempdir, so this pins the
+/// exit and the absence of the message, not the absence of every file.)
+#[test]
+fn save_session_absent_flag_is_default_behaviour() {
+    let run = run_yoyo(&["-p", "x"], None);
+    assert_reached_stub(&run);
+    assert!(
+        !run.stderr.contains("--save-session"),
+        "stderr={}",
+        run.stderr
+    );
+}
+
+/// #978: a turn that dies mid-stream still writes the session, and the run
+/// keeps its own failure exit (the save never turns a failure into 0).
+#[test]
+fn save_session_written_after_a_failed_turn() {
+    let out = tempfile::tempdir().unwrap();
+    let path = out.path().join("s.json");
+    let p = path.to_str().unwrap();
+    let run = run_yoyo_within(
+        &["--no-tools", "--max-turns", "1"],
+        &["--print", "-p", "hi", "--save-session", p],
+        None,
+        vec![sse_dies_mid_stream_body()],
+        Duration::from_secs(120),
+    );
+    assert!(run.stub_hit, "anti-vacuous: stub never received a POST");
+    assert!(
+        !run.success,
+        "a dead turn must exit nonzero; stderr={}",
+        run.stderr
+    );
+    assert_saved_session(&path, &run);
+}

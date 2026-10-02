@@ -692,6 +692,7 @@ pub(crate) const KNOWN_FLAGS: &[&str] = &[
     "-y",
     "--continue",
     "--continue-strict",
+    "--save-session",
     "-c",
     "--fallback",
     "--audit",
@@ -769,6 +770,7 @@ pub(crate) const FLAGS_NEEDING_VALUES: &[&str] = &[
     "--disallowed-tools",
     "--output-format",
     "--cost-warn",
+    "--save-session",
 ];
 
 /// Collect positional arguments that aren't flags, flag values, or known subcommands.
@@ -2715,6 +2717,7 @@ directory ({e}); this run is trusted, later runs will not be."
     let max_turns = parse_numeric_flag::<usize>(args, "--max-turns", &file_config, "max_turns");
 
     let output_path = flag_value(args, &["--output", "-o"]);
+    let save_session = flag_value(args, &["--save-session"]).map(std::path::PathBuf::from);
 
     // Parse boolean output flags
     let of = parse_output_flags(args, &file_config);
@@ -2835,6 +2838,7 @@ directory ({e}); this run is trusted, later runs will not be."
         max_turns,
         continue_session,
         continue_strict,
+        save_session,
         output_path,
         prompt_arg,
         image_path,

@@ -378,6 +378,7 @@ async fn run_single_prompt(
     json_output: bool,
     output_format: cli::OutputFormat,
     print_mode: bool,
+    save_session: &Option<std::path::PathBuf>,
 ) {
     // #786: the one tracker for this whole function. Constructed above the
     // stream-json early return so that branch records into the *same* tracker
@@ -421,8 +422,10 @@ async fn run_single_prompt(
             )
             .await
         };
-        if response.last_api_error.is_some() {
-            std::process::exit(1);
+        let code = i32::from(response.last_api_error.is_some());
+        let code = save_session_after_turn(agent, save_session, code).await;
+        if code != 0 {
+            std::process::exit(code);
         }
         return;
     }
@@ -501,7 +504,7 @@ async fn run_single_prompt(
                         prompt_start.elapsed(),
                         count_assistant_turns(agent),
                     );
-                    std::process::exit(1);
+                    std::process::exit(save_session_after_turn(agent, save_session, 1).await);
                 }
                 final_response
             }
@@ -544,7 +547,7 @@ async fn run_single_prompt(
                 prompt_start.elapsed(),
                 count_assistant_turns(agent),
             );
-            std::process::exit(1);
+            std::process::exit(save_session_after_turn(agent, save_session, 1).await);
         }
         final_response
     };
@@ -583,6 +586,7 @@ async fn run_single_prompt(
         output_write_failed,
         CHECKPOINT_TRIGGERED.load(Ordering::SeqCst),
     );
+    let code = save_session_after_turn(agent, save_session, code).await;
     if code != 0 {
         std::process::exit(code);
     }
@@ -685,6 +689,7 @@ async fn run_piped_mode(
     json_output: bool,
     output_format: cli::OutputFormat,
     print_mode: bool,
+    save_session: &Option<std::path::PathBuf>,
 ) {
     let mut input = String::new();
     if let Err(e) = io::stdin().read_to_string(&mut input) {
@@ -724,8 +729,10 @@ async fn run_piped_mode(
             &session_changes,
         )
         .await;
-        if response.last_api_error.is_some() {
-            std::process::exit(1);
+        let code = i32::from(response.last_api_error.is_some());
+        let code = save_session_after_turn(agent, save_session, code).await;
+        if code != 0 {
+            std::process::exit(code);
         }
         return;
     }
@@ -902,6 +909,7 @@ async fn run_piped_mode(
         output_write_failed,
         CHECKPOINT_TRIGGERED.load(Ordering::SeqCst),
     );
+    let code = save_session_after_turn(agent, save_session, code).await;
     if code != 0 {
         std::process::exit(code);
     }
@@ -1003,6 +1011,48 @@ fn apply_bedrock_credentials(agent_config: &mut AgentConfig) {
             Ok(token) if !token.is_empty() => format!("{access_key}:{secret}:{token}"),
             _ => format!("{access_key}:{secret}"),
         };
+    }
+}
+
+/// #978: write exactly what `/save <path>` writes (`agent.save_messages()`).
+/// Never creates a missing parent directory: a bad path must fail loudly.
+fn save_session_to(agent: &Agent, path: &std::path::Path) -> Result<(), String> {
+    let json = agent.save_messages().map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+/// The `--save-session` failure line; both strings are sanitized.
+fn save_session_error(path: &std::path::Path, reason: &str) -> String {
+    format!(
+        "error: --save-session: could not write {}: {}",
+        cli::sanitize_for_display(&path.display().to_string()),
+        cli::sanitize_for_display(reason)
+    )
+}
+
+/// #978: run after every non-interactive turn, success OR failure. Calls
+/// `finish()` first (yoagent #258: `messages()` is stale until then) and
+/// returns the exit code to use: a failed save turns 0 into 1 but never
+/// replaces a turn's own non-zero code.
+async fn save_session_after_turn(
+    agent: &mut Agent,
+    save_session: &Option<std::path::PathBuf>,
+    code: i32,
+) -> i32 {
+    let Some(path) = save_session else {
+        return code;
+    };
+    agent.finish().await;
+    match save_session_to(agent, path) {
+        Ok(()) => code,
+        Err(e) => {
+            eprintln!("{}", save_session_error(path, &e));
+            if code != 0 {
+                code
+            } else {
+                1
+            }
+        }
     }
 }
 
@@ -1299,6 +1349,7 @@ async fn main() {
             json_output,
             output_format,
             print_mode,
+            &config.save_session,
         )
         .await;
         return;
@@ -1322,6 +1373,7 @@ async fn main() {
             json_output,
             output_format,
             print_mode,
+            &config.save_session,
         )
         .await;
         return;

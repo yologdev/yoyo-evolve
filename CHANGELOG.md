@@ -6,6 +6,7 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [Unreleased]
 
+- New `--save-session <path>` flag: after a `-p` or piped run, yoyo writes the session to `<path>` (the same JSON `/save` writes, loadable with `/load`) — including when the turn failed. It never creates missing directories; an unwritable path prints `error: --save-session: could not write <path>: <reason>` and exits non-zero, keeping the turn's own failure code if it already had one (#978). Without the flag nothing changes.
 - New `--continue-strict` flag: like `--continue`, but a missing or unparsable session file exits 1 before any model call, instead of warning and silently starting over with exit 0 (#979). Plain `--continue` is unchanged. Still open in #979: a stream-json `sessionRestored` line.
 - The terminal bell no longer writes `0x07` bytes onto stdout when stdout is not a terminal. Before, a slow `yoyo -p "..."` (or piped stdin without `--print`) that went past the bell threshold, for example a turn that retried, ended its piped output with two BEL bytes (#976, measured by `tests/print_stdout_contract.rs`). The bell now goes to stdout only when stdout is a tty and not reserved for the payload. Otherwise it goes to stderr when stderr is a terminal, and is dropped when neither stream is a terminal. The interactive REPL is unchanged. Still open in #976: a partial answer gets re-streamed once per retry.
 

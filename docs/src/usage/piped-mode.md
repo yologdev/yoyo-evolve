@@ -123,3 +123,7 @@ yoyo --prompt "/doctor"           # send the literal text to the agent
 yoyo                              # interactive REPL
 ```
 
+
+## Saving the session
+
+Add `--save-session <path>` to write the run's session to `<path>` when it ends (even after a failed turn), in the format `/save` writes: `echo "fix the test" | yoyo --save-session run.json`. A missing parent directory or unwritable path exits non-zero with `error: --save-session: could not write <path>: <reason>`.

@@ -741,6 +741,7 @@ fn test_config() -> Config {
         max_turns: None,
         continue_session: false,
         continue_strict: false,
+        save_session: None,
         output_path: None,
         prompt_arg: None,
         image_path: None,
@@ -1573,4 +1574,37 @@ fn continue_strict_refusal_escapes_control_bytes() {
     let msg = continue_strict_refusal("a\x1b[31mb", &RestoreError::Unparsable("x\x1by".into()));
     assert!(!msg.as_bytes().contains(&0x1b), "{msg:?}");
     assert!("a\x1b[31mb".as_bytes().contains(&0x1b), "anti-vacuous");
+}
+
+// #978: the save seam, through the real writer and the real reader.
+#[test]
+fn save_session_to_round_trips_and_refuses_missing_parent() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = test_agent_config("anthropic", "claude-sonnet-4-5").build_agent();
+    let msgs = vec![
+        yoagent::AgentMessage::Llm(yoagent::Message::user("one")),
+        yoagent::AgentMessage::Llm(yoagent::Message::user("two")),
+    ];
+    agent
+        .restore_messages(&serde_json::to_string(&msgs).unwrap())
+        .unwrap();
+    let path = dir.path().join("s.json");
+    save_session_to(&agent, &path).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        agent.save_messages().unwrap()
+    );
+    let mut fresh = test_agent_config("anthropic", "claude-sonnet-4-5").build_agent();
+    assert_eq!(restore_session_result(&mut fresh, &path).unwrap(), 2);
+
+    let bad = dir.path().join("no/such/s.json");
+    assert!(save_session_to(&agent, &bad).is_err());
+    assert!(!dir.path().join("no").exists(), "must not create parents");
+    let msg = save_session_error(&bad, "x\x1by");
+    assert!(
+        msg.starts_with("error: --save-session: could not write "),
+        "{msg}"
+    );
+    assert!(msg.contains("s.json"), "{msg}");
+    assert!(!msg.as_bytes().contains(&0x1b), "{msg:?}");
 }

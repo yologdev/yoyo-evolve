@@ -334,6 +334,10 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "  --save-session <path>  After a -p or piped run (even a failed one), save the session to <path> for /load"
+    );
+    let _ = writeln!(
+        s,
         "  --fallback <prov> Fallback provider if primary fails (e.g. --fallback google)"
     );
     let _ = writeln!(
