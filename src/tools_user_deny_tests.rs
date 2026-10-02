@@ -110,3 +110,96 @@ async fn user_deny_matches_raw_command_before_the_warning_prompt() {
         "a denied command must never reach the confirm prompt"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The child door: `sub_agent` and `explore_agent` build their bash in
+// `sub_agent_child_tools`, from yoagent's raw `BashTool`, which never sees
+// `StreamingBashTool::user_deny`. Both production callers pass
+// `&config.permissions.deny`; these tests drive that same seam with the two
+// disallow lists production uses (the sub_agent one and the explore fold).
+// Every command runs in a tempdir, never the repo cwd.
+// ---------------------------------------------------------------------------
+
+fn child_bash(user_deny: &[String], explore: bool) -> Arc<dyn AgentTool> {
+    let disallowed = if explore {
+        crate::tools::read_only_child_disallowed(&[])
+    } else {
+        Vec::new()
+    };
+    crate::tools::sub_agent_child_tools(
+        &cli::DirectoryRestrictions::default(),
+        &disallowed,
+        user_deny,
+    )
+    .into_iter()
+    .find(|t| t.name() == "bash")
+    .expect("the child must carry a bash tool, or these tests are vacuous")
+}
+
+#[tokio::test]
+async fn sub_agent_and_explore_child_bash_honour_user_deny_before_running() {
+    for explore in [false, true] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let marker = dir.path().join("MARKER_ZZ");
+        let bash = child_bash(&["touch *".to_string()], explore);
+        let cmd = format!("touch {}", marker.display());
+        let err = run(bash.as_ref(), &cmd)
+            .await
+            .expect_err("a user deny pattern must block the child's bash");
+        assert_eq!(
+            err, "Command blocked by your permission rules: matches deny pattern 'touch *'.",
+            "explore={explore}: the child must refuse with the parent's exact text"
+        );
+        assert!(
+            !marker.exists(),
+            "explore={explore}: the denied command ran anyway"
+        );
+    }
+}
+
+#[tokio::test]
+async fn child_refusal_text_is_the_parents() {
+    let deny = vec!["echo BLOCKED_ZZ".to_string()];
+    let parent = StreamingBashTool {
+        user_deny: deny.clone(),
+        ..Default::default()
+    };
+    let parent_err = run(&parent, "echo BLOCKED_ZZ").await.expect_err("parent");
+    let child_err = run(child_bash(&deny, false).as_ref(), "echo BLOCKED_ZZ")
+        .await
+        .expect_err("child");
+    assert_eq!(child_err, parent_err);
+}
+
+#[tokio::test]
+async fn child_bash_still_runs_a_non_denied_command() {
+    for explore in [false, true] {
+        let bash = child_bash(&["touch *".to_string()], explore);
+        let out = run(bash.as_ref(), "echo ok_ZZ")
+            .await
+            .expect("a non-denied command must still run in the child");
+        assert!(out.contains("ok_ZZ"), "explore={explore}: {out}");
+    }
+}
+
+/// The regression surface: with no deny list the child's bash is the raw tool,
+/// unwrapped, so every user without deny rules is byte-identical to before.
+#[tokio::test]
+async fn empty_deny_list_leaves_child_bash_unchanged() {
+    let bash = child_bash(&[], false);
+    let out = run(bash.as_ref(), "echo ok_ZZ").await.expect("runs");
+    assert!(out.contains("ok_ZZ"), "{out}");
+    let raw = yoagent::tools::bash::BashTool::default();
+    assert_eq!(bash.description(), raw.description());
+    assert_eq!(bash.parameters_schema(), raw.parameters_schema());
+}
+
+/// Weak source-level guard: both production builders hand the user's deny
+/// list to the child seam. Proves the argument is passed, not that it is read.
+#[test]
+fn both_child_builders_pass_the_users_deny_list() {
+    let src = include_str!("tools.rs");
+    let prod = &src[..src.find("#[cfg(test)]").expect("test module")];
+    let needle = ["&config.permissions", ".deny,"].concat();
+    assert_eq!(prod.matches(needle.as_str()).count(), 2, "{needle}");
+}

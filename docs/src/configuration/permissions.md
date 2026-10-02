@@ -32,7 +32,7 @@ yoyo -y -p "refactor the auth module"
 
 This auto-approves every tool call — bash commands, file writes, everything.
 
-The one exception is your own `deny` list: a bash command matching a `--deny` pattern (or `.yoyo.toml` `[permissions] deny`) is still blocked under `--yes`, and still blocked after you answer `a` (always) at a prompt.
+The one exception is your own `deny` list: a bash command matching a `--deny` pattern (or `.yoyo.toml` `[permissions] deny`) is still blocked under `--yes`, and still blocked after you answer `a` (always) at a prompt. It also applies to bash run by `sub_agent` and `explore_agent` children.
 
 > ⚠️ **Use with caution.** This gives yoyo unrestricted access to your shell and filesystem.
 

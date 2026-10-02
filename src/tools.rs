@@ -381,14 +381,8 @@ impl AgentTool for StreamingBashTool {
 
         // User deny patterns — hard block, checked on the raw command before
         // any confirm path, so `--yes` and "always" cannot skip it.
-        if let Some(pattern) = self
-            .user_deny
-            .iter()
-            .find(|p| crate::config::glob_match(p, command))
-        {
-            return Err(ToolError::Failed(format!(
-                "Command blocked by your permission rules: matches deny pattern '{pattern}'."
-            )));
+        if let Some(refusal) = user_deny_refusal(&self.user_deny, command) {
+            return Err(ToolError::Failed(refusal));
         }
 
         // Safety analysis — soft warning that routes through confirmation
@@ -1508,9 +1502,55 @@ pub(crate) fn read_only_child_disallowed(base: &[String]) -> Vec<String> {
     tools
 }
 
-fn sub_agent_child_tools(
+/// The one user-deny predicate and refusal text, read by the parent's
+/// `StreamingBashTool::execute` and the child's `UserDenyBashTool`.
+pub(crate) fn user_deny_refusal(user_deny: &[String], command: &str) -> Option<String> {
+    let pattern = user_deny
+        .iter()
+        .find(|p| crate::config::glob_match(p, command))?;
+    Some(format!(
+        "Command blocked by your permission rules: matches deny pattern '{pattern}'."
+    ))
+}
+
+/// A sub-agent child's bash is yoagent's raw `BashTool`, which never sees
+/// `StreamingBashTool::user_deny`; this is that check on the child door.
+struct UserDenyBashTool {
+    inner: Arc<dyn AgentTool>,
+    user_deny: Vec<String>,
+}
+
+#[async_trait::async_trait]
+impl AgentTool for UserDenyBashTool {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn label(&self) -> &str {
+        self.inner.label()
+    }
+    fn description(&self) -> &str {
+        self.inner.description()
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.inner.parameters_schema()
+    }
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        ctx: yoagent::types::ToolContext,
+    ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        let command = params.get("command").and_then(|v| v.as_str());
+        if let Some(refusal) = command.and_then(|c| user_deny_refusal(&self.user_deny, c)) {
+            return Err(yoagent::types::ToolError::Failed(refusal));
+        }
+        self.inner.execute(params, ctx).await
+    }
+}
+
+pub(crate) fn sub_agent_child_tools(
     restrictions: &DirectoryRestrictions,
     disallowed: &[String],
+    user_deny: &[String],
 ) -> Vec<Arc<dyn AgentTool>> {
     // Sub-agent gets standard yoagent tools — no permission guards needed
     // since the parent already authorized the delegation.
@@ -1523,13 +1563,22 @@ fn sub_agent_child_tools(
     //      agent uses, checked at call time, transparent when no mode is on
     //      and during `/plan apply`.
     //
-    // Known remaining gap (#709): the child's bash is yoagent's raw `BashTool`,
-    // not yoyo's `StreamingBashTool`, so when NO mode is active a child's bash
-    // command does not pass through `safety.rs` (no destructive-pattern check,
-    // no `detect_write_command`, no `detect_git_redirection_escape`). Modes are
-    // enforced; the always-on bash safety layer is not.
+    //   3. The user's `permissions.deny` (`UserDenyBashTool`, same predicate
+    //      and refusal text as the parent; unwrapped when the list is empty).
+    //
+    // Known remaining gap (#709 is closed; tracked in #977): the child's bash is
+    // yoagent's raw `BashTool`, so it skips `safety.rs` and any confirm prompt.
+    let raw_bash: Arc<dyn AgentTool> = Arc::new(yoagent::tools::bash::BashTool::default());
+    let bash = if user_deny.is_empty() {
+        raw_bash
+    } else {
+        Arc::new(UserDenyBashTool {
+            inner: raw_bash,
+            user_deny: user_deny.to_vec(),
+        })
+    };
     let mut tools: Vec<Arc<dyn AgentTool>> = vec![
-        with_read_guard_bash_arc(Arc::new(yoagent::tools::bash::BashTool::default())),
+        with_read_guard_bash_arc(bash),
         maybe_guard_arc(Arc::new(ReadFileTool::default()), restrictions),
         with_read_guard_arc(maybe_guard_arc(
             Arc::new(WriteFileTool::new()),
@@ -1588,7 +1637,11 @@ fn build_sub_agent_tool_at_depth(
     } else {
         config.disallowed_tools.clone()
     };
-    let mut child_tools = sub_agent_child_tools(&config.dir_restrictions, &child_disallowed);
+    let mut child_tools = sub_agent_child_tools(
+        &config.dir_restrictions,
+        &child_disallowed,
+        &config.permissions.deny,
+    );
 
     // Allow exactly one more level of nesting, bounded by MAX_SUB_AGENT_DEPTH.
     // The nested tool shares the SAME store (not a fresh one) so artifacts set
@@ -1663,7 +1716,11 @@ pub(crate) fn build_explore_agent_tool(
     // `build_explore_agent_tool_folds_the_read_only_list_rather_than_re_spelling_it`
     // exists to catch.
     let child_disallowed = read_only_child_disallowed(&config.disallowed_tools);
-    let child_tools = sub_agent_child_tools(&config.dir_restrictions, &child_disallowed);
+    let child_tools = sub_agent_child_tools(
+        &config.dir_restrictions,
+        &child_disallowed,
+        &config.permissions.deny,
+    );
     dispatch_tool_with_fallback(config, &EXPLORE_AGENT_FLAVOR, child_tools, shared_state)
 }
 
@@ -4151,7 +4208,7 @@ mod tests {
     ];
 
     fn child_tool_names(disallowed: &[String]) -> Vec<String> {
-        sub_agent_child_tools(&DirectoryRestrictions::default(), disallowed)
+        sub_agent_child_tools(&DirectoryRestrictions::default(), disallowed, &[])
             .iter()
             .map(|t| t.name().to_string())
             .collect()
@@ -4543,6 +4600,7 @@ mod tests {
         let tools = sub_agent_child_tools(
             &DirectoryRestrictions::default(),
             &read_only_child_disallowed(&[]),
+            &[],
         );
         let bash = tools
             .iter()
