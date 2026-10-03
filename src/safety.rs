@@ -286,8 +286,92 @@ fn check_fd_redirect(cmd: &str, _cmd_lower: &str) -> Option<String> {
     None
 }
 
+/// Shell wrappers that run their argument as a command, so the word after
+/// them (and after their `-flag` / `VAR=value` words) is still in command
+/// position for [`normalise_rm_command_words`].
+const RM_COMMAND_WRAPPERS: &[&str] = &[
+    "sudo", "doas", "env", "command", "builtin", "exec", "nohup", "time", "nice",
+];
+
+/// Rewrite every command-position word that the shell would run as `rm` but
+/// that is not spelled `rm` — `\rm`, `'rm'`, `"rm"`, `r\m`, `/bin/'rm'` — to
+/// its dequoted form, so the `rm `-needle scan in [`check_rm_destruction`]
+/// sees it. Returns `None` when no word needed rewriting, which keeps the
+/// common path a single scan.
+///
+/// Day 217: the inverse probe of the needle. Bash strips `\`, `'` and `"`
+/// from a word before running it, so all of those spellings delete exactly
+/// what `rm` does, and every one of them passed the guard. Only words in
+/// command position are rewritten (start of command, after a separator, or
+/// after a [`RM_COMMAND_WRAPPERS`] wrapper and its flags/assignments), so an
+/// argument that merely *mentions* rm — `grep "rm" -r /etc` — stays an
+/// argument. Limit, stated: a quoted word nested inside another command's
+/// string (`bash -c "\rm -rf /"`) is not in command position here and is
+/// not rewritten; only the plain-spelled nested form is caught (by the
+/// quote boundary in `is_rm_boundary`).
+fn normalise_rm_command_words(cmd: &str) -> Option<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut changed = false;
+    let mut at_cmd = true;
+    let mut after_wrapper = false;
+    for word in cmd.split_whitespace() {
+        if matches!(word, ";" | "&&" | "||" | "|" | "&") {
+            out.push(word.to_string());
+            at_cmd = true;
+            after_wrapper = false;
+            continue;
+        }
+        // An embedded separator (`true&&\rm`, `(\rm`) starts a new command
+        // inside the word; only the part after the last one is the command word.
+        let split = word.rfind([';', '|', '&', '(']).map(|i| i + 1).unwrap_or(0);
+        let (head, tail) = word.split_at(split);
+        let in_cmd_pos = at_cmd || split > 0;
+        let dequoted: String = tail
+            .chars()
+            .filter(|c| !matches!(c, '\\' | '\'' | '"'))
+            .collect();
+        let base = dequoted.rsplit('/').next().unwrap_or("");
+        if in_cmd_pos && base == "rm" && dequoted != tail {
+            out.push(format!("{head}{dequoted}"));
+            changed = true;
+        } else {
+            out.push(word.to_string());
+        }
+        // Does the NEXT word stay in command position?
+        at_cmd = if word.ends_with(';') || word.ends_with('&') || word.ends_with('|') {
+            after_wrapper = false;
+            true
+        } else if in_cmd_pos && RM_COMMAND_WRAPPERS.contains(&base) {
+            after_wrapper = true;
+            true
+        } else if (at_cmd || after_wrapper)
+            && split == 0
+            && (tail.starts_with('-') || (tail.contains('=') && !tail.starts_with('=')))
+        {
+            true
+        } else {
+            after_wrapper = false;
+            false
+        };
+    }
+    changed.then(|| out.join(" "))
+}
+
 /// Check for rm -rf with dangerous target paths.
-fn check_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
+///
+/// The predicate: the literal `rm` followed by a blank (space or tab — the
+/// two bytes bash splits words on within a line) at a command boundary,
+/// with `-r`/`-R`/`--recursive` somewhere after it and a later token naming
+/// `/`, `~`, `$HOME`, `.`, `..` or a [`CRITICAL_SYSTEM_DIRS`] entry. A second
+/// pass runs the same scan over [`normalise_rm_command_words`]'s rewrite so
+/// quoted/escaped spellings of the command word are held to the same rule.
+fn check_rm_destruction(cmd: &str, cmd_lower: &str) -> Option<String> {
+    scan_rm_destruction(cmd, cmd_lower).or_else(|| {
+        normalise_rm_command_words(cmd).and_then(|n| scan_rm_destruction(&n, cmd_lower))
+    })
+}
+
+fn scan_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
     // Trim trailing shell "closer" characters from a target token so that
     // targets buried in nested constructs still compare cleanly — e.g. the
     // `/)]}` produced by `[[ ${arr[$(rm -rf /)]} ]]` becomes `/`. (Day 141:
@@ -306,11 +390,13 @@ fn check_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
                 Some(b'\'' | b'"' | b'`')
             )
     }
-    // Find all occurrences of "rm " in the command
+    // Find all occurrences of "rm" followed by a blank (space OR tab: before
+    // Day 217 the needle was "rm " and `rm\t-rf /` passed) in the command.
     let mut search_from = 0;
-    while let Some(pos) = cmd[search_from..].find("rm ") {
+    while let Some(pos) = cmd[search_from..].find("rm") {
         let abs_pos = search_from + pos;
-        if is_rm_boundary(cmd, abs_pos) {
+        let blank_after = matches!(cmd.as_bytes().get(abs_pos + 2), Some(b' ' | b'\t'));
+        if blank_after && is_rm_boundary(cmd, abs_pos) {
             let after_rm = &cmd[abs_pos..];
             let tokens: Vec<&str> = after_rm.split_whitespace().collect();
             // Combined short flags like `-fr` / `-Rf` where `r` doesn't
@@ -398,7 +484,7 @@ fn check_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
                 }
             }
         }
-        search_from = abs_pos + 3;
+        search_from = abs_pos + 2;
     }
     None
 }
@@ -2398,6 +2484,77 @@ pub(crate) fn redact_secrets(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Day 217 inverse probe of `check_rm_destruction`'s needle (`rm` + blank
+    /// at a command boundary). Before the fix, the tab, backslash, quoted
+    /// and mid-word-escaped rows below passed the guard; the rest were
+    /// already caught and are pinned so the probe stays a full table.
+    #[test]
+    fn rm_spelling_inverse_probe() {
+        let dangerous = [
+            "rm -rf /etc", // control: caught before Day 217
+            "rm\t-rf /etc",
+            "\\rm -rf /etc",
+            "/bin/rm -rf /etc",
+            "/usr/bin/rm -rf /etc",
+            "command rm -rf /etc",
+            "env rm -rf /etc",
+            "sudo rm -rf /etc",
+            "rm  -rf /etc",
+            "rm -r -f /etc",
+            "rm --recursive --force /etc",
+            "true&&rm -rf /etc",
+            "(rm -rf /etc)",
+            "rm\t-rf\t/",
+            "\\rm -rf ~",
+            "'rm' -rf /etc",
+            "\"rm\" -rf /etc",
+            "r\\m -rf /etc",
+            "/bin/'rm' -rf /etc",
+            "sudo \\rm -rf /etc",
+            "sudo -E \\rm -rf /",
+            "env FOO=1 'rm' -rf /usr",
+            "LANG=C \\rm -rf /var",
+            "true && \\rm -rf /etc",
+            "true&&\\rm -rf /etc",
+            "(\\rm -rf /etc)",
+            "cd /tmp; \"rm\" -rf ~",
+        ];
+        for input in dangerous {
+            assert!(
+                analyze_bash_command(input).is_some(),
+                "dangerous rm spelling passed the guard: {input:?}"
+            );
+        }
+        let near_misses = [
+            "rm -rf ./target",
+            "rm -rf /tmp/build",
+            "echo \"rm is a command\"",
+            "grep -rn \"rm -rf\" src/",
+            "npm run rm-dist",
+            "farm -rf /etc",
+            // `rm` mentioned as an ARGUMENT, quoted: not in command position,
+            // so the dequoting pass must leave it alone.
+            "grep \"rm\" -r /etc",
+            "grep -r 'rm' /etc",
+            "git log --grep \\rm -r .",
+            // Quoted rm in command position with a harmless target.
+            "\\rm -rf ./build",
+            "'rm' -f notes.txt",
+            // A newline ends the command: `rm` runs with no arguments.
+            "rm\n-rf /etc",
+            // Words that merely end in `rm` followed by a tab.
+            "farm\t-rf /etc",
+            "confirm\t-r /",
+        ];
+        for input in near_misses {
+            assert_eq!(
+                analyze_bash_command(input),
+                None,
+                "near miss wrongly flagged: {input:?}"
+            );
+        }
+    }
 
     #[test]
     fn redact_secrets_masks_known_shapes_and_leaves_innocent_text_alone() {
