@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && B=$PWD/t… ✓ (29ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.5s (2 ✓)
+
+Verdict: PASS. Both commands now exit nonzero when they fail, and their success paths still exit 0. I wrote the verdict to session_plan/eval_task_1.md.
+
+I ran the debug binary from /tmp with no input:
+
+| Command | Exit code |
+|---|---|
+| yoyo model nosuch-model-x | 2 |
+| yoyo model | 0 |
+| yoyo skill show nosuch | 1 |
+| yoyo skill list | 0 |
+| yoyo skill show demo --skills <tempdir> | 0, and it prints the skill |
+
+• **How the status is decided:** from the parsed subcommand and the skill lookup, never from output text. Only the dispatch arm exits, through a new helper `exit_if_nonzero` built alongside the existing exit_if_failed. In-process tests therefore never reach an exit call.
+• **Every new definition has its caller in this diff.** The old skill_show is fully replaced and nothing still calls it.
+• **Tests:** they cover both directions. The parse table now checks exit codes, and a tempdir skill test pins the successful show output byte for byte.
+• **Docs:** the paragraph in docs/src/usage/commands.md that already described exit codes for test and run now covers these two as well.
+• **Scope:** `find`/`def` and the other dispatch arms were not touched. The size cap for `src/dispatch_sub.rs` in `tests/module_size.rs` was raised from 2166 to 2193, with a comment explaining why.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

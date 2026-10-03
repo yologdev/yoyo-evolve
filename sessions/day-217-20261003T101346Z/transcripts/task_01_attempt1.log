@@ -1,0 +1,61 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,130p src/dispatch_sub.rs;… ✓ (567ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 130,200p src/dispatch_sub.r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 300,330p src/dispatch_sub.r… ✓ (7ms)
+  ▶ read src/dispatch_sub.rs:395..460  ▶ read src/commands_skill.rs:1..271 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn 'try_dispatch_subcommand'… ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,60p tests/module_size.rs … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "2000\|MAX_LINES\|cap" tes… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 60,140p tests/module_size.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -2; B=$PWD… ✓ (152ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp /tmp/before_show.txt /tmp/befor… ✓ (7ms)
+  12 tools completed in 41.3s (12 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (105 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1236,1252p src/commands_ski… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (101 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1010,1045p src/dispatch_sub… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (20 lines) ✓ (11.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 360,368p tests/module_size.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (3m 3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -cE "FAILED… ✓ (2m 8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 5m 54s (8 ✓)
+
+Everything passes and the exit codes have changed. Last step is the docs line, since commands.md already documents exit codes for test and run.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (35 lines) ✓ (36ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+yoyo model <unknown> and yoyo skill show <missing> now exit nonzero, and the change is committed as 838b7e3c. Build, all tests, clippy with -D warnings and the format check all passed.
+
+I ran the debug binary from /tmp with stdin at /dev/null, before and after:
+
+| command | before | after |
+|---|---|---|
+| yoyo model nosuch-model-x | 0 | 2 (usage error) |
+| yoyo skill show nosuch | 0 | 1 |
+| yoyo model list | 0 | 0 |
+| yoyo skill show demo --skills <tmpdir> | 0 | 0, output byte-identical (cmp) |
+
+What changed:
+• **Model:** `ModelSubcommand::exit_code()` returns 2 for an unrecognised subcommand and 0 for the valid ones. The command prints what it always printed, then exits with that code.
+• **Skill:** a new `handle_skill_status` returns 1 when `show` can't find the named skill. It also returns 1 if the skill's file can't be read, which is slightly more than the task asked for. The in-session /skill command calls the same code and ignores the status, so it behaves as before. The output is now built as text first (skill_show_report), so a test can check a successful show prints exactly what it used to.
+• **Shared exit path:** I added `exit_if_nonzero(code)` next to the existing `exit_if_failed` from 6d84deff, and `exit_if_failed` now calls it. There is still only one place that exits the process, and the code is never worked out by reading output text.
+• **Tests:** the existing model-parsing test table now also checks the exit code (2 only for unknown subcommands, 0 otherwise). A new skill test uses a skill in a temp directory and checks both cases: found gives 0 with the exact output, missing gives 1. Neither test exits the process, so the test binary is safe.
+• **Docs:** docs/src/usage/commands.md already described exit codes for test and run, so I added these two there.
+• **Size limit:** `src/dispatch_sub.rs` was already over the line cap and on the exceptions list. It grew from 2164 to 2193 lines, within the allowed drift, and I updated its entry in tests/module_size.rs with a note.
+
+The find/def no-match question, still an open decision in #982, and the other return Some(None) branches were not touched.
+  watch: no files changed this turn — skipping
