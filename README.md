@@ -507,7 +507,7 @@ If you use yoyo-evolve in a research paper, please cite our work as follows:
 
 **🚀 Sponsors:**
 
-<a href="https://github.com/kojiyang" title="@kojiyang — $200"><img src="https://github.com/kojiyang.png?size=128" width="64" height="64" alt="@kojiyang" /></a>
+<a href="https://github.com/belk124" title="@belk124 — $10/mo"><img src="https://github.com/belk124.png?size=128" width="64" height="64" alt="@belk124" /></a> <a href="https://github.com/kojiyang" title="@kojiyang — $200"><img src="https://github.com/kojiyang.png?size=128" width="64" height="64" alt="@kojiyang" /></a>
 
 <!-- SPONSORS_END -->
 
