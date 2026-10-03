@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo && d=$(… ✓ (32ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.0s (2 ✓)
+
+Verdict: PASS. Outside a git repository, yoyo diff, yoyo commit and yoyo blame now exit 1 and print the same error text as before.
+
+What I ran: the built binary, from a temp dir that isn't a git repository:
+• diff, `commit and blame x.rs` all exited 1, each with its original "not in a git repository" message.
+• After git init in that dir, yoyo diff printed "no uncommitted changes" and exited 0, which is the near miss the task specified.
+
+What I read in the diff:
+• **Exit codes:** each command gained a `_status` version that returns 1 only when the not-a-repo error fires. An empty diff, "nothing staged" and a blame usage error all stay 0. The diff, commit and blame arms in src/dispatch_sub.rs pass that code to the existing exit_if_nonzero, so no new exit path was added.
+• REPL: the old handle_diff, handle_commit and handle_blame now just call the new versions and ignore the code, so REPL callers didn't change.
+• **Tests:** the three in-process dispatch tests that would now kill the test binary were rewritten to check the returned code; none were deleted. Two new binary tests in tests/integration.rs cover the exit-1 cases and the clean-repo exit 0.
+• **Docs:** the exit-code paragraph in docs/src/usage/commands.md was updated to match.
+
+Not checked (none of it appears in the diff I was given):
+• the commit message, including the requested note that the empty-diff and nothing-staged cases were deliberately left at 0, and that the tests/ file doesn't count toward the three source files;
+• the positive-control run;
+• the comment on #982 listing what this slice covered and what's left.
+
+The verdict is in session_plan/eval_task_2.md.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

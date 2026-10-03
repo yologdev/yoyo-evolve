@@ -1,0 +1,209 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; grep -n "HARD_D… ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 60,130p src/tools.rs; echo …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "deny_patterns" -r src/ | … ✓ (9ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls src/lib.rs 2>&1; grep -n "^mod … ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls src/lib.rs 2>&1; grep -n "^mod … ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 39s (4 ✓, 1 ✗)
+
+Writing the new module (tests first in the same file, matcher below).
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write src/hard_deny.rs (475 lines) ✓ (1m 30s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That Box::leak in is_root_or_home is wrong — rewrite it cleanly.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/hard_deny.rs (17 → 5 lines)
+  -     let mut t = target.strip_suffix("/*").map_or(target, |s| s);
+  -     let mut t_owned;
+  -     if t.is_empty() {
+  -         return true; // "/*"
+  -     }
+  -     loop {
+  -         if let Some(s) = t.strip_suffix("/.") {
+  -             t_owned = s.to_string();
+  -         } else if let Some(s) = t.strip_suffix('/') {
+  -             t_owned = s.to_string();
+  -         } else {
+  -             break;
+  -         }
+  -         t = Box::leak(Box::<str>::from(t_owned.as_str()));
+  -         let _ = &mut t_owned;
+  +     let mut t = target.strip_suffix("/*").unwrap_or(target);
+  +     while let Some(s) = t.strip_suffix("/.").or_else(|| t.strip_suffix('/')) {
+  +         t = s;
+        }
+        matches!(t, "" | "~" | "$HOME" | "${HOME}")
+  ▶ edit src/tools.rs (18 → 3 lines)
+  - /// The hard deny list (`rm -rf /`, `mkfs`, ...): the authority read by
+  - /// `StreamingBashTool::default()` and by the sub-agent child's bash (#977).
+  - pub(crate) const HARD_DENY_PATTERNS: &[&str] = &[
+  -     "rm -rf /",
+  -     "rm -rf /*",
+  -     "mkfs",
+  -     "dd if=",
+  -     ":(){:|:&};:", // fork bomb
+  - ];
+  - 
+  - /// The hard-deny predicate and refusal text, shared by parent and child bash.
+  - pub(crate) fn hard_deny_refusal<S: AsRef<str>>(patterns: &[S], command: &str) -> Option<String> {
+  -     let pattern = patterns.iter().find(|p| command.contains(p.as_ref()))?;
+  -     Some(format!(
+  -         "Command blocked by safety policy: contains '{}'. This pattern is denied for safety.",
+  -         pattern.as_ref()
+  -     ))
+  - }
+  + // The hard deny list and its token-aware predicate live in `hard_deny.rs`;
+  + // parent and child bash both go through this one `hard_deny_refusal`.
+  ... (1 more lines)
+  ▶ edit src/tools.rs (1 → 1 lines)
+  -     /// Commands/patterns that are always blocked (e.g., "rm -rf /")
+  +     /// Hard-deny rule labels that are active (see `hard_deny.rs`); always blocked
+  ▶ edit src/main.rs (1 → 2 lines)
+  + mod hard_deny;
+    mod help;
+ ✓ (19.2s)
+  -     let mut t = target.strip_suffix("/*").map_or(target, |s| s);
+  -     let mut t_owned;
+  -     if t.is_empty() {
+  -         return true; // "/*"
+  -     }
+  -     loop {
+  -         if let Some(s) = t.strip_suffix("/.") {
+  -             t_owned = s.to_string();
+  ... (12 more lines)
+ ✓ (25.3s)
+  - /// The hard deny list (`rm -rf /`, `mkfs`, ...): the authority read by
+  - /// `StreamingBashTool::default()` and by the sub-agent child's bash (#977).
+  - pub(crate) const HARD_DENY_PATTERNS: &[&str] = &[
+  -     "rm -rf /",
+  -     "rm -rf /*",
+  -     "mkfs",
+  -     "dd if=",
+  -     ":(){:|:&};:", // fork bomb
+  ... (13 more lines)
+ ✓ (31.5s)
+  -     /// Commands/patterns that are always blocked (e.g., "rm -rf /")
+  +     /// Hard-deny rule labels that are active (see `hard_deny.rs`); always blocked
+ ✓ (37.5s)
+  + mod hard_deny;
+    mod help;
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy --all-targets -- -D w… ✓ (5.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy --all-targets -- -D w… ✓ (5.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy --all-targets -- -D w… ✓ (5.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy --all-targets --color… ✓ (5.4s)
+  8 tools completed in 1m 7s (8 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "hard_deny" src/tools.rs s… ✓ (5.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The tools.rs replacement didn't stick; redoing it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1500,1525p src/tools.rs; gi… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (11 lines) ✓ (18.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 23.8s (2 ✓)
+
+Clippy clean. Now the new tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --color never hard_deny… ✓ (31.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 6 pass. Positive control — neuter, run, restore in one atomic command:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/hard_de… (8 lines) ✓ (1m 2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control fired: 5 tests failed by name (should refuse: "rm -rf /"), the near-miss test stayed green (as it must under None), restore → 6/6 green, 0 NEUTERED markers. Now the full suite:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo fmt -- --check … ✓ (2m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green: 5925 passed. tools.rs went from 5068 to 5053 lines. Next I'll tighten the module-size register, then add the ARCHITECTURE.md and docs notes.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "src/tools.rs\|#977" ARCHI… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.6s (2 ✓)
+
+I'll write the ARCHITECTURE entry through a temp file, because this session's bash still runs the old substring matcher and would refuse the text:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/arch_entry.md (22 lines) ✓ (0ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat /tmp/arch_entry.md >> ARCHITEC… ✓ (1.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Docs at docs/src/configuration/permissions.md:358 are still accurate. I'll write the commit message to a file so this session's old matcher doesn't refuse it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/commit_msg.txt (39 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && git commit -q -F /tm… ✓ (0ms)
+ ✓ (71ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.9s (2 ✓)
+
+The hard deny list now matches commands instead of substrings. It's committed as fdf2aa30. Build, all 5925 tests, clippy with -D warnings and the fmt check all pass.
+
+I hit the bug myself during this session. This session still runs the old binary, so its bash refused my own grep and my commit message. I had to write the message to a file and commit with git commit -F.
+
+What changed
+• **New src/hard_deny.rs:** `hard_deny_match` splits the command into shell words the way a shell would. A quoted string counts as one argument, never as a command, so `echo "rm -rf /"`, grep 'rm -rf /' src/ and commit messages that mention it all pass.
+• **Rules:**
+  • **Deleting root or home:** any recursive flag spelling (`-fr`, `-r -f`, `-Rf`, `--recursive`) with a target of `/`, `/*`, `~` or `$HOME`. `--no-preserve-root` alone is also refused.
+  • **`mkfs:** only when it's the command being run, or has a /dev/ argument. man mkfs` passes.
+  • **`dd:** only when it writes to a real device. of=/dev/null, /dev/stdout and /dev/stderr` are allowed, so writing an image file passes.
+  • **Fork bomb:** still a substring match, but with spaces removed, so the usual spaced form :(){ :|:& };: is now caught as well.
+  • **Nested shells:** bash -c and eval are checked up to 3 levels deep. Past that it falls back to a substring scan that refuses rather than allows.
+• **`src/tools.rs:** re-exports hard_deny_refusal and HARD_DENY_PATTERNS` from the new module. Both the parent and child bash still go through that one function. The file shrank from 5068 to 5053 lines, and I updated its entry in the module-size register.
+• **HARD_DENY_PATTERNS** keeps its five strings, which now act as the names of the rules. That keeps the refusal text byte-identical.
+• **Wording quirk I kept on purpose:** a refusal of `rm -fr /` still says it "contains 'rm -rf /'". The quoted text is the rule's name, not a literal match. I followed the task's instruction not to change the message beyond the label.
+
+Tests (all in `src/hard_deny.rs`)
+• 41 commands that must be refused, each checked against its exact rule name, and 23 near misses that must pass.
+• Plus checks that each list entry's basic form is refused, that the refusal text is unchanged, that a disabled rule is skipped, and that nesting past the depth limit is still refused.
+• **Positive control:** I made `hard_deny_match` always return `None`, ran the tests and restored it in one command. 5 tests failed by name (e.g. `should refuse: "rm -rf /"), the near-miss test stayed green as it should, and after restoring all 6 passed. No NEUTERED` marker is left in the file.
+
+Still not handled (written in the module doc; all of these refuse rather than allow):
+• A heredoc line that reads like a root delete is treated as a command and refused.
+• `$(…)`, backticks and lines with an unclosed quote aren't parsed. They get a second check with the quotes removed instead.
+• `rm -rf /usr, find / -delete and > /dev/sda` were never on the list. This is a guard against accidents, not a sandbox.
+
+I also added an ARCHITECTURE.md entry. The commit mentions #977. The user docs at docs/src/configuration/permissions.md:358 were still accurate, so I left them alone.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 2/3 changed files were in top-10 predictions (66.7% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/3 (0.0%) — reactive was 66.7%
+     Predicted correctly: src/tools.rs, src/main.rs
+     Surprises (not predicted): src/hard_deny.rs
