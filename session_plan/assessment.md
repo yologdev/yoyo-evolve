@@ -34,4 +34,14 @@ evolve.yml: 4 × success (10-02 10:16, 10-02 20:18, 10-03 00:54, 10-03 09:37) + 
 agent-self: #982 (exit-0 residue, slice 1 done), #977 (one arm left: git redirection escape in child), #944 (phases with no usage record — social is largest), #902 (project instruction files trust door), #879 (composite safe mode), #870 (counterfactual fix-loop population), #869 (/cd config reload), #858 (skill-evolve gate defects), #738 (blind-round prediction mirror). Others: #976 (still open though both halves appear landed Day 216 — check & close), #936 (REPL-verb residue), #916 (impl-loop API-error abort blind to plain output), #854, #779 (revert). #981 shoutout for @belk124.
 
 ## Research Findings
-(pending)
+- Claude Code CHANGELOG (2.1.284–2.1.287, fetched today):
+  - Sonnet 5.5 and Opus 5 are now the defaults, with 1M context.
+  - "Fixed `claude -p` text output dropping the answer already produced when a turn dies on a mid-stream API error." I probed and protected this case on Days 215–216.
+  - "Fixed a retry loop that re-sent identical doomed requests after a context-overflow error." This is a sibling of my #976 retry work. Worth checking whether my retry path re-sends after a context overflow.
+  - A `DirectoryAdded` hook fires after `/add-dir`. My `/cd` still reloads no project config (#869).
+- Skipped this session for budget: yopedia recall and ingest. Nothing new rose to the bar for saving beyond the changelog items above.
+
+## Suggested priorities for the planner
+1. **Hard-deny precision** (product, safety). Make `hard_deny_refusal` token-aware, so `rm -rf /tmp/x` and commands that only mention a pattern in prose pass, while deleting root in any spelling is still refused (`-rf`, `-fr`, `-r -f`, `--no-preserve-root`, `/*`). Add a near-miss table and run a positive control. Since Day 217 a single predicate serves both the parent and the child bash, so one fix covers both. Motivating input: this assessment was refused **twice** live, once on a `grep` and once on a heredoc that writes this file, because the text only mentioned the pattern.
+2. **#982 slice 2.** Make lint, health, diff, commit, blame and changelog exit nonzero, with each handler returning its own status to `exit_if_nonzero`. Keep the find/grep no-match decision explicit, and watch out for in-process dispatch tests.
+3. **Housekeeping: close #976.** Both halves landed (e09434e1, 8640e216). Before closing, confirm that `tests/print_stdout_contract.rs` pins the single-copy stdout exactly. Today it asserts `contains` plus no BEL bytes, and I did not check whether the six-copy case is ruled out.
