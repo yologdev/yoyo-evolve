@@ -289,7 +289,50 @@ pub fn print_run_result(result: &RunResult) {
     }
 }
 
+/// What a shell subcommand (`yoyo test`, `yoyo run`) did, as a script reading
+/// its exit code needs to know it. Built from the child's real status, never
+/// from parsing a summary string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellOutcome {
+    /// The thing ran and succeeded.
+    Passed,
+    /// The thing ran and failed; `None` when the child has no exit code
+    /// (killed by a signal).
+    Failed(Option<i32>),
+    /// Nothing ran: no recognized project, no test command, or spawn error.
+    CouldNotRun,
+}
+
+/// The process exit code for a shell subcommand's outcome. Passed → 0; a failure
+/// keeps the child's own code when it is a usable positive code, else 1; "nothing
+/// ran" is 1, because nothing ran is not "passed". Never 0 for a non-pass.
+pub fn shell_exit_code(outcome: ShellOutcome) -> i32 {
+    match outcome {
+        ShellOutcome::Passed => 0,
+        ShellOutcome::Failed(Some(code)) if code > 0 => code,
+        ShellOutcome::Failed(_) | ShellOutcome::CouldNotRun => 1,
+    }
+}
+
+/// Classify a [`RunResult`]. A signal death (negative code) or an undetermined
+/// code ([`crate::tools::EXIT_CODE_UNDETERMINED`]) stays `Failed`, and
+/// [`shell_exit_code`] maps it to 1.
+pub fn run_outcome(result: &RunResult) -> ShellOutcome {
+    if result.success {
+        ShellOutcome::Passed
+    } else {
+        ShellOutcome::Failed(Some(result.exit_code))
+    }
+}
+
 pub fn handle_run(input: &str) {
+    let _ = handle_run_with_status(input);
+}
+
+/// The body of [`handle_run`], returning the outcome for the shell arm
+/// (`yoyo run`), which turns it into the process exit code. `None` means no
+/// command was given and only the usage line was printed.
+pub fn handle_run_with_status(input: &str) -> Option<ShellOutcome> {
     let cmd = if input.starts_with("/run ") {
         input.trim_start_matches("/run ").trim()
     } else if input.starts_with('!') && input.len() > 1 {
@@ -299,14 +342,17 @@ pub fn handle_run(input: &str) {
     };
     if cmd.is_empty() {
         println!("{DIM}  usage: /run <command>  or  !<command>{RESET}\n");
+        None
     } else {
         let result = run_shell_command(cmd);
         print_run_result(&result);
+        let outcome = run_outcome(&result);
         if result.success {
             clear_last_failed_run();
         } else {
             set_last_failed_run(result);
         }
+        Some(outcome)
     }
 }
 
@@ -652,6 +698,39 @@ mod tests {
         // ordinary code, exactly as it was before #878.
         assert_eq!(crate::tools::describe_exit_code(3), "3");
         assert_eq!(crate::tools::describe_exit_code(0), "0");
+    }
+
+    /// The shell exit-code contract for `yoyo test` / `yoyo run`, driven through
+    /// the real mapping fn. The pass row is the near-miss: success stays 0.
+    #[test]
+    fn shell_exit_code_maps_every_outcome_and_never_reports_a_failure_as_zero() {
+        let table: &[(ShellOutcome, i32)] = &[
+            (ShellOutcome::Passed, 0),
+            (ShellOutcome::Failed(Some(101)), 101),
+            (ShellOutcome::Failed(Some(1)), 1),
+            (ShellOutcome::Failed(None), 1),
+            (ShellOutcome::Failed(Some(0)), 1),
+            (ShellOutcome::Failed(Some(-9)), 1),
+            (
+                ShellOutcome::Failed(Some(crate::tools::EXIT_CODE_UNDETERMINED)),
+                1,
+            ),
+            (ShellOutcome::CouldNotRun, 1),
+        ];
+        for (outcome, want) in table {
+            assert_eq!(shell_exit_code(*outcome), *want, "outcome {outcome:?}");
+        }
+    }
+
+    /// End to end over a real child: `false` → 1, `true` → 0, `exit 3` → 3, and a
+    /// signal death (no exit code) → 1. No cwd effects.
+    #[test]
+    fn run_outcome_of_a_real_child_maps_to_its_exit_code() {
+        let code = |cmd: &str| shell_exit_code(run_outcome(&run_shell_command(cmd)));
+        assert_eq!(code("true"), 0);
+        assert_eq!(code("false"), 1);
+        assert_eq!(code("exit 3"), 3);
+        assert_eq!(code("kill -9 $$"), 1);
     }
 
     /// The un-overloading itself: the "could not wait for the child" branch

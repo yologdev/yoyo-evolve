@@ -83,6 +83,17 @@ fn quote_args_as_command(args: &[String]) -> String {
     format!("/{}", parts.join(" "))
 }
 
+/// Exit nonzero when a shell subcommand's child failed or never ran; success
+/// returns so the arm's `Some(None)` path is unchanged. Flushes stdout first.
+fn exit_if_failed(outcome: crate::commands_run::ShellOutcome) {
+    let code = crate::commands_run::shell_exit_code(outcome);
+    if code != 0 {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        std::process::exit(code);
+    }
+}
+
 /// Build a `/command ...` string from shell args by plain space-join — no
 /// re-quoting. For handlers that take the remainder VERBATIM (`/todo add`,
 /// `/goal set`, `/memories <query>`): those never call `tokenize_quoted`, so
@@ -290,7 +301,8 @@ pub(crate) fn try_dispatch_subcommand_in(
             "test" => {
                 // #745: args after `yoyo test` used to be silently discarded and
                 // the full suite ran. Forward them verbatim.
-                crate::commands_lint::handle_test(&args[2..]);
+                let (_, outcome) = crate::commands_lint::run_tests(&args[2..]);
+                exit_if_failed(outcome);
                 return Some(None);
             }
             "tree" => {
@@ -310,7 +322,9 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "run" => {
                 let input = quote_args_as_command(args);
-                crate::commands_run::handle_run(&input);
+                if let Some(outcome) = crate::commands_run::handle_run_with_status(&input) {
+                    exit_if_failed(outcome);
+                }
                 return Some(None);
             }
             "diff" => {

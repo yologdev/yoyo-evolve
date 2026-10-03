@@ -1,6 +1,7 @@
 //! Lint, test, and security command handlers: /test, /lint, /lint fix, /lint unsafe, /security.
 
 use crate::commands_project::{detect_project_type, ProjectType};
+use crate::commands_run::ShellOutcome;
 use crate::commands_session::auto_compact_if_needed;
 use crate::format::*;
 use crate::prompt::run_prompt;
@@ -80,20 +81,27 @@ pub(crate) fn build_test_invocation(
 /// suite, as before.
 /// Returns a summary string suitable for AI context.
 pub fn handle_test(extra: &[String]) -> Option<String> {
+    run_tests(extra).0
+}
+
+/// The body of [`handle_test`], also returning what happened as a
+/// [`ShellOutcome`] so the shell arm (`yoyo test`) can exit with it. Taken from
+/// the child's real status, never from parsing the summary string.
+pub fn run_tests(extra: &[String]) -> (Option<String>, ShellOutcome) {
     let project_type = detect_project_type(&std::env::current_dir().unwrap_or_default());
     println!("{DIM}  Detected project: {project_type}{RESET}");
     if project_type == ProjectType::Unknown {
         println!(
             "{DIM}  No recognized project found. Looked for: Cargo.toml, package.json, pyproject.toml, setup.py, go.mod, Makefile{RESET}\n"
         );
-        return None;
+        return (None, ShellOutcome::CouldNotRun);
     }
 
     let (label, args) = match test_command_for_project(&project_type, std::path::Path::new(".")) {
         Some(cmd) => cmd,
         None => {
             println!("{DIM}  No test command configured for {project_type}{RESET}\n");
-            return None;
+            return (None, ShellOutcome::CouldNotRun);
         }
     };
 
@@ -119,7 +127,10 @@ pub fn handle_test(extra: &[String]) -> Option<String> {
 
             if o.status.success() {
                 println!("\n{GREEN}  ✓ Tests passed ({elapsed}){RESET}\n");
-                Some(format!("Tests passed ({elapsed}): {label}"))
+                (
+                    Some(format!("Tests passed ({elapsed}): {label}")),
+                    ShellOutcome::Passed,
+                )
             } else {
                 let code = o.status.code().unwrap_or(-1);
                 println!("\n{RED}  ✗ Tests failed (exit {code}, {elapsed}){RESET}\n");
@@ -131,12 +142,15 @@ pub fn handle_test(extra: &[String]) -> Option<String> {
                     stdout.to_string()
                 };
                 append_tail_preview(&mut summary, &error_text, 20);
-                Some(summary)
+                (Some(summary), ShellOutcome::Failed(o.status.code()))
             }
         }
         Err(e) => {
             eprintln!("{RED}  ✗ Failed to run {label}: {e}{RESET}\n");
-            Some(format!("Failed to run {label}: {e}"))
+            (
+                Some(format!("Failed to run {label}: {e}")),
+                ShellOutcome::CouldNotRun,
+            )
         }
     }
 }
