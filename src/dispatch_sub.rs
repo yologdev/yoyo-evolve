@@ -254,7 +254,8 @@ pub(crate) fn try_dispatch_subcommand_in(
             "health" => {
                 // handle_health takes no arguments — it auto-detects project type
                 // from the current directory and runs the appropriate checks.
-                crate::commands_dev::handle_health();
+                // #982: exits 1 when no recognized project was found.
+                exit_if_nonzero(crate::commands_dev::handle_health_status());
                 return Some(None);
             }
             "help" => {
@@ -300,7 +301,9 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "lint" => {
                 let input = quote_args_as_command(args);
-                crate::commands_lint::handle_lint(&input);
+                // #982: exits 1 when no recognized project was found.
+                let (_, code) = crate::commands_lint::handle_lint_status(&input);
+                exit_if_nonzero(code);
                 return Some(None);
             }
             "security" => {

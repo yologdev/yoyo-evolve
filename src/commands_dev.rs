@@ -838,20 +838,41 @@ pub fn build_fix_prompt(failures: &[(&str, &str)]) -> String {
     prompt
 }
 
+/// Exit status of the "is there a project here at all?" step, shared by the
+/// shell doors `yoyo health` and `yoyo lint` (#982): 1 when no recognized
+/// project was found (nothing ran, so a script must not read it as success),
+/// 0 otherwise. Says nothing about whether the checks that follow pass.
+pub(crate) fn no_project_status(project_type: &ProjectType) -> i32 {
+    if *project_type == ProjectType::Unknown {
+        1
+    } else {
+        0
+    }
+}
+
 pub fn handle_health() {
+    let _ = handle_health_status();
+}
+
+/// `/health` with an exit status for the shell door (`yoyo health`, #982):
+/// 1 when no recognized project was found, 0 otherwise. Deliberately narrow —
+/// failing checks still report 0 here. The REPL calls `handle_health`, which
+/// discards the code.
+pub fn handle_health_status() -> i32 {
     let project_type = detect_project_type(&std::env::current_dir().unwrap_or_default());
     println!("{DIM}  Detected project: {project_type}{RESET}");
-    if project_type == ProjectType::Unknown {
+    let no_project = no_project_status(&project_type);
+    if no_project != 0 {
         println!(
             "{DIM}  No recognized project found. Looked for: Cargo.toml, package.json, pyproject.toml, setup.py, go.mod, Makefile{RESET}\n"
         );
-        return;
+        return no_project;
     }
     println!("{DIM}  Running health checks...{RESET}");
     let results = run_health_check_for_project(&project_type);
     if results.is_empty() {
         println!("{DIM}  No checks configured for {project_type}{RESET}\n");
-        return;
+        return 0;
     }
     let all_passed = results.iter().all(|(_, passed, _)| *passed);
     for (name, passed, detail) in &results {
@@ -867,6 +888,7 @@ pub fn handle_health() {
     } else {
         println!("\n{RED}  Some checks failed ✗{RESET}\n");
     }
+    0
 }
 
 /// Handle the /fix command. Returns Some(fix_prompt) if failures were sent to AI, None otherwise.
@@ -926,6 +948,32 @@ pub async fn handle_fix(
 mod tests {
     use super::*;
     use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+
+    // #982: the shell doors `yoyo health` / `yoyo lint` exit with this status.
+    // Driven through the real detector on real directories, never a typed-in
+    // ProjectType, so the detection step is covered too.
+    #[test]
+    fn test_no_project_status_is_1_in_an_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pt = detect_project_type(tmp.path());
+        assert_eq!(
+            pt,
+            ProjectType::Unknown,
+            "fixture must really be project-less"
+        );
+        assert_eq!(no_project_status(&pt), 1);
+    }
+
+    #[test]
+    fn test_no_project_status_is_0_when_a_project_marker_exists() {
+        for marker in ["Cargo.toml", "Makefile"] {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::write(tmp.path().join(marker), "").unwrap();
+            let pt = detect_project_type(tmp.path());
+            assert_ne!(pt, ProjectType::Unknown, "{marker} must be detected");
+            assert_eq!(no_project_status(&pt), 0, "{marker}");
+        }
+    }
 
     #[test]
     fn test_skill_bytes_to_tokens() {

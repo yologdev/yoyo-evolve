@@ -231,12 +231,21 @@ pub(crate) fn arg_is_fix_subcommand(arg: &str) -> bool {
 /// Returns a summary string suitable for AI context.
 /// Accepts the full input string (e.g. "/lint", "/lint pedantic", "/lint strict").
 pub fn handle_lint(input: &str) -> Option<String> {
+    handle_lint_status(input).0
+}
+
+/// `/lint` with an exit status for the shell door (`yoyo lint`, #982): the
+/// summary `handle_lint` returns, plus 1 when no recognized project was found
+/// (via `commands_dev::no_project_status`) and 0 otherwise. Deliberately
+/// narrow: a lint TOOL that ran and failed still reports 0 here — that is a
+/// separate #982 item. The REPL calls `handle_lint`, which discards the code.
+pub(crate) fn handle_lint_status(input: &str) -> (Option<String>, i32) {
     // Parse strictness from subcommand
     let arg = input.strip_prefix("/lint").unwrap_or("").trim();
 
     // Dispatch to specialized subcommand handlers
     if arg == "unsafe" {
-        return handle_lint_unsafe();
+        return (handle_lint_unsafe(), 0);
     }
 
     // `/lint fix` is routed to handle_lint_fix (dispatch.rs), which needs a live
@@ -249,7 +258,7 @@ pub fn handle_lint(input: &str) -> Option<String> {
             "{DIM}  `lint fix` needs an interactive session — it sends lint failures to the AI to fix.{RESET}"
         );
         println!("{DIM}  Run `yoyo`, then `/lint fix` with no extra arguments.{RESET}\n");
-        return None;
+        return (None, 0);
     }
 
     let strictness = match arg {
@@ -266,27 +275,31 @@ pub fn handle_lint(input: &str) -> Option<String> {
                 "{DIM}  Available: {}{RESET}\n",
                 LINT_SUBCOMMANDS.join(" | ")
             );
-            return Some(format!(
-                "Unknown /lint subcommand: {arg} (available: {})",
-                LINT_SUBCOMMANDS.join(" | ")
-            ));
+            return (
+                Some(format!(
+                    "Unknown /lint subcommand: {arg} (available: {})",
+                    LINT_SUBCOMMANDS.join(" | ")
+                )),
+                0,
+            );
         }
     };
 
     let project_type = detect_project_type(&std::env::current_dir().unwrap_or_default());
     println!("{DIM}  Detected project: {project_type}{RESET}");
-    if project_type == ProjectType::Unknown {
+    let no_project = crate::commands_dev::no_project_status(&project_type);
+    if no_project != 0 {
         println!(
             "{DIM}  No recognized project found. Looked for: Cargo.toml, package.json, pyproject.toml, setup.py, go.mod, Makefile{RESET}\n"
         );
-        return None;
+        return (None, no_project);
     }
 
     let (label, args) = match lint_command_for_project(&project_type, strictness) {
         Some(cmd) => cmd,
         None => {
             println!("{DIM}  No lint command configured for {project_type}{RESET}\n");
-            return None;
+            return (None, 0);
         }
     };
 
@@ -297,7 +310,7 @@ pub fn handle_lint(input: &str) -> Option<String> {
         .output();
     let elapsed = format_duration(start.elapsed());
 
-    match output {
+    let summary = match output {
         Ok(o) => {
             let stdout = String::from_utf8_lossy(&o.stdout);
             let stderr = String::from_utf8_lossy(&o.stderr);
@@ -329,7 +342,8 @@ pub fn handle_lint(input: &str) -> Option<String> {
             eprintln!("{RED}  ✗ Failed to run {label}: {e}{RESET}\n");
             Some(format!("Failed to run {label}: {e}"))
         }
-    }
+    };
+    (summary, 0)
 }
 
 /// Build a prompt asking the AI to fix lint errors.
