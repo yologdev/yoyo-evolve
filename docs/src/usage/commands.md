@@ -504,7 +504,7 @@ The `/test` command is a focused shortcut that only runs the test suite for your
 
 The echoed `Running:` line always shows the full command, so you can see that your arguments reached the runner. Arguments are **forwarded verbatim** — yoyo does not validate them and does not translate them between project types, so `--lib` means whatever `cargo test` says it means and a flag the runner rejects surfaces as that runner's own error, not a yoyo error. With no arguments, `/test` behaves exactly as before.
 
-**Exit codes (CLI only).** `yoyo test` and `yoyo run <cmd>` exit with the status of what they ran: 0 when it passed, the runner's or command's own exit code when it failed (1 if it was killed by a signal), and 1 when nothing could run (no recognized project, no test command, or the process could not be spawned). A script or CI step can therefore trust `yoyo test`'s exit status. The REPL `/test` and `/run` are unchanged.
+**Exit codes (CLI only).** `yoyo test` and `yoyo run <cmd>` exit with the status of what they ran: 0 when it passed, the runner's or command's own exit code when it failed (1 if it was killed by a signal), and 1 when nothing could run (no recognized project, no test command, or the process could not be spawned). A script or CI step can therefore trust `yoyo test`'s exit status. The REPL `/test` and `/run` are unchanged. Two more CLI subcommands report failure in their exit status: `yoyo model <unknown-subcommand>` exits 2 (usage error), and `yoyo skill show <name>` exits 1 when no loaded skill has that name (or its file cannot be read). Other subcommands still exit 0 (#982).
 
 The `/lint` command is similar to `/test` but runs only the linter for your project. It auto-detects the project type and runs the appropriate linter:
 

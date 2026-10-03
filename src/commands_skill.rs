@@ -11,6 +11,13 @@ pub const SKILL_SUBCOMMANDS: &[&str] = &["list", "show", "path", "install", "sea
 /// to the loaded `SkillSet`. If no skills directory is configured, prints a
 /// helpful message about the `--skills` flag.
 pub fn handle_skill(input: &str, skills: &yoagent::skills::SkillSet) {
+    handle_skill_status(input, skills);
+}
+
+/// [`handle_skill`], returning the process exit code the shell `yoyo skill`
+/// arm uses (#982): 1 when `show` names a skill that is not loaded (or whose
+/// file cannot be read), 0 otherwise. Decided from the lookup, never from text.
+pub fn handle_skill_status(input: &str, skills: &yoagent::skills::SkillSet) -> i32 {
     let sub = input.strip_prefix("/skill").unwrap_or(input).trim();
 
     if sub.is_empty() || sub == "list" {
@@ -18,7 +25,10 @@ pub fn handle_skill(input: &str, skills: &yoagent::skills::SkillSet) {
     } else if sub == "path" {
         skill_path(skills);
     } else if let Some(name) = sub.strip_prefix("show ") {
-        skill_show(name.trim(), skills);
+        let report = skill_show_report(name.trim(), skills);
+        print!("{}", report.stdout);
+        eprint!("{}", report.stderr);
+        return report.code;
     } else if sub == "show" {
         eprintln!("{YELLOW}  usage: /skill show <name>{RESET}");
         eprintln!("{DIM}  try /skill list to see available skills{RESET}\n");
@@ -59,6 +69,7 @@ pub fn handle_skill(input: &str, skills: &yoagent::skills::SkillSet) {
         eprintln!("{RED}  unknown subcommand: {sub}{RESET}");
         eprintln!("{DIM}  try: /skill list, /skill show <name>, /skill path, /skill install <path>, /skill search <query>, /skill init <name>{RESET}\n");
     }
+    0
 }
 
 /// Validate a skill name: must be kebab-case (a-z, 0-9, hyphens).
@@ -223,39 +234,61 @@ fn skill_path(skills: &yoagent::skills::SkillSet) {
     }
 }
 
-/// Show the full content of a named skill's SKILL.md file.
-fn skill_show(name: &str, skills: &yoagent::skills::SkillSet) {
+/// What `/skill show <name>` prints, and its exit code (#982). Pure, so the
+/// status and the bytes are tested together without a terminal.
+#[derive(Debug, PartialEq, Eq)]
+struct SkillShowReport {
+    code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+/// Build the full content of a named skill's SKILL.md file as a report.
+fn skill_show_report(name: &str, skills: &yoagent::skills::SkillSet) -> SkillShowReport {
+    use std::fmt::Write as _;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
     let skill = skills.skills().iter().find(|s| s.name == name);
 
-    match skill {
-        Some(s) => {
-            match std::fs::read_to_string(&s.file_path) {
-                Ok(content) => {
-                    println!("{BOLD}  Skill: {}{RESET}", s.name);
-                    println!("{DIM}  path: {}{RESET}\n", s.file_path.display());
-                    // Print the skill content with light indentation
-                    for line in content.lines() {
-                        println!("  {line}");
-                    }
-                    println!();
+    let code = match skill {
+        Some(s) => match std::fs::read_to_string(&s.file_path) {
+            Ok(content) => {
+                let _ = writeln!(stdout, "{BOLD}  Skill: {}{RESET}", s.name);
+                let _ = writeln!(stdout, "{DIM}  path: {}{RESET}\n", s.file_path.display());
+                // Print the skill content with light indentation
+                for line in content.lines() {
+                    let _ = writeln!(stdout, "  {line}");
                 }
-                Err(e) => {
-                    eprintln!(
-                        "{RED}  error reading {}: {e}{RESET}\n",
-                        s.file_path.display()
-                    );
-                }
+                stdout.push('\n');
+                0
             }
-        }
+            Err(e) => {
+                let _ = writeln!(
+                    stderr,
+                    "{RED}  error reading {}: {e}{RESET}\n",
+                    s.file_path.display()
+                );
+                1
+            }
+        },
         None => {
-            eprintln!("{RED}  skill not found: {name}{RESET}");
+            let _ = writeln!(stderr, "{RED}  skill not found: {name}{RESET}");
             if !skills.is_empty() {
                 let names: Vec<&str> = skills.skills().iter().map(|s| s.name.as_str()).collect();
-                eprintln!("{DIM}  available: {}{RESET}\n", names.join(", "));
+                let _ = writeln!(stderr, "{DIM}  available: {}{RESET}\n", names.join(", "));
             } else {
-                eprintln!("{DIM}  no skills loaded — use --skills <dir>{RESET}\n");
+                let _ = writeln!(
+                    stderr,
+                    "{DIM}  no skills loaded — use --skills <dir>{RESET}\n"
+                );
             }
+            1
         }
+    };
+    SkillShowReport {
+        code,
+        stdout,
+        stderr,
     }
 }
 
@@ -1855,5 +1888,43 @@ mod tests {
         // Init with name should not panic (will try to create in cwd's .yoyo/)
         // We don't assert file creation here since it writes to cwd
         handle_skill("/skill init  ", &skills);
+    }
+
+    /// #982: `skill show` exit status, both directions, decided from the lookup.
+    /// The found path's bytes are pinned whole (near-miss guard: the status change
+    /// must not alter what a successful `show` prints).
+    #[test]
+    fn skill_show_status_is_nonzero_only_when_not_found() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("demo");
+        std::fs::create_dir_all(&dir).unwrap();
+        let body = "---\nname: demo\ndescription: d\n---\n# Demo\n";
+        std::fs::write(dir.join("SKILL.md"), body).unwrap();
+        let skills = yoagent::skills::SkillSet::load(&[tmp.path()]).unwrap();
+        let path = skills.skills()[0].file_path.display().to_string();
+
+        let found = skill_show_report("demo", &skills);
+        let expected = format!(
+            "{BOLD}  Skill: demo{RESET}\n{DIM}  path: {path}{RESET}\n\n  ---\n  name: demo\n  description: d\n  ---\n  # Demo\n\n"
+        );
+        assert_eq!(found.code, 0);
+        assert_eq!(found.stdout, expected);
+        assert_eq!(found.stderr, "");
+
+        let missing = skill_show_report("nosuch", &skills);
+        assert_eq!(missing.code, 1);
+        assert_eq!(missing.stdout, "");
+        assert!(missing.stderr.contains("skill not found: nosuch"));
+        assert!(missing.stderr.contains("available: demo"));
+
+        let none_loaded = skill_show_report("nosuch", &yoagent::skills::SkillSet::empty());
+        assert_eq!(none_loaded.code, 1);
+        assert!(none_loaded.stderr.contains("no skills loaded"));
+
+        // Through the dispatcher-facing entry point.
+        assert_eq!(handle_skill_status("/skill show demo", &skills), 0);
+        assert_eq!(handle_skill_status("/skill show nosuch", &skills), 1);
+        assert_eq!(handle_skill_status("/skill list", &skills), 0);
+        assert_eq!(handle_skill_status("/skill show", &skills), 0);
     }
 }

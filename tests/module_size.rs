@@ -364,7 +364,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 211 (#962): 2162 -> 2166 (+4): the `ProjectIo` seam so the setup/init
     // dispatch tests write into a tempdir; the tests moved OUT to
     // src/dispatch_sub_project_tests.rs so this file did not absorb them.
-    ("src/dispatch_sub.rs", 2166),
+    // Day 217: #982 slice 1 — 2164 -> 2193 (+29): `exit_if_nonzero`, `ModelSubcommand::exit_code`
+    // and the model/skill arms routing through them, plus the exit-code rows in the
+    // parse table. The skill status logic lives in commands_skill.rs to keep this small.
+    ("src/dispatch_sub.rs", 2193),
     // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
     // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
     // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769

@@ -86,7 +86,11 @@ fn quote_args_as_command(args: &[String]) -> String {
 /// Exit nonzero when a shell subcommand's child failed or never ran; success
 /// returns so the arm's `Some(None)` path is unchanged. Flushes stdout first.
 fn exit_if_failed(outcome: crate::commands_run::ShellOutcome) {
-    let code = crate::commands_run::shell_exit_code(outcome);
+    exit_if_nonzero(crate::commands_run::shell_exit_code(outcome));
+}
+
+/// Sibling of [`exit_if_failed`] for arms whose core returns a code (#982).
+fn exit_if_nonzero(code: i32) {
     if code != 0 {
         use std::io::Write;
         let _ = std::io::stdout().flush();
@@ -120,6 +124,17 @@ pub(crate) enum ModelSubcommand {
     /// Anything else — in practice a bare model name. Carries the offending
     /// token so the refusal can name it.
     Refuse(String),
+}
+
+impl ModelSubcommand {
+    /// Exit code for `yoyo model …` (#982): 2, a usage error, for a refused subcommand.
+    pub(crate) fn exit_code(&self) -> i32 {
+        if matches!(self, Self::Refuse(_)) {
+            2
+        } else {
+            0
+        }
+    }
 }
 
 /// Parse the tail of `yoyo model …` (everything after the `model` verb).
@@ -411,7 +426,9 @@ pub(crate) fn try_dispatch_subcommand_in(
                 let model = flag_value(args, &["--model"])
                     .or_else(|| file_config.get("model").cloned())
                     .unwrap_or_else(|| default_model_for_provider(&provider));
-                match parse_model_subcommand(&args[2..]) {
+                let sub = parse_model_subcommand(&args[2..]);
+                let code = sub.exit_code();
+                match sub {
                     ModelSubcommand::Show => {
                         crate::commands_info::handle_model_show(&model);
                     }
@@ -428,6 +445,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                         eprintln!("{YELLOW}  {}{RESET}", model_refusal_message(&arg));
                     }
                 }
+                exit_if_nonzero(code);
                 return Some(None);
             }
             "update" => {
@@ -453,7 +471,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                         SkillSet::empty()
                     })
                 };
-                crate::commands_skill::handle_skill(&input, &skills);
+                exit_if_nonzero(crate::commands_skill::handle_skill_status(&input, &skills));
                 return Some(None);
             }
             "watch" => {
@@ -1011,6 +1029,17 @@ mod tests {
                 &parse_model_subcommand(&tail(input)),
                 expected,
                 "parse_model_subcommand({input:?})"
+            );
+            // #982: only a refusal exits nonzero (2, usage error).
+            let want = if matches!(expected, ModelSubcommand::Refuse(_)) {
+                2
+            } else {
+                0
+            };
+            assert_eq!(
+                parse_model_subcommand(&tail(input)).exit_code(),
+                want,
+                "{input:?}"
             );
         }
     }
