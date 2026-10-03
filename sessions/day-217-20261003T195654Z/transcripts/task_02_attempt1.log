@@ -1,0 +1,73 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (18ms)
+  ▶ $ grep -rn "handle_health\|handle_lint\b" src/ | grep -v "^src/commands_lint.rs:10… ✓ (16ms)
+  ▶ $ sed -n 836,860p src/commands_dev.rs; grep -n "No recognized project" src/*.rs | … ✓ (17ms)
+  ▶ $ sed -n 300,370p src/commands_lint.rs; sed -n 645,700p src/dispatch.rs; ls docs/s… ✓ (9ms)
+  ▶ $ grep -n "exit_if_nonzero" src/dispatch_sub.rs | head -20; git log --oneline -5 ✓ (5ms)
+  ▶ $ grep -n "fn handle_diff_status\|fn handle_diff\b\|pub fn handle_diff(" -A12 src/… ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (53 lines) ✓ (31ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 33.5s (7 ✓)
+
+Now health and the helper in commands_dev.rs.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (47 lines) ✓ (23ms)
+  ▶ $ python3 - <<'EOF' (38 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n '"health"\|"lint"' src/dispatch_sub.rs | head; sed -n 948,960p src/comma… ✓ (5ms)
+  ▶ $ python3 - <<'EOF' (32 lines) ✓ (39.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 53.9s (4 ✓)
+
+Positive control (atomic mutate → run → restore):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/commands_dev.rs /tmp/cd.bak && python3 -c " (7 lines) ✓ (57.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; B=$PWD/target/debug/yoyo; T=$(mkte… ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 15 ./target/debug/yoyo hea… ✓ (15.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.4s (2 ✓)
+
+Repo root passes detection (it moved on to running checks; I cut it off with a timeout rather than wait for a full cargo run). Now the full gate:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo clippy --all-ta… ✓ (3m 18s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "^test r… ✓ (2m 6s)
+  2 tools completed in 5m 27s (2 ✓)
+
+Everything passes. Now the doc line (commands.md already lists per-subcommand exit codes):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (27 lines) ✓ (39ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/c98… (21 lines) ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.3s (2 ✓)
+
+yoyo lint and yoyo health now exit 1 when no recognized project is found, instead of exiting 0 after doing nothing. Most of #982 is still open: changelog outside git, bare run, tree <bad arg>, the find/grep no-match case, lint/health checks that ran and failed (still exit 0), and about 30 subcommands nobody has tested yet all still exit 0. This commit fixes only the "no project" case of these two commands.
+
+What changed
+• **src/commands_dev.rs:** a new helper, `no_project_status`, returns 1 when no project is found and 0 otherwise. Both commands use it. A new `handle_health_status()` returns that code. The old handle_health() now calls it and ignores the code, so /health inside yoyo behaves as before.
+• **`src/commands_lint.rs:** handle_lint_status() returns the summary plus the code. handle_lint() keeps its old signature, so /lint and /lint fix` inside yoyo are unchanged.
+• **src/dispatch_sub.rs:** the health and lint shell commands call exit_if_nonzero(code). No output strings are parsed.
+• **`docs/src/usage/commands.md`:** the exit-code paragraph now covers lint and health, and says a check that ran and failed still exits 0.
+
+Checks
+• **New tests:** they run the real project detector on temp dirs. An empty dir gives 1; a dir with a Cargo.toml or Makefile gives 0.
+• **Positive control:** I temporarily made the no-project case return 0, and the empty-dir test failed by name. I restored it in the same command, and the marker count confirms nothing was left behind.
+• **Real binary in an empty temp dir:** lint exits 1 and health exits 1, with the same output as before. After touch Makefile, health exits 0.
+• **Repo root:** `health` gets past project detection ("Detected project: Rust (Cargo)", then "Running health checks..."). I stopped it after 15 seconds rather than wait for the full cargo run, so I didn't see its final exit code.
+• **Existing test:** test_try_dispatch_subcommand_lint runs from the repo root, which has a Cargo.toml, so it never hits the new exit. It is untouched and passes.
+• **Full suite:** cargo build, cargo test (0 failures), cargo clippy --all-targets -- -D warnings and cargo fmt -- --check all pass.
+
+Committed as 5e1ce6ad. I commented on #982 with the probe output and the list of what still exits 0, and left the issue open.
+  watch: no files changed this turn — skipping
