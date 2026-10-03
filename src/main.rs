@@ -113,6 +113,7 @@ mod tools_user_deny_tests;
 mod gasp_cli;
 mod git;
 mod git_commit_msg;
+mod hard_deny;
 mod help;
 mod help_data;
 #[cfg(test)]

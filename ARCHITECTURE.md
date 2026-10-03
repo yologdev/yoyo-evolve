@@ -1296,3 +1296,25 @@ Run durations, stamp-value → stamp-commit: the six burned ones are **125s, 150
 **#951's measured instance was wrong.** `6e79f686` never reached main (not on GitHub). Run 36050318880's attempt 1 committed it locally, a later step exited 1, the retries ran on the same runner, and the job was cancelled before any push. The hole it pointed at was real regardless.
 
 **Edge cases fixed while testing.** (1) A multi-path `git add`/`git reset` aborts on the first unmatched pathspec (an already-staged deletion), which silently skipped the rest, so paths are handled one at a time with `GIT_LITERAL_PATHSPECS=1`. (2) A rename out of an allowed directory must refuse both halves; refusing only the new half committed the source's deletion and lost the file. **Tests** (`tests/harness_logic.sh`): a real-git fixture mixes bookkeeping with a `src/` edit, a stray file, a staged deletion, a path with a space, an out-of-scope rename and a gitignored file. Result: only the journal and the `.yoyo/` ledger are committed, the tree is clean, 5 refused diffs are saved, and the ignored file is untouched. Positive controls: the ungated sweep commits the drift; reverting either edge-case fix fails exactly that test. The pre-push fixture now dirties its real writer, and a new case pins that a file outside `.yoyo/` is refused.
+
+### `src/hard_deny.rs` / `src/tools.rs` — Day 217 (14:33): the hard deny list matches commands, not substrings
+
+**The measured defect, in both directions.** `hard_deny_refusal` matched `HARD_DENY_PATTERNS` with `command.contains(p)`. That list is a **hard** deny: there is no confirm and `--yes` cannot skip it. Since Day 217 (#977) it also guards the sub_agent/explore_agent child bash. **Overmatch, which every user hit:** the root-delete pattern matched every recursive delete of an absolute path (`rm -rf /tmp/build`) and every command that only *mentioned* it. The Day-217 assessment's own `grep` for it was refused, and so was a heredoc writing markdown. `dd if=` blocked `dd if=/dev/zero of=./img`, and the word `mkfs` anywhere (`man mkfs`) was refused. **Undermatch, the reason the list exists:** `rm -fr /`, `rm -r -f /`, `rm -Rf /` and `rm -rf --no-preserve-root /` contain no matching substring and got through. The old tests checked list membership only, and no near miss was pinned.
+
+**The fix is one module with one table.** `hard_deny_match(command) -> Option<&'static str>` returns the rule's label. Its matcher works like this: lines (with `\`-newline joined), shell words with quote removal, and segments on `; & | ( )`. A quoted string becomes one word, so `echo "rm -rf /"` has no word equal to `rm`. The rules:
+- rm-root: `rm` (by basename, at any position) plus a recursive flag in any spelling plus a root/home target, or `--no-preserve-root`. `-f` is not required.
+- mkfs: in command position after wrappers, or with a `/dev/` argument.
+- dd: `of=/dev/…` other than null/stdout/stderr.
+- Fork bomb: kept as a substring rule but whitespace-stripped, which is strictly tighter.
+- Nested `bash/sh/zsh/dash/ksh -c` and `eval` are re-matched up to depth 3. Past the cap there is a fail-closed substring scan.
+
+`HARD_DENY_PATTERNS` keeps its five strings, now as **rule labels**, so the refusal text is byte-identical, `StreamingBashTool::deny_patterns` still selects the active rules, and `tools.rs` re-exports both names. Parent and child still go through the one `hard_deny_refusal`, so there is no second door. **Wording caveat, kept deliberately:** the text still says `contains '<label>'`, so `rm -fr /` is reported as containing `rm -rf /`. The label names the rule; the command does not literally contain it.
+
+**Tests:** `src/hard_deny.rs` has a 41-row must-refuse table, with every row checked against its exact label via `assert_eq!`. It also has a 23-row must-pass near-miss table, a canonical-form row for every list entry, the byte-identical refusal text, a disabled-rule case and the nesting-cap case. **Positive control, run as one atomic mutate→run→restore:** with `hard_deny_match` neutered to `None`, 5 tests failed by name (`should refuse: "rm -rf /"`) and `near_miss_rows_pass` stayed green, as it must. After the restore, 6/6 passed and the file had no `NEUTERED` marker.
+
+**Known residue (in the module doc, not fixed).**
+- A heredoc body line that reads like a root delete is still refused. That fails closed.
+- `$(…)`, backticks and lines with an unbalanced quote are not parsed. They trigger a second scan with quotes stripped and substitutions turned into separators, which also fails closed.
+- `rm -rf /usr`, `find / -delete` and `> /dev/sda` were never on the list.
+
+This is a guard against accidental catastrophe, **not a sandbox**: `safety.rs`'s `analyze_bash_command` and the confirm prompt still run.

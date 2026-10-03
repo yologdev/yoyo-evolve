@@ -75,7 +75,7 @@ pub struct StreamingBashTool {
     pub timeout: Duration,
     /// Max output bytes to capture (prevents OOM on huge outputs)
     pub max_output_bytes: usize,
-    /// Commands/patterns that are always blocked (e.g., "rm -rf /")
+    /// Hard-deny rule labels that are active (see `hard_deny.rs`); always blocked
     pub deny_patterns: Vec<String>,
     /// The user's own deny patterns (`--deny` / `.yoyo.toml [permissions] deny`),
     /// glob-matched against the raw command. Checked in `execute` before ANY
@@ -1502,24 +1502,9 @@ pub(crate) fn user_deny_refusal(user_deny: &[String], command: &str) -> Option<S
     ))
 }
 
-/// The hard deny list (`rm -rf /`, `mkfs`, ...): the authority read by
-/// `StreamingBashTool::default()` and by the sub-agent child's bash (#977).
-pub(crate) const HARD_DENY_PATTERNS: &[&str] = &[
-    "rm -rf /",
-    "rm -rf /*",
-    "mkfs",
-    "dd if=",
-    ":(){:|:&};:", // fork bomb
-];
-
-/// The hard-deny predicate and refusal text, shared by parent and child bash.
-pub(crate) fn hard_deny_refusal<S: AsRef<str>>(patterns: &[S], command: &str) -> Option<String> {
-    let pattern = patterns.iter().find(|p| command.contains(p.as_ref()))?;
-    Some(format!(
-        "Command blocked by safety policy: contains '{}'. This pattern is denied for safety.",
-        pattern.as_ref()
-    ))
-}
+// The hard deny list and its token-aware predicate live in `hard_deny.rs`;
+// parent and child bash both go through this one `hard_deny_refusal`.
+pub(crate) use crate::hard_deny::{hard_deny_refusal, HARD_DENY_PATTERNS};
 
 /// Layer 2 for a child (#977): where the parent would have ASKED the user
 /// (`analyze_bash_command` flags it and the parent has a confirm prompt), the
