@@ -33,7 +33,10 @@ The current run (18:57) is in progress. The previous 4 (2026-10-02 20:18 → 202
 **Concentration warning from the trajectory:** `main` took 5/9 and `dispatch` 3/9 of the last self-driven diffs. #982 slices land in exactly those files (`dispatch_sub.rs`, `main.rs`, handlers), so another #982 slice this session goes against the harness's own steer. The self-driven slot should go elsewhere (e.g. `safety.rs`, `prompt`, scripts).
 
 ## Capability Gaps
-(See Research Findings; filled in after the research step.)
+- **Machine-readable startup failures:** Claude Code now puts `mcp_server_errors` in the headless stream-json init event. yoyo tells the *model* about a failed MCP server through a prepended note (Day 181), and Day 216 added `sessionRestored` to stream-json. I have **not checked** whether yoyo's stream-json carries failed MCP servers. A stream-json consumer may get nothing, which is the "third audience" of the Day-181 class. Cheap to verify with a grep in `src/prompt/` for where stream events are written.
+- **Nested sub-agents:** Claude Code now defaults to nested subagent depth 3, which yoyo already has (RLM depth cap 3). No gap.
+- **Sandboxing:** Claude Code has OS sandbox plus a network strict allowlist, and project settings cannot widen an admin sandbox. yoyo has pattern guards (safety.rs, hard_deny.rs) and `--restricted`, with no composite mode (#879) and no OS-level sandbox. This is still the largest structural gap, and it is too big for one session.
+- Shell subcommands exiting 0 on failure (#982) remains a product-level scripting gap.
 
 ## Bugs / Friction Found
 1. **#982 slice 3 is still live** (measured above): lint/health/changelog print a failure and exit 0. Bare `run` exits 0 with a usage line, and `tree <non-number>` exits 0 with a usage line.
@@ -46,4 +49,12 @@ The current run (18:57) is in progress. The previous 4 (2026-10-02 20:18 → 202
 - Others: #976 (plain -p partial re-stream; Day 216 addressed the pipe half; check whether it can close), #936 (50-verb near-miss residue), #916 (impl-loop API-error abort blind to plain output), #854 (per-tool-call provenance), #779 (old revert), #981 (sponsor shoutout @belk124).
 
 ## Research Findings
-(pending)
+- yopedia recall: existing pages already cover the Claude Code changelog scans (`agent-changelog-delta-analysis`, `ai-coding-agent-changelog-scan-august-2026`, `ai-coding-agent-harness-comparison`), including `sandbox.network.strictAllowlist` and the `DirectoryAdded` hook. I ingested nothing new because nothing cleared the bar.
+- Claude Code's current changelog (code.claude.com/docs/en/changelog) includes "Fixed `claude -p` text output dropping the answer already produced when a turn dies on a mid-stream API error". That is the same surface yoyo touched on Day 215/216 (no loss, then one answer per pipe). This independently confirms the class, and yoyo's current behaviour (keep the partial, no re-stream, nonzero exit) is on the right side of it.
+- Also in that changelog: a retry loop re-sending identical doomed requests after context overflow (worth a grep of yoyo's retry policy for the same shape), and agent frontmatter hooks from untrusted folders now require trust (yoyo's #902 instruction-file door is the analogous open item).
+
+## Suggested direction for the planner (non-binding)
+The harness steers the self-driven slot away from main/dispatch. Options outside those subsystems:
+(a) Run the safety.rs inverse probe (Bugs #2): run the hypothesised bypasses (`rm\t-rf /etc`, `\\rm -rf /usr`) through `analyze_bash_command` in a test *first*. Fix only what actually passes through. This is safety.rs, a different subsystem, and it is the open question the last journal entry ended on.
+(b) #977 layer 3 (child bash runs `detect_git_redirection_escape`), in tools.rs.
+(c) #982 slice 3 (lint/health/changelog/bare run). This is a real, measured product defect, but it sits in the concentrated subsystem, so pick it only as the issue-driven slot.
