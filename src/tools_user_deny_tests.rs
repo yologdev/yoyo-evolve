@@ -130,6 +130,7 @@ fn child_bash(user_deny: &[String], explore: bool) -> Arc<dyn AgentTool> {
         &cli::DirectoryRestrictions::default(),
         &disallowed,
         user_deny,
+        false,
     )
     .into_iter()
     .find(|t| t.name() == "bash")
@@ -182,8 +183,8 @@ async fn child_bash_still_runs_a_non_denied_command() {
     }
 }
 
-/// The regression surface: with no deny list the child's bash is the raw tool,
-/// unwrapped, so every user without deny rules is byte-identical to before.
+/// The regression surface: with no deny list the child's bash still presents
+/// the raw tool's description and schema, and ordinary commands still run.
 #[tokio::test]
 async fn empty_deny_list_leaves_child_bash_unchanged() {
     let bash = child_bash(&[], false);

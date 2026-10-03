@@ -100,13 +100,7 @@ impl Default for StreamingBashTool {
             cwd: None,
             timeout: Duration::from_secs(120),
             max_output_bytes: 256 * 1024, // 256KB
-            deny_patterns: vec![
-                "rm -rf /".into(),
-                "rm -rf /*".into(),
-                "mkfs".into(),
-                "dd if=".into(),
-                ":(){:|:&};:".into(), // fork bomb
-            ],
+            deny_patterns: HARD_DENY_PATTERNS.iter().map(|p| p.to_string()).collect(),
             user_deny: Vec::new(),
             confirm_fn: None,
             update_interval: Duration::from_millis(500),
@@ -370,13 +364,8 @@ impl AgentTool for StreamingBashTool {
         }
 
         // Check deny patterns (hard block — always denied, no override)
-        for pattern in &self.deny_patterns {
-            if command.contains(pattern.as_str()) {
-                return Err(ToolError::Failed(format!(
-                    "Command blocked by safety policy: contains '{}'. This pattern is denied for safety.",
-                    pattern
-                )));
-            }
+        if let Some(refusal) = hard_deny_refusal(&self.deny_patterns, command) {
+            return Err(ToolError::Failed(refusal));
         }
 
         // User deny patterns — hard block, checked on the raw command before
@@ -1513,11 +1502,48 @@ pub(crate) fn user_deny_refusal(user_deny: &[String], command: &str) -> Option<S
     ))
 }
 
+/// The hard deny list (`rm -rf /`, `mkfs`, ...): the authority read by
+/// `StreamingBashTool::default()` and by the sub-agent child's bash (#977).
+pub(crate) const HARD_DENY_PATTERNS: &[&str] = &[
+    "rm -rf /",
+    "rm -rf /*",
+    "mkfs",
+    "dd if=",
+    ":(){:|:&};:", // fork bomb
+];
+
+/// The hard-deny predicate and refusal text, shared by parent and child bash.
+pub(crate) fn hard_deny_refusal<S: AsRef<str>>(patterns: &[S], command: &str) -> Option<String> {
+    let pattern = patterns.iter().find(|p| command.contains(p.as_ref()))?;
+    Some(format!(
+        "Command blocked by safety policy: contains '{}'. This pattern is denied for safety.",
+        pattern.as_ref()
+    ))
+}
+
+/// Layer 2 for a child (#977): where the parent would have ASKED the user
+/// (`analyze_bash_command` flags it and the parent has a confirm prompt), the
+/// child has nobody to ask, so it refuses. Without a parent prompt (piped,
+/// `--yes`) the parent allows such commands, and so does the child.
+pub(crate) fn child_confirm_refusal(parent_confirms: bool, command: &str) -> Option<String> {
+    if !parent_confirms {
+        return None;
+    }
+    let warning = analyze_bash_command(command)?;
+    Some(format!(
+        "Command needs user confirmation that a sub-agent cannot obtain: {warning} \
+         Return this step to the parent agent and let it run the command itself, \
+         where the user can confirm it."
+    ))
+}
+
 /// A sub-agent child's bash is yoagent's raw `BashTool`, which never sees
-/// `StreamingBashTool::user_deny`; this is that check on the child door.
+/// `StreamingBashTool`'s checks; this wrapper applies them on the child door:
+/// the hard deny list, the user's deny list, and the confirm-inheritance rule.
 struct UserDenyBashTool {
     inner: Arc<dyn AgentTool>,
     user_deny: Vec<String>,
+    parent_confirms: bool,
 }
 
 #[async_trait::async_trait]
@@ -1540,7 +1566,12 @@ impl AgentTool for UserDenyBashTool {
         ctx: yoagent::types::ToolContext,
     ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
         let command = params.get("command").and_then(|v| v.as_str());
-        if let Some(refusal) = command.and_then(|c| user_deny_refusal(&self.user_deny, c)) {
+        let refusal = command.and_then(|c| {
+            hard_deny_refusal(HARD_DENY_PATTERNS, c)
+                .or_else(|| user_deny_refusal(&self.user_deny, c))
+                .or_else(|| child_confirm_refusal(self.parent_confirms, c))
+        });
+        if let Some(refusal) = refusal {
             return Err(yoagent::types::ToolError::Failed(refusal));
         }
         self.inner.execute(params, ctx).await
@@ -1551,6 +1582,7 @@ pub(crate) fn sub_agent_child_tools(
     restrictions: &DirectoryRestrictions,
     disallowed: &[String],
     user_deny: &[String],
+    parent_confirms: bool,
 ) -> Vec<Arc<dyn AgentTool>> {
     // Sub-agent gets standard yoagent tools — no permission guards needed
     // since the parent already authorized the delegation.
@@ -1563,20 +1595,20 @@ pub(crate) fn sub_agent_child_tools(
     //      agent uses, checked at call time, transparent when no mode is on
     //      and during `/plan apply`.
     //
-    //   3. The user's `permissions.deny` (`UserDenyBashTool`, same predicate
-    //      and refusal text as the parent; unwrapped when the list is empty).
+    //   3. `UserDenyBashTool`, calling the parent's own predicates: the hard
+    //      deny list (`HARD_DENY_PATTERNS`), the user's `permissions.deny`, and
+    //      `analyze_bash_command` — refused when the parent would have asked
+    //      the user (`parent_confirms`), allowed when it would not (piped/--yes).
     //
-    // Known remaining gap (#709 is closed; tracked in #977): the child's bash is
-    // yoagent's raw `BashTool`, so it skips `safety.rs` and any confirm prompt.
+    // Invariant over executors: no path that can run bash is more permissive
+    // than the parent, except layer 3 of #977 — `detect_git_redirection_escape`
+    // applies only to a pinned-cwd parent and is not checked here.
     let raw_bash: Arc<dyn AgentTool> = Arc::new(yoagent::tools::bash::BashTool::default());
-    let bash = if user_deny.is_empty() {
-        raw_bash
-    } else {
-        Arc::new(UserDenyBashTool {
-            inner: raw_bash,
-            user_deny: user_deny.to_vec(),
-        })
-    };
+    let bash: Arc<dyn AgentTool> = Arc::new(UserDenyBashTool {
+        inner: raw_bash,
+        user_deny: user_deny.to_vec(),
+        parent_confirms,
+    });
     let mut tools: Vec<Arc<dyn AgentTool>> = vec![
         with_read_guard_bash_arc(bash),
         maybe_guard_arc(Arc::new(ReadFileTool::default()), restrictions),
@@ -1641,6 +1673,7 @@ fn build_sub_agent_tool_at_depth(
         &config.dir_restrictions,
         &child_disallowed,
         &config.permissions.deny,
+        !config.auto_approve,
     );
 
     // Allow exactly one more level of nesting, bounded by MAX_SUB_AGENT_DEPTH.
@@ -1720,6 +1753,7 @@ pub(crate) fn build_explore_agent_tool(
         &config.dir_restrictions,
         &child_disallowed,
         &config.permissions.deny,
+        !config.auto_approve,
     );
     dispatch_tool_with_fallback(config, &EXPLORE_AGENT_FLAVOR, child_tools, shared_state)
 }
@@ -4208,7 +4242,7 @@ mod tests {
     ];
 
     fn child_tool_names(disallowed: &[String]) -> Vec<String> {
-        sub_agent_child_tools(&DirectoryRestrictions::default(), disallowed, &[])
+        sub_agent_child_tools(&DirectoryRestrictions::default(), disallowed, &[], false)
             .iter()
             .map(|t| t.name().to_string())
             .collect()
@@ -4601,6 +4635,7 @@ mod tests {
             &DirectoryRestrictions::default(),
             &read_only_child_disallowed(&[]),
             &[],
+            false,
         );
         let bash = tools
             .iter()
