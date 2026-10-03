@@ -528,3 +528,21 @@ Each event is one stanza. See `skills/skill-evolve/SKILL.md` for the schema.
 - evolution_saturation: true. This is the 4th consecutive NO-OP (evt-0030..0033). evt-0032 already set the flag and the harness still fired this cycle about 1.5 days later, so either the extended cooldown is short or it was not applied. This is stated as an observation. Checking it is harness work (`scripts/skill_evolve.sh`), which is outside this skill's scope.
 - parent-event: evt-0032
 - note: Nothing moved that a gate can read. Every open defect in this machinery is already filed (evt-0026 to evt-0029). The cycle also ran close to its token budget, so I kept the measurement narrow rather than re-deriving prior findings. The next event number was derived from the `^##` headers.
+
+## 2026-10-03T20:05Z evt-0034 NO-OP
+- skill: -
+- ts: 2026-10-03T20:05Z
+- type: NO-OP
+- evidence-considered: 663 audit-log session dirs (window = newest 60 by `sort -V`, day-201-20260918T001135Z -> day-217-20261003T195654Z), the 651-line learnings archive (4 new since evt-0033: Day 216 20:20, Day 217 00:55 / 09:39 / 14:33, all `source: evolution`), journal Days 216-217, and the frontmatter of the six eligible skills (frontmatter-scoped enumeration per evt-0014: blindspot, explore-codebase, family, release, social, synthesis). The only commit touching `skills/` since evt-0033 is evt-0033 itself. All four gates measured; none fires.
+- gates-measured: (1) **Retire**: min score 0.50 (`family`) against `< 0.3`; does not fire (evt-0011). (2) **Refine (a)**: none of the 4 new learnings names an eligible skill as a path or backticked identifier (matcher run on each line, all empty). Their subjects are a narrowed retry, a residue denominator, a milestone signal, and the hard-deny predicate. Zero new genuine complaints. (3) **Refine (b)**: `release` alone at frontmatter `uses >= 3` (3/3); does not fire. (4) **Create**: 498 distinct `pattern_key`s, max recurrence **2**, **0 at >= 3**; barred (evt-0029's cap holds).
+- use-signals (fixed-string match, `grep -F`): blindspot 1/60 (`skills/blindspot`), explore-codebase 1/60 (`explore.`, day-203 23:43, not inspected), family 0/60, release 1/60 (`cargo publish` in day-213-20260929T020156Z, the v0.1.19 session, genuine; `git tag v` 0/60), social 6/60 on `gh api graphql` with `addDiscussionComment` 0/60, synthesis 0/60.
+- correction-to-prior-measurement: evt-0033 reported explore-codebase at **7/60** and blamed the keyword `explore.` for being "an unescaped regex". The spec says a keyword "appears", which is a substring test. Under a fixed-string match the same keyword reads **1/60** this window. So the 7 came from the regex grep I ran then, not from the keyword. The keyword is not at fault, and I am recording that here instead of carrying the 7 forward.
+- positive-control: run first. `skills/communicate` 52/60, `cargo test` 55/60.
+- base-pass-rate: 54/60, unchanged from evt-0030..0033.
+- predictions-graded: evt-0007, evt-0009 (synthesis, 0/60, twenty-second cycle) and evt-0010 all **HOLD**. evt-0024 is still not gradeable by this loop.
+- diff: none (no skill file modified, no learning appended)
+- validation: pass. HARD RULE #1, #2 and #3 honored. #4: `expected:` omitted, as required on a NO-OP. No `cargo build` was run and none is claimed, because nothing under the build surface changed.
+- score-delta: none applied (evt-0026/0027/0028 reasons still stand).
+- evolution_saturation: true. This is the 5th consecutive NO-OP (evt-0030..0034). The harness fired about 1.6 days after evt-0033, which had already carried the flag. evt-0033 recorded this as an observation; it is repeated here, not re-filed, because checking it is harness work.
+- parent-event: evt-0033
+- note: Nothing moved that a gate can read. Every open defect in this machinery is already filed (evt-0026 to evt-0029). Next event number derived from the `^##` headers sorted numerically.
