@@ -250,12 +250,20 @@ pub fn parse_diff_args(input: &str) -> DiffOptions {
 }
 
 pub fn handle_diff(input: &str) {
+    let _ = handle_diff_status(input);
+}
+
+/// `/diff` with an exit status for the shell door (`yoyo diff`, #982):
+/// 1 when the not-a-git-repository branch fires, 0 otherwise. An empty diff
+/// ("no uncommitted changes") is deliberately 0 — nothing to show is not a
+/// failure. The REPL calls `handle_diff`, which discards the code.
+pub fn handle_diff_status(input: &str) -> i32 {
     let opts = parse_diff_args(input);
 
     // When a ref range is specified, compare commits directly
     if let Some(ref range) = opts.ref_range {
         handle_diff_ref_range(&opts, range);
-        return;
+        return 0;
     }
 
     // Check if we're in a git repo
@@ -313,7 +321,7 @@ pub fn handle_diff(input: &str) {
                     }
                     println!();
                 }
-                return;
+                return 0;
             }
 
             // --stat: show compact diffstat summary without full diff
@@ -359,13 +367,13 @@ pub fn handle_diff(input: &str) {
                         print!("{formatted}");
                     }
                 }
-                return;
+                return 0;
             }
 
             // --functions: show semantic-level change summary
             if opts.functions {
                 handle_diff_functions(&opts);
-                return;
+                return 0;
             }
 
             // ── Staged-only mode ────────────────────────────────────
@@ -381,7 +389,7 @@ pub fn handle_diff(input: &str) {
 
                 if stat_text.trim().is_empty() {
                     println!("{DIM}  (no staged changes){RESET}\n");
-                    return;
+                    return 0;
                 }
 
                 let summary = parse_diff_stat(&stat_text);
@@ -404,7 +412,7 @@ pub fn handle_diff(input: &str) {
                     print!("{}", colorize_diff(&full_diff));
                     println!();
                 }
-                return;
+                return 0;
             }
 
             // ── File-specific mode (unstaged + staged) ──────────────
@@ -418,7 +426,7 @@ pub fn handle_diff(input: &str) {
                 let combined_stat = combine_stats(&stat_text, &staged_stat_text);
                 if combined_stat.trim().is_empty() {
                     println!("{DIM}  (no changes for {file}){RESET}\n");
-                    return;
+                    return 0;
                 }
 
                 let summary = parse_diff_stat(&combined_stat);
@@ -436,7 +444,7 @@ pub fn handle_diff(input: &str) {
                     print!("{}", colorize_diff(&combined_diff));
                     println!();
                 }
-                return;
+                return 0;
             }
 
             // ── Default: show all changes (original behavior) ───────
@@ -480,8 +488,12 @@ pub fn handle_diff(input: &str) {
                 println!();
             }
         }
-        _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+        _ => {
+            eprintln!("{RED}  error: not in a git repository{RESET}\n");
+            return 1;
+        }
     }
+    0
 }
 
 /// Handle `/diff` when a ref range is specified (e.g. `main..feature`, `HEAD~3`, `v1.0`).
@@ -1458,12 +1470,20 @@ fn print_dry_run_preview(message: Option<&str>) {
 }
 
 pub fn handle_commit(input: &str) {
+    let _ = handle_commit_status(input);
+}
+
+/// `/commit` with an exit status for the shell door (`yoyo commit`, #982):
+/// 1 when the not-a-git-repository branch fires, 0 otherwise. "Nothing
+/// staged" is deliberately 0 in this slice. The REPL calls `handle_commit`,
+/// which discards the code.
+pub fn handle_commit_status(input: &str) -> i32 {
     let arg = input.strip_prefix("/commit").unwrap_or("").trim();
     let parsed = parse_commit_args(arg);
 
     // Auto-stage tracked files when `-a`/`--all` is present
     if parsed.auto_stage && !auto_stage_tracked() {
-        return;
+        return 0;
     }
 
     if parsed.dry_run {
@@ -1476,7 +1496,7 @@ pub fn handle_commit(input: &str) {
             Some(parsed.message.clone())
         };
         print_dry_run_preview(msg.as_deref());
-        return;
+        return 0;
     }
 
     if parsed.amend {
@@ -1493,6 +1513,7 @@ pub fn handle_commit(input: &str) {
         match get_staged_diff() {
             None => {
                 eprintln!("{RED}  error: not in a git repository{RESET}\n");
+                return 1;
             }
             Some(diff) if diff.trim().is_empty() => {
                 println!("{DIM}  nothing staged — use `git add` first{RESET}");
@@ -1547,6 +1568,7 @@ pub fn handle_commit(input: &str) {
             }
         }
     }
+    0
 }
 
 /// Handle `--amend` variant of `/commit`.

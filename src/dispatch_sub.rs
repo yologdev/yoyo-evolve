@@ -344,12 +344,12 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "diff" => {
                 let input = quote_args_as_command(args);
-                crate::commands_git::handle_diff(&input);
+                exit_if_nonzero(crate::commands_git::handle_diff_status(&input));
                 return Some(None);
             }
             "commit" => {
                 let input = quote_args_as_command(args);
-                crate::commands_git::handle_commit(&input);
+                exit_if_nonzero(crate::commands_git::handle_commit_status(&input));
                 return Some(None);
             }
             "review" => {
@@ -361,7 +361,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "blame" => {
                 let input = quote_args_as_command(args);
-                crate::commands_git_review::handle_blame(&input);
+                exit_if_nonzero(crate::commands_git_review::handle_blame_status(&input));
                 return Some(None);
             }
             "risk" => {
@@ -1502,34 +1502,25 @@ mod tests {
 
     #[test]
     fn test_try_dispatch_subcommand_diff() {
-        let args = vec!["yoyo".into(), "diff".into()];
-        let result = try_dispatch_subcommand(&args);
-        assert!(
-            matches!(result, Some(None)),
-            "expected Some(None) for bare `diff` subcommand"
-        );
+        // #982: the `diff` arm now calls `exit_if_nonzero`, which would kill
+        // the test binary from a non-git cwd, so test the status core the arm
+        // calls. `cargo test` runs from the crate root, a git checkout.
+        assert_eq!(crate::commands_git::handle_diff_status("/diff"), 0);
     }
 
     #[test]
     fn test_try_dispatch_subcommand_commit() {
         // `yoyo commit` with no message should still dispatch (shows "nothing staged" or similar).
-        let args = vec!["yoyo".into(), "commit".into()];
-        let result = try_dispatch_subcommand(&args);
-        assert!(
-            matches!(result, Some(None)),
-            "expected Some(None) for bare `commit` subcommand"
-        );
+        // #982: test the status core the arm calls (see the `diff` test).
+        assert_eq!(crate::commands_git::handle_commit_status("/commit"), 0);
     }
 
     #[test]
     fn test_try_dispatch_subcommand_blame() {
         // `yoyo blame` with no file should still dispatch (shows error message).
-        let args = vec!["yoyo".into(), "blame".into()];
-        let result = try_dispatch_subcommand(&args);
-        assert!(
-            matches!(result, Some(None)),
-            "expected Some(None) for bare `blame` subcommand"
-        );
+        // #982: test the status core the arm calls (see the `diff` test).
+        // A usage error is not the not-a-repo branch, so it stays 0.
+        assert_eq!(crate::commands_git_review::handle_blame_status("/blame"), 0);
     }
 
     #[test]

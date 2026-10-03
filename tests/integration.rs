@@ -2864,3 +2864,64 @@ fn shell_todo_add_refuses_instead_of_printing_success_and_forgetting() {
     assert!(String::from_utf8_lossy(&list.stdout).contains("No tasks"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Run `yoyo <args>` in `dir` with git confined to that directory, so a
+/// temp dir nested under some unrelated repo still reads as "not a repo".
+fn yoyo_in_dir(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let ceiling = dir.parent().unwrap_or(dir);
+    yoyo_cmd()
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CEILING_DIRECTORIES", ceiling)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run yoyo")
+}
+
+#[test]
+fn git_subcommands_exit_one_outside_a_git_repository() {
+    // #982 slice 2: `yoyo diff`, `yoyo commit` and `yoyo blame` printed
+    // "not in a git repository" and exited 0, so a script read success.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cases: [(&[&str], &str); 3] = [
+        (&["diff"], "not in a git repository"),
+        (&["commit"], "not in a git repository"),
+        (&["blame", "x.rs"], "Not in a git repository"),
+    ];
+    for (args, needle) in cases {
+        let out = yoyo_in_dir(dir.path(), args);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "yoyo {args:?}: stdout={stdout} stderr={stderr}"
+        );
+        // The original error text is unchanged.
+        assert!(
+            stdout.contains(needle) || stderr.contains(needle),
+            "yoyo {args:?}: expected {needle:?}; stdout={stdout} stderr={stderr}"
+        );
+    }
+}
+
+#[test]
+fn git_diff_in_a_clean_repository_still_exits_zero() {
+    // Near miss for #982 slice 2: an empty diff is not a failure.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let init = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git init");
+    assert!(init.success());
+    let out = yoyo_in_dir(dir.path(), &["diff"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "stderr: {stderr}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("no uncommitted changes"),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(!stderr.contains("not in a git repository"));
+}

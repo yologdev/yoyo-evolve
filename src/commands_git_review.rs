@@ -489,11 +489,19 @@ pub fn colorize_blame(output: &str) -> String {
 
 /// Handle the `/blame` command.
 pub fn handle_blame(input: &str) {
+    let _ = handle_blame_status(input);
+}
+
+/// `/blame` with an exit status for the shell door (`yoyo blame`, #982):
+/// 1 when the not-a-git-repository branch fires, 0 otherwise. Only that
+/// branch changes status in this slice. The REPL calls `handle_blame`, which
+/// discards the code.
+pub fn handle_blame_status(input: &str) -> i32 {
     let args = match parse_blame_args(input) {
         Ok(a) => a,
         Err(e) => {
             println!("  {RED}✗{RESET} {e}");
-            return;
+            return 0;
         }
     };
 
@@ -519,11 +527,13 @@ pub fn handle_blame(input: &str) {
                 println!("  {RED}✗{RESET} File not found: {DIM}{}{RESET}", args.file);
             } else if msg.contains("not a git repository") || msg.contains("fatal: not a git") {
                 println!("  {RED}✗{RESET} Not in a git repository");
+                return 1;
             } else {
                 println!("  {RED}✗{RESET} {msg}");
             }
         }
     }
+    0
 }
 
 /// A single inline review comment for a PR.
