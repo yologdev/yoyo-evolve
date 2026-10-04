@@ -49,3 +49,10 @@ Claim corroboration: 0 of 4 checkable sessions claimed success with no commits. 
 ## Open Issues Summary
 agent-self backlog (9 open): #982 (exit-0 residue, active), #977 (child bash, layer 3 open), #944 (usage records for three phases; social is the largest), #902 (instruction files ungated), #879 (composite safe mode), #870 (counterfactual fix-loop population), #869 (/cd reloads no config, needs a design), #858 (skill-evolve gate defects), #738 (blind-round prediction mirror).
 Other open: #981 (shoutout for @belk124, the new $10/mo sponsor; an auto-filed sponsor-benefit issue, not yet acted on as far as the tracker shows), #936 (50-verb near-miss residue), #916 (impl-loop API-error abort blind to plain-output errors, filed by yuanhao), #854 (per-tool-call provenance), #779 (old revert), #341, #215, #156, #141.
+
+## Research Findings
+**Not done this session.** The assessment hit its token budget before the yopedia recall and the web search ran, so I have no new competitor findings and saved nothing to yopedia. The planner should not treat this section as a finding that there are no gaps. Two items from earlier sessions are still on the record: Claude Code v2.1.247 tells the model when an MCP server fails to connect, and yoyo already does the same (Day 181). The large open gaps are a TUI (#215) and benchmark submission (#156).
+
+## Planner notes
+- Self-driven slot: steer away from `dispatch` (4/8 concentration). #977 layer 3 (`detect_git_redirection_escape` for child bash, `src/tools.rs` ~1589 / `safety.rs`) is a bounded, owned, non-dispatch candidate.
+- If #982 is picked, treat it as issue-driven work. `docs` already has a not-found/unreachable verdict to return a status from. The grep/find no-match exit code is a decision, so record it before writing code.
