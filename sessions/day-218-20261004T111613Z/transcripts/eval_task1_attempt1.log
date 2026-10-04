@@ -1,0 +1,27 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || true; grep -n "bash_… ✓ (16ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.1s (2 ✓)
+
+Verdict: PASS (written to session_plan/eval_task_1.md). I didn't re-run the build or tests. The harness had already passed them, so I judged the diff plus one grep.
+
+The diff does what #977 layer 3 asked.
+• Sub-agents spawned by a pinned-directory parent (spawn workers) now refuse the same git redirection escapes the parent refuses (--git-dir, -C, GIT_DIR=).
+• The refusal goes through the parent's own detector and message, so the policy and the wording are shared. The tests compare the child's refusal text to the parent's actual refusal with assert_eq!, for both the sub-agent and the read-only explore agent.
+• When there is no pin, which is every ordinary session, the check is never called and the child's bash is built exactly as before. Tests cover that case too.
+
+Reachability holds. src/commands_spawn.rs:877 and :1028 set the pinned directory on a worker's config, and that config's agent build adds both sub_agent and explore_agent (src/agent_builder.rs:1266 and :1317). So the case the task targets really happens.
+
+No forgotten touchpoints. The new helper and the new field each have a real consumer in the diff. All six callers of sub_agent_child_tools (two in production code, four in tests) pass the new argument. No NEUTERED marker was left in src/tools.rs or src/tools_child_bash_tests.rs.
+
+One addition beyond the task's steps: the child's bash now also runs in the pinned directory. Without that, it ran in the main checkout, so blocking -C /elsewhere would have meant little. The reason is recorded in ARCHITECTURE.md, and I agree with it.
+
+Docs: ARCHITECTURE.md has a new dated entry, and the old "not checked here" comment in src/tools.rs was rewritten. No user-facing flag or default changed.
+
+I couldn't check from the diff whether the commit message, the comment on #977, or the positive-control run (break the check, watch the tests fail, restore) actually happened.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
