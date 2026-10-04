@@ -152,11 +152,17 @@ fn start_stub_seq(bodies: Vec<String>) -> (u16, Arc<AtomicUsize>) {
             if request_line.starts_with("POST") {
                 served += 1;
             }
-            let resp = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                payload.len(),
+            // A body that is already a full HTTP response (status line first)
+            // is sent verbatim, so a test can serve a non-200 status (#987).
+            let resp = if payload.starts_with("HTTP/1.1 ") {
                 payload
-            );
+            } else {
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    payload.len(),
+                    payload
+                )
+            };
             let _ = stream.write_all(resp.as_bytes());
             let _ = stream.flush();
         }
@@ -1284,4 +1290,145 @@ fn stream_json_failed_lenient_continue_emits_no_session_restored() {
     let lines = ndjson_lines(&run);
     assert_eq!(lines[0]["type"], "agentStart");
     assert!(lines.iter().all(|v| v["type"] != "sessionRestored"));
+}
+
+// ---------------------------------------------------------------------------
+// #987: yoagent 0.24's OWN provider retry, one layer below yoyo's.
+//
+// yoagent retries inside the agent loop when `ProviderError::is_retryable()`
+// holds, i.e. `RateLimited` (HTTP 429, or an SSE `error` event whose type is
+// `rate_limit_error`) or `Network` (including a stream that ends with no
+// `message_stop` and no stop_reason). A failed attempt's partial text has
+// already streamed by then. The Day-216 guard (`should_retry_after_partial`)
+// lives in yoyo's own retry loop and cannot see these retries, so each case
+// below drives a retry that ONLY yoagent performs (the `overloaded_error`
+// fixtures above classify as `Api`, which yoagent does not retry).
+// ---------------------------------------------------------------------------
+
+/// Answer of the successful second attempt in the #987 probes.
+const RETRY_ANSWER: &str = "PONG\n";
+
+/// HTTP 429 with `Retry-After: 0`, served before any text. yoagent classifies
+/// it as `RateLimited` and retries; `Retry-After: 0` keeps the backoff at 0s.
+fn http_429_response() -> String {
+    let body = r#"{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#;
+    format!(
+        "HTTP/1.1 429 Too Many Requests\r\ncontent-type: application/json\r\nretry-after: 0\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    )
+}
+
+/// Streams `partial` as a text delta, then ends the stream with `tail`
+/// (`None` = connection closes with no terminator at all).
+fn sse_partial_then(partial: &str, tail: Option<(&str, String)>) -> String {
+    let text = serde_json::to_string(partial).unwrap();
+    let mut events = vec![
+        (
+            "message_start",
+            r#"{"type":"message_start","message":{"id":"msg_retry","type":"message","role":"assistant","model":"claude-stub","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":1}}}"#.to_string(),
+        ),
+        (
+            "content_block_start",
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#.to_string(),
+        ),
+        (
+            "content_block_delta",
+            format!(
+                r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":{text}}}}}"#
+            ),
+        ),
+    ];
+    if let Some(t) = tail {
+        events.push(t);
+    }
+    sse_events(events)
+}
+
+fn probe_run(bodies: Vec<String>) -> Run {
+    let run = run_yoyo_within(
+        &["--no-tools", "--max-turns", "1"],
+        &["-p", "hi"],
+        None,
+        bodies,
+        Duration::from_secs(120),
+    );
+    eprintln!(
+        "PROBE #987: stdout={:?} success={} requests={} stderr_tail={:?}",
+        String::from_utf8_lossy(&run.stdout),
+        run.success,
+        run.requests,
+        run.stderr.lines().rev().take(6).collect::<Vec<_>>()
+    );
+    run
+}
+
+/// The case where retry WORKS (Day-216 lesson: measure the capability a fix
+/// might narrow). A 429 before any text is retried by yoagent and the answer
+/// lands exactly once with exit 0, and the retried attempt's error does not
+/// make yoyo classify the recovered turn as failed (risk A).
+#[test]
+fn yoagent_retry_after_429_before_text_yields_one_clean_answer() {
+    let run = probe_run(vec![http_429_response(), sse_text_body(RETRY_ANSWER)]);
+    assert_eq!(
+        run.requests, 2,
+        "anti-vacuous: yoagent must have retried the 429; stderr={}",
+        run.stderr
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        RETRY_ANSWER,
+        "stderr={}",
+        run.stderr
+    );
+    assert!(
+        run.success,
+        "#987 (A): a recovered turn must exit 0; stderr={}",
+        run.stderr
+    );
+}
+
+/// Partial text, then a mid-stream `rate_limit_error` SSE event: yoagent
+/// retries (RateLimited) after `PARTIAL_` already streamed (risk B).
+/// Measured Day 218: stdout="PARTIAL_\n\nPONG\n", exit 0, requests=2.
+#[test]
+#[ignore = "#989: yoagent's internal retry duplicates -p stdout"]
+fn yoagent_retry_after_partial_rate_limit_does_not_duplicate_stdout() {
+    let first = sse_partial_then(
+        "PARTIAL_",
+        Some((
+            "error",
+            r#"{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#
+                .to_string(),
+        )),
+    );
+    assert!(first.contains("text_delta") && !first.contains("message_stop"));
+    let run = probe_run(vec![first, sse_text_body(RETRY_ANSWER)]);
+    assert_partial_retry_reading(&run);
+}
+
+/// Partial text, then the connection closes with no terminator: yoagent reads
+/// `StreamEnded` as `Network` and retries (risk B, second spelling).
+/// Measured Day 218: stdout="PARTIAL_\n\nPONG\n", exit 0, requests=2.
+#[test]
+#[ignore = "#989: yoagent's internal retry duplicates -p stdout"]
+fn yoagent_retry_after_truncated_stream_does_not_duplicate_stdout() {
+    let first = sse_partial_then("PARTIAL_", None);
+    assert!(first.contains("text_delta") && !first.contains("event: error"));
+    let run = probe_run(vec![first, sse_text_body(RETRY_ANSWER)]);
+    assert_partial_retry_reading(&run);
+}
+
+fn assert_partial_retry_reading(run: &Run) {
+    let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
+    assert!(run.stub_hit, "anti-vacuous: stub never received a POST");
+    // The #976 policy, applied to yoagent's retry: a pipe that already holds
+    // the attempt's text gets ONE copy, no second request, and a nonzero exit.
+    assert_eq!(
+        stdout, "PARTIAL_\n",
+        "#989: exactly one copy of the partial; requests={} stderr={}",
+        run.requests, run.stderr
+    );
+    assert_eq!(run.requests, 1, "#989: no retry after streamed text");
+    assert!(!run.success, "#989: the dead turn must exit nonzero");
 }
