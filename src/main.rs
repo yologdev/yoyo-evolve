@@ -45,6 +45,7 @@ mod commands;
 mod commands_ast_grep;
 mod commands_bg;
 mod commands_config;
+mod commands_config_get;
 #[cfg(test)]
 mod commands_config_get_tests;
 mod commands_config_mcp;

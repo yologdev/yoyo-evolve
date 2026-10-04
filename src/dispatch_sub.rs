@@ -459,7 +459,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "docs" => {
                 let input = quote_args_as_command(args);
-                crate::commands_project::handle_docs(&input);
+                exit_if_nonzero(crate::commands_project::handle_docs_status(&input));
                 return Some(None);
             }
             "skill" => {
@@ -526,7 +526,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                         // Reconstruct as /config get <key>
                         let key = args.get(3).map(|s| s.as_str()).unwrap_or("");
                         let input = format!("/config get {key}");
-                        crate::commands_config::handle_config_get(&input);
+                        exit_if_nonzero(crate::commands_config::handle_config_get_status(&input));
                     }
                     Some(other) => {
                         eprintln!(

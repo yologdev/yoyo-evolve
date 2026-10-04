@@ -5,6 +5,8 @@
 
 use crate::cli::{is_verbose, AUTO_COMPACT_THRESHOLD};
 use crate::commands::thinking_level_name;
+use crate::commands_config_get::config_get_report;
+pub(crate) use crate::commands_config_get::config_get_unknown_key_message;
 use crate::commands_config_mcp::mcp_list_text;
 use crate::config_paths::{
     demoted_config_file, demoted_write_warning, detect_loaded_config_path, existing_config_paths,
@@ -356,7 +358,7 @@ pub fn handle_config(cfg: &ConfigDisplay<'_>) {
 /// case-insensitive substring checks against `key`, `token`, `secret`,
 /// and `password`. Keep this list in sync with anything that gets
 /// stored in `.yoyo.toml` as a sensitive value (e.g. API keys).
-fn is_secret_key(key: &str) -> bool {
+pub(crate) fn is_secret_key(key: &str) -> bool {
     let lower = key.to_ascii_lowercase();
     lower.contains("key")
         || lower.contains("token")
@@ -843,8 +845,15 @@ fn apply_config_to_runtime(
 
 /// Handle `/config get <key>`.
 ///
-/// Shows the current runtime value for a single config key.
+/// Shows the current runtime value for a single config key. REPL caller: the
+/// exit code is the shell's business only (#982).
 pub fn handle_config_get(input: &str) {
+    let _ = handle_config_get_status(input);
+}
+
+/// [`handle_config_get`] plus the shell exit code (#982): 2 for a key that is
+/// neither settable nor in the file (misuse, like `yoyo model <bad>`), else 0.
+pub fn handle_config_get_status(input: &str) -> i32 {
     let key = input
         .strip_prefix("/config get ")
         .or_else(|| input.strip_prefix("/config get"))
@@ -854,7 +863,7 @@ pub fn handle_config_get(input: &str) {
     if key.is_empty() {
         println!("{YELLOW}  usage: /config get <key>{RESET}");
         println!("{DIM}  settable keys: {}{RESET}", settable_keys_list());
-        return;
+        return 0;
     }
 
     // Read from the detected config file
@@ -866,55 +875,17 @@ pub fn handle_config_get(input: &str) {
         },
         None => std::collections::HashMap::new(),
     };
-
-    match config.get(key) {
-        Some(value) => {
-            let display = if is_secret_key(key) {
-                "***".to_string()
-            } else {
-                value.clone()
-            };
-            let source = path
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "defaults".to_string());
-            println!("{DIM}  {key} = {display}  ({source}){RESET}");
-        }
-        None => {
-            let known: Vec<&str> = crate::config::SETTABLE_KEYS
-                .iter()
-                .map(|(k, _)| *k)
-                .collect();
-            // Unknown key: "using default" would claim a real key sits at its
-            // default. Still exits 0; the shell exit status is dispatch_sub.rs (#982).
-            if let Some(msg) = config_get_unknown_key_message(key, &known) {
-                println!("{YELLOW}  {msg}{RESET}");
-                println!("{DIM}  settable keys: {}{RESET}", settable_keys_list());
-            } else {
-                println!("{DIM}  {key} is not set in config file (using default){RESET}");
-            }
-        }
-    }
-}
-
-/// `Some(refusal)` when `key` (absent from the file) is not in `known`
-/// (`SETTABLE_KEYS`). Says "not a settable config key", never "not a config
-/// key": the parser also reads unlisted keys (`base_url`, ...), so the stronger
-/// claim would cry wolf on a real, unset key. Glyph-free on purpose.
-pub(crate) fn config_get_unknown_key_message(key: &str, known: &[&str]) -> Option<String> {
-    if known.contains(&key) {
-        return None;
-    }
-    let mut msg =
-        format!("{key} is not a settable config key, and it is not set in the config file");
-    if let Some(near) = crate::commands::closest_match(key, known, 2) {
-        msg.push_str(&format!(" (did you mean {near}?)"));
-    }
-    Some(msg)
+    let source = path
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "defaults".to_string());
+    let (code, text) = config_get_report(key, &config, &source);
+    print!("{text}");
+    code
 }
 
 /// Helper: comma-separated list of settable key names.
-fn settable_keys_list() -> String {
+pub(crate) fn settable_keys_list() -> String {
     crate::config::SETTABLE_KEYS
         .iter()
         .map(|(k, _)| *k)

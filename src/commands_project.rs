@@ -688,16 +688,23 @@ pub(crate) fn handle_init_in(dir: &std::path::Path) {
 // ── /docs ────────────────────────────────────────────────────────────────
 
 pub fn handle_docs(input: &str) {
+    // REPL caller: the code is the shell's business, never the REPL's (#982).
+    let _ = handle_docs_status(input);
+}
+
+/// [`handle_docs`] plus the shell exit code (#982): 0 when the crate/item was
+/// found or only usage was printed, 1 otherwise ([`docs::docs_exit_code`]).
+pub fn handle_docs_status(input: &str) -> i32 {
     if input == "/docs" {
         println!("{DIM}  usage: /docs <crate> [item]");
         println!("  Look up docs.rs documentation for a Rust crate.");
         println!("  Examples: /docs serde, /docs tokio task{RESET}\n");
-        return;
+        return 0;
     }
     let args = input.trim_start_matches("/docs ").trim();
     if args.is_empty() {
         println!("{DIM}  usage: /docs <crate> [item]{RESET}\n");
-        return;
+        return 0;
     }
     let parts: Vec<&str> = args.splitn(2, char::is_whitespace).collect();
     let crate_name = parts[0].trim();
@@ -719,6 +726,7 @@ pub fn handle_docs(input: &str) {
     } else {
         println!("{RED}  ✗ {summary}{RESET}\n");
     }
+    docs::docs_exit_code(found)
 }
 
 // ── /health ──────────────────────────────────────────────────────────────

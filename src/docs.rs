@@ -43,6 +43,18 @@ fn classify_docs_response(status: u16, body: &str) -> DocsLookup {
     }
 }
 
+/// Shell exit code for a lookup's `found` flag (#982): found → 0; not found,
+/// unreachable or an invalid name → 1. One code for both failures on purpose: the
+/// printed text already tells "does not exist" from "could not check", and a
+/// script only needs to know it got no docs.
+pub(crate) fn docs_exit_code(found: bool) -> i32 {
+    if found {
+        0
+    } else {
+        1
+    }
+}
+
 /// Split curl's `-w '\n%{http_code}'` trailer off its output. Uses `rsplit_once`, never
 /// a byte index. Missing or unparseable trailer → status 0 (unreachable), never a guess.
 fn split_status_trailer(raw: &str) -> (&str, u16) {
@@ -681,6 +693,36 @@ mod tests {
         <a class=\"mod\" href=\"de/index.html\" title=\"mod serde::de\">de</a>\
         <a class=\"trait\" href=\"trait.Serialize.html\" title=\"trait serde::Serialize\">Serialize</a>\
         </body></html>\n";
+
+    #[test]
+    fn test_docs_exit_code_follows_the_classified_verdict() {
+        // #982: the shell exit code, built THROUGH the real chain (status/body →
+        // classify_docs_response → docs_body_for → summary/item_outcome → code), never
+        // by typing a verdict in. Found is the only 0.
+        let url = "https://docs.rs/serde/latest/serde/";
+        let rows: [(u16, &str, DocsLookup, i32); 6] = [
+            (200, FOUND_PAGE, DocsLookup::Found, 0),
+            (404, CURRENT_DOCSRS_404_BODY, DocsLookup::NotFound, 1),
+            (410, "", DocsLookup::NotFound, 1),
+            (503, "", DocsLookup::Unreachable, 1),
+            (0, "", DocsLookup::Unreachable, 1),
+            (200, "", DocsLookup::Unreachable, 1),
+        ];
+        for (status, body, verdict, code) in rows {
+            // Anti-vacuous: each row really lands on the verdict it claims to test.
+            assert_eq!(
+                classify_docs_response(status, body),
+                verdict,
+                "HTTP {status}"
+            );
+            let (found, _) = summary_outcome("serde", url, docs_body_for(status, body));
+            assert_eq!(docs_exit_code(found), code, "crate path, HTTP {status}");
+            let (found, _) = item_outcome("serde", "de", url, docs_body_for(status, body));
+            assert_eq!(docs_exit_code(found), code, "item path, HTTP {status}");
+        }
+        // An invalid name never reaches the network and is a failure too.
+        assert_eq!(docs_exit_code(fetch_docs_summary("no spaces").0), 1);
+    }
 
     #[test]
     fn test_classify_docs_response_table() {
