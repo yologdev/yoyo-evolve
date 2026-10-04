@@ -511,3 +511,7 @@ is tracked in issue #749.
 | `--trust-project-always` | This directory | Records the canonicalized cwd in `~/.config/yoyo/trusted_dirs`; exact match only, no subdirectory inheritance; revoke by deleting the line |
 
 > **Tip:** Use `/permissions` during a session to see the full security posture — auto-approve status, command patterns, and directory restrictions all in one view.
+
+## After `/cd`
+
+`/cd` applies one part of the new directory's `.yoyo.toml`: its `[permissions] deny` patterns. They are added to the session's deny list and enforced on bash commands (the agent's and sub-agents') for the rest of the session. The list only grows: `/cd`-ing back does not remove anything. Deny patterns apply to bash only; file tools never read them. Everything else in the new directory's config (`allow`, `[directories]`, hooks, MCP servers, skills) is still **not** reloaded, and yoyo prints a warning naming what was skipped. Restart yoyo in that directory to use it (#869).

@@ -1,4 +1,5 @@
-//! `/cd` disclosure: name the new directory's config that is NOT applied (#869).
+//! `/cd` disclosure: name the new directory's config that is NOT applied (#869),
+//! and say that its `[permissions]` deny entries now ARE (Day 218, `cd_deny.rs`).
 //!
 //! After `/cd`, the launch directory's `[permissions]`, `[directories]`, hooks and
 //! MCP servers stay in force and the new directory's `.yoyo.toml` is never read.
@@ -9,6 +10,11 @@
 //!
 //! **Disclosure is not a control.** Nothing here applies, merges or executes any
 //! value from the file, and nothing here touches trust, permissions or globals.
+//! Day 218: one value IS applied, by the `/cd` arm in `dispatch.rs` rather than
+//! here — the reading's `deny` entries, appended to `cd_deny`'s session list,
+//! which both bash executors read at call time. Deny only narrows, so it needs
+//! no trust check. This module reports it from the same reading `dispatch.rs`
+//! appended, so the note cannot disagree with what was applied.
 //!
 //! The file is read through yoyo's own config parsers — the same doors startup
 //! uses — so "does this file set X" has exactly one statement per section and
@@ -24,12 +30,14 @@ pub(crate) enum CdConfigReading {
     /// The file exists but could not be read (permissions, not UTF-8). This is
     /// deliberately distinct from "sets nothing": we cannot tell what it sets.
     Unreadable,
-    /// The file was read; these sections are set (possibly none).
-    Sets(Vec<&'static str>),
+    /// The file was read: the NOT-applied sections it sets (possibly none), and
+    /// its `[permissions] deny` entries, which `/cd` does apply (bash only).
+    Sets(Vec<&'static str>, Vec<String>),
 }
 
 /// Section labels, in the fixed order they are reported.
-const PERMISSIONS: &str = "[permissions]";
+/// Only the allow half: the deny half is applied on `/cd` (Day 218).
+const PERMISSIONS: &str = "[permissions] allow";
 const DIRECTORIES: &str = "[directories]";
 const HOOKS: &str = "hooks";
 const MCP: &str = "MCP servers";
@@ -51,7 +59,7 @@ pub(crate) fn unapplied_config_sections(toml_text: &str) -> Vec<&'static str> {
     let mut out = Vec::new();
 
     let perms = crate::config::parse_permissions_from_config(toml_text);
-    if !perms.allow.is_empty() || !perms.deny.is_empty() {
+    if !perms.allow.is_empty() {
         out.push(PERMISSIONS);
     }
 
@@ -89,7 +97,10 @@ pub(crate) fn unapplied_config_sections(toml_text: &str) -> Vec<&'static str> {
 /// any other error is `Unreadable` (never silently "sets nothing").
 pub(crate) fn classify_read(read: std::io::Result<String>) -> CdConfigReading {
     match read {
-        Ok(text) => CdConfigReading::Sets(unapplied_config_sections(&text)),
+        Ok(text) => CdConfigReading::Sets(
+            unapplied_config_sections(&text),
+            crate::config::parse_permissions_from_config(&text).deny,
+        ),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => CdConfigReading::Absent,
         Err(_) => CdConfigReading::Unreadable,
     }
@@ -108,8 +119,32 @@ pub(crate) fn cd_config_note(
     let sep = if plain { ":" } else { " —" };
     match reading {
         CdConfigReading::Absent => None,
-        CdConfigReading::Sets(sections) if sections.is_empty() => None,
-        CdConfigReading::Sets(sections) => Some(format!(
+        CdConfigReading::Sets(sections, deny) if !deny.is_empty() => {
+            let n = deny.len();
+            let (s, verb, them) = if n == 1 {
+                ("", "is", "it")
+            } else {
+                ("s", "are", "them")
+            };
+            let tail = if sections.is_empty() {
+                "Its allow list, [directories], hooks and MCP servers would still not be \
+                 reloaded on /cd (#869)."
+                    .to_string()
+            } else {
+                format!(
+                    "It also sets {} and they are NOT applied{sep} the launch directory's \
+                     settings stay in force. Restart yoyo here to use them (#869).",
+                    sections.join(", ")
+                )
+            };
+            Some(format!(
+                "  {dir}/.yoyo.toml: its {n} [permissions] deny pattern{s} {verb} now enforced \
+                 on bash commands for the rest of this session (another /cd does not remove \
+                 {them}; file tools never read this list). {tail}"
+            ))
+        }
+        CdConfigReading::Sets(sections, _) if sections.is_empty() => None,
+        CdConfigReading::Sets(sections, _) => Some(format!(
             "  {dir}/.yoyo.toml sets {} and they are NOT applied in this session{sep} \
              the launch directory's settings stay in force. Restart yoyo here to use them (#869).",
             sections.join(", ")
@@ -138,7 +173,9 @@ pub(crate) enum NoteVolume {
 /// before; raising it would warn on content we have not seen.
 pub(crate) fn note_volume(reading: &CdConfigReading) -> NoteVolume {
     match reading {
-        CdConfigReading::Sets(sections) if sections.iter().any(|s| SAFETY_SECTIONS.contains(s)) => {
+        CdConfigReading::Sets(sections, deny)
+            if !deny.is_empty() || sections.iter().any(|s| SAFETY_SECTIONS.contains(s)) =>
+        {
             NoteVolume::Warning
         }
         _ => NoteVolume::Chrome,
@@ -157,11 +194,24 @@ pub(crate) fn render_cd_config_note(note: &str, volume: NoteVolume, plain: bool)
     }
 }
 
-/// Read `<target>/.yoyo.toml` and print the note to stderr. Read-only.
-pub(crate) fn print_cd_config_note(target: &Path) {
-    let reading = classify_read(std::fs::read_to_string(target.join(".yoyo.toml")));
+/// Read and classify `<target>/.yoyo.toml`. Read-only; one read per `/cd`, so
+/// the deny entries applied and the note printed come from the same bytes.
+pub(crate) fn read_cd_config(target: &Path) -> CdConfigReading {
+    classify_read(std::fs::read_to_string(target.join(".yoyo.toml")))
+}
+
+/// The `[permissions] deny` entries `/cd` applies; empty unless the file was read.
+pub(crate) fn deny_entries(reading: &CdConfigReading) -> &[String] {
+    match reading {
+        CdConfigReading::Sets(_, deny) => deny,
+        _ => &[],
+    }
+}
+
+/// Print the note for an already-read `reading` to stderr.
+pub(crate) fn print_cd_config_note(target: &Path, reading: &CdConfigReading) {
     let plain = crate::format::is_plain_output();
-    let note = cd_config_note(&target.display().to_string(), &reading, plain);
+    let note = cd_config_note(&target.display().to_string(), reading, plain);
     // Deliberately NOT gated on quiet mode, for either volume. A warning is not
     // chrome: `--quiet` is auto-on whenever stdin and stdout are both piped, so a
     // quiet-gated warning is silent for exactly the runs nobody watches live —
@@ -170,7 +220,7 @@ pub(crate) fn print_cd_config_note(target: &Path) {
     if let Some(note) = note {
         eprintln!(
             "{}",
-            render_cd_config_note(&note, note_volume(&reading), plain)
+            render_cd_config_note(&note, note_volume(reading), plain)
         );
     }
 }
@@ -180,28 +230,65 @@ mod tests {
     use super::*;
 
     const PERMS_TOML: &str = "model = \"x\"\n\n[permissions]\ndeny = [\"rm -rf *\"]\n";
+    const ALLOW_TOML: &str = "[permissions]\nallow = [\"git *\"]\n";
 
     fn sets(text: &str) -> CdConfigReading {
         classify_read(Ok(text.to_string()))
     }
 
     #[test]
-    fn permissions_deny_is_named() {
+    fn permissions_deny_is_named_as_enforced() {
         // Anti-vacuous: the fixture really carries a deny entry.
         assert!(PERMS_TOML.contains("deny"));
-        assert_eq!(unapplied_config_sections(PERMS_TOML), vec!["[permissions]"]);
-        let note = cd_config_note("/repo", &sets(PERMS_TOML), false).expect("note");
-        assert!(note.contains("[permissions]"), "{note}");
-        assert!(note.contains("NOT applied"), "{note}");
-        assert!(note.contains("/repo/.yoyo.toml"), "{note}");
-        assert!(note.contains("#869"), "{note}");
+        // Day 218: deny is applied on /cd, so it is no longer an unapplied section.
+        assert_eq!(unapplied_config_sections(PERMS_TOML), Vec::<&str>::new());
+        let reading = sets(PERMS_TOML);
+        assert_eq!(deny_entries(&reading), ["rm -rf *".to_string()]);
+        let note = cd_config_note("/repo", &reading, false).expect("note");
+        assert_eq!(
+            note,
+            "  /repo/.yoyo.toml: its 1 [permissions] deny pattern is now enforced on bash \
+             commands for the rest of this session (another /cd does not remove it; file tools \
+             never read this list). Its allow list, [directories], hooks and MCP servers would \
+             still not be reloaded on /cd (#869)."
+        );
+    }
+
+    #[test]
+    fn deny_plus_unapplied_sections_names_both() {
+        let text = "[permissions]\nallow = [\"git *\"]\ndeny = [\"a *\", \"b *\"]\n\
+                    hooks.pre.bash = \"echo\"\n";
+        let reading = sets(text);
+        assert_eq!(note_volume(&reading), NoteVolume::Warning);
+        let note = cd_config_note("/r", &reading, true).unwrap();
+        assert_eq!(
+            note,
+            "  /r/.yoyo.toml: its 2 [permissions] deny patterns are now enforced on bash \
+             commands for the rest of this session (another /cd does not remove them; file tools \
+             never read this list). It also sets [permissions] allow, hooks and they are NOT \
+             applied: the launch directory's settings stay in force. Restart yoyo here to use \
+             them (#869)."
+        );
+    }
+
+    #[test]
+    fn allow_only_keeps_the_day_213_wording() {
+        // Near-miss: no deny entry, so nothing is applied and the old text stands.
+        let reading = sets(ALLOW_TOML);
+        assert!(deny_entries(&reading).is_empty());
+        assert_eq!(
+            cd_config_note("/repo", &reading, false).unwrap(),
+            "  /repo/.yoyo.toml sets [permissions] allow and they are NOT applied in this \
+             session — the launch directory's settings stay in force. Restart yoyo here to use \
+             them (#869)."
+        );
     }
 
     #[test]
     fn model_only_config_sets_nothing_and_prints_nothing() {
         let text = "provider = \"anthropic\"\nmodel = \"x\"\n";
         assert_eq!(unapplied_config_sections(text), Vec::<&str>::new());
-        assert_eq!(sets(text), CdConfigReading::Sets(vec![]));
+        assert_eq!(sets(text), CdConfigReading::Sets(vec![], vec![]));
         assert_eq!(cd_config_note("/repo", &sets(text), false), None);
         assert_eq!(cd_config_note("/repo", &sets(text), true), None);
     }
@@ -221,11 +308,16 @@ mod tests {
                     [permissions]\nallow = [\"git *\"]\n";
         assert_eq!(
             unapplied_config_sections(text),
-            vec!["[permissions]", "[directories]", "hooks", "MCP servers"]
+            vec![
+                "[permissions] allow",
+                "[directories]",
+                "hooks",
+                "MCP servers"
+            ]
         );
         let note = cd_config_note("/r", &sets(text), false).unwrap();
         assert!(
-            note.contains("sets [permissions], [directories], hooks, MCP servers and"),
+            note.contains("sets [permissions] allow, [directories], hooks, MCP servers and"),
             "{note}"
         );
     }
@@ -249,7 +341,8 @@ mod tests {
             std::io::ErrorKind::PermissionDenied,
         )));
         assert_eq!(bad, CdConfigReading::Unreadable);
-        assert_ne!(bad, CdConfigReading::Sets(vec![]));
+        assert_ne!(bad, CdConfigReading::Sets(vec![], vec![]));
+        assert!(deny_entries(&bad).is_empty()); // nothing applied from unread bytes
         let note = cd_config_note("/repo", &bad, false).expect("unreadable must be reported");
         assert!(note.contains("could not be read"), "{note}");
     }
@@ -291,7 +384,7 @@ mod tests {
 
     /// One fixture per safety section, each parsed through the real detector.
     const SAFETY_FIXTURES: [&str; 4] = [
-        PERMS_TOML,
+        ALLOW_TOML,
         "[directories]\ndeny = [\"secrets\"]\n",
         "hooks.pre.bash = \"echo hi\"\n",
         "[mcp_servers.fs]\ncommand = \"npx\"\n",
@@ -303,7 +396,7 @@ mod tests {
         let mut seen = Vec::new();
         for text in SAFETY_FIXTURES {
             let reading = sets(text);
-            let CdConfigReading::Sets(found) = &reading else {
+            let CdConfigReading::Sets(found, _) = &reading else {
                 panic!("{text:?} did not read as Sets");
             };
             assert_eq!(found.len(), 1, "{text:?} -> {found:?}"); // anti-vacuous
@@ -312,6 +405,9 @@ mod tests {
         }
         // The fixtures cover the whole list, derived from the detector's output.
         assert_eq!(seen, SAFETY_SECTIONS.to_vec());
+        // A deny-only file names no unapplied section, and still warns: it
+        // changes what bash may run for the rest of the session.
+        assert_eq!(note_volume(&sets(PERMS_TOML)), NoteVolume::Warning);
     }
 
     #[test]
@@ -320,7 +416,7 @@ mod tests {
         let note = cd_config_note("/repo", &reading, false).unwrap();
         let out = render_cd_config_note(&note, note_volume(&reading), false);
         assert!(
-            out.starts_with("\x1b[33m⚠ warning: /repo/.yoyo.toml sets [permissions]"),
+            out.starts_with("\x1b[33m⚠ warning: /repo/.yoyo.toml: its 1 [permissions] deny"),
             "{out:?}"
         );
         assert!(out.ends_with("\x1b[0m"), "{out:?}");
@@ -333,7 +429,7 @@ mod tests {
         let note = cd_config_note("/repo", &reading, true).unwrap();
         let out = render_cd_config_note(&note, note_volume(&reading), true);
         assert!(
-            out.starts_with("warning: /repo/.yoyo.toml sets [permissions]"),
+            out.starts_with("warning: /repo/.yoyo.toml: its 1 [permissions] deny"),
             "{out:?}"
         );
         assert!(!out.as_bytes().contains(&0x1b), "{out:?}");

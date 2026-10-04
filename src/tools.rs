@@ -82,6 +82,8 @@ pub struct StreamingBashTool {
     /// approval path — `--yes`, a prior "always", and the analyzer's warning
     /// prompt all pass through here, so this is the one place user deny lives.
     pub user_deny: Vec<String>,
+    /// Deny patterns added by `/cd` (#869), read at call time (`cd_deny.rs`).
+    pub cd_deny: crate::cd_deny::DenyAdditions,
     /// Optional callback for confirming dangerous commands
     pub confirm_fn: Option<ConfirmFn>,
     /// How often to emit streaming updates
@@ -102,6 +104,7 @@ impl Default for StreamingBashTool {
             max_output_bytes: 256 * 1024, // 256KB
             deny_patterns: HARD_DENY_PATTERNS.iter().map(|p| p.to_string()).collect(),
             user_deny: Vec::new(),
+            cd_deny: crate::cd_deny::cd_added_deny_handle(),
             confirm_fn: None,
             update_interval: Duration::from_millis(500),
             lines_per_update: 20,
@@ -370,7 +373,9 @@ impl AgentTool for StreamingBashTool {
 
         // User deny patterns — hard block, checked on the raw command before
         // any confirm path, so `--yes` and "always" cannot skip it.
-        if let Some(refusal) = user_deny_refusal(&self.user_deny, command) {
+        if let Some(refusal) =
+            crate::cd_deny::effective_user_deny_refusal(&self.user_deny, &self.cd_deny, command)
+        {
             return Err(ToolError::Failed(refusal));
         }
 
@@ -1528,6 +1533,7 @@ pub(crate) fn child_confirm_refusal(parent_confirms: bool, command: &str) -> Opt
 struct UserDenyBashTool {
     inner: Arc<dyn AgentTool>,
     user_deny: Vec<String>,
+    cd_deny: crate::cd_deny::DenyAdditions,
     parent_confirms: bool,
     /// The parent's pinned cwd (spawn workers), if any. `Some` → refuse git
     /// redirection escapes exactly as `StreamingBashTool::execute` does;
@@ -1558,7 +1564,9 @@ impl AgentTool for UserDenyBashTool {
         let refusal = command.and_then(|c| {
             child_git_redirection_refusal(self.pinned_cwd.as_deref(), c)
                 .or_else(|| hard_deny_refusal(HARD_DENY_PATTERNS, c))
-                .or_else(|| user_deny_refusal(&self.user_deny, c))
+                .or_else(|| {
+                    crate::cd_deny::effective_user_deny_refusal(&self.user_deny, &self.cd_deny, c)
+                })
                 .or_else(|| child_confirm_refusal(self.parent_confirms, c))
         });
         if let Some(refusal) = refusal {
@@ -1590,6 +1598,25 @@ pub(crate) fn sub_agent_child_tools(
     parent_confirms: bool,
     pinned_cwd: Option<&str>,
 ) -> Vec<Arc<dyn AgentTool>> {
+    sub_agent_child_tools_with(
+        restrictions,
+        disallowed,
+        user_deny,
+        parent_confirms,
+        pinned_cwd,
+        crate::cd_deny::cd_added_deny_handle(),
+    )
+}
+
+/// `sub_agent_child_tools` with the `/cd` deny list injected (tests pass a local one).
+pub(crate) fn sub_agent_child_tools_with(
+    restrictions: &DirectoryRestrictions,
+    disallowed: &[String],
+    user_deny: &[String],
+    parent_confirms: bool,
+    pinned_cwd: Option<&str>,
+    cd_deny: crate::cd_deny::DenyAdditions,
+) -> Vec<Arc<dyn AgentTool>> {
     // Sub-agent gets standard yoagent tools — no permission guards needed
     // since the parent already authorized the delegation.
     //
@@ -1620,6 +1647,7 @@ pub(crate) fn sub_agent_child_tools(
     let bash: Arc<dyn AgentTool> = Arc::new(UserDenyBashTool {
         inner: raw_bash,
         user_deny: user_deny.to_vec(),
+        cd_deny,
         parent_confirms,
         pinned_cwd: pinned_cwd.map(str::to_string),
     });

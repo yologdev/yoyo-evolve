@@ -1449,7 +1449,14 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                                 "{DIM}  (project context was loaded from the original \
                                  directory and is not reloaded — use /context to review){RESET}\n"
                             );
-                            crate::cd_config_note::print_cd_config_note(&target);
+                            // #869 slice (Day 218): the new directory's deny entries
+                            // only narrow, so they apply now (bash, both executors,
+                            // append-only); everything else is still only disclosed.
+                            let reading = crate::cd_config_note::read_cd_config(&target);
+                            crate::cd_deny::append_cd_deny(crate::cd_config_note::deny_entries(
+                                &reading,
+                            ));
+                            crate::cd_config_note::print_cd_config_note(&target, &reading);
                         }
                         Err(e) => {
                             eprintln!("{RED}  ✗ cannot cd to {}: {e}{RESET}\n", target.display())
