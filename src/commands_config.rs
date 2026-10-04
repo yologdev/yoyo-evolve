@@ -881,9 +881,36 @@ pub fn handle_config_get(input: &str) {
             println!("{DIM}  {key} = {display}  ({source}){RESET}");
         }
         None => {
-            println!("{DIM}  {key} is not set in config file (using default){RESET}");
+            let known: Vec<&str> = crate::config::SETTABLE_KEYS
+                .iter()
+                .map(|(k, _)| *k)
+                .collect();
+            // Unknown key: "using default" would claim a real key sits at its
+            // default. Still exits 0; the shell exit status is dispatch_sub.rs (#982).
+            if let Some(msg) = config_get_unknown_key_message(key, &known) {
+                println!("{YELLOW}  {msg}{RESET}");
+                println!("{DIM}  settable keys: {}{RESET}", settable_keys_list());
+            } else {
+                println!("{DIM}  {key} is not set in config file (using default){RESET}");
+            }
         }
     }
+}
+
+/// `Some(refusal)` when `key` (absent from the file) is not in `known`
+/// (`SETTABLE_KEYS`). Says "not a settable config key", never "not a config
+/// key": the parser also reads unlisted keys (`base_url`, ...), so the stronger
+/// claim would cry wolf on a real, unset key. Glyph-free on purpose.
+pub(crate) fn config_get_unknown_key_message(key: &str, known: &[&str]) -> Option<String> {
+    if known.contains(&key) {
+        return None;
+    }
+    let mut msg =
+        format!("{key} is not a settable config key, and it is not set in the config file");
+    if let Some(near) = crate::commands::closest_match(key, known, 2) {
+        msg.push_str(&format!(" (did you mean {near}?)"));
+    }
+    Some(msg)
 }
 
 /// Helper: comma-separated list of settable key names.
