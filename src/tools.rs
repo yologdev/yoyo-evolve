@@ -1529,6 +1529,10 @@ struct UserDenyBashTool {
     inner: Arc<dyn AgentTool>,
     user_deny: Vec<String>,
     parent_confirms: bool,
+    /// The parent's pinned cwd (spawn workers), if any. `Some` → refuse git
+    /// redirection escapes exactly as `StreamingBashTool::execute` does;
+    /// `None` (every ordinary session) → the check is never called.
+    pinned_cwd: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -1552,7 +1556,8 @@ impl AgentTool for UserDenyBashTool {
     ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
         let command = params.get("command").and_then(|v| v.as_str());
         let refusal = command.and_then(|c| {
-            hard_deny_refusal(HARD_DENY_PATTERNS, c)
+            child_git_redirection_refusal(self.pinned_cwd.as_deref(), c)
+                .or_else(|| hard_deny_refusal(HARD_DENY_PATTERNS, c))
                 .or_else(|| user_deny_refusal(&self.user_deny, c))
                 .or_else(|| child_confirm_refusal(self.parent_confirms, c))
         });
@@ -1563,11 +1568,27 @@ impl AgentTool for UserDenyBashTool {
     }
 }
 
+/// Layer 3 for a child (#977): under a pinned-cwd parent, the parent's own
+/// git-redirection check and wording; with no pin, never called.
+pub(crate) fn child_git_redirection_refusal(
+    pinned_cwd: Option<&str>,
+    command: &str,
+) -> Option<String> {
+    let cwd = pinned_cwd?;
+    let reason = crate::safety::detect_git_redirection_escape(command, std::path::Path::new(cwd))?;
+    Some(crate::safety::git_redirection_refusal_message(
+        &reason,
+        cwd,
+        crate::format::is_plain_output(),
+    ))
+}
+
 pub(crate) fn sub_agent_child_tools(
     restrictions: &DirectoryRestrictions,
     disallowed: &[String],
     user_deny: &[String],
     parent_confirms: bool,
+    pinned_cwd: Option<&str>,
 ) -> Vec<Arc<dyn AgentTool>> {
     // Sub-agent gets standard yoagent tools — no permission guards needed
     // since the parent already authorized the delegation.
@@ -1585,14 +1606,22 @@ pub(crate) fn sub_agent_child_tools(
     //      `analyze_bash_command` — refused when the parent would have asked
     //      the user (`parent_confirms`), allowed when it would not (piped/--yes).
     //
+    //   4. Layer 3 of #977: under a pinned-cwd parent (spawn workers), the
+    //      child's bash runs in the same pinned cwd and refuses the same git
+    //      redirection escapes with the parent's wording
+    //      (`child_git_redirection_refusal`). No pin → neither happens.
+    //
     // Invariant over executors: no path that can run bash is more permissive
-    // than the parent, except layer 3 of #977 — `detect_git_redirection_escape`
-    // applies only to a pinned-cwd parent and is not checked here.
-    let raw_bash: Arc<dyn AgentTool> = Arc::new(yoagent::tools::bash::BashTool::default());
+    // than the parent.
+    let raw_bash: Arc<dyn AgentTool> = Arc::new(match pinned_cwd {
+        Some(cwd) => yoagent::tools::bash::BashTool::default().with_cwd(cwd),
+        None => yoagent::tools::bash::BashTool::default(),
+    });
     let bash: Arc<dyn AgentTool> = Arc::new(UserDenyBashTool {
         inner: raw_bash,
         user_deny: user_deny.to_vec(),
         parent_confirms,
+        pinned_cwd: pinned_cwd.map(str::to_string),
     });
     let mut tools: Vec<Arc<dyn AgentTool>> = vec![
         with_read_guard_bash_arc(bash),
@@ -1659,6 +1688,7 @@ fn build_sub_agent_tool_at_depth(
         &child_disallowed,
         &config.permissions.deny,
         !config.auto_approve,
+        config.bash_cwd.as_deref(),
     );
 
     // Allow exactly one more level of nesting, bounded by MAX_SUB_AGENT_DEPTH.
@@ -1739,6 +1769,7 @@ pub(crate) fn build_explore_agent_tool(
         &child_disallowed,
         &config.permissions.deny,
         !config.auto_approve,
+        config.bash_cwd.as_deref(),
     );
     dispatch_tool_with_fallback(config, &EXPLORE_AGENT_FLAVOR, child_tools, shared_state)
 }
@@ -4227,10 +4258,16 @@ mod tests {
     ];
 
     fn child_tool_names(disallowed: &[String]) -> Vec<String> {
-        sub_agent_child_tools(&DirectoryRestrictions::default(), disallowed, &[], false)
-            .iter()
-            .map(|t| t.name().to_string())
-            .collect()
+        sub_agent_child_tools(
+            &DirectoryRestrictions::default(),
+            disallowed,
+            &[],
+            false,
+            None,
+        )
+        .iter()
+        .map(|t| t.name().to_string())
+        .collect()
     }
 
     /// The NEAR-MISS GUARD, and the whole regression surface of the #887
@@ -4621,6 +4658,7 @@ mod tests {
             &read_only_child_disallowed(&[]),
             &[],
             false,
+            None,
         );
         let bash = tools
             .iter()

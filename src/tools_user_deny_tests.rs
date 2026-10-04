@@ -131,6 +131,7 @@ fn child_bash(user_deny: &[String], explore: bool) -> Arc<dyn AgentTool> {
         &disallowed,
         user_deny,
         false,
+        None,
     )
     .into_iter()
     .find(|t| t.name() == "bash")

@@ -29,6 +29,7 @@ fn child_bash(parent_confirms: bool, explore: bool) -> Arc<dyn AgentTool> {
         &disallowed,
         &[],
         parent_confirms,
+        None,
     )
     .into_iter()
     .find(|t| t.name() == "bash")
@@ -136,5 +137,109 @@ fn parent_default_deny_list_is_the_shared_authority() {
 fn both_child_builders_pass_parent_confirms_from_auto_approve() {
     let src = include_str!("tools.rs");
     let needle = ["!config", ".auto_approve,"].concat();
+    assert_eq!(src.matches(needle.as_str()).count(), 2);
+}
+
+// === Layer 3 (#977): git redirection escapes under a pinned-cwd parent ===
+
+const ESCAPES: [&str; 3] = [
+    "git --git-dir=/elsewhere/.git status",
+    "git -C /elsewhere log",
+    "GIT_DIR=/x git status",
+];
+
+fn pinned_root() -> String {
+    let root = std::env::temp_dir().join("yoyo_child_bash_pinned_root");
+    std::fs::create_dir_all(&root).expect("create pinned root");
+    std::fs::canonicalize(&root)
+        .expect("canonicalize pinned root")
+        .display()
+        .to_string()
+}
+
+fn pinned_child_bash(pin: Option<&str>, explore: bool) -> Arc<dyn AgentTool> {
+    let disallowed = if explore {
+        crate::tools::read_only_child_disallowed(&[])
+    } else {
+        Vec::new()
+    };
+    crate::tools::sub_agent_child_tools(
+        &cli::DirectoryRestrictions::default(),
+        &disallowed,
+        &[],
+        false,
+        pin,
+    )
+    .into_iter()
+    .find(|t| t.name() == "bash")
+    .expect("the child must carry a bash tool, or these tests are vacuous")
+}
+
+#[tokio::test]
+async fn pinned_child_refuses_git_redirection_with_the_parents_text() {
+    let pin = pinned_root();
+    let parent = StreamingBashTool::default().with_cwd(pin.clone());
+    for cmd in ESCAPES {
+        // Anti-vacuous: the detector really fires on this input against the pin.
+        let reason = crate::safety::detect_git_redirection_escape(cmd, std::path::Path::new(&pin))
+            .unwrap_or_else(|| panic!("fixture `{cmd}` must escape the pin"));
+        let parent_err = run(&parent, cmd).await.expect_err("parent must refuse");
+        for explore in [false, true] {
+            let err = run(pinned_child_bash(Some(&pin), explore).as_ref(), cmd)
+                .await
+                .expect_err("pinned child must refuse a git redirection escape");
+            assert_eq!(
+                err,
+                crate::safety::git_redirection_refusal_message(
+                    &reason,
+                    &pin,
+                    crate::format::is_plain_output()
+                ),
+                "`{cmd}` explore={explore}"
+            );
+            assert_eq!(err, parent_err, "child text must be the parent's: `{cmd}`");
+        }
+    }
+}
+
+#[tokio::test]
+async fn pinned_child_runs_in_the_pin_and_lets_bare_git_through() {
+    let pin = pinned_root();
+    for cmd in ["git status", "git log --oneline"] {
+        assert_eq!(
+            crate::tools::child_git_redirection_refusal(Some(&pin), cmd),
+            None,
+            "`{cmd}`"
+        );
+    }
+    // The child's bash runs where the parent's does, not in the process cwd.
+    let out = run(pinned_child_bash(Some(&pin), false).as_ref(), "pwd -P")
+        .await
+        .expect("pwd must run");
+    assert!(out.contains(&pin), "child cwd must be the pin: {out}");
+}
+
+#[tokio::test]
+async fn unpinned_child_never_applies_the_redirection_check() {
+    // Every ordinary session: no pin, so the escape inputs are not refused here.
+    for cmd in ESCAPES {
+        assert_eq!(
+            crate::tools::child_git_redirection_refusal(None, cmd),
+            None,
+            "`{cmd}`"
+        );
+        let out = run(pinned_child_bash(None, false).as_ref(), cmd).await;
+        if let Err(e) = &out {
+            assert!(!e.contains("pinned worktree"), "`{cmd}` was refused: {e}");
+        }
+    }
+}
+
+/// Weak source guard: both production builders pass the parent's pin.
+/// Proves it is passed, not that it fires.
+#[test]
+fn both_child_builders_pass_the_parents_pinned_cwd() {
+    let src = include_str!("tools.rs");
+    let needle = ["config.bash_cwd", ".as_deref(),"].concat();
     assert_eq!(src.matches(needle.as_str()).count(), 2);
 }
