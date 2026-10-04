@@ -3,7 +3,12 @@
 use crate::format::*;
 
 /// Build a project tree from git-tracked files, up to `max_depth` levels deep.
-pub fn build_project_tree(max_depth: usize) -> String {
+///
+/// The failure is kept apart from the text (#982): `Err` carries the
+/// not-a-git-repository message, so the shell door can exit nonzero without
+/// comparing strings. "(no tracked files)" is `Ok`: an empty repo is not a
+/// failure.
+pub fn build_project_tree(max_depth: usize) -> Result<String, String> {
     let files = match crate::git::run_git(&["ls-files"]) {
         Ok(text) => {
             let mut files: Vec<String> = text
@@ -14,14 +19,14 @@ pub fn build_project_tree(max_depth: usize) -> String {
             files.sort();
             files
         }
-        Err(_) => return "(not a git repository — /tree requires git)".to_string(),
+        Err(_) => return Err("(not a git repository — /tree requires git)".to_string()),
     };
 
     if files.is_empty() {
-        return "(no tracked files)".to_string();
+        return Ok("(no tracked files)".to_string());
     }
 
-    format_tree_from_paths(&files, max_depth)
+    Ok(format_tree_from_paths(&files, max_depth))
 }
 
 /// Format a sorted list of file paths into an indented tree string.
@@ -100,15 +105,27 @@ pub fn parse_tree_arg(input: &str) -> TreeArg {
 }
 
 pub fn handle_tree(input: &str) {
+    let _ = handle_tree_status(input);
+}
+
+/// `/tree` with an exit status for the shell door (`yoyo tree`, #982): 1 when
+/// the not-a-git-repository branch fires, 0 otherwise. The usage branch still
+/// returns 0 — a separate #982 item. Printed text is identical either way; the
+/// REPL calls `handle_tree`, which discards the code.
+pub fn handle_tree_status(input: &str) -> i32 {
     let max_depth = match parse_tree_arg(input) {
         TreeArg::Depth(d) => d,
         TreeArg::Usage => {
             println!("{DIM}  usage: /tree [depth]  (default depth: {DEFAULT_TREE_DEPTH}){RESET}\n");
-            return;
+            return 0;
         }
     };
-    let tree = build_project_tree(max_depth);
+    let (tree, code) = match build_project_tree(max_depth) {
+        Ok(tree) => (tree, 0),
+        Err(msg) => (msg, 1),
+    };
     println!("{DIM}{tree}{RESET}\n");
+    code
 }
 
 #[cfg(test)]
@@ -250,8 +267,9 @@ mod tests {
 
     #[test]
     fn test_build_project_tree_runs() {
-        // build_project_tree should return something non-empty
-        let tree = build_project_tree(3);
+        // build_project_tree should return something non-empty — a tree in a
+        // repo, the not-a-repo message outside one (mutants' temp copy).
+        let tree = build_project_tree(3).unwrap_or_else(|msg| msg);
         assert!(!tree.is_empty());
     }
 

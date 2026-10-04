@@ -1049,6 +1049,14 @@ pub fn parse_changelog_count(input: &str) -> usize {
 }
 
 pub fn handle_changelog(input: &str) {
+    let _ = handle_changelog_status(input);
+}
+
+/// `/changelog` with an exit status for the shell door (`yoyo changelog`,
+/// #982): 1 when git is missing or the cwd is not a git repository, 0
+/// otherwise. "(no commits found)" is 0 — an empty history is not a failure.
+/// The REPL calls `handle_changelog`, which discards the code.
+pub fn handle_changelog_status(input: &str) -> i32 {
     let count = parse_changelog_count(input);
 
     let count_arg = format!("-{count}");
@@ -1064,12 +1072,15 @@ pub fn handle_changelog(input: &str) {
                 }
                 println!("{RESET}");
             }
+            0
         }
         Err(e) if e.contains("git not found") => {
             println!("{DIM}  (git not available){RESET}\n");
+            1
         }
         Err(_) => {
             println!("{DIM}  (not in a git repository){RESET}\n");
+            1
         }
     }
 }
@@ -1424,7 +1435,14 @@ fn count_tests_via_cargo() -> usize {
 /// CI runs) and does nothing else, so the report logic is drivable from a test
 /// without spawning anything. Production output is unchanged.
 pub fn handle_evolution(input: &str) {
-    handle_evolution_with(input, &count_tests_via_cargo, &|| fetch_ci_runs(10));
+    let _ = handle_evolution_status(input);
+}
+
+/// `/evolution` with an exit status for the shell door (`yoyo evolution`,
+/// #982): 1 when git is missing or the cwd is not a git repository, 0
+/// otherwise. The REPL calls `handle_evolution`, which discards the code.
+pub fn handle_evolution_status(input: &str) -> i32 {
+    handle_evolution_with(input, &count_tests_via_cargo, &|| fetch_ci_runs(10))
 }
 
 /// The decision/rendering half of `/evolution`, with every subprocess injected.
@@ -1436,7 +1454,7 @@ fn handle_evolution_with(
     input: &str,
     test_count: &dyn Fn() -> usize,
     ci_runs: &dyn Fn() -> Vec<CiRun>,
-) {
+) -> i32 {
     let count = parse_evolution_count(input);
 
     // Read DAY_COUNT
@@ -1450,11 +1468,11 @@ fn handle_evolution_with(
         Ok(text) => text,
         Err(e) if e.contains("git not found") => {
             println!("{DIM}  (git not available){RESET}\n");
-            return;
+            return 1;
         }
         Err(_) => {
             println!("{DIM}  (not in a git repository){RESET}\n");
-            return;
+            return 1;
         }
     };
 
@@ -1505,7 +1523,7 @@ fn handle_evolution_with(
     // Recent sessions
     if sessions.is_empty() {
         println!("{DIM}  (no evolution sessions found){RESET}\n");
-        return;
+        return 0;
     }
 
     let show_count = count.min(sessions.len());
@@ -1546,6 +1564,7 @@ fn handle_evolution_with(
         }
         println!();
     }
+    0
 }
 
 // ---------------------------------------------------------------------------

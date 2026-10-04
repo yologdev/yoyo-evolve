@@ -325,7 +325,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "tree" => {
                 let input = quote_args_as_command(args);
-                crate::commands_tree::handle_tree(&input);
+                exit_if_nonzero(crate::commands_tree::handle_tree_status(&input));
                 return Some(None);
             }
             "map" => {
@@ -506,12 +506,12 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "changelog" => {
                 let input = quote_args_as_command(args);
-                crate::commands_info::handle_changelog(&input);
+                exit_if_nonzero(crate::commands_info::handle_changelog_status(&input));
                 return Some(None);
             }
             "evolution" => {
                 let input = quote_args_as_command(args);
-                crate::commands_info::handle_evolution(&input);
+                exit_if_nonzero(crate::commands_info::handle_evolution_status(&input));
                 return Some(None);
             }
             "config" => {

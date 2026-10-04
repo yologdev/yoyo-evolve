@@ -2925,3 +2925,64 @@ fn git_diff_in_a_clean_repository_still_exits_zero() {
     );
     assert!(!stderr.contains("not in a git repository"));
 }
+
+#[test]
+fn changelog_evolution_tree_exit_one_outside_a_git_repository() {
+    // #982 slice: `yoyo changelog`, `yoyo evolution` and `yoyo tree` printed
+    // a not-a-repo message and exited 0, so `yoyo changelog > notes.md &&
+    // publish notes.md` published an error. The printed bytes are unchanged.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cases: [(&str, &str); 3] = [
+        ("changelog", "  (not in a git repository)\n\n"),
+        ("evolution", "  (not in a git repository)\n\n"),
+        ("tree", "(not a git repository — /tree requires git)\n\n"),
+    ];
+    for (cmd, expected_stdout) in cases {
+        let out = yoyo_in_dir(dir.path(), &[cmd]);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "yoyo {cmd}: stdout={stdout:?} stderr={stderr:?}"
+        );
+        assert_eq!(stdout, expected_stdout, "yoyo {cmd}: stdout bytes changed");
+        assert_eq!(stderr, "", "yoyo {cmd}: unexpected stderr");
+    }
+}
+
+#[test]
+fn changelog_evolution_tree_inside_a_git_repository_still_exit_zero() {
+    // Near miss for the slice above: a real repo with one commit is success.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let git = |args: &[&str]| {
+        let st = Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.com")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.com")
+            .status()
+            .expect("git");
+        assert!(st.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(dir.path().join("a.txt"), "x\n").unwrap();
+    git(&["add", "a.txt"]);
+    git(&["commit", "-q", "-m", "first"]);
+    for cmd in ["changelog", "evolution", "tree"] {
+        let out = yoyo_in_dir(dir.path(), &[cmd]);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "yoyo {cmd}: stdout={stdout:?} stderr={:?}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !stdout.contains("git repository"),
+            "yoyo {cmd} inside a repo printed the not-a-repo text: {stdout:?}"
+        );
+    }
+}
