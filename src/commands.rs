@@ -521,6 +521,16 @@ pub fn thinking_level_name(level: ThinkingLevel) -> &'static str {
         ThinkingLevel::Low => "low",
         ThinkingLevel::Medium => "medium",
         ThinkingLevel::High => "high",
+        // yoagent 0.19 added the two tiers above `High`. yoyo's own config
+        // parser still folds `max` to `High` (sending a higher tier is a
+        // cost decision not yet made), but a level built elsewhere must
+        // still name itself honestly rather than masquerade as "high".
+        ThinkingLevel::XHigh => "xhigh",
+        ThinkingLevel::Max => "max",
+        // `ThinkingLevel` is `#[non_exhaustive]` since 0.19, so the compiler
+        // requires a catch-all. A future tier we have not mapped is shown as
+        // unknown rather than guessed at.
+        _ => "unknown",
     }
 }
 // ── /version ─────────────────────────────────────────────────────────────

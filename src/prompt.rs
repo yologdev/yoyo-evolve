@@ -2921,15 +2921,15 @@ mod tests {
     /// connection-loss shape lands in `RetriableError`, so `run_prompt_auto_retry`
     /// already retries it and the piped gate's `!had_error` never sees it.
     ///
-    /// The strings are not invented. yoagent 0.18.1's `ProviderError` carries the
-    /// `#[error(...)]` formats below (`provider/traits.rs:246-262`) and
-    /// `agent_loop.rs:1139` does `error_message: Some(e.to_string())`, so the
+    /// The strings are not invented. yoagent 0.24.0's `ProviderError` carries the
+    /// `#[error(...)]` formats below (`provider/traits.rs:253-268`) and
+    /// `agent_loop.rs:1404` passes `e.to_string()` into `error_message: Some(..)` (`:1452`), so the
     /// Display string of that enum *is* what reaches this branch. Cross-checked
     /// against the one error string CLAUDE.md records verbatim from a real
     /// session — `Rate limited, retry after Some(14454000)ms` — which matches
     /// `#[error("Rate limited, retry after {retry_after_ms:?}ms")]` exactly,
     /// including the `Some(..)` that only a `{:?}` of an `Option` produces.
-    /// <!-- yoagent-version-claim: 0.18.1 -->
+    /// <!-- yoagent-version-claim: 0.24.0 -->
     #[test]
     fn stream_cut_off_mid_answer_is_retriable_not_fatal() {
         // (shape, expected verdict, why)

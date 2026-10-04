@@ -84,12 +84,19 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // runtime — the preset is the source of truth, not this table. This must
     // run BEFORE the substring matching below, otherwise e.g. claude-opus-4-8
     // would fall into the legacy opus branch and show the wrong price.
-    if let Some(preset) = crate::agent_builder::anthropic_preset(model) {
+    //
+    // yoagent 0.19 made `ModelConfig.cost` an `Option<CostConfig>`: `None`
+    // means "this preset carries no price", which is NOT the same as free.
+    // An unpriced preset therefore falls through to yoyo's own table below
+    // rather than being priced at $0 — a silent zero would read as a
+    // confident measurement of a bill that is really unknown.
+    if let Some(cost) = crate::agent_builder::anthropic_preset(model).and_then(|preset| preset.cost)
+    {
         return Some((
-            preset.cost.input_per_million,
-            preset.cost.cache_write_per_million,
-            preset.cost.cache_read_per_million,
-            preset.cost.output_per_million,
+            cost.input_per_million,
+            cost.cache_write_per_million,
+            cost.cache_read_per_million,
+            cost.output_per_million,
         ));
     }
 
@@ -1436,14 +1443,33 @@ mod tests {
         // input/1M * rate + output/1M * rate — not Anthropic price list.
         let preset = crate::agent_builder::anthropic_preset("claude-sonnet-5")
             .expect("claude-sonnet-5 must resolve to a preset");
-        let expected = 1.0 * preset.cost.input_per_million + 0.1 * preset.cost.output_per_million;
+        let expected = 1.0
+            * preset
+                .cost
+                .as_ref()
+                .expect("claude-sonnet-5 preset is priced")
+                .input_per_million
+            + 0.1
+                * preset
+                    .cost
+                    .as_ref()
+                    .expect("claude-sonnet-5 preset is priced")
+                    .output_per_million;
         let cost = estimate_cost(&usage, "claude-sonnet-5").unwrap();
         assert!(
             (cost - expected).abs() < 0.001,
             "estimate_cost disagreed with the preset it reads: got {cost}, \
              preset implies {expected} (input {}/MTok, output {}/MTok)",
-            preset.cost.input_per_million,
-            preset.cost.output_per_million
+            preset
+                .cost
+                .as_ref()
+                .expect("claude-sonnet-5 preset is priced")
+                .input_per_million,
+            preset
+                .cost
+                .as_ref()
+                .expect("claude-sonnet-5 preset is priced")
+                .output_per_million
         );
     }
 
@@ -2340,7 +2366,7 @@ mod tests {
     /// discipline `test_estimate_cost_sonnet_5_preset` uses against the preset
     /// table, so the test cannot pass by agreeing with a literal that drifted
     /// alongside it.
-    /// <!-- yoagent-version-claim: 0.18.1 -->
+    /// <!-- yoagent-version-claim: 0.24.0 -->
     #[test]
     fn cache_hit_rate_denominator_is_input_plus_read_plus_write() {
         let usage = yoagent::Usage {
@@ -2383,7 +2409,7 @@ mod tests {
     /// *saturates to 0* in Rust rather than panicking, so if either half were
     /// widened the display would render a confident `0% hit rate` instead of
     /// failing. Pinning the upstream half means only one guard has to hold.
-    /// <!-- yoagent-version-claim: 0.18.1 -->
+    /// <!-- yoagent-version-claim: 0.24.0 -->
     #[test]
     fn cache_hit_rate_zero_denominator_is_zero_not_nan() {
         let rate = yoagent::Usage::default().cache_hit_rate();
