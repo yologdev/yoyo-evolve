@@ -176,6 +176,8 @@ The `/docs` command fetches the docs.rs page for a given crate and shows a quick
 
 Each category is capped at 10 items with a "+N more" suffix for large crates.
 
+Whether a crate or item exists is decided by docs.rs's HTTP status, not by its page text. A 404 prints a `✗` refusal naming the crate (or item) and the status, e.g. `✗ Crate 'foo' not found on docs.rs (HTTP 404)`. If docs.rs can't be reached (offline, 5xx, rate-limited), it says `Could not reach docs.rs`, which does not mean the crate is missing. The exit code is 0 in every case for now.
+
 ```
 /docs serde
   ✓ serde

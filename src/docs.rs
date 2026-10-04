@@ -11,27 +11,77 @@ pub fn is_valid_crate_name(name: &str) -> bool {
             .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
 }
 
+/// What a docs.rs response means. Three outcomes, kept apart on purpose: "could not
+/// check" (`Unreachable`) must never read as "does not exist" (`NotFound`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DocsLookup {
+    Found,
+    NotFound,
+    Unreachable,
+}
+
+/// Classify a docs.rs response by its HTTP status first; the body is only a secondary
+/// signal. Before Day 218 only body strings decided, and docs.rs's current 404 page
+/// ("The requested crate does not exist") matched none of them, so every 404 read as found.
+/// `status == 0` means curl failed or gave no code.
+fn classify_docs_response(status: u16, body: &str) -> DocsLookup {
+    match status {
+        404 | 410 => DocsLookup::NotFound,
+        200..=299 => {
+            if body.trim().is_empty() {
+                DocsLookup::Unreachable
+            } else if body.contains("This crate does not exist")
+                || body.contains("failed to build")
+                || body.contains("The requested resource does not exist")
+            {
+                DocsLookup::NotFound
+            } else {
+                DocsLookup::Found
+            }
+        }
+        _ => DocsLookup::Unreachable,
+    }
+}
+
+/// Split curl's `-w '\n%{http_code}'` trailer off its output. Uses `rsplit_once`, never
+/// a byte index. Missing or unparseable trailer → status 0 (unreachable), never a guess.
+fn split_status_trailer(raw: &str) -> (&str, u16) {
+    match raw.rsplit_once('\n') {
+        Some((body, code)) => (body, code.trim().parse::<u16>().unwrap_or(0)),
+        None => (raw, 0),
+    }
+}
+
+/// Turn a classified response into the body (found) or the error message the callers
+/// already understand ("not found ..." / "Could not reach ...").
+fn docs_body_for(status: u16, body: &str) -> Result<String, String> {
+    match classify_docs_response(status, body) {
+        DocsLookup::Found => Ok(body.to_string()),
+        DocsLookup::NotFound if status == 404 || status == 410 => {
+            Err(format!("not found on docs.rs (HTTP {status})"))
+        }
+        DocsLookup::NotFound => Err("not found on docs.rs".to_string()),
+        DocsLookup::Unreachable if (200..=299).contains(&status) || status == 0 => {
+            Err("Could not reach docs.rs".to_string())
+        }
+        DocsLookup::Unreachable => Err(format!(
+            "Could not reach docs.rs (HTTP {status}: lookup not completed)"
+        )),
+    }
+}
+
 /// Fetch HTML from a docs.rs URL. Returns Ok(body) or Err(message).
 fn fetch_docs_html(url: &str) -> Result<String, String> {
     let output = std::process::Command::new("curl")
-        .args(["-sL", "--max-time", "10", url])
+        .args(["-sL", "--max-time", "10", "-w", "\n%{http_code}", url])
         .output()
         .map_err(|e| format!("Error fetching docs: {e}"))?;
 
-    if !output.status.success() || output.stdout.is_empty() {
-        return Err("Could not reach docs.rs".to_string());
-    }
-
-    let body = String::from_utf8_lossy(&output.stdout).to_string();
-
-    if body.contains("This crate does not exist")
-        || body.contains("failed to build")
-        || body.contains("The requested resource does not exist")
-    {
-        return Err("not found on docs.rs".to_string());
-    }
-
-    Ok(body)
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let (body, status) = split_status_trailer(&raw);
+    // A curl failure (DNS, timeout mid-body) is "could not check", whatever code it saw.
+    let status = if output.status.success() { status } else { 0 };
+    docs_body_for(status, body)
 }
 
 /// A single API item parsed from a docs.rs crate page.
@@ -170,7 +220,13 @@ pub fn fetch_docs_summary(crate_name: &str) -> (bool, String) {
     let crate_mod = crate_name.replace('-', "_");
     let url = format!("https://docs.rs/{crate_name}/latest/{crate_mod}/");
 
-    let body = match fetch_docs_html(&url) {
+    summary_outcome(crate_name, &url, fetch_docs_html(&url))
+}
+
+/// Pure half of `fetch_docs_summary`: what the caller receives for a fetch result.
+/// `found == false` is what keeps the ✓ off the screen in `handle_docs`.
+fn summary_outcome(crate_name: &str, url: &str, fetched: Result<String, String>) -> (bool, String) {
+    let body = match fetched {
         Ok(body) => body,
         Err(e) if e.contains("not found") => {
             return (false, format!("Crate '{crate_name}' {e}"));
@@ -185,7 +241,7 @@ pub fn fetch_docs_summary(crate_name: &str) -> (bool, String) {
     let items = parse_docs_items(&body);
     let items_display = format_docs_items(&items, 10);
 
-    (true, build_docs_display(&url, description, &items_display))
+    (true, build_docs_display(url, description, &items_display))
 }
 
 /// Build the user-facing message for a failed item fetch.
@@ -199,7 +255,10 @@ fn item_fetch_error_message(err: &str, crate_name: &str, item: &str) -> String {
     if err.contains("Could not reach") || err.contains("Error fetching docs") {
         format!("{err} (looking up '{item}' in '{crate_name}')")
     } else {
-        format!("Item '{item}' not found in crate '{crate_name}' on docs.rs")
+        // Carry the status suffix (" (HTTP 404)") when the status decided; the legacy
+        // body-match error has none, so its message stays byte-identical.
+        let status = err.strip_prefix("not found on docs.rs").unwrap_or("");
+        format!("Item '{item}' not found in crate '{crate_name}' on docs.rs{status}")
     }
 }
 
@@ -217,7 +276,17 @@ pub fn fetch_docs_item(crate_name: &str, item: &str) -> (bool, String) {
     let crate_mod = crate_name.replace('-', "_");
     let url = format!("https://docs.rs/{crate_name}/latest/{crate_mod}/{item}/");
 
-    let body = match fetch_docs_html(&url) {
+    item_outcome(crate_name, item, &url, fetch_docs_html(&url))
+}
+
+/// Pure half of `fetch_docs_item`: what the caller receives for a fetch result.
+fn item_outcome(
+    crate_name: &str,
+    item: &str,
+    url: &str,
+    fetched: Result<String, String>,
+) -> (bool, String) {
+    let body = match fetched {
         Ok(body) => body,
         Err(e) => return (false, item_fetch_error_message(&e, crate_name, item)),
     };
@@ -226,7 +295,7 @@ pub fn fetch_docs_item(crate_name: &str, item: &str) -> (bool, String) {
     let items = parse_docs_items(&body);
     let items_display = format_docs_items(&items, 10);
 
-    (true, build_docs_display(&url, description, &items_display))
+    (true, build_docs_display(url, description, &items_display))
 }
 
 /// Extract the content of `<meta name="description" content="...">` from HTML.
@@ -596,5 +665,160 @@ mod tests {
             msg,
             "Item 'Serialize' not found in crate 'serde' on docs.rs"
         );
+    }
+
+    // ── HTTP status, not page prose (Day 218) ─────────────────────────────────
+    // Before this, `fetch_docs_html` ran `curl -sL` with no status check and recognised
+    // not-found only by three body strings. docs.rs's current 404 page says "The requested
+    // crate does not exist", which matches none of them, so every 404 printed a green ✓.
+
+    const CURRENT_DOCSRS_404_BODY: &str =
+        "<html><head><title>The requested crate does not exist</title></head>\
+         <body><h1>The requested crate does not exist</h1></body></html>";
+    const FOUND_PAGE: &str = "<html><head>\
+        <meta name=\"description\" content=\"A generic serialization framework\">\
+        </head><body>\
+        <a class=\"mod\" href=\"de/index.html\" title=\"mod serde::de\">de</a>\
+        <a class=\"trait\" href=\"trait.Serialize.html\" title=\"trait serde::Serialize\">Serialize</a>\
+        </body></html>\n";
+
+    #[test]
+    fn test_classify_docs_response_table() {
+        // Anti-vacuous: the current 404 body really matches none of the legacy strings,
+        // so the 404 row below is decided by status and not by a body match.
+        for legacy in [
+            "This crate does not exist",
+            "failed to build",
+            "The requested resource does not exist",
+        ] {
+            assert!(!CURRENT_DOCSRS_404_BODY.contains(legacy), "{legacy}");
+        }
+        let rows: &[(u16, &str, DocsLookup)] = &[
+            (404, CURRENT_DOCSRS_404_BODY, DocsLookup::NotFound),
+            (404, "", DocsLookup::NotFound),
+            (410, "gone", DocsLookup::NotFound),
+            // Near miss: a normal crate page must stay Found.
+            (200, FOUND_PAGE, DocsLookup::Found),
+            // Legacy body path, unchanged.
+            (
+                200,
+                "<p>This crate does not exist</p>",
+                DocsLookup::NotFound,
+            ),
+            (
+                200,
+                "<p>docs for this crate failed to build</p>",
+                DocsLookup::NotFound,
+            ),
+            (
+                200,
+                "<p>The requested resource does not exist</p>",
+                DocsLookup::NotFound,
+            ),
+            // Could not check is not the same as not found.
+            (0, "", DocsLookup::Unreachable),
+            (0, FOUND_PAGE, DocsLookup::Unreachable),
+            (500, CURRENT_DOCSRS_404_BODY, DocsLookup::Unreachable),
+            (503, "", DocsLookup::Unreachable),
+            (429, "slow down", DocsLookup::Unreachable),
+            (200, "", DocsLookup::Unreachable),
+        ];
+        for (status, body, want) in rows {
+            assert_eq!(
+                classify_docs_response(*status, body),
+                *want,
+                "status {status}, body {body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_split_status_trailer() {
+        // The body is exactly what the server sent; only the "\n<code>" curl appended is removed.
+        assert_eq!(
+            split_status_trailer("<html>é</html>\n\n200"),
+            ("<html>é</html>\n", 200)
+        );
+        assert_eq!(split_status_trailer("\n404"), ("", 404));
+        assert_eq!(split_status_trailer("\n000"), ("", 0));
+        // No trailer or garbage: status 0, never a guessed success.
+        assert_eq!(split_status_trailer(""), ("", 0));
+        assert_eq!(split_status_trailer("body\nnotanumber"), ("body", 0));
+    }
+
+    #[test]
+    fn test_crate_404_is_a_refusal_naming_the_crate_and_the_status() {
+        let url = "https://docs.rs/zzqq/latest/zzqq/";
+        let (found, msg) =
+            summary_outcome("zzqq", url, docs_body_for(404, CURRENT_DOCSRS_404_BODY));
+        assert!(
+            !found,
+            "a 404 must not be reported as found (that is what prints the ✓)"
+        );
+        assert_eq!(msg, "Crate 'zzqq' not found on docs.rs (HTTP 404)");
+        assert!(!msg.contains("Docs available"), "{msg}");
+    }
+
+    #[test]
+    fn test_item_404_is_a_refusal_naming_crate_item_and_status() {
+        let url = "https://docs.rs/serde/latest/serde/NoSuchItemXyz/";
+        let (found, msg) = item_outcome("serde", "NoSuchItemXyz", url, docs_body_for(404, ""));
+        assert!(!found);
+        assert_eq!(
+            msg,
+            "Item 'NoSuchItemXyz' not found in crate 'serde' on docs.rs (HTTP 404)"
+        );
+    }
+
+    #[test]
+    fn test_unreachable_is_not_reported_as_not_found() {
+        let url = "https://docs.rs/serde/latest/serde/";
+        let (found, msg) = summary_outcome("serde", url, docs_body_for(0, ""));
+        assert!(!found);
+        assert_eq!(msg, "Could not reach docs.rs for 'serde'");
+
+        let (found, msg) = summary_outcome("serde", url, docs_body_for(503, ""));
+        assert!(!found);
+        assert_eq!(
+            msg,
+            "Could not reach docs.rs (HTTP 503: lookup not completed) for 'serde'"
+        );
+        assert!(!msg.contains("not found"), "{msg}");
+
+        let (found, msg) = item_outcome("serde", "de", url, docs_body_for(500, ""));
+        assert!(!found);
+        assert!(!msg.contains("not found in crate"), "{msg}");
+        assert_eq!(
+            msg,
+            "Could not reach docs.rs (HTTP 500: lookup not completed) (looking up 'de' in 'serde')"
+        );
+    }
+
+    #[test]
+    fn test_found_page_renders_byte_identically() {
+        let url = "https://docs.rs/serde/latest/serde/";
+        let (found, msg) = summary_outcome("serde", url, docs_body_for(200, FOUND_PAGE));
+        assert!(found);
+        // Full string: the found path is the regression surface and must not drift.
+        assert_eq!(
+            msg,
+            "  📦 https://docs.rs/serde/latest/serde/\n  📝 A generic serialization framework\n\n  Modules: de\n  Traits: Serialize"
+        );
+        let (found_item, item_msg) =
+            item_outcome("serde", "de", url, docs_body_for(200, FOUND_PAGE));
+        assert!(found_item);
+        assert_eq!(item_msg, msg);
+    }
+
+    #[test]
+    fn test_legacy_body_not_found_keeps_its_old_message() {
+        let url = "https://docs.rs/serde/latest/serde/";
+        let (found, msg) = summary_outcome(
+            "serde",
+            url,
+            docs_body_for(200, "<p>This crate does not exist</p>"),
+        );
+        assert!(!found);
+        assert_eq!(msg, "Crate 'serde' not found on docs.rs");
     }
 }
