@@ -1818,28 +1818,31 @@ pub(crate) fn build_explore_agent_tool(
 /// register reasons ×4, #892's visibility claim, #902's `--safe-mode` claim). Four findings,
 /// each with a citation so the answer is re-derivable rather than believed:
 ///
-/// 1. **The schema is a hardcoded literal with no seam.** `sub_agent.rs:364-375` returns a
+/// 1. **The schema is a hardcoded literal with no seam.** `sub_agent.rs:451-462` returns a
 ///    `serde_json::json!` block advertising exactly one property, `task`, required. It takes
 ///    `&self` and reads **nothing** from `self`, so it is not overridable *or* configurable at
-///    construction, and no builder sets it (the full `with_*` list is `sub_agent.rs:166-317`).
+///    construction, and no builder sets it (the full `with_*` list is `sub_agent.rs:204-430`).
 /// 2. **`execute`'s signature is wide and its body is narrow.** It takes
-///    `params: serde_json::Value` (`sub_agent.rs:377-381`) yet reads only `params.get("task")`
-///    (`sub_agent.rs:385-389`), dropping every other key silently. The second half is the half
+///    `params: serde_json::Value` (`sub_agent.rs:464-468`) yet reads only `params.get("task")`
+///    (`sub_agent.rs:473-477`), dropping every other key silently. The second half is the half
 ///    that matters, and it is why the wide signature is not a loophole: **the schema is the
 ///    gate, not the `Value`** — a model can only send a field the schema advertises, so an
 ///    extra argument is never populated in the first place.
 /// 3. **Every knob is construction-time.** `with_tools`, `with_system_prompt`, `with_max_turns`,
-///    `with_shared_state` and the rest are builders on the struct (`sub_agent.rs:166-317`), and
-///    `tools` is a `Vec<Arc<dyn AgentTool>>` fixed at construction (`sub_agent.rs:54`);
-///    `execute` rebuilds a fresh `Vec` per call (`sub_agent.rs:392-396`) but always from that
-///    same fixed set. **`ToolMiddleware` was the most plausible seam and is a DIFFERENT
-///    mechanism rather than this one**: `types.rs:1146-1148` is
+///    `with_shared_state` and the rest are builders on the struct (`sub_agent.rs:204-430`), and
+///    `tools` is a `Vec<Arc<dyn AgentTool>>` fixed at construction (`sub_agent.rs:59`);
+///    `execute` rebuilds a fresh `Vec` per call (`sub_agent.rs:480`) from that same fixed set.
+///    Since yoagent 0.23 a `ToolSource` (`with_tool_source`, `sub_agent.rs:254`) can add tools
+///    per delegation (`sub_agent.rs:508`), but `ToolSource::tools` takes no arguments
+///    (`tool_source.rs:86`): it cannot see the call's parameters, so it is not a per-dispatch
+///    `read_only` seam either. **`ToolMiddleware` was the most plausible seam and is a DIFFERENT
+///    mechanism rather than this one**: `types.rs:2282` is
 ///    `async fn before_tool(&self, call: &ToolCallRequest<'_>) -> ToolDecision`, which
 ///    intercepts the **child's own tool calls** once the child is already running — a veto at
 ///    call time rather than a tool absent from the list — and it is itself installed at
-///    construction (`sub_agent.rs:210`).
-/// 4. **There is no rival primitive.** `lib.rs:105` exports exactly one delegation tool,
-///    `pub use sub_agent::SubAgentTool;`; its neighbours (`lib.rs:97-98`, `Agent` /
+///    construction (`sub_agent.rs:261`).
+/// 4. **There is no rival primitive.** `lib.rs:129` exports exactly one delegation tool,
+///    `pub use sub_agent::SubAgentTool;`; its neighbours (`lib.rs:121-122`, `Agent` /
 ///    `agent_loop`) are the loop itself rather than a dispatchable tool. No `Explore`, no
 ///    preset, no task-typed variant.
 ///
@@ -1850,7 +1853,7 @@ pub(crate) fn build_explore_agent_tool(
 /// later yoagent adds the seam this marker goes stale **loudly** rather than silently, which is
 /// the entire point of pinning it.
 ///
-/// <!-- yoagent-version-claim: 0.18.1 -->
+/// <!-- yoagent-version-claim: 0.24.0 -->
 /// What distinguishes yoyo's two dispatch tools from each other: the name the
 /// parent model sees, and the sentence it is given about the tool.
 ///

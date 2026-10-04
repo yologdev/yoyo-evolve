@@ -1881,14 +1881,12 @@ mod tests {
         let preset =
             anthropic_preset("claude-opus-5").expect("claude-opus-5 should map to a fleet preset");
         let expected = ModelConfig::claude_opus_5();
-        assert_eq!(
-            preset.cost.input_per_million,
-            expected.cost.input_per_million
+        let (got, want) = (
+            preset.cost.as_ref().expect("preset is priced"),
+            expected.cost.as_ref().expect("claude_opus_5 is priced"),
         );
-        assert_eq!(
-            preset.cost.output_per_million,
-            expected.cost.output_per_million
-        );
+        assert_eq!(got.input_per_million, want.input_per_million);
+        assert_eq!(got.output_per_million, want.output_per_million);
         assert_eq!(preset.context_window, expected.context_window);
         assert_eq!(preset.id, "claude-opus-5");
         // A dated variant keeps the requested id but still hits the fleet arm.
@@ -1896,8 +1894,12 @@ mod tests {
             .expect("dated claude-opus-5 variant should still map to the preset");
         assert_eq!(dated.id, "claude-opus-5-20260724");
         assert_eq!(
-            dated.cost.input_per_million,
-            expected.cost.input_per_million
+            dated
+                .cost
+                .as_ref()
+                .expect("dated preset is priced")
+                .input_per_million,
+            want.input_per_million
         );
     }
 
@@ -2547,8 +2549,9 @@ mod tests {
         assert_eq!(config.provider, "minimax");
         assert_eq!(config.id, "MiniMax-M2.7");
         assert_eq!(
-            config.base_url, "https://api.minimaxi.chat/v1",
-            "MiniMax should use api.minimaxi.chat (not api.minimax.io)"
+            config.base_url, "https://api.minimax.io/v1",
+            "MiniMax should use api.minimax.io, the base URL MiniMax's API reference \
+             names (yoagent 0.19 moved off api.minimaxi.chat)"
         );
         assert!(
             config.compat.is_some(),

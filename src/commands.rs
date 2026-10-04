@@ -521,6 +521,10 @@ pub fn thinking_level_name(level: ThinkingLevel) -> &'static str {
         ThinkingLevel::Low => "low",
         ThinkingLevel::Medium => "medium",
         ThinkingLevel::High => "high",
+        ThinkingLevel::XHigh => "xhigh",
+        ThinkingLevel::Max => "max",
+        // `ThinkingLevel` is `#[non_exhaustive]` (yoagent 0.19+).
+        _ => "unknown",
     }
 }
 // ── /version ─────────────────────────────────────────────────────────────
