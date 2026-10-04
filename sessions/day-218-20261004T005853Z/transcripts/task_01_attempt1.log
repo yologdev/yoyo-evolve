@@ -1,0 +1,94 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; wc -l src/docs.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "docs::\|build_docs_displa… ✓ (7ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 140,255p src/docs.rs; sed -… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -2; B=$PWD… ✓ (648ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 38.3s (4 ✓)
+
+Reproduced with network available: both 404 cases print ✓ and exit 0, and serde is the near-miss that renders items. Writing the tests first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (146 lines) ✓ (19ms)
+
+Now the implementation.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (152 lines) ✓ (22.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 32 green. Now the positive control, atomically and serially: neuter the classifier, run, restore.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/docs.rs… (6 lines) ✓ (42.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -1; B=$PWD… ✓ (7.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 57.5s (2 ✓)
+
+The glyph itself changed: ✓ (U+2713) became ✗ (U+2717) on both 404s. serde is byte-identical to the before reading. Full gate and docs check:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy --all-targets -- -D w… ✓ (1m 33s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 170,200p docs/src/usage/com… ✓ (1m 21s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 59s (2 ✓)
+
+The docs page says /docs is "confirming the crate exists", which the old code did not actually do. I'll add a line saying what the refusal looks like now:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/usage/commands.md (1 → 3 lines)
+    Each category is capped at 10 items with a "+N more" suffix for large crates.
+  + 
+  + Whether a crate or item exists is decided by docs.rs's HTTP status, not by its page text. A 404 prints a `✗` refusal naming the crate (or item) and the status, e.g. `✗ Crate 'foo' not found on docs.rs (HTTP 404)`. If docs.rs can't be reached (offline, 5xx, rate-limited), it says `Could not reach docs.rs`, which does not mean the crate is missing. The exit code is 0 in every case for now.
+ ✓ (0ms)
+    Each category is capped at 10 items with a "+N more" suffix for large crates.
+  + 
+  + Whether a crate or item exists is decided by docs.rs's HTTP status, not by its page text. A 404 prints a `✗` refusal naming the crate (or item) and the status, e.g. `✗ Crate 'foo' not found on docs.rs (HTTP 404)`. If docs.rs can't be reached (offline, 5xx, rate-limited), it says `Could not reach docs.rs`, which does not mean the crate is missing. The exit code is 0 in every case for now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --s… (14 lines) ✓ (15ms)
+  2 tools completed in 4.9s (2 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+The commit landed. The last step is the one-line note on #982.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comment 982 --body "The \… ✓ (1.9s)
+
+yoyo docs no longer prints a green ✓ for a crate or item that docs.rs doesn't have. It now decides based on the HTTP status docs.rs returns, not on the page's wording. Committed as 641b76da.
+
+The bug: the lookup ignored the HTTP status and only recognised "not found" by three phrases in the page text. docs.rs's current 404 page says "The requested crate does not exist", which matches none of them, so every 404 showed ✓ and "Docs available at the URL above."
+
+Before and after, real binary, run from a temp dir with network access (curl confirmed both URLs return 404):
+
+| Command | Before | After |
+|---|---|---|
+| yoyo docs zzqq_definitely_not_a_crate_918 | ✓ zzqq_… + "Docs available at the URL above." | ✗ Crate 'zzqq_definitely_not_a_crate_918' not found on docs.rs (HTTP 404) |
+| yoyo docs serde NoSuchItemXyz | ✓ serde::NoSuchItemXyz + "Docs available at the URL above." | ✗ Item 'NoSuchItemXyz' not found in crate 'serde' on docs.rs (HTTP 404) |
+| yoyo docs serde (real crate) | ✓ with modules, traits and macros | byte-for-byte identical |
+
+The change (in `src/docs.rs`):
+• curl now also reports the HTTP status.
+• A new function sorts each response into three outcomes:
+  • **Found:** a 2xx page with content.
+  • **Not found:** a 404 or 410. The three old page phrases still count, but only as a second check on a 2xx page.
+  • **Unreachable:** curl failed, a 5xx, a 429, any other status, or an empty 2xx page. This prints "Could not reach docs.rs" and never says the crate is missing.
+• The status is split off curl's output without byte indexing. Missing or unreadable codes count as unreachable.
+
+Tests:
+• New tests cover the three outcomes, the status parsing, and the exact messages for the not-found, unreachable and old page-text cases. A full-string comparison checks that a found page renders exactly as before.
+• Positive control, run in one command: with the new function forced to always say "found", 5 docs tests failed (the outcome table was among them; the output cut off the other names). After restoring it, all 32 passed and no NEUTERED marker is left.
+• `cargo build, cargo test (5935 passed), cargo clippy --all-targets -- -D warnings and cargo fmt -- --check` all pass.
+
+Docs: docs/src/usage/commands.md already said /docs confirms the crate exists, which wasn't true before this fix. I added a line describing the ✗ refusal and the separate unreachable message.
+
+Still open: a not-found still exits 0. That was out of scope because it goes through dispatch_sub.rs. I commented on #982 that the docs arm now prints a refusal but still exits 0, citing 641b76da.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

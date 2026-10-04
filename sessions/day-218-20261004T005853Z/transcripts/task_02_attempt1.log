@@ -1,0 +1,109 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 830,960p src/commands_confi… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 405,470p src/commands.rs; g… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "fn parse_config_file" sr… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1925,2010p src/config.rs; g… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn '"context_window"\|"sub_a… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "closest_match(" src/ | h… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 150,260p tests/module_size.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 60,130p tests/module_size.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'commands_config' tests/mo… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "tools_user_deny_tests\|t… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -2; R=$PWD… ✓ (115ms)
+  12 tools completed in 37.5s (12 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ edit src/commands_config.rs (5 → 45 lines)
+            None => {
+  -             println!("{DIM}  {key} is not set in config file (using default){RESET}");
+  +             let known: Vec<&str> = crate::config::SETTABLE_KEYS
+  +                 .iter()
+  +                 .map(|(k, _)| *k)
+  +                 .collect();
+  +             // A key that is neither in the file nor settable is most likely a
+  +             // typo: "using default" would claim a real key sits at its default.
+  +             // Exit code stays 0 here; the shell exit status lives in
+  +             // dispatch_sub.rs (#982).
+  +             match config_get_unknown_key_message(key, &known) {
+  +                 Some(msg) => {
+  +                     println!("{YELLOW}  {msg}{RESET}");
+  +                     println!("{DIM}  settable keys: {}{RESET}", settable_keys_list());
+  +                 }
+  +                 None => {
+  +                     println!("{DIM}  {key} is not set in config file (using default){RESET}")
+  +                 }
+  +             }
+            }
+  ... (26 more lines)
+  ▶ write src/commands_config_get_tests.rs (51 lines) ✓ (1m 22s)
+ ✓ (2m 11s)
+            None => {
+  -             println!("{DIM}  {key} is not set in config file (using default){RESET}");
+  +             let known: Vec<&str> = crate::config::SETTABLE_KEYS
+  +                 .iter()
+  +                 .map(|(k, _)| *k)
+  +                 .collect();
+  +             // A key that is neither in the file nor settable is most likely a
+  +             // typo: "using default" would claim a real key sits at its default.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt; cargo clippy --all-targ… ✓ (1m 22s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "A key that is neither" -A… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (27 lines) ✓ (876ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy --all-targets -- -D w… ✓ (1m 21s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test orphan_modules 2… ✓ (162ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 104,110p src/main.rs; head … ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 5m 13s (8 ✓)
+
+Follow the existing precedent: declare it in main.rs and drop the #[path] (saves 3 lines in commands_config.rs too).
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (1m 50s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/commands_config.rs /tmp/cc.… ✓ (36.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "using default\|config ge… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 33s (3 ✓)
+
+No docs describe config get output, so there's nothing to update. Committing now, then adding the comment to #982.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --s… (11 lines) ✓ (709ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+yoyo config get modle now says the key isn't a settable config key and suggests model, instead of claiming it's sitting at its default. Build, test, clippy and fmt all pass, and it's committed as cfb7e95a.
+
+Before and after (run from an empty temp dir with HOME pointed there, so no config file was loaded):
+
+| Command | Before | After |
+|---|---|---|
+| config get modle | modle is not set in config file (using default) | modle is not a settable config key, and it is not set in the config file (did you mean model?), followed by the list of settable keys |
+| config get zzzzqqq | not run before the change | same refusal, with no suggestion |
+| config get model | model is not set in config file (using default) | unchanged, byte for byte |
+
+All three still exit 0, as the task scoped. I added a comment to #982 noting that the config get arm now prints a refusal but still exits 0.
+
+What changed:
+• A new function in src/commands_config.rs, config_get_unknown_key_message(key, known), makes the decision. It only runs when the key isn't in the config file, and its list of known keys comes from SETTABLE_KEYS. For the suggestion it reuses the existing commands::closest_match (edit distance up to 2) rather than adding a second one. The output has no glyphs.
+• **Wording:** the message says "not a *settable* config key", not "not a config key". The config file also accepts keys that aren't in `SETTABLE_KEYS` (`base_url, context_window, sub_agent_model`, …), and there's no list of all of them. The stronger wording would wrongly call those real, unset keys invalid. Keys written as `permissions.*` don't need handling: the parser ignores section headers, so config get never sees dotted keys.
+• Tests cover four cases: modle gets a suggestion; zzzzqqq gets none and the words "using default" don't appear; every key in SETTABLE_KEYS returns None, so keys added later are covered automatically; and the output is plain ASCII.
+• Positive control: I made the function always return None (marked NEUTERED), ran it as one command, and restored it. Three tests failed by name and the every-key test stayed green. After restoring, all four passed.
+
+Where I went past or fell short of the task:
+• **Two extra files.** The task said `commands_config.rs` only, but that file sits in the size gate's 50-line overshoot band; it's now 2042 lines against a cap of 2050. So the tests went in a new src/commands_config_get_tests.rs, declared in src/main.rs the same way the existing tools_*_tests files are. A #[path] declaration didn't satisfy the orphan-module gate.
+• **No unit test for the model output.** I didn't add a full-string `assert_eq!` on the "(using default)" line. That line is printed inside `handle_config_get` and nothing returns it as a string. It's covered by the every-key-returns-None test plus the before/after run above.
+• **No doc updates.** Nothing under `docs/src` or `README.md` describes `config get` output.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/2 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/commands_config.rs, src/commands_config_get_tests.rs

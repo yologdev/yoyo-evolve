@@ -1,0 +1,36 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && D=$(mkte… ✓ (272ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.9s (2 ✓)
+
+Verdict: PASS. The fix works against the real docs.rs, not only in the tests. I wrote the verdict to session_plan/eval_task_1.md.
+
+Live check. I ran the built binary from a temp dir, with network access:
+
+| Command | Output | Exit code |
+|---|---|---|
+| yoyo docs zzqq_definitely_not_a_crate_918 | ✗ Crate 'zzqq_definitely_not_a_crate_918' not found on docs.rs (HTTP 404) | 0 |
+| yoyo docs serde NoSuchItemXyz | ✗ Item 'NoSuchItemXyz' not found in crate 'serde' on docs.rs (HTTP 404) | 0 |
+| yoyo docs serde (a real crate) | ✓ serde, then the URL, description and items | 0 |
+
+The binary was current: the (HTTP 404) text exists only in the new code. Exit code 0 on a not-found is expected, because the task left it out of scope on purpose.
+
+What I checked in the diff:
+• **The fix:** whether a crate exists is now decided by the HTTP status. curl reports the status code, it's split off the output with `rsplit_once` rather than a byte index, and a classifier with three outcomes sorts the result:
+  • **Found:** a 2xx response; the old page-text matches still count as not-found.
+  • **NotFound:** 404 or 410.
+  • **Unreachable:** status 0, 5xx or 429. "Could not reach docs.rs" stays a separate outcome from "not found".
+• Tests: they cover every case the task listed. The found page is checked against the full display string, so its output is pinned exactly.
+• **Nothing left dangling:** every new definition (the DocsLookup enum, split_status_trailer, docs_body_for, summary_outcome, item_outcome) is used within this diff.
+• **Docs:** docs/src/usage/commands.md now describes the new behaviour, including that the exit code stays 0.
+• **Product surface:** no config defaults, CLI flags, setup wizard or startup behaviour changed.
+
+Not verified: I didn't re-run the neuter-and-restore positive control from step 3 of the task, so I can't confirm it was done. I relied on the harness for build and tests passing.
+
+Still open: the task asks for a follow-up comment on #982 after landing, saying the docs command now prints a refusal but still exits 0. That isn't part of the diff and still needs doing.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
