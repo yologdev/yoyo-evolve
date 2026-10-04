@@ -6,7 +6,6 @@
 use crate::cli::{is_verbose, AUTO_COMPACT_THRESHOLD};
 use crate::commands::thinking_level_name;
 use crate::commands_config_get::config_get_report;
-pub(crate) use crate::commands_config_get::config_get_unknown_key_message;
 use crate::commands_config_mcp::mcp_list_text;
 use crate::config_paths::{
     demoted_config_file, demoted_write_warning, detect_loaded_config_path, existing_config_paths,

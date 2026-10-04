@@ -2,7 +2,7 @@
 //! Lives in its own file because `commands_config.rs` sits at the module-size
 //! gate's overshoot band.
 
-use crate::commands_config::config_get_unknown_key_message;
+use crate::commands_config_get::config_get_unknown_key_message;
 
 fn known() -> Vec<&'static str> {
     crate::config::SETTABLE_KEYS
