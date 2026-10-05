@@ -87,13 +87,24 @@ fn format_self_written(self_written: usize, total: usize, pct: f64) -> String {
 /// Build a compact version string: `yoyo v0.1.9 (abc1234 2026-04-23) linux-x86_64`
 ///
 /// Uses compile-time env vars `GIT_HASH` and `BUILD_DATE` (set by `build.rs`
-/// or overridden in CI/release builds).
+/// — from `.cargo_vcs_info.json` on a crates.io build, else `git` — or
+/// overridden in CI/release builds).
 pub fn version_line() -> String {
-    let hash = option_env!("GIT_HASH").unwrap_or("dev");
-    let date = option_env!("BUILD_DATE").unwrap_or("dev");
     let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    version_line_with(option_env!("GIT_HASH"), option_env!("BUILD_DATE"), &target)
+}
 
-    format!("yoyo v{VERSION} ({hash} {date}) {target}")
+/// Pure formatter behind [`version_line`]. A missing hash or date is
+/// omitted rather than printed as `dev` (#994): `dev` read as "a development
+/// build" on a published crates.io install. With both present the output is
+/// byte-identical to the pre-#994 format; with neither, the parentheses go.
+pub(crate) fn version_line_with(hash: Option<&str>, date: Option<&str>, target: &str) -> String {
+    let parts: Vec<&str> = [hash, date].into_iter().flatten().collect();
+    if parts.is_empty() {
+        format!("yoyo v{VERSION} {target}")
+    } else {
+        format!("yoyo v{VERSION} ({}) {target}", parts.join(" "))
+    }
 }
 
 pub fn handle_version() {
@@ -2055,6 +2066,37 @@ mod tests {
         );
         assert!(line.contains('('), "should contain '(': {line}");
         assert!(line.contains(')'), "should contain ')': {line}");
+    }
+
+    #[test]
+    fn test_version_line_with_hash_and_date_is_unchanged_format() {
+        // Near-miss guard: every local build has both, and its line must stay
+        // byte-identical to the pre-#994 `(HASH DATE)` format.
+        assert_eq!(
+            version_line_with(Some("40422a76"), Some("2026-10-05"), "linux-x86_64"),
+            format!("yoyo v{VERSION} (40422a76 2026-10-05) linux-x86_64")
+        );
+    }
+
+    #[test]
+    fn test_version_line_with_no_hash_prints_no_dev() {
+        // #994: a build with no hash (neither .cargo_vcs_info.json nor git)
+        // shows the date alone, never `dev`.
+        let line = version_line_with(None, Some("2026-10-05"), "linux-x86_64");
+        assert_eq!(line, format!("yoyo v{VERSION} (2026-10-05) linux-x86_64"));
+        assert!(!line.contains("dev"), "{line}");
+    }
+
+    #[test]
+    fn test_version_line_with_missing_parts_never_prints_dev() {
+        assert_eq!(
+            version_line_with(Some("365cc12"), None, "linux-x86_64"),
+            format!("yoyo v{VERSION} (365cc12) linux-x86_64")
+        );
+        assert_eq!(
+            version_line_with(None, None, "linux-x86_64"),
+            format!("yoyo v{VERSION} linux-x86_64")
+        );
     }
 
     #[test]

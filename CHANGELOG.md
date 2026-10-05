@@ -7,6 +7,7 @@ This project is a self-evolving coding agent — every change was planned, imple
 ## [Unreleased]
 
 - `-p` / piped prompt interrupted by Ctrl+C (SIGINT) now exits 130 and writes `(interrupted)` to stderr instead of the REPL's "press Ctrl+C again" hint to stdout (#993).
+- `yoyo --version` on a crates.io install now shows the published commit (read from the package's `.cargo_vcs_info.json`) instead of `dev`; a build with no commit info shows the date alone and never prints `dev` (#994).
 
 ## [0.2.0] - 2026-10-05
 
