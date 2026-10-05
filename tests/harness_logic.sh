@@ -752,6 +752,42 @@ if require "commit_scope_gate extracted" "$GATE_FN" && require "scope vars extra
         "$(grep -A1 -F 'commit_scope_gate "$PREPUSH_SCOPE" prepush' "$SCRIPT" | tail -1 | cut -c1-17)" "PREPUSH_LEFTOVERS"
 fi
 
+# ── a reverted task's work is saved before the reset (#997) ─────────────────
+# Day 219 (13:11) lost a verified fix to `git reset --hard` after a transient
+# Overloaded. Real git: a task commit, an uncommitted edit and a new untracked
+# file must all land in the saved patch, and that patch must re-apply cleanly
+# on the reset tree. Nothing to save → no file.
+SAVE_FN=$(awk '/^save_reverted_task_diff\(\) \{/,/^\}/' "$SCRIPT")
+save_case() { # $1 = work|none → "<files in patch>|<tree after reset>|<re-apply>|<var set?>"
+    ( set +e; d=$(mktemp -d); cd "$d" || exit 1
+      git init -q; git config user.email t@t; git config user.name t
+      echo a > a.rs; echo b > b.rs; git add -A; git commit -qm base; base=$(git rev-parse HEAD)
+      if [ "$1" = work ]; then
+          echo A2 >> a.rs; git commit -qam "task commit"
+          echo B2 >> b.rs; echo new > c.rs
+      fi
+      SESSION_STAGING="$(mktemp -d)/stage"; eval "$SAVE_FN"
+      save_reverted_task_diff "$base" task1_api_error >/dev/null
+      git reset -q --hard "$base"; git clean -qfd
+      p="$SESSION_STAGING/task1_api_error.patch"
+      files=$(grep '^diff --git' "$p" 2>/dev/null | awk '{print $3}' | sed 's#^a/##' | sort | paste -sd, -)
+      tree=$([ -z "$(git status --porcelain)" ] && echo clean || echo dirty)
+      apply=$([ -s "$p" ] && { git apply --index "$p" 2>/dev/null && grep -q B2 b.rs && [ -f c.rs ] && echo reapplies || echo broken; } || echo none)
+      echo "${files:-}|$tree|$apply|${SAVED_TASK_PATCH:+set}"
+      cd /; rm -rf "$d" "$(dirname "$SESSION_STAGING")" ) 2>/dev/null | tail -1
+}
+if require "save_reverted_task_diff extracted" "$SAVE_FN"; then
+    check "revert save: commit + uncommitted edit + new file saved, reset clean, patch re-applies" \
+        "$(save_case work)" "a.rs,b.rs,c.rs|clean|reapplies|set"
+    check "revert save: a task with no changes saves nothing" "$(save_case none)" "|clean|none|"
+    # Both reset sites save first: the call sits right above each reset.
+    check "revert save: the API-error abort saves before its reset" \
+        "$(grep -A1 -F 'save_reverted_task_diff "$PRE_TASK_SHA" "task${TASK_NUM}_api_error"' "$SCRIPT" | tail -1 | tr -d ' ')" \
+        'if!gitreset--hard"$PRE_TASK_SHA";then'
+    check "revert save: the verification revert saves before its reset" \
+        "$(grep -c -F 'save_reverted_task_diff "$PRE_TASK_SHA" "task${TASK_NUM}_reverted"' "$SCRIPT")" "1"
+fi
+
 # ── main push: retry, and never echo a failure into success ────────────────
 PR_FN=$(awk '/^push_main_with_retry\(\) \{/,/^\}/' "$SCRIPT")
 if require "push_main_with_retry extracted" "$PR_FN"; then

@@ -708,6 +708,31 @@ commit_scope_gate() { # $1 = allowed-path ERE, $2 = label for messages/files
 WRAPUP_SCOPE='^(journals|memory|session_plan|\.yoyo)/'
 PREPUSH_SCOPE='^\.yoyo/'
 
+# ── Keep a reverted task's work (#997) ──
+# Both task-revert paths end in `git reset --hard "$PRE_TASK_SHA"`, which
+# deletes committed AND uncommitted work with no trace. Day 219 (13:11) lost a
+# verified --allow-dir security fix that way: tests red on HEAD, green with the
+# fix, then a transient Overloaded during the final checks. Before any reset,
+# save the whole task diff (its commits plus whatever is still uncommitted)
+# against the pre-task commit to $SESSION_STAGING, which is gitignored and
+# reaches the audit-log branch with the rest of the session. Sets
+# SAVED_TASK_PATCH to the saved file ("" when there was nothing to save).
+# Fail-soft: saving must never stop the revert it precedes.
+save_reverted_task_diff() { # $1 = pre-task sha, $2 = file label
+    local base="$1" out="${SESSION_STAGING:-.yoyo/session_staging}/$2.patch" files
+    SAVED_TASK_PATCH=""
+    mkdir -p "$(dirname "$out")" 2>/dev/null || true
+    git add -A >/dev/null 2>&1 || true
+    if git diff --cached --binary "$base" > "$out" 2>/dev/null && [ -s "$out" ]; then
+        files=$(grep -c '^diff --git' "$out" 2>/dev/null || echo "?")
+        SAVED_TASK_PATCH="$out"
+        echo "    Saved the task diff ($files file(s)) to $out before reverting (audit-log branch)."
+    else
+        rm -f "$out" 2>/dev/null || true
+    fi
+    return 0
+}
+
 # ── Ensure fresh token (retries start with a stale token from job start) ──
 refresh_gh_token
 
@@ -2230,6 +2255,7 @@ TEOF
         if agent_log_has_api_error "$TASK_LOG"; then
             echo "    API error in Task $TASK_NUM. Reverting and aborting implementation loop."
             rm -f "$TASK_LOG"
+            save_reverted_task_diff "$PRE_TASK_SHA" "task${TASK_NUM}_api_error"
             if ! git reset --hard "$PRE_TASK_SHA"; then
                 echo "    FATAL: git reset --hard failed after API error."
             fi
@@ -3106,6 +3132,10 @@ $(cat "session_plan/eval_task_${TASK_NUM}.md" 2>/dev/null || echo 'no eval file 
         GASP_TASK_KIND="$task_kind" gasp_task_result "$TASK_NUM" "$task_title" rejected "$PRE_TASK_SHA" \
             "$(git rev-parse HEAD 2>/dev/null || echo unknown)" "$REVERT_REASON"
         echo "    Reverting Task $TASK_NUM (resetting to $PRE_TASK_SHA)"
+        save_reverted_task_diff "$PRE_TASK_SHA" "task${TASK_NUM}_reverted"
+        if [ -n "$SAVED_TASK_PATCH" ]; then
+            REVERT_REASON="$REVERT_REASON The reverted diff is preserved as $(basename "$SAVED_TASK_PATCH") in this session's directory on the audit-log branch (sessions/day-${DAY}-*/), so a retry can start from it."
+        fi
         if ! git reset --hard "$PRE_TASK_SHA"; then
             echo "    FATAL: git reset --hard failed. Cannot guarantee clean state."
             TASK_FAILURES=$((TASK_FAILURES + 1))
