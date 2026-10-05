@@ -2366,7 +2366,7 @@ mod tests {
     /// discipline `test_estimate_cost_sonnet_5_preset` uses against the preset
     /// table, so the test cannot pass by agreeing with a literal that drifted
     /// alongside it.
-    /// <!-- yoagent-version-claim: 0.24.0 -->
+    /// <!-- yoagent-version-claim: 0.24.1 -->
     #[test]
     fn cache_hit_rate_denominator_is_input_plus_read_plus_write() {
         let usage = yoagent::Usage {
@@ -2409,7 +2409,7 @@ mod tests {
     /// *saturates to 0* in Rust rather than panicking, so if either half were
     /// widened the display would render a confident `0% hit rate` instead of
     /// failing. Pinning the upstream half means only one guard has to hold.
-    /// <!-- yoagent-version-claim: 0.24.0 -->
+    /// <!-- yoagent-version-claim: 0.24.1 -->
     #[test]
     fn cache_hit_rate_zero_denominator_is_zero_not_nan() {
         let rate = yoagent::Usage::default().cache_hit_rate();

@@ -1859,7 +1859,7 @@ pub(crate) fn build_explore_agent_tool(
 /// dispatch — the schema is still `{"task"}` only, and the #881 conclusion stands. Citations
 /// above were re-pointed to 0.24.0 line numbers.
 ///
-/// <!-- yoagent-version-claim: 0.24.0 -->
+/// <!-- yoagent-version-claim: 0.24.1 -->
 /// What distinguishes yoyo's two dispatch tools from each other: the name the
 /// parent model sees, and the sentence it is given about the tool.
 ///
