@@ -1,0 +1,212 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (11ms)
+  ▶ read src/config.rs:215..385 ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "resolve_path\|fn director… ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 385,460p src/config.rs; sed… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "config.rs" tests/module_s… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,40p tests/module_size.rs;… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "unhittable_tests\|config… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1284,1292p src/commands_ris… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rln "#\[path" src tests | he… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "path\b\|#\[path\|fn decla… ✓ (4ms)
+  ▶ write src/config_resolve.rs (197 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 205,214p src/config.rs; gre… ✓ (1m 30s)
+ ✓ (1m 30s)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 2m 58s (12 ✓)
+
+Wire the module in (before resolve_path), then run the red baseline.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (2 → 5 lines)
+  + #[path = "config_resolve.rs"]
+  + mod config_resolve;
+  + 
+    /// Resolve a path to an absolute, normalized form.
+    /// Uses `canonicalize` for existing paths
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo config_resol… ✓ (2m 13s)
+  + #[path = "config_resolve.rs"]
+  + mod config_resolve;
+  + 
+    /// Resolve a path to an absolute, normalized form.
+    /// Uses `canonicalize` for existing paths
+ ✓ (2m 13s)
+  2 tools completed in 2m 13s (2 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ edit src/config_resolve.rs (1 → 78 lines)
+    //! resolver and its symlink tables do not grow that grandfathered module.
+  + 
+  + use std::ffi::OsString;
+  + use std::path::{Component, Path, PathBuf};
+  + 
+  + /// Link hops followed before a path is declared unresolvable — the same
+  + /// order as Linux's SYMLOOP_MAX (40). A loop exceeds it by construction.
+  + pub(super) const MAX_LINK_HOPS: usize = 40;
+  + 
+  + /// Resolve `absolute` the way the kernel will, component by component.
+  + ///
+  + /// Each existing component that is a symlink is replaced by its target
+  + /// (relative targets resolve against the link's parent), and `..` is applied
+  + /// only to the already-resolved physical prefix — never lexically across a
+  + /// link, which is how `R/link/../x` escaped (#996). Components that do not
+  + /// exist yet are appended verbatim, so a dangling link resolves to the path
+  + /// its target names, and that path is what the fence judges.
+  + ///
+  + /// Returns `None` when the path cannot be resolved (more than
+  + /// [`MAX_LINK_HOPS`] hops, i.e. a loop, or an unreadable link). Callers must
+  ... (58 more lines)
+ ✓ (17.4s)
+    //! resolver and its symlink tables do not grow that grandfathered module.
+  + 
+  + use std::ffi::OsString;
+  + use std::path::{Component, Path, PathBuf};
+  + 
+  + /// Link hops followed before a path is declared unresolvable — the same
+  + /// order as Linux's SYMLOOP_MAX (40). A loop exceeds it by construction.
+  + pub(super) const MAX_LINK_HOPS: usize = 40;
+  ... (13 more lines)
+  ▶ edit src/config_resolve.rs (9 → 3 lines)
+  -     }
+  -     if path.has_root() {
+  -         // RootDir without a Prefix (unix): start from "/" alone.
+  -         if !matches!(path.components().next(), Some(Component::Prefix(_))) {
+  -             *resolved = PathBuf::from(Component::RootDir.as_os_str());
+  -         }
+        }
+        pending.extend(rest.into_iter().rev());
+    }
+  ▶ edit src/config_resolve.rs (1 → 1 lines)
+  -             Component::RootDir => resolved.push(Component::RootDir.as_os_str()),
+  +             Component::RootDir => resolved.push(Component::RootDir.as_os_str()), // absolute push replaces
+ ✓ (17.3s)
+  -     }
+  -     if path.has_root() {
+  -         // RootDir without a Prefix (unix): start from "/" alone.
+  -         if !matches!(path.components().next(), Some(Component::Prefix(_))) {
+  -             *resolved = PathBuf::from(Component::RootDir.as_os_str());
+  -         }
+        }
+        pending.extend(rest.into_iter().rev());
+    }
+ ✓ (34.5s)
+  -             Component::RootDir => resolved.push(Component::RootDir.as_os_str()),
+  +             Component::RootDir => resolved.push(Component::RootDir.as_os_str()), // absolute push replaces
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 1s (3 ✓)
+
+Now wire it into config.rs: replace the fallback body of resolve_path and make check_path refuse an unresolvable candidate.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (73 lines) ✓ (26.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 237 config:: tests pass, including the 5 that were red. WIP checkpoint now, before the long gate:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add src/config.rs src/config_r… ✓ (14ms)
+
+Fix the now-stale check_path doc comment, then the full gate.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (4 → 6 lines)
+        /// - Symlinks and `..` components are resolved via `std::fs::canonicalize`
+  -     ///   when the path exists; for non-existent paths, the nearest existing
+  -     ///   ancestor is canonicalized and the remainder re-appended, so symlinked
+  -     ///   spellings can't bypass deny checks (issue #600).
+  +     ///   when the path exists; otherwise the path is walked component by
+  +     ///   component, following each existing symlink (dangling ones resolve to
+  +     ///   their target) and applying `..` only to the physical prefix, so no
+  +     ///   symlinked spelling can bypass deny (#600) or escape allow (#996).
+  +     /// - A path that cannot be resolved (symlink loop) is refused.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo clippy --all-ta… ✓ (3m 27s)
+        /// - Symlinks and `..` components are resolved via `std::fs::canonicalize`
+  -     ///   when the path exists; for non-existent paths, the nearest existing
+  -     ///   ancestor is canonicalized and the remainder re-appended, so symlinked
+  -     ///   spellings can't bypass deny checks (issue #600).
+  +     ///   when the path exists; otherwise the path is walked component by
+  +     ///   component, following each existing symlink (dangling ones resolve to
+  +     ///   their target) and applying `..` only to the physical prefix, so no
+  +     ///   symlinked spelling can bypass deny (#600) or escape allow (#996).
+  +     /// - A path that cannot be resolved (symlink loop) is refused.
+ ✓ (3m 27s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 29s (2 ✓)
+
+Full suite: no failures. Check what the size gate said about config.rs (it shrank 4650 → 4640):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test module_size 2>&1… ✓ (172ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (433ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.2s (2 ✓)
+
+Positive control, one atomic mutate → run → restore command (turns off link-following in the walker, so it reverts to lexical behaviour):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/config_resolve.rs /tmp/cr.b… ✓ (52.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control went red on the escape tests by name, and after the restore it was back to green (10/10, no diff left). Now the ARCHITECTURE.md entry and the docs check:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^- \`config.rs\`\|^- \`co… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Docs have no symlink claims to fix. Appending a dated sub-entry right after the config.rs bullet (line 396), plus a short entry for the new file:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 397p AR… (21 lines) ✓ (37ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (2m 39s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate is green: fmt clean, clippy clean, and cargo test printed no failures. No sabotage markers are left in the tree. Committing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && git commit -q -m "Da… ✓ (50ms)
+
+I've redone the lost fix: all three --allow-dir symlink escapes are now refused, and the full gate passes. It's committed as 4b3fb405, on top of the WIP checkpoint d9dc4ae9. I made that checkpoint as soon as the config:: tests went green and before the long gate, so a provider failure couldn't erase the work a second time.
+
+The bug: when canonicalize couldn't resolve a path, resolve_path fell back to the nearest existing parent directory and handled .. as plain text. That let three paths through:
+1. **Dangling link:** R/link -> O/does-not-exist was judged as R/link, but writing to it creates a file in O.
+2. **Link then `..:** R/link/../x, where the ..` cancelled the link on paper, but the OS follows the link first and lands in O.
+3. **Link loop:** R/a <-> R/b was judged as R/a.
+
+The fix: a new resolver, resolve_physical, now does the fallback. It walks the path one component at a time the way the OS does:
+• each existing symlink is replaced by its target, and a dangling link is judged by where it points;
+• .. only steps back through the part of the path that has already been resolved;
+• it gives up after 40 link hops.
+
+check_path refuses any path that can't be resolved. Paths that canonicalize already handled get the same verdict as before. The same resolver also serves the deny list, and there the change only makes it stricter.
+
+Tests:
+• **Before the fix:** five tests failed by name on unchanged code: `escape_dangling_link_out_of_root_is_refused`, `escape_link_then_parent_dir_is_refused`, `escape_link_loop_is_refused, escape_self_loop_is_refused and deny_arm_judges_the_link_target_too`.
+• **Still allowed:** cases (a) to (d) from the task, plus a relative in-root link, plus a dangling link whose target is inside R. All passed before the fix and still pass.
+• **Positive control:** I turned off link-following and reran the tests, then restored the file, all in one command. The escape tests failed again, and the restore left no diff and 10 of 10 passing.
+
+Things that differ from the task file:
+• **New file:** `src/config.rs` was already at its size limit (4650 lines), so the resolver and its tests went into `src/config_resolve.rs`, pulled in from `config.rs. config.rs shrank to 4640 lines, and I updated its entry in tests/module_size.rs` to match.
+• **Wider match for allow and deny entries:** a configured entry that is a dangling link now resolves to its target. That could newly allow paths at the target that were refused before. I judged this acceptable because the user named that link. It isn't covered by a test, and I didn't record it in ARCHITECTURE.md either.
+• **ARCHITECTURE.md:** the new bullet states the guarantee as a rule: if the filesystem doesn't change between the check and the use, no path that resolves outside every allowed directory passes check_path. It also says this doesn't protect against a link being created or changed after the check.
+• Docs: I didn't change any. A grep of the two pages for "symlink" found nothing.
+
+#996 is still open, as the task asked; the yoagent bump is Task 2.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/2 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/config_resolve.rs, src/config.rs
