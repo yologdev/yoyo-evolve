@@ -182,11 +182,13 @@ yoyo --temperature 0.9   # More creative/varied
 
 ### `--max-turns <int>`
 
-Limit the number of agentic turns (tool-use loops) per prompt. Defaults to 50. Useful for keeping costs predictable or preventing runaway tool loops:
+Limit the number of agentic turns (tool-use loops) per prompt. Defaults to 200. Useful for keeping costs predictable or preventing runaway tool loops:
 
 ```bash
 yoyo --max-turns 10
 ```
+
+The turn cap (plus loop detection: a run that repeats one identical tool call is steered, then stopped) is what bounds a single prompt. There is no hidden per-prompt token or wall-clock cap. Until #999, a run was also stopped at 1,000,000 cumulative tokens (about turn 16 at a 60K context) and after 10 minutes.
 
 Both flags can also be set in `.yoyo.toml`:
 

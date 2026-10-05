@@ -1175,6 +1175,40 @@ pub(crate) fn anthropic_output_maximum(model: &str) -> Option<u32> {
     }
 }
 
+/// Execution limits for the main (top-level) agent, applied per run — one
+/// user request with all its tool turns; each `prompt` starts again at zero.
+///
+/// **Decision (#999): a run is bounded by turns and loop detection, not by a
+/// token count or a clock.**
+///
+/// - `max_turns`: the user's `--max-turns`, else 200. A unit the user
+///   understands and can set.
+/// - `max_total_tokens`: **unbounded** (`usize::MAX`). This used to be
+///   `1_000_000`, under a comment calling it "a generous default". It was not:
+///   yoagent adds each turn's *whole* prompt (cache included) to the count, so
+///   a run's total is roughly turns × context, and at a ~60K context the cap
+///   bound around turn 16, long before the turn cap. Observed live 2026-10-05:
+///   `[Agent stopped: Max tokens reached (1061497/1000000)]`. It measured
+///   re-sent context, not cost, so it was neither a cost bound nor a work bound.
+/// - `max_duration`: **unbounded** (`Duration::MAX`), set explicitly. Before,
+///   this was inherited from `ExecutionLimits::default()` — 600 s in yoagent
+///   0.24.2 — so every request was silently ended after 10 minutes of wall
+///   clock, a number nobody in yoyo chose. yoagent 0.24.2 only *compares*
+///   against it (`elapsed >= max_duration`), so `MAX` cannot overflow.
+/// - `max_consecutive_identical_tool_calls`: inherited `Some(3)`, kept
+///   deliberately (#856; see the comment at the build site).
+///
+/// Opt-in bounds (a duration or dollar budget flag) are a separate decision.
+/// Sub-agents are NOT covered here: their limits are hard-coded inside
+/// yoagent 0.24.2's `SubAgentTool` (1M tokens, 300 s); yoagent#238 makes them
+/// settable and ships in 0.24.3, which yoyo does not use yet.
+pub(crate) fn main_agent_execution_limits(max_turns: Option<usize>) -> ExecutionLimits {
+    ExecutionLimits::default()
+        .with_max_turns(max_turns.unwrap_or(200))
+        .with_max_total_tokens(usize::MAX)
+        .with_max_duration(std::time::Duration::MAX)
+}
+
 impl AgentConfig {
     /// Apply common configuration to an agent (system prompt, model, API key,
     /// thinking level, skills, tools, and optional limits).
@@ -1391,7 +1425,7 @@ impl AgentConfig {
         // second-to-last message.
         agent = agent.with_cache_config(CacheConfig::new());
 
-        // Always set execution limits — use user's --max-turns or a generous default.
+        // Always set execution limits — the user's --max-turns, else 200.
         //
         // #856: this spread also inherits yoagent 0.18's
         // `max_consecutive_identical_tool_calls: Some(3)`. That value is KEPT
@@ -1409,11 +1443,10 @@ impl AgentConfig {
         // signatures always reset the streak, so an ALTERNATING loop
         // (`[a, b, a, b, …]`) is NOT caught. Both escalations surface through
         // `prompt::announce_loop_detected`.
-        agent = agent.with_execution_limits(
-            ExecutionLimits::default()
-                .with_max_turns(self.max_turns.unwrap_or(200))
-                .with_max_total_tokens(1_000_000),
-        );
+        //
+        // #999: the token and wall-clock caps are unbounded on purpose; see
+        // `main_agent_execution_limits` for the decision and its reason.
+        agent = agent.with_execution_limits(main_agent_execution_limits(self.max_turns));
 
         if let Some(max) = self.max_tokens {
             // #943: compare the user's configured value against the resolved

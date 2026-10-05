@@ -36,6 +36,8 @@
 //!   /retry          Re-send the last user input
 
 mod agent_builder;
+#[cfg(test)]
+mod agent_limits_tests;
 mod auto_check_scope;
 mod banner;
 mod cd_config_note;
