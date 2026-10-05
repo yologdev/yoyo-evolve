@@ -2927,6 +2927,40 @@ fn git_diff_in_a_clean_repository_still_exits_zero() {
 }
 
 #[test]
+fn git_blame_of_a_committed_file_still_exits_zero() {
+    // Near miss for #982 slice 2, blame's twin of the diff test above: the
+    // only in-repo blame pin was a usage error (`/blame`, no file), so a real
+    // successful blame had no exit-0 guard. Git is confined to the temp dir.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let git = |args: &[&str]| {
+        let ok = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c"])
+            .args(["commit.gpgsign=false"])
+            .args(args)
+            .current_dir(dir.path())
+            .env("GIT_CEILING_DIRECTORIES", dir.path().parent().unwrap())
+            .status()
+            .expect("git");
+        assert!(ok.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(dir.path().join("f.txt"), "blame_marker_982\n").unwrap();
+    git(&["add", "f.txt"]);
+    git(&["commit", "-q", "-m", "init"]);
+    let out = yoyo_in_dir(dir.path(), &["blame", "f.txt"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stdout={stdout} stderr={stderr}"
+    );
+    // Anti-vacuous: the blame really ran and printed the committed line.
+    assert!(stdout.contains("blame_marker_982"), "stdout={stdout}");
+    assert!(!stdout.contains("Not in a git repository"));
+}
+
+#[test]
 fn changelog_evolution_tree_exit_one_outside_a_git_repository() {
     // #982 slice: `yoyo changelog`, `yoyo evolution` and `yoyo tree` printed
     // a not-a-repo message and exited 0, so `yoyo changelog > notes.md &&
