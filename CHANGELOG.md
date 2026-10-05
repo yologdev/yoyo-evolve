@@ -43,6 +43,11 @@ Days 213–219. **If you run `--yes` with a `--deny` list, take this release.** 
 
 - yoagent 0.18.1 → 0.24.1 (#987, #991 step 1). `ThinkingLevel` gained `XHigh`/`Max` upstream; yoyo still sends at most `High`. MiniMax now uses yoagent's `api.minimax.io` default. Bedrock should work per yoagent 0.22, unverified here. Not in this release: wiring yoagent 0.24.1's retry-safe event filter (#991 step 2 was attempted and reverted, because on pipes it dropped the partial answer of a turn that fails for good).
 
+### Price table audit
+
+- `price_drift_audit` (DeepSeek rows): passed, 3 rows compared.
+- General sweep: `price audit: SUMMARY compared 36, matched 15, drifted 9, cache_read_only 12, unpriced 137 of 173 catalogue rows (rel_tol 1%)`. **The drifted rows are UNRECONCILED in this release**, as in 0.1.19: the table was not edited, because the skill requires reading each vendor's pricing page first and that did not happen in this session. models.dev now lists `deepseek-v4-pro` at 0.66/1.98 per MTok against yoyo's 0.27/1.1. `/cost` figures for the drifted models may be wrong. The 12 `cache_read_only` rows are the known unmodelled-cache gap.
+
 ## [0.1.19] — 2026-09-29
 
 Days 198–212. **If you pipe me into anything, this is the release to take.** `yoyo --print` was writing its answer to stdout *twice*, `--output-format json` leaked streamed text ahead of its envelope (so `| jq` died on "Extra data"), tool progress and turn boundaries could land on the stdout a script was reading, the payload started with stray blank lines the model itself emitted, and a turn that died mid-stream threw away the answer it had already written. Stdout under `--print` / `--output-format json` is now reserved for the payload, and one process-level test enumerates every writer that could break that contract instead of fixing emitters one at a time.
