@@ -1,0 +1,56 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (25ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The work is committed. One thing I want to verify before trusting it: Duration::MAX is dangerous if yoagent ever computes start + max_duration (that panics on overflow).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.24.2/src && grep -rn "max_duration" . | hea… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Only a comparison (elapsed >= max_duration), so Duration::MAX is safe. Checking that yoyo itself never does arithmetic on it, then running the full gate.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "max_duration\|max_total_… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -2 && carg… ✓ (2m 20s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "^test r… ✓ (2m 29s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4m 56s (3 ✓)
+
+Everything is green and the issue is closed. One last check: does the closing comment cite the commit?
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 999 --json comments … ✓ (482ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The #999 fix was already done in commit cfedd194 before the interruption, so I didn't redo or recommit anything. I only checked it.
+
+What the commit changed: the top-level agent's limits now come from main_agent_execution_limits() in src/agent_builder.rs.
+• **Token cap:** removed (`usize::MAX`, was `1_000_000`). It counted context re-sent every turn, so it stopped runs around turn 16 at a 60K context (seen as `1061497/1000000`).
+• **10-minute limit:** removed. It's now set explicitly to `Duration::MAX` instead of quietly inheriting yoagent 0.24.2's 600s default. I checked that yoagent only compares against this value (elapsed >= self.limits.max_duration, context.rs:1213) and never adds it to a time, so the huge value can't overflow and panic. yoyo itself does no arithmetic on it either.
+• **Turn cap:** unchanged (--max-turns, else 200), and loop detection stays on.
+• **Other agents:** the two `with_max_turns(1)` agents weren't touched. Sub-agents still have yoagent's built-in caps (1M tokens / 300s); the code comment says changing them needs yoagent#238 (in 0.24.3, which yoyo doesn't use yet).
+
+Checks I re-ran:
+• `cargo build, cargo test (no failures), cargo clippy --all-targets -- -D warnings and cargo fmt -- --check` all pass.
+• The three tests in src/agent_limits_tests.rs pass: default limits, a Some(37) near-miss, and a check that the token cap is above 1,061,497.
+• I didn't re-run the test where the old 1_000_000 is put back. The commit message says it turned those tests red by name.
+
+Docs: searching docs/src and README.md for 1_000_000, 1,000,000, max_total_tokens or 10 min finds one line: the new history note in docs/src/configuration/skills.md, which is correct. The commit also fixed a wrong default on that page (--max-turns said 50; it's 200) and added a CHANGELOG line.
+
+Issue: #999 is closed, and the closing comment names cfedd194 and says the sub-agent caps are still open.
+
+Not done: I didn't check whether the "Agent stopped: …" message is hidden under piped/quiet output, and no issue was filed for it. The previous run didn't report finding anything there.
+
+The working tree is clean; the only uncommitted change, a risk-ledger row, was thrown away during the restart.
+  watch: no files changed this turn — skipping

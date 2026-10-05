@@ -1,0 +1,6 @@
+Verdict: PASS
+Reason: Both arms already exited 1 outside a repo before this task. I reproduced that myself: `yoyo diff` gave exit=1 and `yoyo blame src/x.rs` gave exit=1 from a fresh mktemp -d, and dispatch_sub.rs already sends both through exit_if_nonzero(handle_*_status). So the task's own "probed, nothing to fix" branch applies, and the commit records that honestly while adding the one missing pin: a guard that a successful in-repo blame still exits 0.
+Checked: intent_alignment: PASS: I ran the real binary outside a repo for both commands and both exit 1. I read dispatch_sub.rs at lines 348-369, where diff and blame use the status-returning handle_diff_status and handle_blame_status. The commit message gives both readings, cites the earlier fix 0d765e7a, and names #982's remaining residue.
+Checked: forgotten_touchpoints: PASS: The diff only adds one integration test function, which the test harness picks up. There are no new fns, variables or enum variants that need consumers.
+Checked: doc_sync: N/A: No behavior changed. The diff is test-only because the exit-code fix had already landed on Day 217.
+Checked: product_surface: N/A: Only tests/integration.rs is touched. No config defaults, CLI flags, wizard or startup behavior changed.

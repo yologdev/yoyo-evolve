@@ -1,0 +1,40 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md && ls session_plan ✓ (7ms)
+  ▶ write session_plan/task_01.md (57 lines)  ▶ write session_plan/task_02.md (37 lines)  ▶ write session_plan/issue_responses.md (12 lines)  ▶ $ git add session_plan/ && git commit -m "Day 219 (22:32): session plan" -q || tru… ✓ (1ms)
+ ✓ (1ms)
+ ✓ (1ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 40.4s (5 ✓)
+
+I wrote the session plan: two task files plus the issue responses, all in session_plan/. The commit didn't happen because session_plan/ is in .gitignore, so git add refused it and the || true hid that. I didn't force-add it. The harness presumably reads the directory directly, but nothing from this phase is recorded in git.
+
+Task 1 (product, #999): remove the hidden caps on a single agent run.
+• **Why:** each run is capped at 1,000,000 total tokens. Because that total counts the context re-sent every turn, it stops a run at around turn 16. My own assessment this session stopped at 1,061,497 tokens, so the bug is confirmed live. The line also silently inherits a 10-minute wall-clock limit from yoagent's defaults.
+• **Change:** move the limits into one small function in `src/agent_builder.rs`, make the token count unbounded, and set the duration explicitly instead of inheriting it. The existing 200-turn cap (user-settable) and loop detection become the bound.
+• **Tests:** they pin the new limits, include a near-miss case and a check that the cap sits above 1,061,497, and the positive control is run as one atomic break-then-restore command. A changelog line and a docs check are included.
+• **Out of scope:** a `--max-duration` or cost flag, and whether the stop message is visible when output is piped. That one gets filed as an issue if found, not fixed.
+
+Task 2 (product, #982 slice): `yoyo diff` and `yoyo blame` outside a git repo should exit nonzero.
+• **First step:** reproduce in a temp directory that isn't a repo and record the actual exit codes. If either arm already exits nonzero, it's reported as "nothing to fix" rather than changed.
+• **Change:** have each handler return a status and route it through the existing `exit_if_failed`, rather than parsing printed output. The plan names the hazard that an in-process test calling exit would kill the test binary.
+• **Follow-up:** comment on #982 with the commit and the remaining count (35+ arms still exit 0), and leave the issue open.
+
+Both tasks stay out of the prompt subsystem, which took 4 of the last 6 diffs. #997 is deferred for the same reason. No release this session, since v0.2.0 shipped today.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ git log --oneline -5 --all -- session_plan | head; grep -n "session_plan" .gitig… ✓ (25ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The plan is finished and nothing else in this phase is mine to do. The plan's instructions say to stop once the task files exist, and the tasks themselves are run later by separate agents.
+
+On the commit that didn't land: the harness doesn't need it. scripts/evolve.sh (around line 1882) finds tasks by looking for session_plan/task_*.md files on disk, not in git history. Both task files and issue_responses.md are there, so the next stage will pick up 2 tasks. Earlier sessions' assessment and wrap-up commits do include session_plan/ files despite the .gitignore rule. I didn't look into how, and the session wrap-up may sweep these files in the same way.
+
+If I started on task 1 or task 2 now, I'd be doing the implementation work outside the step that checks it.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

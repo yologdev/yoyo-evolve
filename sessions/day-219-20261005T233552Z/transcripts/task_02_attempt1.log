@@ -1,0 +1,116 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;… ✓ (17ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; sed -n 75,110p src/dispatch_sub.r… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.4s (2 ✓)
+
+Diff and blame already route through *_status functions. Let me check when that landed and probe the actual behavior.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; git log --oneline -8; git log -S'… ✓ (329ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; git show --stat 98144e37 | head -… ✓ (97ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.6s (2 ✓)
+
+The status cores already exist, oddly inside a commit titled for a different task. Step 1: probe the real binary.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; git show --stat --format= 98144e3… ✓ (248ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; grep -rn "handle_diff_status\|han… ✓ (15ms)
+  ▶ read src/dispatch_sub.rs:1470..1550  ▶ read src/commands_git.rs:245..325  ▶ read src/commands_git_review.rs:485..555 ✓ (1ms)
+ ✓ (2ms)
+ ✓ (2ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; sed -n 1,60p tests/common/mod.rs;… ✓ (7ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; sed -n 1,40p tests/integration.rs… ✓ (8ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; gh issue view 982 --json state,ti… ✓ (590ms)
+  ▶ read tests/integration.rs:2880..2930 ✓ (1ms)
+  ▶ edit tests/integration.rs (4 → 38 lines)
+        assert!(!stderr.contains("not in a git repository"));
+  + }
+  + 
+  + #[test]
+  + fn git_blame_of_a_committed_file_still_exits_zero() {
+  +     // Near miss for #982 slice 2, blame's twin of the diff test above: the
+  +     // only in-repo blame pin was a usage error (`/blame`, no file), so a real
+  +     // successful blame had no exit-0 guard. Git is confined to the temp dir.
+  +     let dir = tempfile::tempdir().expect("tempdir");
+  +     let git = |args: &[&str]| {
+  +         let ok = Command::new("git")
+  +             .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c"])
+  +             .args(["commit.gpgsign=false"])
+  +             .args(args)
+  +             .current_dir(dir.path())
+  +             .env("GIT_CEILING_DIRECTORIES", dir.path().parent().unwrap())
+  +             .status()
+  +             .expect("git");
+  +         assert!(ok.success(), "git {args:?}");
+  +     };
+  ... (18 more lines)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo test --test integration git… ✓ (2m 21s)
+        assert!(!stderr.contains("not in a git repository"));
+  + }
+  + 
+  + #[test]
+  + fn git_blame_of_a_committed_file_still_exits_zero() {
+  +     // Near miss for #982 slice 2, blame's twin of the diff test above: the
+  +     // only in-repo blame pin was a usage error (`/blame`, no file), so a real
+  +     // successful blame had no exit-0 guard. Git is confined to the temp dir.
+  ... (13 more lines)
+ ✗ (2m 21s)
+    │ Command timed out after 120s
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo test --test integration git… ✓ (193ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; F=src/commands_git_review.rs; cp … ✓ (10.0s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; F=src/commands_git_review.rs; cp … ✓ (10.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  14 tools completed in 3m 33s (13 ✓, 1 ✗)
+
+Both controls went red by name, and src/ is restored with no diff. Now the full gate:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo fmt && cargo build 2>&1 | t… ✓ (3m 17s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo test 2>&1 | grep -E "test r… ✓ (4m 2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7m 23s (2 ✓)
+
+All green: build, clippy, fmt, and no failing test-result line anywhere. Committing with the probe readings in the message.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; git add -A &&… (30 lines) ✓ (15ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; gh issue comm… (17 lines) ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.8s (2 ✓)
+
+There was nothing to fix: yoyo diff and yoyo blame already exit 1 outside a git repo. The fix shipped on Day 217 as #982 slice 2 (0d765e7a), and #982 already has a comment saying so. Tonight's plan was built from the out-of-date census in the issue body.
+
+What I ran: the real binary from a fresh temp directory that isn't a git repo, at cfedd194.
+• `yoyo diff` prints "error: not in a git repository" and exits 1.
+• `yoyo blame src/x.rs` prints "✗ Not in a git repository" and exits 1.
+
+What I added (`75acd8d4`): one test in tests/integration.rs. Diff's success path inside a repo already had an exit-0 test, but blame's only had a usage-error test. The new test, git_blame_of_a_committed_file_still_exits_zero, runs the real binary in a temp repo against a committed file and checks for exit 0 and the printed line.
+
+Checks:
+• I broke `handle_blame_status` twice, one change at a time, and restored it after each. Making the not-a-repo branch return 0 failed the existing outside-a-repo test. Making the success branch return 1 failed the new test.
+• `src/` is back exactly as it was, with no NEUTERED marker left.
+• Build, the full test suite, clippy with -D warnings, and fmt --check all pass.
+
+#982: I posted the comment (#issuecomment-6005330469) and gh issue view 982 shows it landed. The issue stays open. The rest of the class still isn't done:
+• def/`outline` "not found" still exit 0.
+• Whether find/grep should exit 1 when nothing matches is still undecided.
+• Most other subcommands haven't been probed, so their status is unknown, not known to be broken.
+
+The "40 sites" count in the issue body counts subcommands that exist, not ones that are broken. The 2026-10-04 comment on #982 already corrects it.
+
+No docs changed, because behavior didn't.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

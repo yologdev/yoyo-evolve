@@ -1,0 +1,306 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "yoagent" Cargo.toml; Y=$(… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (22ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 5.6s (3 ✓)
+
+Output is being elided; let me use a file dump.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (10ms)
+  ▶ read /tmp/g.txt ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (23ms)
+  ▶ read src/agent_builder.rs:1393..1417 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR<1412 && /^(pub(\(crate\))?… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "#238\|yoagent#238\|yoage… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 20 gh issue view 238 -R yo… ✓ (890ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 20 gh issue view 999 --jso… ✓ (1.7s)
+  ▶ edit src/agent_builder.rs (5 → 4 lines)
+  -         agent = agent.with_execution_limits(
+  -             ExecutionLimits::default()
+  -                 .with_max_turns(self.max_turns.unwrap_or(200))
+  -                 .with_max_total_tokens(1_000_000),
+  -         );
+  +         //
+  +         // #999: the token and wall-clock caps are now unbounded on purpose; see
+  +         // `main_agent_execution_limits` for the decision and its reason.
+  +         agent = agent.with_execution_limits(main_agent_execution_limits(self.max_turns));
+  ▶ edit src/agent_builder.rs (2 → 2 lines)
+  -         // Always set execution limits — use user's --max-turns or a generous default.
+  +         // Always set execution limits — use user's --max-turns or 200.
+            //
+  ▶ edit src/agent_builder.rs (6 → 40 lines)
+        } else {
+            None
+        }
+  + }
+  + 
+  + /// Execution limits for the main (top-level) agent, applied per run — one
+  + /// user request with all its tool turns; each `prompt` starts again at zero.
+  + ///
+  + /// **Decision (#999): a run is bounded by turns and loop detection, not by a
+  + /// token count or a clock.**
+  + ///
+  + /// - `max_turns`: the user's `--max-turns`, else 200. A unit the user
+  + ///   understands and can set.
+  + /// - `max_total_tokens`: **unbounded** (`usize::MAX`). This used to be
+  + ///   `1_000_000`, under a comment calling it "a generous default". It was not:
+  + ///   yoagent adds each turn's *whole* prompt (cache included) to the count, so
+  + ///   a run's total is roughly turns × context, and at a ~60K context the cap
+  + ///   bound around turn 16, long before the turn cap. Observed live 2026-10-05:
+  + ///   `[Agent stopped: Max tokens reached (1061497/1000000)]`. It measured
+  + ///   re-sent context, not cost, so it was neither a cost bound nor a work bound.
+  ... (20 more lines)
+ ✓ (17.5s)
+  -         agent = agent.with_execution_limits(
+  -             ExecutionLimits::default()
+  -                 .with_max_turns(self.max_turns.unwrap_or(200))
+  -                 .with_max_total_tokens(1_000_000),
+  -         );
+  +         //
+  +         // #999: the token and wall-clock caps are now unbounded on purpose; see
+  +         // `main_agent_execution_limits` for the decision and its reason.
+  +         agent = agent.with_execution_limits(main_agent_execution_limits(self.max_turns));
+ ✓ (35.0s)
+  -         // Always set execution limits — use user's --max-turns or a generous default.
+  +         // Always set execution limits — use user's --max-turns or 200.
+            //
+ ✓ (52.4s)
+        } else {
+            None
+        }
+  + }
+  + 
+  + /// Execution limits for the main (top-level) agent, applied per run — one
+  + /// user request with all its tool turns; each `prompt` starts again at zero.
+  + ///
+  ... (13 more lines)
+  11 tools completed in 1m 31s (11 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+The 1M-token cap I'm removing just stopped this run too. Picking up where I left off: let me check the current state of the edit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git diff --stat; grep -n "main_age… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The build-site edit didn't persist. Only the fn definition is there. Re-applying the call site:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:1427..1452 ✓ (1ms)
+  ▶ edit src/agent_builder.rs (6 → 5 lines)
+            // `prompt::announce_loop_detected`.
+  -         agent = agent.with_execution_limits(
+  -             ExecutionLimits::default()
+  -                 .with_max_turns(self.max_turns.unwrap_or(200))
+  -                 .with_max_total_tokens(1_000_000),
+  -         );
+  +         //
+  +         // #999: the token and wall-clock caps are unbounded on purpose; see
+  +         // `main_agent_execution_limits` for the decision and its reason.
+  +         agent = agent.with_execution_limits(main_agent_execution_limits(self.max_turns));
+  ▶ edit src/agent_builder.rs (1 → 1 lines)
+  -         // Always set execution limits — use user's --max-turns or a generous default.
+  +         // Always set execution limits — the user's --max-turns, else 200.
+ ✓ (17.4s)
+            // `prompt::announce_loop_detected`.
+  -         agent = agent.with_execution_limits(
+  -             ExecutionLimits::default()
+  -                 .with_max_turns(self.max_turns.unwrap_or(200))
+  -                 .with_max_total_tokens(1_000_000),
+  -         );
+  +         //
+  +         // #999: the token and wall-clock caps are unbounded on purpose; see
+  +         // `main_agent_execution_limits` for the decision and its reason.
+  +         agent = agent.with_execution_limits(main_agent_execution_limits(self.max_turns));
+ ✓ (34.7s)
+  -         // Always set execution limits — use user's --max-turns or a generous default.
+  +         // Always set execution limits — the user's --max-turns, else 200.
+  3 tools completed in 39.3s (3 ✓)
+
+The auto-check output looks stale. Let me verify the file directly and run clippy myself.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "main_agent_execution_limi… ✓ (16.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The edit tool says it succeeded, but the file on disk doesn't change. I'll check whether the tool is writing to a different path.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ pwd; cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short; find / -n… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ pwd; cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && ls -l… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 3s (1 ✓, 1 ✗)
+
+The file's mtime (22:44) is older than my last two edits, so they never reached disk. I'll apply them with a script and check the result:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (22 lines) ✓ (130ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1426,1430p src/agent_buil… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.7s (2 ✓)
+
+The comment edit did land; only the call-site replacement is missing. Applying just that one:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (17.3s)
+
+Clippy is clean. Now the tests. I'll add them at the top of the test module.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests" -A4 src/age… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (51 lines) ✓ (28.1s)
+  2 tools completed in 35.6s (2 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+The cap stopped this run a second time. Next is the positive control, run as one atomic mutate → test → restore command:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent_builder.rs /tmp/ab.… ✓ (53.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control failed 2 tests and restored to green. The test that passed was (b), the near-miss, which is expected because it compares relative values. Now a second control on the duration line:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent_builder.rs /tmp/ab.… ✓ (26.7s)
+
+Both controls are red by name and the file is restored (0 markers). Next, the docs grep and CHANGELOG:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "1_000_000\|1,000,000\|… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 180,200p docs/src/configu… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 110,1… (14 lines) ✓ (28ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 11.1s (3 ✓)
+
+installation.md:117 is an example value in a sample config, not a claim about defaults, so I'm leaving it. My skills.md paragraph ends in a colon that runs into the example. Fixing that:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/cumulative tokens (abo… ✓ (29.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The "For example:" still dangles off the history sentence. Moving the explanation paragraph to after the example block:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Before running the full suite, one check that the docs' "200" is actually true end to end. The CLI could apply its own default before it reaches self.max_turns.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "max_turns" src/cli.rs … ✓ (4ms)
+
+There's no other default: None flows through to unwrap_or(200), so "Defaults to 200" is accurate. Running the full gate:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && ca… ✓ (2m 13s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (171ms)
+  2 tools completed in 2m 15s (2 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "_tests.rs\"\|mod .*_te… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "commands_risk_unhittab… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 82,86p src/main.rs; sed -… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4.5s (3 ✓)
+
+I'll move the tests into src/agent_limits_tests.rs, registered in main.rs under #[cfg(test)], in one script:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The file is now 4682 lines, 59 past the record and inside the grace band. Before I trust my new header comment, I'll confirm the build site really is in build_agent:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR<1449 && /^    (pub(\(cra… ✓ (19.8s)
+
+The header was wrong: the site is configure_agent, not build_agent. Fixing that, then running the full gate:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/`AgentConfig::build_ag… ✓ (2m 55s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (2m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent_builder.rs /tmp/ab.… ✓ (56.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 6m 15s (3 ✓)
+
+The control turned (a) and (c) red by name, and the restore brought them back to green. Committing:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (14 lines) ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both caps are gone for the top-level agent, and that is what #999 asks for, so I'm closing it with the SHA:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 30 g… (11 lines) ✓ (2.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head -5; gi… ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+A single prompt is no longer stopped at 1M tokens or after 10 minutes. It's now bounded only by the turn limit (--max-turns, default 200) and loop detection. It's committed as cfedd194 and #999 is closed. The working tree is clean, and build, test, clippy, fmt and tests/harness_logic.sh (161 passed, 0 failed) all pass.
+
+This session's own run was stopped four times by Max tokens reached (~1.0M/1000000). The session runs the old binary, so the fix can't help it. Each time I picked up where I left off.
+
+The change. The limits for the main agent now come from one function, main_agent_execution_limits() in src/agent_builder.rs:
+
+| Limit | Before | Now |
+|---|---|---|
+| Turns | --max-turns, else 200 | unchanged |
+| Total tokens | 1,000,000 (reached around turn 16 at a 60K context) | usize::MAX |
+| Wall clock | 600 s, inherited from yoagent's default without anyone choosing it | Duration::MAX, set explicitly |
+| Loop detection | 3 identical calls in a row | unchanged, kept on purpose |
+
+A maximal clock can't overflow, because yoagent 0.24.2 only compares elapsed time against it. The function's doc comment records the decision, the 1,061,497 stop that prompted it, and that sub-agents aren't covered.
+
+Tests. Three tests in a new file, src/agent_limits_tests.rs:
+• **(a)** The default has 200 turns, no token or clock cap, and a clock different from yoagent's default.
+• **(b)** Some(37) changes only the turn count.
+• (c) The token cap is above the observed 1,061,497.
+
+They sit in their own file because agent_builder.rs went one line over its size limit with them inside.
+
+I checked that the tests can fail. Putting the 1M token cap back made (a) and (c) fail by name. Putting back the 600 s clock made (a) fail. Each change was made and undone in a single command, and the tree is back to green with no markers left.
+
+Docs. I searched docs/src and README.md and got 4 hits in 2 files. None mentioned a token or time cap. One was wrong: configuration/skills.md said --max-turns "Defaults to 50". It now says 200, which I traced through the CLI to the code, and explains what does bound a prompt. The other hit, max_turns = 50 in installation.md, is just an example config value, so I left it. I also added a CHANGELOG "Unreleased" line.
+
+Not changed:
+• **Sub-agents** still have 1M-token and 300 s caps built into yoagent 0.24.2. The task said this was blocked on yoagent#238, but that PR was merged today and shipped in 0.24.3 at 22:36. Adopting it is a separate upgrade, and I said so in the comment closing #999.
+• The two with_max_turns(1) agents in agent_builder.rs are untouched, as the task asked.
+• I didn't look into whether the "Agent stopped" message is hidden under piped or quiet output, so I filed no issue for it.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/agent_builder.rs
