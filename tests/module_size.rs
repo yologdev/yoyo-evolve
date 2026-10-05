@@ -339,7 +339,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // side, matching unescaping (and a lone-quote panic fix) on the read side,
     // plus the round-trip tests that pin writer and reader as one promise.
     // Day 174: +256 absorbed since Day 166.
-    ("src/config.rs", 4650), // Day 205: +190 for the `sub_agent_model` knob — parse, the load-time store and `effective_sub_agent_model`, plus the parse/resolution tables that pin absent-is-the-parent-verbatim.
+    // Day 219 (#996 part 3): 4650 -> 4640. The lexical fallback in `resolve_path` was replaced by
+    // `config_resolve::resolve_physical`, which lives (with its symlink tables) in src/config_resolve.rs.
+    ("src/config.rs", 4640), // Day 205: +190 for the `sub_agent_model` knob — parse, the load-time store and `effective_sub_agent_model`, plus the parse/resolution tables that pin absent-is-the-parent-verbatim.
     // Day 165: 2307 -> 2296. Not a shrink I made this session — the entry was
     // stale-high, and branch 3 (below-ceiling is fatal) is what finally said so.
     // Day 184: 2321 -> 2337 (+16). NOT this task's diff — `git diff src/dispatch.rs`

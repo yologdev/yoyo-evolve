@@ -241,9 +241,11 @@ impl DirectoryRestrictions {
     /// - Absolute paths are used directly.
     /// - Relative paths are resolved against the current working directory.
     /// - Symlinks and `..` components are resolved via `std::fs::canonicalize`
-    ///   when the path exists; for non-existent paths, the nearest existing
-    ///   ancestor is canonicalized and the remainder re-appended, so symlinked
-    ///   spellings can't bypass deny checks (issue #600).
+    ///   when the path exists; otherwise the path is walked component by
+    ///   component, following each existing symlink (dangling ones resolve to
+    ///   their target) and applying `..` only to the physical prefix, so no
+    ///   symlinked spelling can bypass deny (#600) or escape allow (#996).
+    /// - A path that cannot be resolved (symlink loop) is refused.
     pub fn check_path(&self, path: &str) -> Result<(), String> {
         if self.is_empty() {
             return Ok(());
