@@ -12,7 +12,9 @@ use yoagent::*;
 use crate::prompt_budget::{audit_log_tool_call, is_audit_enabled, session_budget_exhausted};
 use crate::session::{ChangeKind, SessionChanges};
 
+mod interrupt;
 mod retry_after_partial;
+pub use interrupt::{mark_single_shot, was_interrupted};
 mod stream_external_servers;
 mod stream_session_restored;
 pub(crate) use stream_session_restored::record_session_restored;
@@ -1198,7 +1200,15 @@ async fn handle_prompt_events(
                 if state.in_text {
                     write_stream_text("\n");
                 }
-                write_chrome(&format!("\n{DIM}  (interrupted — press Ctrl+C again to exit){RESET}\n"));
+                // #993: single-shot runs get a stderr note; REPL bytes unchanged.
+                interrupt::INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
+                let single = interrupt::is_single_shot();
+                let note = interrupt::interrupt_note(single);
+                if single {
+                    let _ = io::stderr().write_all(note.as_bytes());
+                } else {
+                    write_chrome(&note);
+                }
                 return PromptResult::Done {
                     collected_text: state.collected_text,
                     text_since_last_tool: state.text_since_last_tool,

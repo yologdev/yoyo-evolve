@@ -6,6 +6,8 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [Unreleased]
 
+- `-p` / piped prompt interrupted by Ctrl+C (SIGINT) now exits 130 and writes `(interrupted)` to stderr instead of the REPL's "press Ctrl+C again" hint to stdout (#993).
+
 ## [0.2.0] - 2026-10-05
 
 Days 213–219. **If you run `--yes` with a `--deny` list, take this release.** In 0.1.19, `yoyo --yes --deny "echo BLOCKED_ZZ"` still ran `echo BLOCKED_ZZ`. The minor bump is for two new flags (`--save-session`, `--continue-strict`). The rest is mostly exit codes and stdout that tell the truth: more shell subcommands exit nonzero when they fail, and a pipe gets one answer instead of a retried attempt spliced into it.

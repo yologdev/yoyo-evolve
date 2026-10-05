@@ -593,6 +593,8 @@ async fn run_single_prompt(
         output_write_failed,
         CHECKPOINT_TRIGGERED.load(Ordering::SeqCst),
     );
+    // #993: SIGINT mid-turn exits 130, partial answer kept on stdout.
+    let code = if prompt::was_interrupted() { 130 } else { code };
     let code = save_session_after_turn(agent, save_session, code).await;
     if code != 0 {
         std::process::exit(code);
@@ -805,7 +807,7 @@ async fn run_piped_mode(
     // (default OFF, unchanged); once opted in, the full predicate runs, so
     // queue-pending and `looks_incomplete` do drive continuation. Widening
     // the gate to unconditional parity is a separate, arguable task.
-    if !should_exit_error {
+    if !should_exit_error && !prompt::was_interrupted() {
         let opted_in = cli::is_continue_on_silence();
         let piped_file_config = crate::config::load_config_file().0;
         let max_continues = crate::repl::get_max_auto_continues(
@@ -916,6 +918,9 @@ async fn run_piped_mode(
         output_write_failed,
         CHECKPOINT_TRIGGERED.load(Ordering::SeqCst),
     );
+    // #993: a turn cut short by SIGINT exits 130 (the shell convention), so a
+    // script can tell a partial answer from a complete one.
+    let code = if prompt::was_interrupted() { 130 } else { code };
     let code = save_session_after_turn(agent, save_session, code).await;
     if code != 0 {
         std::process::exit(code);
@@ -1334,6 +1339,8 @@ async fn main() {
             disable_color();
         }
         // #966: stdout carries only the final payload in --print / json.
+        // #993: single-shot doors print a plain interrupt note, never the REPL hint.
+        prompt::mark_single_shot();
         if reserves_stdout(print_mode, json_output) {
             format::reserve_stdout_for_payload();
         } else {
@@ -1369,6 +1376,8 @@ async fn main() {
         if print_mode {
             disable_color();
         }
+        // #993: single-shot doors print a plain interrupt note, never the REPL hint.
+        prompt::mark_single_shot();
         if reserves_stdout(print_mode, json_output) {
             format::reserve_stdout_for_payload();
         } else {
