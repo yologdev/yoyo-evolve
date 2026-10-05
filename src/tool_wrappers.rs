@@ -1430,7 +1430,7 @@ pub(crate) fn fallback_switch_note(primary: &str, fallback: &str) -> String {
 /// (e.g. `"Max turns reached (25/25)"`). Hitting `max_turns` is a bound, not a
 /// failure, so the call returns **`Ok`** — which is why every `Err`-branching
 /// decorator beside this one is structurally blind to it.
-/// <!-- yoagent-version-claim: 0.24.1 -->
+/// <!-- yoagent-version-claim: 0.24.2 -->
 ///
 /// The prefix is used **by reference** rather than re-spelled, so an upstream
 /// rename is a compile error here instead of a silently dead match.
@@ -1458,7 +1458,7 @@ pub(crate) fn sub_agent_partial_notice(text: &str) -> Option<String> {
 /// oversight: `LOOP_ABORT_PREFIX` *starts with* the same `"[Agent stopped:"`
 /// bytes, but yoagent's `extract_error` turns a loop abort into a
 /// `ToolError::Failed`, so it never arrives as `Ok` and needs no second handler.
-/// <!-- yoagent-version-claim: 0.24.1 -->
+/// <!-- yoagent-version-claim: 0.24.2 -->
 fn annotate_if_partial(result: yoagent::types::ToolResult) -> yoagent::types::ToolResult {
     let joined = result
         .content
@@ -5217,7 +5217,7 @@ mod diagnostic_sub_agent_tests {
     /// The marker shape is captured from yoagent's own source rather than
     /// hand-typed: `check_limits()` builds `"Max turns reached ({turns}/{max})"`
     /// and the loop wraps it as `"[Agent stopped: {reason}]"`.
-    /// <!-- yoagent-version-claim: 0.24.1 -->
+    /// <!-- yoagent-version-claim: 0.24.2 -->
     const STOP_MARKER: &str = "[Agent stopped: Max turns reached (25/25)]";
 
     /// `CountingStub::ok` takes a `&'static str`, and every fixture here is

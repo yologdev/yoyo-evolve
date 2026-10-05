@@ -2990,7 +2990,7 @@ mod tests {
     /// session — `Rate limited, retry after Some(14454000)ms` — which matches
     /// `#[error("Rate limited, retry after {retry_after_ms:?}ms")]` exactly,
     /// including the `Some(..)` that only a `{:?}` of an `Option` produces.
-    /// <!-- yoagent-version-claim: 0.24.1 -->
+    /// <!-- yoagent-version-claim: 0.24.2 -->
     #[test]
     fn stream_cut_off_mid_answer_is_retriable_not_fatal() {
         // (shape, expected verdict, why)

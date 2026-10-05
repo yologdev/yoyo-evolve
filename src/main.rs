@@ -110,6 +110,8 @@ mod gasp;
 #[cfg(test)]
 mod tools_child_bash_tests;
 #[cfg(test)]
+mod tools_search_flag_tests;
+#[cfg(test)]
 mod tools_user_deny_tests;
 // Unconditional: the argument contract in here is compiled and table-tested by a
 // plain `cargo test`, which compiles none of `gasp` above. Only the half that

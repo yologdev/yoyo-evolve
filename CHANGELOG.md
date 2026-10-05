@@ -6,6 +6,7 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [Unreleased]
 
+- yoagent 0.24.1 → 0.24.2 (security release, #996): a `search` pattern starting with `-` (e.g. `--pre=<cmd>`, which made ripgrep run a command) is now searched as a literal; pinned for both the parent and sub-agent `search` tools in `src/tools_search_flag_tests.rs`.
 - `-p` / piped prompt interrupted by Ctrl+C (SIGINT) now exits 130 and writes `(interrupted)` to stderr instead of the REPL's "press Ctrl+C again" hint to stdout (#993).
 - `yoyo --version` on a crates.io install now shows the published commit (read from the package's `.cargo_vcs_info.json`) instead of `dev`; a build with no commit info shows the date alone and never prints `dev` (#994).
 
