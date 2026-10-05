@@ -249,7 +249,16 @@ impl DirectoryRestrictions {
             return Ok(());
         }
 
-        let resolved = resolve_path(path);
+        // An unresolvable candidate (symlink loop, unreadable link) is refused
+        // outright: "could not find where this lands" must never read as
+        // "lands inside" (#996 part 3).
+        let Some(resolved) = resolve_path_checked(path) else {
+            return Err(format!(
+                "Access denied: '{}' could not be resolved (symlink loop, more than {} link hops, or an unreadable link)",
+                path,
+                config_resolve::MAX_LINK_HOPS
+            ));
+        };
 
         // Deny always takes priority
         for denied in &self.deny {
@@ -313,14 +322,21 @@ fn expand_tilde(path: &str) -> String {
     expand_tilde_with(path, home.as_deref())
 }
 
-/// Resolve a path to an absolute, normalized form.
-/// Uses `canonicalize` for existing paths (resolves symlinks, `..`, etc.).
-/// For non-existent paths, canonicalizes the nearest existing ancestor
-/// (resolving symlinks) and re-appends the non-existent remainder, so that
-/// existing and non-existent spellings of the same location converge on one
-/// canonical form (issue #600: `/etc/shadow` vs a deny on `/etc` that
-/// canonicalizes to `/private/etc` on macOS).
-fn resolve_path(path: &str) -> String {
+#[path = "config_resolve.rs"]
+mod config_resolve;
+
+/// Resolve a path to an absolute, normalized form, or `None` when it cannot be
+/// resolved (a symlink loop, or an unreadable link).
+///
+/// Uses `canonicalize` for existing paths. For anything else (a not-yet-existing
+/// file, a dangling link, `link/../x` whose landing spot does not exist) it
+/// walks the path component by component the way the kernel will, following
+/// each existing symlink and applying `..` only to the physical prefix — see
+/// [`config_resolve::resolve_physical`]. The old fallback (nearest existing
+/// ancestor + lexical `..`) let three spellings escape an allowed root (#996).
+/// Existing and non-existent spellings of one location still converge on one
+/// canonical form (issue #600: `/etc` vs `/private/etc` on macOS).
+fn resolve_path_checked(path: &str) -> Option<String> {
     // Expand a leading `~` FIRST: `fs::canonicalize` does not do it (the shell
     // does, and a config file never went through a shell), and a `~/...` string
     // is not absolute, so without this it would be joined onto the cwd and
@@ -333,11 +349,9 @@ fn resolve_path(path: &str) -> String {
 
     // Try canonicalize first (works for existing paths)
     if let Ok(canonical) = std::fs::canonicalize(path) {
-        return canonical.to_string_lossy().to_string();
+        return Some(canonical.to_string_lossy().to_string());
     }
 
-    // Non-existent path: make absolute, then normalize `.` and `..` lexically
-    // (they can't be resolved against a real filesystem).
     let p = std::path::Path::new(path);
     let absolute = if p.is_absolute() {
         p.to_path_buf()
@@ -346,41 +360,15 @@ fn resolve_path(path: &str) -> String {
             .unwrap_or_else(|_| std::path::PathBuf::from("/"))
             .join(p)
     };
+    config_resolve::resolve_physical(&absolute).map(|r| r.to_string_lossy().to_string())
+}
 
-    let mut components = Vec::new();
-    for component in absolute.components() {
-        match component {
-            std::path::Component::ParentDir => {
-                components.pop();
-            }
-            std::path::Component::CurDir => {}
-            other => components.push(other),
-        }
-    }
-    let normalized: std::path::PathBuf = components.iter().collect();
-
-    // Walk up to the nearest existing ancestor, canonicalize it (resolving
-    // symlinks), then re-append the non-existent remainder components.
-    let mut remainder: Vec<std::ffi::OsString> = Vec::new();
-    let mut cursor: Option<&std::path::Path> = Some(normalized.as_path());
-    while let Some(dir) = cursor {
-        if let Ok(canonical_dir) = std::fs::canonicalize(dir) {
-            let mut result = canonical_dir;
-            for component in remainder.iter().rev() {
-                result.push(component);
-            }
-            return result.to_string_lossy().to_string();
-        }
-        match dir.file_name() {
-            Some(name) => remainder.push(name.to_os_string()),
-            // No file name (e.g. root that failed to canonicalize) — stop.
-            None => break,
-        }
-        cursor = dir.parent();
-    }
-
-    // Degenerate case: no ancestor exists — fall back to manual normalization.
-    normalized.to_string_lossy().to_string()
+/// [`resolve_path_checked`] for a configured `[directories]` ENTRY: an entry
+/// that cannot be resolved keeps its tilde-expanded spelling, so a deny entry
+/// still matches its own literal form. Candidates never use this — an
+/// unresolvable candidate is refused by `check_path`.
+fn resolve_path(path: &str) -> String {
+    resolve_path_checked(path).unwrap_or_else(|| expand_tilde(path))
 }
 
 /// Does a `[directories]` entry carry a glob metacharacter (#823)?
