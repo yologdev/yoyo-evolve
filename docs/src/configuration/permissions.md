@@ -214,7 +214,11 @@ This affects `read_file`, `write_file`, `edit_file`, `list_files`, and `search`.
 - If **`--deny-dir`** is set, paths under denied directories are blocked.
 - **Deny overrides allow** — if a path is under both an allowed and a denied directory, it's blocked.
 - Paths are resolved to absolute paths before checking, so `../` traversal escapes are caught.
-- Symlinks are resolved via `canonicalize` when the path exists.
+- Symlinks are followed before matching, both for the path being checked and for each
+  `--allow-dir`/`--deny-dir` entry: an entry that is a symlink matches at its **target**,
+  including a dangling link whose target does not exist yet (so `allow = ["./out"]` with
+  `out -> /somewhere/else` allows `/somewhere/else`, not a directory inside your repo).
+  A path caught in a symlink loop is refused.
 
 ### Example: lock yoyo to your project
 
