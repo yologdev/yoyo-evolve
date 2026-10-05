@@ -1,0 +1,79 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (9ms)
+  ▶ $ git show eaeab54f --stat; git show eaeab54f -- src/prompt.rs | head -200  ▶ $ sed -n 1280,1500p tests/print_stdout_contract.rs ✓ (2ms)
+ ✓ (23ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2.6s (3 ✓)
+
+Now the stream-json loop and the text-path handler.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 975,1015p src/prompt.rs; sed -n 1130,1160p src/prompt.rs; sed -n 180,200p… ✓ (6ms)
+  ▶ $ sed -n 1135,1160p src/prompt.rs; echo ----; sed -n 1860,2120p src/prompt.rs; gre… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read src/prompt.rs:1924..2094 ✓ (0ms)
+  ▶ $ grep -n "fn stdout_reserved" -A20 src/prompt.rs src/*.rs src/*/*.rs | head -40; … ✓ (8ms)
+  ▶ $ grep -rn "set_stdout_reserved\|STDOUT_RESERVED.store\|reserve_stdout" src | head… ✓ (18ms)
+  ▶ $ sed -n 1325,1380p src/main.rs; sed -n 385,460p src/main.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 14.2s (6 ✓)
+
+Measure first. Writing a probe test for both cases.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat >> tests/print_stdout_contract.rs <<'EOF' (41 lines) ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -rn "run_prompt_stream_json" src --include=*.rs | grep -v "^src/prompt.rs:.… ✓ (7ms)
+  ▶ $ sed -n 720,760p src/main.rs; grep -n "providerRetry\|ProviderRetry" docs/src -r … ✓ (3ms)
+  ▶ $ grep -rn "ProviderRetry" ~/.cargo/registry/src/*/yoagent-0.24*/src/*.rs | head -…  ▶ read src/prompt.rs:3488..3538 ✓ (0ms)
+ ✓ (7ms)
+  5 tools completed in 31.1s (5 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+Budget is tight, so I'll finish on the null branch. I'm turning the probes into pins with exact assertions and leaving the latent internal concatenation as a named finding rather than an extra diff.
+  ▶ $ python3 - <<'EOF' (74 lines) ✓ (2.4s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 && cargo test 2>&1 | gr… ✓ (1m 24s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 30s (2 ✓)
+
+Clippy is clean and no test failed. Committing, then closing #989.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -q -F - <<'EOF' (31 lines) ✓ (10ms)
+  ▶ $ gh issue close 989 --comment "Fixed and probed in two commit… (6 lines) ✓ (2.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.7s (2 ✓)
+
+I measured the stream-json path first, and the problem the task expected isn't there. So I didn't add the abort policy to stream-json; instead, two tests now lock in its current, correct behaviour. Committed as ef018be4; #989 is closed with a comment naming both commits, and gh issue view 989 shows CLOSED. Formatting, clippy and the full test suite all pass.
+
+What the measurement showed:
+• **Partial answer, then a mid-stream rate-limit error, then PONG:** exit 0, 2 requests. `PARTIAL_` does go out on the stream. But the failed attempt is then closed with an error record saying it "will be retried", followed by a retry event. All three final records (messageEnd, turnEnd, agentEnd) contain only PONG\n.
+• **429 before any text, then PONG:** an empty error record, a retry event, then PONG, exit 0.
+• The full raw output is in the commit message.
+
+Why I left stream-json alone: on a plain-text pipe, the reader can't tell two attempts apart. That's why the text path (Task 1, eaeab54f) now exits non-zero instead. Stream-json marks the failed attempt in the stream itself, so a consumer can discard it. Applying the same abort there would turn every recoverable stream-json run into a failure and fix nothing. The task's own instructions allowed this outcome if the first measurement disproved the hypothesis.
+
+The new tests (in tests/print_stdout_contract.rs, checking exact fields):
+• **Mid-stream case:** exit 0 and 2 requests. `PARTIAL_` really appears in the stream, so the test can't pass vacuously. It is followed directly by an error `messageEnd` and then the retry event, and the final answer is exactly PONG\n.
+• **429 case:** exit 0, a retry event is present, and the final answer is exactly PONG\n.
+
+Other problems the raw output showed, not fixed:
+• yoagent's retry message prints internal Rust values instead of a number (retry after Some(0)ms, Nonems). That's upstream in yoagent and cosmetic.
+• yoyo's internal copy of the answer in stream-json mode still joins both attempts into PARTIAL_PONG\n. Nothing reads it today (all three callers only check whether an API error occurred), but a future caller that uses the text would get both attempts.
+
+I ran out of token budget once during this task, so I kept the finish narrow and didn't fix that internal text copy. Both leftovers are named in the commit message and the closing comment on #989.
+  watch: no files changed this turn — skipping

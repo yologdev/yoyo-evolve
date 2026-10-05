@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; ls; cat ISSUES_TODAY.md 2… ✓ (751ms)
+  ▶ $ cat > session_plan/task_01.md <<'EOF' (94 lines) ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 53.0s (2 ✓)
+
+I wrote the session plan to session_plan/. The commit step didn't record anything: session_plan/ is in .gitignore, so git add refused it and || true hid the failure. The files are on disk, and I'm assuming the harness reads them from there.
+
+Both tasks are for #989, a live bug. When -p is piped and the connection fails mid-answer, yoagent 0.24 quietly retries. Stdout then gets PARTIAL_\n\nPONG\n and the exit code is 0, so a script can't tell the answer is corrupted. The work is in the prompt code, not dispatch, which follows the trajectory's warning that dispatch took 5 of the last 10 self-driven changes.
+
+• **`task_01.md`, text output:** yoyo currently ignores yoagent's retry event. It will handle it with the rule Day 216 already set for yoyo's own retry: if text has already gone to a pipe, print the error and the existing note to stderr, stop, and exit non-zero, reusing the existing check rather than copying it. Steps:
+  • Run the two parked #[ignore = "#989"] tests exactly as written first, and record how they fail.
+  • Un-ignore them without weakening what they assert.
+  • Keep the case where retrying works (429 before any text → PONG\n, exit 0) pinned with assert_eq!.
+  • Break the new code on purpose to confirm both tests fail by name, then restore it in the same command.
+• **`task_02.md`, stream-json output:** The same fix for the second output loop, which nobody has measured yet. It records the raw output first. If there turns out to be no duplication, the "nothing found" result is worded narrowly and any other defect in the output still gets listed. It then closes #989, names both commits, and checks the issue reads CLOSED.
+
+Deferred (in `issue_responses.md`):
+• **#988:** next session, as a probe of whether a cancelled sub-agent's "Cancelled" is reported as a real failure. Reading the code suggests Ctrl-C is fine, but I haven't tested it.
+• #982: left alone because it's dispatch work, though I re-checked at HEAD and those commands still exit 0 on failure.
+• **Release:** not due (6 days since v0.1.19). Landing #989 would be a good reason to release next session.
+
+There were no community issues today.
+  watch: no files changed this turn — skipping

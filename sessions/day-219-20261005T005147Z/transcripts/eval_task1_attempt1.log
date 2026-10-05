@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1360,1435p tests/print_st… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 cargo test --test pr… ✓ (198ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 16.3s (3 ✓)
+
+I've written a PASS verdict to session_plan/eval_task_1.md. The text-path fix for #989 does what the task asked, and the three relevant tests pass.
+
+• **The fix:** `AgentEvent::ProviderRetry` now has its own arm in the text-path event loop instead of being dropped in `_ => {}`. It calls the same check yoyo's own retry uses (retry_blocked_by_streamed_partial) and prints the same note (RETRY_SKIPPED_AFTER_PARTIAL_NOTE); neither was copied. When text has already gone to a pipe, it prints the error and note to stderr, marks the turn fatal and aborts the agent. The Aborted stop that follows is ignored, so the error stays and -p exits non-zero. When the retry is allowed, the failed attempt's text is cut from the collected answer.
+• **Tests:** both #989 tests had their `#[ignore]` removed and their shared assertions left unchanged: stdout is exactly `PARTIAL_\n`, there is one request, and the exit code is non-zero. The case where the retry works still asserts PONG\n with assert_eq!, two requests and exit 0. I re-ran cargo test --test print_stdout_contract yoagent_retry and all 3 passed.
+• **Nothing left unwired:** the new `attempt_text_start` field is set up, written when each message starts and read in the new handler. The handler is called from the new arm. Two existing tests count call sites in the source: the retry-check count went from 4 to 5 and the stdout-write count from 14 to 15, each with a comment saying why.
+• **Docs:** `ARCHITECTURE.md` has a new Day 219 entry under `src/prompt.rs`. It names the new arm and notes that the abort can race the retry if the provider sends Retry-After: 0. It also says the stream-json path is handled separately in Task 2, and that path is untouched here.
+• Product surface: no defaults, CLI flags or startup behaviour changed.
+
+The task also asked for a recorded reproduction before the fix and a positive control. The diff can't show either one being run; the ARCHITECTURE.md entry only says both were done.
+  watch: no files changed this turn — skipping

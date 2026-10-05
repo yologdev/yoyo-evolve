@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || true; git log -3 --f… ✓ (286ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.8s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md. I didn't re-run the build or tests. I judged the diff, read commit ef018be4, and checked that gh issue view 989 shows the issue as CLOSED.
+
+• **Measurement first:** the commit message records the raw stream-json output for both cases (partial text then `rate_limit_error` then `PONG`, and 429 before any text). Both exit 0 with 2 requests.
+• **Hypothesis false:** the final `messageEnd`/`turnEnd`/`agentEnd` records carry only `"PONG\n"`, with no `PARTIAL_` in front. The dead attempt is closed in the stream itself: a messageEnd with stopReason "error", then a providerRetry event.
+• **Abort policy not applied:** that is a deliberate departure from step 2, and the task's own escape clause allows it. The reasoning holds up: a stream-json reader can tell the two attempts apart, which a plain-text pipe can't. Aborting would turn every recoverable turn into a failure.
+• **Pin tests:** two new tests with exact-field assertions lock in both readings.
+• **Other defects listed:** yoagent's retry error leaks Rust Debug text (`Nonems`, `Some(0)ms`). Separately, `collected_text` inside the stream-json handler still joins the attempts into "PARTIAL_PONG\n". That second one is harmless today because nothing in main.rs reads it, but it wasn't fixed.
+• **Checklist:**
+  • Consumers: the two new helpers are both used by the new tests, and nothing in src/ changed.
+  • Docs: N/A, because behaviour didn't change.
+  • Product surface: N/A, because the diff only touches the test file.
+
+One caveat: a stream-json consumer that just concatenates the text deltas would still see PARTIAL_PONG. The final records are clean, though, and the task allowed this outcome, so I didn't count it against the verdict.
+  watch: no files changed this turn — skipping

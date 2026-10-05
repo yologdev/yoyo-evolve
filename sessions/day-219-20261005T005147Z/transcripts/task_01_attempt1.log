@@ -1,0 +1,90 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (7ms)
+  ▶ $ pwd; sed -n 1230,1440p tests/print_stdout_contract.rs  ▶ $ ls src/prompt/; grep -n 'should_retry_after_partial\|RETRY_SKIPPED_AFTER_PARTIAL… ✓ (3ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7.7s (3 ✓)
+
+Now the step-1 reproduction, unmodified, while I read the event loop.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test --test print_stdout_contract -- --ignored yoagent_retry_after 2>&1 | …  ▶ $ cat src/prompt/retry_after_partial.rs | head -40; sed -n 170,200p src/prompt.rs;… ✓ (5ms)
+ ✓ (1.4s)
+  ▶ $ sed -n 1038,1145p src/prompt.rs; sed -n 1165,1185p src/prompt.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read src/prompt.rs:1043..1143 ✓ (0ms)
+  ▶ $ Y=$(ls -d ~/.cargo/registry/src/*/yoagent-0.24*/ | head -1); echo $Y; grep -rn '… ✓ (5ms)
+  ▶ $ Y=$(ls -d ~/.cargo/registry/src/*/yoagent-0.24*/ | head -1); grep -rn 'ProviderR… ✓ (7ms)
+  ▶ read /tmp/pr.txt ✓ (0ms)
+  ▶ $ Y=$(ls -d ~/.cargo/registry/src/*/yoagent-0.24*/ | head -1); sed -n 1025,1060p $…  ▶ read /tmp/a.txt ✗ (0ms)
+    │ Cannot access /tmp/a.txt: No such file or directory (os error 2)
+ ✓ (5ms)
+  ▶ $ Y=$(ls -d ~/.cargo/registry/src/*/yoagent-0.24*/ | head -1); { sed -n 1025,1060p…  ▶ read /tmp/a.txt ✓ (0ms)
+ ✓ (6ms)
+  ▶ $ Y=$(ls -d ~/.cargo/registry/src/*/yoagent-0.24*/ | head -1); { grep -n 'pub fn\|…  ▶ read /tmp/b.txt ✗ (0ms)
+    │ Cannot access /tmp/b.txt: No such file or directory (os error 2)
+ ✓ (9ms)
+  ▶ $ Y=$(ls -d ~/.cargo/registry/src/*/yoagent-0.24*/ | head -1); ls $Y/src $Y/src/pr… ✓ (4ms)
+  14 tools completed in 37.8s (12 ✓, 2 ✗)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ Y=$(ls -d ~/.cargo/registry/src/*/yoagent-0.24*/ | head -1); grep -n 'initial_de… ✓ (5ms)
+  ▶ $ grep -n 'struct PromptEventState\|fn new() -> Self\|fn handle_message_update_tex… ✓ (3ms)
+  ▶ read src/prompt.rs:485..545  ▶ read src/prompt.rs:804..834  ▶ read src/prompt.rs:875..1025 ✓ (0ms)
+ ✓ (1ms)
+ ✓ (1ms)
+  ▶ $ python3 - <<'EOF' (84 lines) ✓ (17ms)
+  ▶ $ sed -i '/#\[ignore = "#989: yoagent.s internal retry duplicates -p stdout"\]/d' … ✓ (6.8s)
+  ▶ $ cp src/prompt.rs /tmp/prompt.bak && sed -i 's|if state.handle_provider_retry(&er… ✓ (14.1s)
+  ▶ $ grep -n '^#\+ .*src/prompt.rs\|^### `src/prompt' ARCHITECTURE.md | head ✓ (3ms)
+  ▶ $ grep -n 'prompt.rs' ARCHITECTURE.md | grep -n '^[0-9]*:#\|\*\*`src/prompt.rs`' |… ✓ (5ms)
+  ▶ $ python3 - <<'EOF' (8 lines) ✓ (13.1s)
+  ▶ $ cargo test 2>&1 | grep -E '^test result|FAILED|panicked' | sort | uniq -c | head… ✓ (59.4s)
+  12 tools completed in 2m 34s (12 ✓)
+
+  ▶ $ sed -n 60,80p src/prompt/retry_after_partial.rs; cargo test --lib every_streamed… ✓ (92ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cargo test --bin yoyo every_streamed_text_write_is_gated 2>&1 | grep -A8 'panick… ✓ (83ms)
+  ▶ $ sed -i 's|assert_eq!(sites, 14, "gated streamed-text sites c… (4 lines) ✓ (1m 55s)
+  ▶ $ grep -n 'count(), 5\|sites, 15' src/prompt.rs src/prompt/retry_after_partial.rs;… ✓ (1m 30s)
+  ▶ $ git add -A && git commit -q -m "Day 219 (00:26): -p text pat… (17 lines) ✓ (31ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 3m 58s (5 ✓)
+
+The -p text path no longer prints a partial answer twice when yoagent retries internally on a pipe. It's committed as eaeab54f. The full test suite passes (6254 tests, 0 failed), and clippy with -D warnings and cargo fmt --check are clean.
+
+Before the fix: I ran the two ignored #989 tests exactly as written. Both failed the same way:
+
+```
+PROBE #987: stdout="PARTIAL_\n\nPONG\n" success=true requests=2
+left: "PARTIAL_\n\nPONG\n"   right: "PARTIAL_\n"
+```
+
+The change (`src/prompt.rs`):
+• yoagent's retry event (ProviderRetry) is now handled explicitly instead of being dropped. A new field, attempt_text_start, marks where the current message's text begins in collected_text, so the code can tell what the failing attempt already streamed.
+• It reuses the Day-216 check (retry_blocked_by_streamed_partial) and the same stderr note. There's no second copy of either.
+• **Retry blocked** (stdout is a pipe and text already streamed): it prints the error and the note to stderr, marks the turn fatal, and stops the agent. The `Aborted stop that follows is ignored by classify_stop_reason`, so it can't overwrite the error, and the process exits non-zero.
+• **Retry allowed** (no text yet, a terminal, or `--print`/json, which hold stdout back): yoagent retries as before, and the failed attempt's text is removed from the collected answer.
+
+After the fix:
+• I un-ignored both #989 tests without editing their assertions. Both pass: stdout is "PARTIAL_\n", one request, non-zero exit.
+• The case where the retry works, a 429 before any text, still gives exactly PONG\n, exit 0 and 2 requests.
+• Positive control, run as one command: with the new code disabled (marked NEUTERED), exactly the two #989 tests fail by name. After restoring it, all three pass, and no marker is left in the source.
+
+Two count checks raised on purpose:
+• `every_retry_site_consults_the_shared_rule` now expects 5 sites instead of 4. The fifth is yoagent's own retry.
+• `every_streamed_text_write_is_gated now expects 15 instead of 14. The new code writes through the gated write_stream_text`.
+
+These tests use exact counts so that anyone adding a site has to decide about it. Each bump has a comment saying why.
+
+Known gap: the fix only works if the agent is stopped while yoagent is waiting before its second attempt. These errors don't carry a Retry-After header, so the wait defaults to 1 second and the stop arrives in time. If a provider sent a partial answer followed by Retry-After: 0, the second request could go out first. No test covers that case; it's written down in ARCHITECTURE.md.
+
+Not done (out of scope): the stream-json event loop, which is Task 2. #989 stays open. ARCHITECTURE.md has a new Day 219 entry under the src/prompt.rs notes describing this change and saying the stream-json path is handled separately.
+  watch: no files changed this turn — skipping
