@@ -1511,3 +1511,250 @@ fn stream_json_retry_after_429_before_text_yields_clean_answer() {
     assert_eq!(final_assistant_text(&lines), RETRY_ANSWER);
     assert!(lines.iter().any(|v| v["type"] == "providerRetry"));
 }
+
+// ---------------------------------------------------------------------------
+// #993: SIGINT during a `-p` stream.
+// ---------------------------------------------------------------------------
+
+/// A stub that streams `partial` as one text delta and then STALLS: it never
+/// sends `content_block_stop`/`message_stop` and holds the connection open, so
+/// the turn is still in flight when the test sends SIGINT.
+#[cfg(unix)]
+fn start_stall_stub(partial: &str) -> (u16, Arc<AtomicUsize>) {
+    let text = serde_json::to_string(partial).unwrap();
+    let body = sse_events(vec![
+        (
+            "message_start",
+            r#"{"type":"message_start","message":{"id":"msg_stall","type":"message","role":"assistant","model":"claude-stub","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":1}}}"#.to_string(),
+        ),
+        (
+            "content_block_start",
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#.to_string(),
+        ),
+        (
+            "content_block_delta",
+            format!(
+                r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":{text}}}}}"#
+            ),
+        ),
+    ]);
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub");
+    let port = listener.local_addr().unwrap().port();
+    let hit = Arc::new(AtomicUsize::new(0));
+    let hit_thread = Arc::clone(&hit);
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let body = body.clone();
+            let hit = Arc::clone(&hit_thread);
+            thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    return;
+                }
+                let mut content_length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        break;
+                    }
+                    let trimmed = line.trim_end();
+                    if trimmed.is_empty() {
+                        break;
+                    }
+                    if let Some((k, v)) = trimmed.split_once(':') {
+                        if k.eq_ignore_ascii_case("content-length") {
+                            content_length = v.trim().parse().unwrap_or(0);
+                        }
+                    }
+                }
+                let mut req_body = vec![0u8; content_length];
+                let _ = reader.read_exact(&mut req_body);
+                if request_line.starts_with("POST") {
+                    hit.fetch_add(1, Ordering::SeqCst);
+                }
+                let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\nconnection: close\r\n\r\n";
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(body.as_bytes());
+                let _ = stream.flush();
+                // Stall: hold the stream open, never finish the message.
+                thread::sleep(Duration::from_secs(120));
+            });
+        }
+    });
+    (port, hit)
+}
+
+#[cfg(unix)]
+struct SigintRun {
+    stdout: Vec<u8>,
+    stderr: String,
+    code: Option<i32>,
+    stub_hit: bool,
+}
+
+/// Run `yoyo <extra>` against the stall stub. Wait (no fixed sleep) until
+/// `wait_for` appears on the child's stdout, then send SIGINT and collect.
+#[cfg(unix)]
+fn run_yoyo_sigint(extra: &[&str], partial: &str, wait_for: &str) -> SigintRun {
+    use std::sync::Mutex;
+    let (port, hit) = start_stall_stub(partial);
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let base_url = format!("http://127.0.0.1:{port}/v1");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_yoyo"))
+        .args([
+            "--provider",
+            "anthropic",
+            "--model",
+            "claude-sonnet-4-5",
+            "--base-url",
+            &base_url,
+            "--no-tools",
+            "--max-turns",
+            "1",
+        ])
+        .args(extra)
+        .current_dir(cwd.path())
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path().join(".config"))
+        .env("XDG_DATA_HOME", home.path().join(".local/share"))
+        .env("XDG_STATE_HOME", home.path().join(".local/state"))
+        .env("XDG_CACHE_HOME", home.path().join(".cache"))
+        .env("ANTHROPIC_API_KEY", "sk-ant-dummy-test-key")
+        .env_remove("API_KEY")
+        .env_remove("MODEL")
+        .env_remove("YOYO_MODEL")
+        .env_remove("YOYO_PROVIDER")
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn yoyo");
+    let out = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let err = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let mut so = child.stdout.take().unwrap();
+    let mut se = child.stderr.take().unwrap();
+    let (o2, e2) = (Arc::clone(&out), Arc::clone(&err));
+    let t_out = thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = so.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            o2.lock().unwrap().extend_from_slice(&buf[..n]);
+        }
+    });
+    let t_err = thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = se.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            e2.lock().unwrap().extend_from_slice(&buf[..n]);
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if String::from_utf8_lossy(&out.lock().unwrap()).contains(wait_for) {
+            break;
+        }
+        if Instant::now() > deadline || child.try_wait().unwrap().is_some() {
+            let _ = child.kill();
+            panic!(
+                "streamed text never reached stdout before SIGINT; stdout={:?} stderr={}",
+                String::from_utf8_lossy(&out.lock().unwrap()),
+                String::from_utf8_lossy(&err.lock().unwrap())
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let status = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .expect("run kill");
+    assert!(status.success(), "kill -INT failed");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(s) = child.try_wait().unwrap() {
+            break s;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("yoyo did not exit after SIGINT");
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    t_out.join().unwrap();
+    t_err.join().unwrap();
+    let stdout = out.lock().unwrap().clone();
+    let stderr = String::from_utf8_lossy(&err.lock().unwrap()).into_owned();
+    SigintRun {
+        stdout,
+        stderr,
+        code: status.code(),
+        stub_hit: hit.load(Ordering::SeqCst) > 0,
+    }
+}
+
+/// #993: `-p` cut short by SIGINT keeps the streamed text on stdout and
+/// nothing else, writes the interrupt note to stderr, and exits 130.
+#[cfg(unix)]
+#[test]
+fn sigint_during_print_prompt_exits_130_with_note_on_stderr() {
+    let run = run_yoyo_sigint(&["-p", "hi"], PARTIAL_LINE, PARTIAL_LINE);
+    assert!(run.stub_hit, "anti-vacuous: stub never received a POST");
+    let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
+    eprintln!(
+        "PROBE #993: stdout={stdout:?} code={:?} stderr_tail={:?}",
+        run.code,
+        run.stderr.lines().rev().take(3).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        stdout, PARTIAL_LINE,
+        "#993: stdout must be exactly the streamed text, no REPL hint; stderr={}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("(interrupted)"),
+        "#993: the interrupt note belongs on stderr; stderr={}",
+        run.stderr
+    );
+    assert!(
+        !run.stderr.contains("again"),
+        "#993: a single-shot run has exited, so no 'press Ctrl+C again'; stderr={}",
+        run.stderr
+    );
+    assert_eq!(
+        run.code,
+        Some(130),
+        "#993: SIGINT exits 130; stderr={}",
+        run.stderr
+    );
+}
+
+/// #993 near-miss: the same partial text, streamed to completion without a
+/// signal, is byte-identical on stdout and exits 0.
+#[test]
+fn uninterrupted_print_prompt_is_unchanged_and_exits_zero() {
+    let run = run_yoyo_with(
+        &["--no-tools", "--max-turns", "1"],
+        &["-p", "hi"],
+        None,
+        vec![sse_text_body(PARTIAL_LINE)],
+    );
+    assert_reached_stub(&run);
+    assert_eq!(String::from_utf8_lossy(&run.stdout), PARTIAL_LINE);
+    assert!(
+        run.success,
+        "uninterrupted -p must exit 0; stderr={}",
+        run.stderr
+    );
+    assert!(
+        !run.stderr.contains("(interrupted"),
+        "stderr={}",
+        run.stderr
+    );
+}

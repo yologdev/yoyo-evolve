@@ -55,6 +55,10 @@ answer=$(yoyo --print -p "Reply with exactly: PONG")
 yoyo -p "summarize this repo" --output-format json | jq -r .response
 ```
 
+If the run is interrupted with Ctrl+C (SIGINT), yoyo exits with code **130**, writes
+`(interrupted)` to stderr, and leaves whatever text was already streamed on stdout
+unchanged. A script can tell a cut-off answer from a complete one, which exits 0.
+
 ## Slash commands are not expanded here
 
 A prompt whose first non-space character is `/` is treated as a REPL command, not as
