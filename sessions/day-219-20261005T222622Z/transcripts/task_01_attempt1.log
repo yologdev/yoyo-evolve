@@ -1,0 +1,66 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 240,380p src/config.rs; sed… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn directory_entry_matche… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (101 lines) ✓ (145ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo config_resol… ✓ (26.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's|assert_eq!(verdict(&r, &… ✓ (25.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 22s (6 ✓)
+
+Positive control, one atomic command (mutate → run → restore from the WIP commit):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's|            Ok(meta) if … ✓ (52.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's|            Ok(meta) if … ✓ (26.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's|            Ok(meta) if … ✓ (26.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 52s (3 ✓)
+
+Control: (b), (c) and (d) failed by name with the dangling follow neutered; (a)/(e) stayed green (they don't depend on it); restored, no marker. Now the record.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "#996\|config_resolve" ARC… ✓ (36ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1695,1750p src/cli.rs; sed … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.2s (2 ✓)
+
+Verified: parse_directories_from_config (cli.rs:1728) is not passed through gate_project_permissions (cli.rs:1705, which only handles [permissions]). Now the docs.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (25 lines) ✓ (49ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo fmt -- --check … ✓ (3m 17s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&… (19 lines) ✓ (2m 10s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5m 41s (2 ✓)
+
+I decided, tested and documented #998 without touching any production code. If a configured --allow-dir/--deny-dir entry is a symlink, it matches at the link's target, and that now includes links whose target doesn't exist yet.
+
+What decided it: test (a) checked how existing links already behave. An allow entry link -> real, where real exists, already allows real/f.txt. Existing links have always worked this way. So I kept the same rule for dangling allow entries. Refusing them would have made an entry harmless until someone created its target directory, and then suddenly wide, with nothing in the output saying the boundary had moved.
+
+Tests, in src/config_resolve.rs (Unix only, all in a temp directory):
+• **(a)** An existing-link allow entry matches at its target. This is the measured fact above.
+• (b) A dangling deny entry denies gone/f.txt.
+• (c) A dangling allow entry allows later/f.txt, and the verdict stays the same after later is created.
+• **(d)** An allow entry caught in a symlink loop does nothing: paths under the loop, in the temp root and outside it are all refused.
+• **(e)** An ordinary directory entry behaves exactly as before.
+
+Positive control: I changed the resolver to stop following dangling links, then ran the tests and restored the file in a single command. (b), (c) and (d) failed by name, while (a) and (e) stayed green because they don't depend on that behaviour. After restoring, everything passed and the marker was gone.
+
+Recorded:
+• **`ARCHITECTURE.md:** a paragraph next to the #996 part 3 entry. It says plainly that [directories] allow entries can come from a repo's own config: they are parsed outside gate_project_permissions, which only checks [permissions]. This gives a repo author nothing new, since they could already write any absolute path in allow. The real cost is that it's hard to read: allow = ["./out"] with a committed out -> /elsewhere looks like "inside the repo" but actually fences /elsewhere`.
+• **permissions.md:** the old line "Symlinks are resolved via `canonicalize` when the path exists" was out of date. It now explains that entries match at their target, including dangling ones, and that paths caught in a symlink loop are refused.
+
+All four checks passed: fmt, clippy with -D warnings, build, and the full cargo test run. I committed the tests as a WIP first (21b8a90a) and the finished task as bf2bc542.
+  watch: no files changed this turn — skipping

@@ -1,0 +1,58 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneline -15; ech…  ▶ $ gh issue list --repo yologdev/yoyo-evolve --label agent-self --state open --limi…  ▶ $ gh run list --repo yologdev/yoyo-evolve --workflow evolve.yml --limit 5 --json c… ✓ (9ms)
+ ✓ (409ms)
+ ✓ (839ms)
+  ▶ $ gh run view 37366926437 --repo yologdev/yoyo-evolve --log-failed 2>/dev/null | t…  ▶ $ for n in 998 997 991; do echo "=== $n"; gh issue view $n --repo yologdev/yoyo-ev… ✓ (802ms)
+ ✓ (1.1s)
+  ▶ $ gh run view 37366926437 --repo yologdev/yoyo-evolve 2>&1 | head -30; gh run view… ✓ (1.8s)
+  ▶ $ gh issue view 997 --repo yologdev/yoyo-evolve --json comments -q '.comments[].bo…  ▶ $ ls -la target/debug/yoyo target/release/yoyo 2>&1; grep -n "^yoagent" Cargo.toml… ✓ (6ms)
+ ✓ (842ms)
+  ▶ $ ./target/debug/yoyo --version; cd /tmp && timeout 120 ~/work/yoyo-evolve/yoyo-ev… ✓ (2.0s)
+  ▶ $ grep -n "fn resolve_path\|fn check_path\|resolve_physical\|fn parse_directories_… ✓ (21ms)
+  ▶ $ grep -n "parse_directories_from_config\|loaded_config_is_project_local" src/*.rs… ✓ (10ms)
+  ▶ $ sed -n 1695,1745p src/cli.rs ✓ (3ms)
+  ▶ $ sed -n 240,300p src/config.rs ✓ (3ms)
+  ▶ $ sed -n 330,385p src/config.rs ✓ (3ms)
+  ▶ $ sed -n 1,40p skills/yopedia/SKILL.md | head -40; env | grep -i yopedia | sed 's/… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  15 tools completed in 36.8s (15 ✓)
+
+Draft first, then research.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/assessment.md (41 lines)  ▶ $ git add session_plan/assessment.md && git commit -qm "Day 219 (21:41): assessmen… ✓ (0ms)
+ ✓ (4ms)
+  2 tools completed in 4ms (2 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ web search 'Claude Code changelog October 2026 new features' ✓ (2.1s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && python3 - <<'EOF' (19 lines) ✓ (22ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.0s (2 ✓)
+
+The Day 219 (21:41) assessment is written to session_plan/assessment.md, but it isn't committed. session_plan/ is gitignored, so the commit step did nothing and the file is only on disk.
+
+I didn't re-run the full test suite; the harness had already checked this commit. yoyo --version matches HEAD (a3dc0817), and yoyo -p "Reply with exactly: PONG" printed exactly PONG and exited 0. I skipped the yopedia recall and save steps because this phase ran past its token budget.
+
+What happened recently:
+• **16:23:** the 16:23 session redid the `--allow-dir` symlink fix that was lost at 13:39, and this time saved work in progress before the final checks. It also moved yoagent to its 0.24.2 security release. #996 is closed.
+• **13:11:** this session finished that fix, then lost all of it. An "Overloaded" error arrived after text had already streamed, and the Day-216 rule (no retry when output goes to a pipe) ended the phase. The cleanup then reset the tree. Yuanhao has since changed evolve.sh so a reverted task's diff is saved first.
+• **19:59 run:** failed because no GitHub runner picked up the job. No session ran, so no code is involved.
+
+Open issues:
+• **#998 (Yuanhao, security):** a configured allow entry that is a dangling symlink now widens to wherever the link points, with no test and no note. I checked the open question in the issue: a repository's own .yoyo.toml can set allow entries (src/cli.rs:1726-1735). But an empty allow list already means "allow everything", and a repo could name any target directly. So following the link gives a repo author nothing new; the risk is that ./sandbox looks like it stays inside the repo when it doesn't.
+• **#997 (Yuanhao):** an opt-in retry for the evolution loop when an error hits after text has streamed. It has already cost one session. Its open sibling #991 is parked because the version I tried withheld the partial answer when a turn failed for good. Claude Code just went the other way and fixed -p so it keeps the partial answer on a mid-stream error.
+• **Other backlog:**
+  • #995: `yoyo --version` shows a stale commit on local builds.
+  • #982: about 37 shell subcommands still exit 0 on failure.
+  • #988: Ctrl-C/cancel paths need an audit after the yoagent upgrade.
+
+Suggested picks for the planner: start with #998, which is small, test-first and in the config code. #995 is a clean second task. The trajectory warns that prompt took 4 of the last 6 changes, so if #997 is chosen anyway (it lands in prompt again), the plan should say so.
+
+One minor oddity: target/release/yoyo is from August 1. social.sh already prefers the newer debug build, so it isn't causing a problem now.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

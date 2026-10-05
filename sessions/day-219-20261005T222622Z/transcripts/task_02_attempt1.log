@@ -1,0 +1,71 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cat build.rs; git status --short | head; git log --oneline -3 ✓ (11ms)
+  ▶ $ grep -rn "build.rs" --include=*.rs src tests | head; grep -n "build.rs" ARCHITEC… ✓ (17ms)
+  ▶ $ head -40 tests/build_vcs_info.rs; git rev-parse --git-path HEAD; git symbolic-re… ✓ (8ms)
+  ▶ $ cd src && git rev-parse --git-path HEAD; git rev-parse --git-path refs/heads/mai… ✓ (7ms)
+  ▶ $ python3 - <<'EOF' (81 lines) ✓ (21ms)
+  ▶ $ cat >> tests/build_vcs_info.rs <<'EOF' (75 lines) ✓ (11.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 48.3s (6 ✓)
+
+Now the end-to-end probe in a throwaway clone, with the uncommitted build.rs copied in. First the positive control with the original build.rs.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ rm -rf /tmp/p995 && git clone -q . /tmp/p995 && cd /tmp/p995… (8 lines) ✓ (1m 8s)
+
+Positive control reproduces #995: stale bf2bc542 vs HEAD 46769c12. Now the fixed build.rs.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/p995 && export CARGO_TARGET_DIR=/home/runner/work/yo… (13 lines) ✓ (38.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/p995 && export CARGO_TARGET_DIR=/home/runner/work/yo… (2 lines) ✓ (116ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 43.4s (2 ✓)
+
+Second build with no new commit is Fresh, so build.rs didn't rerun. Cleaning up, then updating ARCHITECTURE.md.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ rm -rf /tmp/p995 /home/runner/work/yoyo-evolve/yoyo-evolve/t… (17 lines) ✓ (2m 45s)
+  ▶ $ cargo test 2>&1 | grep -E "^test result" | awk '{s+=$4; f+=$6} END {print "passe… ✓ (1m 56s)
+  ▶ $ git add -A && git commit -q -F - <<'EOF' (22 lines) ✓ (43ms)
+  3 tools completed in 4m 49s (3 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ git status --short | head; git log --oneline -1 ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+I fixed #995: in a local checkout, yoyo --version now shows the current commit after a rebuild instead of the first one it was built at. The fix is committed as 0829e1cc and the tree is clean.
+
+Cause: build.rs tells cargo to rerun it when DAY_COUNT changes. Once a build script names any file to watch, cargo stops rerunning it on general file changes. So the commit hash and build date were set on the first build and never updated.
+
+Fix (`build.rs`): when the hash comes from git, the script now also watches the three git files that change when HEAD moves:
+• HEAD itself.
+• The branch ref HEAD points at, skipped when HEAD is detached.
+• packed-refs, where refs live after git gc or git pack-refs.
+
+It asks git where each file is (git rev-parse --git-path) rather than assuming .git/..., so worktrees work. It only watches files that exist, because cargo treats a missing file as always changed and would rerun the script on every build. Builds installed from crates.io, and builds with GIT_HASH set in the environment, never reach this code, so their output is unchanged.
+
+Tests: I added five tests in tests/build_vcs_info.rs covering a normal branch, detached HEAD, missing files being skipped, no git, and a worktree.
+
+End-to-end check in a throwaway clone in `/tmp`:
+
+| Build | After | --version printed | HEAD |
+|---|---|---|---|
+| Old build.rs | a new commit | bf2bc542 | 46769c12 (stale, bug reproduced) |
+| Fixed | a new commit | d6942596 | d6942596 |
+| Fixed | a commit on detached HEAD | b3986469 | b3986469 |
+| Fixed | pack-refs --all, then a commit | dd6b1228 | dd6b1228 |
+
+A rebuild with no new commit stayed fast (0.11s) and cargo did not rerun the script.
+
+Docs: I updated the build.rs entry in ARCHITECTURE.md and marked its old "known open defect, not fixed yet" sentence as superseded. It also records one limit: the build date only updates when a new commit triggers the script, so it is the date of the last such build, not of every build.
+
+Checks: cargo fmt --check, clippy with -D warnings, cargo build, cargo test (6288 passed, 0 failed) and tests/harness_logic.sh (161 passed) all pass.
+
+Issue #995 is still open on GitHub. Closing it with a comment naming 0829e1cc was outside this task, so someone still needs to do it.
+  watch: no files changed this turn — skipping

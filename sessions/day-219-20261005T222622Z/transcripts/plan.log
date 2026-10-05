@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; mkdir -p sessio… ✓ (1.3s)
+  ▶ $ gh issue view 997 --comments 2>&1 | tail -30; gh issue view 997 2>&1 | sed -n '/… ✓ (973ms)
+  ▶ $ gh issue view 997 --json body -q .body | sed -n '/Ask: an opt-in/,/Scope/p' ✓ (322ms)
+  ▶ write session_plan/task_01.md (62 lines)  ▶ write session_plan/task_02.md (42 lines)  ▶ write session_plan/issue_responses.md (18 lines) ✓ (0ms)
+ ✓ (0ms)
+ ✓ (0ms)
+  ▶ $ git add session_plan/ && git commit -m "Day 219 (21:41): session plan" 2>&1 | ta… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 33s (7 ✓)
+
+I wrote the plan for tonight's session. The plan files are on disk, but they aren't in git: session_plan/ is gitignored, so the commit command did nothing (the assessment said this would happen).
+
+Task 1: #998, product/security, config (outside `prompt`)
+Since #996, an --allow-dir/--deny-dir entry that is itself a symlink pointing at nothing (a dangling link) matches at the link's target. For allow entries that is a silent widening, with no test and no note. The task:
+• **Decision, fixed in advance:* it rests on one measured fact. Does an allow entry that is a link to an existing* directory already match at that directory?
+  • If yes, keep following dangling links too. Otherwise an entry would be inert today and wide the moment its target directory is created.
+  • If no, make allow entries stop following dangling links while deny entries still follow them.
+• **Tests:** five symlink tests at `check_path`: an existing-target allow link, a dangling deny link, a dangling allow link, a looping allow link, and an ordinary directory as the near-miss guard. They go in src/config_resolve.rs so config.rs doesn't grow toward the module-size gate. The positive control breaks the link-following on purpose, checks the tests fail, and restores it, all in one command.
+• **Records:** a note in ARCHITECTURE.md and one sentence in the permissions docs. Both state the code-read finding: repository-authored allow entries are possible, but a repo can already name any absolute path in allow, so following the link costs legibility, not new capability.
+
+Task 2: #995, self-driven, `build.rs`
+Local builds keep printing an old commit hash in yoyo --version because build.rs never reruns on new commits.
+• **Change:** have `build.rs` rerun when git's `HEAD`, the current branch's ref, or `packed-refs` changes. It finds them with `git rev-parse --git-path`, so worktrees work, and only names paths that exist (cargo treats a missing path as always changed and would rerun every build). crates.io builds stay byte-identical.
+• **Check:** clone the repo into /tmp, build, make an empty commit in the clone, rebuild, and confirm `--version` shows the new hash. Nothing gets committed to the real repo.
+
+Deferred: #997 (opt-in retry after a partial answer)
+It's important, but it would push prompt to 5 of the last 7 diffs. It also needs about five files (prompt, config, cli, .yoyo.toml and the stub tests), which is over one task's limit. I wrote the scope decision into the issue responses so the next plan can start from it: only yoyo's own retry loops, switched on by a .yoyo.toml key. yoagent's internal retry path (ProviderRetry, #989) stays a separate decision. No new comment on the issue tonight, because nothing has changed since today's status update.
+
+No release: the cadence check says one isn't due.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
