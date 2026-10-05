@@ -68,7 +68,8 @@ mod tests {
         let src = include_str!("../prompt.rs");
         let body = &src[..src.find(&format!("#[cfg({})]\nmod tests", "test")).unwrap()];
         let call = format!("{}(&", "retry_blocked_by_streamed_partial");
-        assert_eq!(body.matches(&call).count(), 4, "one call per retry site");
+        // 5 = four yoyo retry sites + yoagent's internal retry (`handle_provider_retry`, #989).
+        assert_eq!(body.matches(&call).count(), 5, "one call per retry site");
         let malformed = format!("{}(", "malformed_tool_call_retry");
         assert_eq!(body.matches(&malformed).count(), 2, "two resample sites");
         let arms = format!(

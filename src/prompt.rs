@@ -520,6 +520,10 @@ struct PromptEventState {
     /// Cached edit_file params (old_text, new_text) for post-execution diff display.
     /// Keyed by tool_call_id. Stored at ToolExecutionStart, consumed at ToolExecutionEnd.
     edit_params: HashMap<String, serde_json::Value>,
+    /// #989: byte length of `collected_text` when the current assistant
+    /// message started, so a `ProviderRetry` can tell what the dying attempt
+    /// streamed. Always a value `collected_text.len()` once had (a boundary).
+    attempt_text_start: usize,
 }
 
 impl PromptEventState {
@@ -536,6 +540,7 @@ impl PromptEventState {
             fatal_error: None,
             last_tool_error: None,
             last_tool_name: None,
+            attempt_text_start: 0,
             md_renderer: MarkdownRenderer::new(),
             spinner: Some(Spinner::start()),
             think_filter: ThinkBlockFilter::new(),
@@ -970,6 +975,41 @@ impl PromptEventState {
         }
     }
 
+    /// #989: a yoagent-internal retry was announced. Returns `true` when the
+    /// retry is blocked (the caller aborts the agent): the error and
+    /// `RETRY_SKIPPED_AFTER_PARTIAL_NOTE` go to stderr and the turn is marked
+    /// fatal so the process exits non-zero. A later `Aborted` stop is
+    /// `StopHandling::Ignore`, so it cannot overwrite this. When the retry is
+    /// allowed, the dead attempt's text is dropped from the collected answer
+    /// so `--print`/json never carry it.
+    fn handle_provider_retry(&mut self, error: &str) -> bool {
+        let start = self.attempt_text_start.min(self.collected_text.len());
+        let dying = self.collected_text.get(start..).unwrap_or("").to_string();
+        if retry_blocked_by_streamed_partial(&dying) {
+            if let Some(s) = self.spinner.take() {
+                s.stop();
+            }
+            if self.in_text {
+                write_stream_text("\n");
+                self.in_text = false;
+            }
+            eprintln!("\n{RED}  error: {error}{RESET}");
+            eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
+            self.fatal_error = Some(error.to_string());
+            return true;
+        }
+        if self.collected_text.is_char_boundary(start) {
+            self.collected_text.truncate(start);
+        }
+        if !dying.is_empty() && self.text_since_last_tool.ends_with(&dying) {
+            let keep = self.text_since_last_tool.len() - dying.len();
+            if self.text_since_last_tool.is_char_boundary(keep) {
+                self.text_since_last_tool.truncate(keep);
+            }
+        }
+        false
+    }
+
     /// Print and reset the tool batch summary.
     fn print_batch_summary(&mut self) {
         let batch_duration = self.batch_start.map(|s| s.elapsed()).unwrap_or_default();
@@ -1096,6 +1136,17 @@ async fn handle_prompt_events(
                         // Agent started a new message — stop the spinner
                         // so it doesn't overlap with output
                         if let Some(s) = state.spinner.take() { s.stop(); }
+                        state.attempt_text_start = state.collected_text.len();
+                    }
+                    // #989: yoagent 0.24 retries RateLimited/Network INSIDE its
+                    // loop. The Day-216 policy (#976) for yoyo's own retry applies
+                    // here too: a pipe that already holds this attempt's text must
+                    // not receive a second attempt. The stream-json door is
+                    // handled separately (its own event loop).
+                    AgentEvent::ProviderRetry { error, .. } => {
+                        if state.handle_provider_retry(&error) {
+                            agent.abort();
+                        }
                     }
                     AgentEvent::MessageEnd { .. }
                         // Agent finished a message — flush any pending text
@@ -3820,7 +3871,7 @@ mod reserved_stdout_tests {
         let body = &src[..src.find(&format!("#[cfg({})]\nmod tests", "test")).unwrap()];
         let call = format!("{}(", "write_stream_text");
         let sites = body.matches(&call).count() - 1; // minus the definition
-        assert_eq!(sites, 14, "gated streamed-text sites changed");
+        assert_eq!(sites, 15, "gated streamed-text sites changed"); // +1 Day 219: handle_provider_retry (#989)
         for bare in ["rendered", "remaining"] {
             let a = format!("print!(\"{{}}\", {bare})");
             let b = format!("print!(\"{{{bare}}}\")");

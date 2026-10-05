@@ -1392,7 +1392,6 @@ fn yoagent_retry_after_429_before_text_yields_one_clean_answer() {
 /// retries (RateLimited) after `PARTIAL_` already streamed (risk B).
 /// Measured Day 218: stdout="PARTIAL_\n\nPONG\n", exit 0, requests=2.
 #[test]
-#[ignore = "#989: yoagent's internal retry duplicates -p stdout"]
 fn yoagent_retry_after_partial_rate_limit_does_not_duplicate_stdout() {
     let first = sse_partial_then(
         "PARTIAL_",
@@ -1411,7 +1410,6 @@ fn yoagent_retry_after_partial_rate_limit_does_not_duplicate_stdout() {
 /// `StreamEnded` as `Network` and retries (risk B, second spelling).
 /// Measured Day 218: stdout="PARTIAL_\n\nPONG\n", exit 0, requests=2.
 #[test]
-#[ignore = "#989: yoagent's internal retry duplicates -p stdout"]
 fn yoagent_retry_after_truncated_stream_does_not_duplicate_stdout() {
     let first = sse_partial_then("PARTIAL_", None);
     assert!(first.contains("text_delta") && !first.contains("event: error"));
