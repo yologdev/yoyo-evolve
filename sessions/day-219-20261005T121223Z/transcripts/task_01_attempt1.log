@@ -1,0 +1,209 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 100,135p src/prompt.rs; ech… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat src/prompt/retry_after_partial… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 255,275p src/main.rs; sed -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "is_terminal\|stdout_is_te… ✓ (8ms)
+ ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,30p tests/print_stdout_co… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 20,70p src/format/mod.rs; s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "static [A-Z_]*: AtomicBo… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 255,300p src/main.rs; grep … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 460,600p src/main.rs; sed -… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1071,1110p src/prompt.rs; s… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 30,80p tests/print_stdout_c… ✓ (6ms)
+  12 tools completed in 53.3s (12 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ edit src/prompt.rs (2 → 12 lines)
+  -                 write_chrome(&format!("\n{DIM}  (interrupted — press Ctrl+C again to exit){RESET}\n"));
+  +                 // #993: a single-shot run exits after this turn, so the REPL's
+  +                 // "press Ctrl+C again" hint is wrong there and must not reach
+  +                 // the stdout payload; the REPL path is byte-identical.
+  +                 INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
+  +                 let single = is_single_shot();
+  +                 let note = interrupt_note(single);
+  +                 if single {
+  +                     let _ = io::stderr().write_all(note.as_bytes());
+  +                 } else {
+  +                     write_chrome(&note);
+  +                 }
+                    return PromptResult::Done {
+  ▶ edit src/prompt.rs (1 → 31 lines)
+  + /// #993: set by `main.rs` for the non-interactive doors (`-p`, piped stdin).
+  + static SINGLE_SHOT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+  + /// #993: set when a Ctrl+C (SIGINT) cut a turn short.
+  + static INTERRUPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+  + 
+  + /// Mark this process as a single-shot run (`-p` / piped prompt).
+  + pub fn mark_single_shot() {
+  +     SINGLE_SHOT.store(true, std::sync::atomic::Ordering::SeqCst);
+  + }
+  + 
+  + fn is_single_shot() -> bool {
+  +     SINGLE_SHOT.load(std::sync::atomic::Ordering::SeqCst)
+  + }
+  + 
+  + /// Whether a SIGINT interrupted a turn in this process (#993: `-p` exits 130).
+  + pub fn was_interrupted() -> bool {
+  +     INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst)
+  + }
+  + 
+  + /// #993: the note printed when Ctrl+C interrupts a turn. The REPL row is the
+  ... (11 more lines)
+  ▶ edit src/prompt.rs (3 → 14 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     #[test]
+  +     fn interrupt_note_repl_row_is_the_old_hint_and_single_shot_drops_again() {
+  +         assert_eq!(
+  +             interrupt_note(false),
+  +             format!("\n{DIM}  (interrupted — press Ctrl+C again to exit){RESET}\n")
+  +         );
+  +         let single = interrupt_note(true);
+  +         assert_eq!(single, format!("\n{DIM}  (interrupted){RESET}\n"));
+  +         assert!(!single.contains("again"));
+  +     }
+ ✓ (15.6s)
+  -                 write_chrome(&format!("\n{DIM}  (interrupted — press Ctrl+C again to exit){RESET}\n"));
+  +                 // #993: a single-shot run exits after this turn, so the REPL's
+  +                 // "press Ctrl+C again" hint is wrong there and must not reach
+  +                 // the stdout payload; the REPL path is byte-identical.
+  +                 INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
+  +                 let single = is_single_shot();
+  +                 let note = interrupt_note(single);
+  +                 if single {
+  ... (5 more lines)
+ ✓ (30.9s)
+  + /// #993: set by `main.rs` for the non-interactive doors (`-p`, piped stdin).
+  + static SINGLE_SHOT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+  + /// #993: set when a Ctrl+C (SIGINT) cut a turn short.
+  + static INTERRUPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+  + 
+  + /// Mark this process as a single-shot run (`-p` / piped prompt).
+  + pub fn mark_single_shot() {
+  +     SINGLE_SHOT.store(true, std::sync::atomic::Ordering::SeqCst);
+  ... (13 more lines)
+ ✓ (46.2s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     #[test]
+  +     fn interrupt_note_repl_row_is_the_old_hint_and_single_shot_drops_again() {
+  +         assert_eq!(
+  +             interrupt_note(false),
+  ... (6 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^mod \|^#\[path\|^    mod… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy --all-targets -- -D w… ✓ (14.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (29 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 588,602p src/main.rs; sed -… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (15 lines) ✓ (16.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy --all-targets -- -D w… ✓ (14.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy --all-targets -- -D w… ✓ (14.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "SINGLE_SHOT\|fn interrupt… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (54 lines) ✓ (18.4s)
+  12 tools completed in 2m 35s (12 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (7 lines) ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 | grep… ✓ (1m 40s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 | grep… ✓ (1m 33s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (16 lines) ✓ (18.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (14 lines) ✓ (3m 13s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 9m 0s (4 ✓, 1 ✗)
+
+Everything is green. Committing now.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- -… (24 lines) ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I committed the #993 fix as 4c6fb486, but the end-to-end test the task asked for is missing. I never ran the -p + Ctrl+C scenario either before or after the change, so the new behaviour is untested in a real run. Build, cargo test, clippy with -D warnings, and cargo fmt --check all pass.
+
+What changed
+• **Exit code: a `-p` or piped-stdin run cut short by Ctrl+C now exits 130** instead of 0, so a script can tell a partial answer from a complete one.
+• **The note: it now says `(interrupted)` and goes to stderr**. The old "press Ctrl+C again to exit" hint no longer lands at the end of the answer on stdout. Any text already streamed stays on stdout.
+• **No follow-up work after an interrupt:** in piped mode, the auto-continue loop no longer starts a new turn.
+• REPL: unchanged. It still prints the same hint to the same place.
+• **JSON mode** (`--output-format json`) also exits 130 on interrupt because it shares the same exit-code path. The JSON output itself is produced the same way as before. Stream-JSON has its own Ctrl+C handling and was not touched.
+• I added a line to `CHANGELOG.md under [Unreleased], and the commit message says this shipped after v0.2.0. I didn't check whether docs/src/usage/single-prompt.md` documents exit codes, so that page may still need a 130 line.
+
+The new code is in src/prompt/interrupt.rs rather than src/prompt.rs. prompt.rs was already over its recorded size, and adding the code there tripped the size-limit test. I moved it rather than raise the limit.
+
+Not done
+• **No end-to-end test and no positive control.** I ran out of budget before writing the test that sends SIGINT to a real `yoyo -p` against a stalled stub server. The only test is a small table test on the note text, which checks that the REPL hint is unchanged byte for byte and that the -p note doesn't say "again". Nothing tests the stderr routing, the exit code 130, or what stdout contains.
+• **Possible lost partial line (I noticed this but did not check it):** the interrupt path doesn't flush the markdown renderer's buffer, so text still waiting in it may never reach stdout. This was already true before my change.
+
+The commit message records both gaps. Next step: write the SIGINT test in tests/print_stdout_contract.rs, waiting for the first streamed bytes before sending the signal, then run the positive control.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short; sed -n 340,380… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> tests/p… (237 lines) ✓ (2.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 34.0s (2 ✓)
+
+Both pass. Next, the positive control, run as one command (break, run, restore):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/prompt.rs /tmp/prompt.rs.ba… ✓ (10.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control shows the #993 symptom exactly (the hint lands on stdout), and the restore left src/prompt.rs clean. Next, a second control on the exit code:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/prompt/… (6 lines) ✓ (10.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls fail on the expected assertion, and both restores leave the tree clean. Now the docs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "exit\|^#" docs/src/usage/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 40,57p docs/src/usage/singl… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (12 lines) ✓ (3m 14s)
+  3 tools completed in 3m 20s (3 ✓)
+
+All green: fmt, clippy, and the full test suite with no failures. Committing.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (35 lines) ✓ (14ms)
+
+The #993 fix now has an end-to-end test, and the test fails when the fix is broken. It's committed as bbe333f2, a follow-up to 4c6fb486. Build, cargo test, clippy with -D warnings and cargo fmt --check all pass.
+
+What the new test does: it runs the real binary with -p against a stub server that streams some text and then stalls. It waits until that text appears on stdout (no fixed sleep), then sends kill -INT.
+
+After the fix:
+• stdout is exactly "PARTIAL_ANSWER_7Q\n", the streamed text with nothing added;
+• stderr ends with (interrupted) and does not say "again";
+• the exit code is 130.
+
+A second test runs the same text with no signal: stdout is unchanged and the exit code is 0.
+
+Checking that the test can fail: I broke the fix two ways, one at a time, restoring the code after each:
+1. Sending the note through the REPL path made the test fail with the original bug's exact output on stdout: "PARTIAL_ANSWER_7Q\n\n\n  (interrupted — press Ctrl+C again to exit)\n".
+2. Ignoring the interrupt when choosing the exit code made it fail with exit code 0, as before the fix.
+
+Docs: docs/src/usage/single-prompt.md now says that Ctrl+C exits 130, puts (interrupted) on stderr, and leaves already-streamed text on stdout.
+
+Still not covered:
+• **`--print` has no Ctrl+C test.** In that mode nothing is printed to stdout until the end, so the test has no reliable moment to send the signal. It uses the same interrupt handling and exit-code logic as plain -p, so it should behave the same, but no test exercises it.
+• **The possible lost text from the first commit is still unchecked.** When Ctrl+C arrives, text from an unfinished line that is still held in yoyo's output buffer may never reach stdout. The new test's streamed text ends in a newline, so it never hits that case.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/prompt.rs

@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; gh issue view 994 2>&1 | … ✓ (1.6s)
+  ▶ write session_plan/task_01.md (32 lines)  ▶ write session_plan/task_02.md (38 lines)  ▶ write session_plan/issue_responses.md (5 lines)  ▶ $ git add session_plan/ && git commit -q -m "Day 219 (11:10): session plan" && git… ✓ (1ms)
+ ✓ (1ms)
+ ✓ (1ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 2m 3s (5 ✓)
+
+I wrote the session plan: two task files and the issue responses in session_plan/. The commit step didn't take: .gitignore lists session_plan/, so git add refused. I didn't force-add it, since the planned command already tolerates failure (|| true). The files are on disk for the next phase, but they're in no commit, so a fresh checkout won't have them.
+
+• **task_01.md, #993 (product, my own find):** when yoyo -p is interrupted with Ctrl+C, it currently exits 0 and prints the REPL's "press Ctrl+C again" hint into stdout.
+  • **Fix:** in single-prompt mode, send a short note to stderr and exit 130 (the usual Ctrl+C exit code). Text already streamed stays on stdout, and the interactive REPL behaves exactly as before.
+  • **Mode check:** the fix should key on single-prompt mode, not on whether stdout is a terminal, because -p into a terminal also exits after one turn.
+  • Tests: pinned in tests/print_stdout_contract.rs. The signal is sent only after the first streamed bytes arrive, to avoid timing flakes. A positive control proves the test actually fails when the fix is reverted.
+• **task_02.md, #994 (product, filed by the creator):** crates.io installs print "dev" in --version.
+  • **Fix:** `build.rs` reads the published commit from `.cargo_vcs_info.json`, which `cargo publish` writes into the package, and only falls back to `git rev-parse when that file is absent. With no hash at all, version_line()` prints just the date, never "dev". Local builds stay exactly as they are now.
+  • **Staleness probe:** the assessment suspects local builds can show an old commit hash, because `build.rs` only re-runs when `DAY_COUNT` changes. That's unverified, so the first step checks it before anything in build.rs is edited. If it reproduces, it gets its own issue rather than a fix in this task.
+• Issue responses: #988 and #982 are deferred with reasons, and nothing is owed on #991.
+
+There's no release task: v0.2.0 shipped today and the release cadence says one isn't due.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

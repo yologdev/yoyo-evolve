@@ -1,0 +1,285 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0: probe before touching build.rs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -2; echo "… ✓ (154ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reproduces: cargo build (no rerun) prints 40422a76, HEAD is dbb41933. Filing the issue as instructed, not fixing it here.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls -t target/d… (21 lines) ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list --label agent-self -… ✓ (609ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 995 --json state,lab… ✓ (372ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2040,2075p src/commands_inf… ✓ (18ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 16.0s (4 ✓)
+
+Now the test file first (helper doesn't exist yet → should fail to compile).
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ write tests/build_vcs_info.rs (67 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test build_vcs_info 2… ✓ (330ms)
+ ✓ (331ms)
+  2 tools completed in 1.4s (2 ✓)
+
+Red as expected. Now build.rs.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit build.rs (4 → 41 lines)
+  + /// Extract a 7-char short commit hash from the text of `.cargo_vcs_info.json`,
+  + /// which `cargo publish` writes into the package root (#994). A crates.io
+  + /// install builds from unpacked registry source with no `.git`, so this file
+  + /// is the only record of the published commit.
+  + ///
+  + /// Deliberately a substring scan, not a JSON parse: build.rs takes no build
+  + /// dependencies. Returns `None` unless the `"sha1"` value is a string whose
+  + /// first 7 chars are ASCII hex — so the slice below is always on an ASCII
+  + /// boundary (never byte-index non-ASCII text, #250).
+  + pub fn short_sha_from_vcs_info(text: &str) -> Option<String> {
+  +     let after_key = &text[text.find("\"sha1\"")? + "\"sha1\"".len()..];
+  +     let after_colon = after_key.trim_start().strip_prefix(':')?;
+  +     let value_start = after_colon.trim_start().strip_prefix('"')?;
+  +     let value = &value_start[..value_start.find('"')?];
+  +     let short = value.get(..7)?;
+  +     if short.chars().all(|c| c.is_ascii_hexdigit()) {
+  +         Some(short.to_string())
+  +     } else {
+  +         None
+  +     }
+  ... (23 more lines)
+ ✓ (3m 0s)
+  + /// Extract a 7-char short commit hash from the text of `.cargo_vcs_info.json`,
+  + /// which `cargo publish` writes into the package root (#994). A crates.io
+  + /// install builds from unpacked registry source with no `.git`, so this file
+  + /// is the only record of the published commit.
+  + ///
+  + /// Deliberately a substring scan, not a JSON parse: build.rs takes no build
+  + /// dependencies. Returns `None` unless the `"sha1"` value is a string whose
+  + /// first 7 chars are ASCII hex — so the slice below is always on an ASCII
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test build_vcs_info 2… ✓ (145ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 6s (2 ✓)
+
+Now version_line() with a seam.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 84,90p src/commands_info.rs ✓ (3ms)
+  ▶ read src/commands_info.rs:85..97 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_info.rs (11 → 22 lines)
+    /// Build a compact version string: `yoyo v0.1.9 (abc1234 2026-04-23) linux-x86_64`
+    ///
+    /// Uses compile-time env vars `GIT_HASH` and `BUILD_DATE` (set by `build.rs`
+  - /// or overridden in CI/release builds).
+  + /// — from `.cargo_vcs_info.json` on a crates.io build, else `git` — or
+  + /// overridden in CI/release builds).
+    pub fn version_line() -> String {
+  -     let hash = option_env!("GIT_HASH").unwrap_or("dev");
+  -     let date = option_env!("BUILD_DATE").unwrap_or("dev");
+        let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+  +     version_line_with(option_env!("GIT_HASH"), option_env!("BUILD_DATE"), &target)
+  + }
+    
+  -     format!("yoyo v{VERSION} ({hash} {date}) {target}")
+  + /// Pure formatter behind [`version_line`]. A missing hash or date is
+  + /// omitted rather than printed as `dev` (#994): `dev` read as "a development
+  + /// build" on a published crates.io install. With both present the output is
+  + /// byte-identical to the pre-#994 format; with neither, the parentheses go.
+  + pub(crate) fn version_line_with(hash: Option<&str>, date: Option<&str>, target: &str) -> String {
+  +     let parts: Vec<&str> = [hash, date].into_iter().flatten().collect();
+  ... (6 more lines)
+  ▶ edit src/commands_info.rs (2 → 33 lines)
+            assert!(line.contains(')'), "should contain ')': {line}");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_version_line_with_hash_and_date_is_unchanged_format() {
+  +         // Near-miss guard: every local build has both, and its line must stay
+  +         // byte-identical to the pre-#994 `(HASH DATE)` format.
+  +         assert_eq!(
+  +             version_line_with(Some("40422a76"), Some("2026-10-05"), "linux-x86_64"),
+  +             format!("yoyo v{VERSION} (40422a76 2026-10-05) linux-x86_64")
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_version_line_with_no_hash_prints_no_dev() {
+  +         // #994: a build with no hash (neither .cargo_vcs_info.json nor git)
+  +         // shows the date alone, never `dev`.
+  +         let line = version_line_with(None, Some("2026-10-05"), "linux-x86_64");
+  +         assert_eq!(line, format!("yoyo v{VERSION} (2026-10-05) linux-x86_64"));
+  +         assert!(!line.contains("dev"), "{line}");
+  ... (13 more lines)
+ ✓ (15.7s)
+    /// Build a compact version string: `yoyo v0.1.9 (abc1234 2026-04-23) linux-x86_64`
+    ///
+    /// Uses compile-time env vars `GIT_HASH` and `BUILD_DATE` (set by `build.rs`
+  - /// or overridden in CI/release builds).
+  + /// — from `.cargo_vcs_info.json` on a crates.io build, else `git` — or
+  + /// overridden in CI/release builds).
+    pub fn version_line() -> String {
+  -     let hash = option_env!("GIT_HASH").unwrap_or("dev");
+  ... (13 more lines)
+ ✓ (31.1s)
+            assert!(line.contains(')'), "should contain ')': {line}");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_version_line_with_hash_and_date_is_unchanged_format() {
+  +         // Near-miss guard: every local build has both, and its line must stay
+  +         // byte-identical to the pre-#994 `(HASH DATE)` format.
+  +         assert_eq!(
+  ... (13 more lines)
+  4 tools completed in 45.8s (4 ✓)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'fn version_line' src/comm… ✓ (16.2s)
+  ▶ read src/commands_info.rs:85..110 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 19.6s (2 ✓)
+
+The first edit was lost (the two parallel edits to one file raced). Re-applying it alone.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (9 → 20 lines)
+    /// Uses compile-time env vars `GIT_HASH` and `BUILD_DATE` (set by `build.rs`
+  - /// or overridden in CI/release builds).
+  + /// — from `.cargo_vcs_info.json` on a crates.io build, else `git` — or
+  + /// overridden in CI/release builds).
+    pub fn version_line() -> String {
+  -     let hash = option_env!("GIT_HASH").unwrap_or("dev");
+  -     let date = option_env!("BUILD_DATE").unwrap_or("dev");
+        let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+  +     version_line_with(option_env!("GIT_HASH"), option_env!("BUILD_DATE"), &target)
+  + }
+    
+  -     format!("yoyo v{VERSION} ({hash} {date}) {target}")
+  + /// Pure formatter behind [`version_line`]. A missing hash or date is
+  + /// omitted rather than printed as `dev` (#994): `dev` read as "a development
+  + /// build" on a published crates.io install. With both present the output is
+  + /// byte-identical to the pre-#994 format; with neither, the parentheses go.
+  + pub(crate) fn version_line_with(hash: Option<&str>, date: Option<&str>, target: &str) -> String {
+  +     let parts: Vec<&str> = [hash, date].into_iter().flatten().collect();
+  +     if parts.is_empty() {
+  +         format!("yoyo v{VERSION} {target}")
+  ... (4 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo clippy --all-ta… ✓ (3m 0s)
+    /// Uses compile-time env vars `GIT_HASH` and `BUILD_DATE` (set by `build.rs`
+  - /// or overridden in CI/release builds).
+  + /// — from `.cargo_vcs_info.json` on a crates.io build, else `git` — or
+  + /// overridden in CI/release builds).
+    pub fn version_line() -> String {
+  -     let hash = option_env!("GIT_HASH").unwrap_or("dev");
+  -     let date = option_env!("BUILD_DATE").unwrap_or("dev");
+        let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+  ... (13 more lines)
+ ✓ (3m 0s)
+  2 tools completed in 3m 2s (2 ✓)
+
+Clean. Positive control on the parser (atomic mutate→run→restore), then the optional package check.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp build.rs /tmp/build.rs.bak; sed… ✓ (20.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Optional end-to-end check: package, then build the unpacked package (it sits inside the repo's worktree, so git would also answer there — a good test that the vcs file wins).
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git stash list | head -1 >/dev/nul… ✓ (810ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Only the .crate was written; unpack it outside the repo (closer to a real registry install).
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf pkgtest && mkdir pkgtest && tar xzf /home/runner/work/yoyo-evo… ✓ (234ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Cargo reused the repo build (0.09s), so that reading proves nothing. Retry with a distinguishable sha and its own target dir:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/pkgtest/yoyo-agent-0.2.0 && sed -i 's/dbb4193302fced9a15929d2413894b7b2f… ✓ (1m 4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; rm -rf /tmp/pkgtarget /tmp/pkgtest… ✓ (279ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (7 lines) ✓ (2m 51s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4m 5s (3 ✓)
+
+All green, and the local build still prints its git hash (dbb41933). Committing.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/msg… (44 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed as b4304064. A crates.io install now prints the commit it was published from instead of dev. Build, test, clippy and fmt all pass.
+
+Step 0 (checked before editing build.rs): the stale-hash suspicion was right. After a fresh cargo build, yoyo --version printed 40422a76, but HEAD was dbb41933. The newest build-script output also held GIT_HASH=40422a76, so build.rs hadn't rerun after new commits. I filed that as #995 and didn't fix it here. The likely cause is rerun-if-changed=DAY_COUNT, but I haven't proven that.
+
+Changes:
+• **`build.rs:** a new helper, short_sha_from_vcs_info, reads the commit from .cargo_vcs_info.json (the file cargo publish adds to the package). It returns the first 7 characters only if they are hex, and needs no new build dependency. When GIT_HASH` isn't already set, the build uses this file first and falls back to `git` as before. The rebuild trigger for the file is only added when the file exists. A local checkout has no such file, so it behaves exactly as before.
+• **tests/build_vcs_info.rs (new):** tests the real helper from `build.rs`, not a copy. The real 0.2.0 file gives `365cc12`; missing, empty, truncated, too-short, non-hex and non-ASCII inputs give nothing. I also checked the test catches a real break: with the hex check removed it failed, and it passed again once restored.
+• **`src/commands_info.rs:** version_line()` now calls a formatter that takes the hash and date as arguments, so tests don't depend on the build environment. A missing part is left out instead of printed as dev. With both hash and date the line is byte-identical to before, and a test pins that exactly. These lines were the only place in src/ falling back to dev; every other caller goes through version_line().
+• **`CHANGELOG.md:** one [Unreleased]` line.
+
+One change beyond the spec: a build that has a hash but no build date (no date program, likely on Windows) used to print (HASH dev) and now prints (HASH). The commit message says so.
+
+End-to-end check (the optional step): I packaged the crate, unpacked it in /tmp outside any git repo, and changed its recorded commit to abcdef1… so the result could only come from that file. Built from there, --version printed yoyo v0.2.0 (abcdef1 2026-10-05). My first attempt reused the repo's existing build, proved nothing, and I didn't count it.
+
+I didn't comment on or close #994: the fix only reaches users in the next release.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short; git log --onel… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+One thing was still open: the build.rs entry in ARCHITECTURE.md says GIT_HASH comes from git, which is now only part of the story. Fixing that line:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (2.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Task 2 is done. A crates.io install of yoyo should now show the commit it was published from in yoyo --version, not dev.
+
+The last loose end was ARCHITECTURE.md. Its build.rs entry still said the commit hash comes only from git. I fixed that in a follow-up commit, 99ea46ad, which also records the stale-hash bug as #995. The harness script and the doc tests pass on that commit.
+
+The main commit, b4304064, passed build, test, clippy and fmt:
+• **`build.rs:** reads the published commit from .cargo_vcs_info.json, the file cargo publish puts in the package. If that file isn't there, as in every local checkout, it uses git rev-parse` as before.
+• **`src/commands_info.rs:** version_line() now leaves out a missing hash or date instead of printing dev`. A build with both prints the same line as before, and a test pins it exactly.
+• **`tests/build_vcs_info.rs (new):** tests the parser in build.rs` directly. I broke it on purpose to confirm the test fails, then restored it.
+
+I also checked the whole path: I packaged the crate, unpacked it outside any git repo, and changed the recorded commit to abcdef1…. A build from there printed (abcdef1 2026-10-05).
+
+One behaviour change goes beyond the spec. A build that has a hash but no build date used to print (HASH dev) and now prints (HASH). That probably only happens on Windows, where there's usually no date program.
+
+Still open:
+• **#995:** the hash really does go stale in a local checkout. One build printed `40422a76` while HEAD was `dbb41933`, because `build.rs` doesn't rerun on new commits. I filed it as the task asked and didn't fix it. The suspected cause is the rerun-if-changed=DAY_COUNT line, but that isn't confirmed.
+• **#994** is still open with no comment from me. The fix only reaches users in the next release, so closing it now would be early.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/commands_info.rs
