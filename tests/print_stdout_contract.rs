@@ -1430,3 +1430,84 @@ fn assert_partial_retry_reading(run: &Run) {
     assert_eq!(run.requests, 1, "#989: no retry after streamed text");
     assert!(!run.success, "#989: the dead turn must exit nonzero");
 }
+
+// #989 stream-json door, probed Day 219 (Task 2). Hypothesis tested: "the
+// final record concatenates PARTIAL_ with PONG, exit 0". FALSE on the record:
+// messageEnd/turnEnd/agentEnd carry exactly "PONG\n". The dead attempt is
+// marked IN BAND: its messageEnd has stopReason "error" + "will be retried",
+// then a providerRetry event. Unlike plain text, an NDJSON consumer can tell
+// the attempts apart, so the abort policy is deliberately NOT applied here
+// (it would turn every recoverable stream-json turn into a failure).
+
+fn stream_json_probe_run(bodies: Vec<String>) -> Run {
+    run_yoyo_within(
+        &["--no-tools", "--max-turns", "1"],
+        &["--output-format", "stream-json", "-p", "hi"],
+        None,
+        bodies,
+        Duration::from_secs(120),
+    )
+}
+
+/// Text of the last assistant message in the final `agentEnd` record.
+fn final_assistant_text(lines: &[serde_json::Value]) -> String {
+    let end = lines
+        .iter()
+        .rfind(|v| v["type"] == "agentEnd")
+        .expect("agentEnd");
+    let msg = end["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rfind(|m| m["role"] == "assistant")
+        .expect("assistant message");
+    msg["content"][0]["text"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn stream_json_retry_after_partial_marks_dead_attempt_and_final_record_is_clean() {
+    let first = sse_partial_then(
+        "PARTIAL_",
+        Some((
+            "error",
+            r#"{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#
+                .to_string(),
+        )),
+    );
+    let run = stream_json_probe_run(vec![first, sse_text_body(RETRY_ANSWER)]);
+    assert_eq!(
+        run.requests, 2,
+        "anti-vacuous: yoagent must retry; stderr={}",
+        run.stderr
+    );
+    assert!(
+        run.success,
+        "recovered stream-json turn exits 0; stderr={}",
+        run.stderr
+    );
+    let lines = ndjson_lines(&run);
+    assert_eq!(final_assistant_text(&lines), RETRY_ANSWER);
+    // The dead attempt's text did reach the wire...
+    let partial = lines
+        .iter()
+        .position(|v| v["type"] == "messageUpdate" && v["delta"]["delta"] == "PARTIAL_")
+        .expect("anti-vacuous: PARTIAL_ streamed");
+    // ...and is closed in band before the retry: error messageEnd, then providerRetry.
+    assert_eq!(lines[partial + 1]["type"], "messageEnd");
+    assert_eq!(lines[partial + 1]["message"]["stopReason"], "error");
+    assert_eq!(lines[partial + 2]["type"], "providerRetry");
+}
+
+#[test]
+fn stream_json_retry_after_429_before_text_yields_clean_answer() {
+    let run = stream_json_probe_run(vec![http_429_response(), sse_text_body(RETRY_ANSWER)]);
+    assert_eq!(
+        run.requests, 2,
+        "anti-vacuous: yoagent must retry; stderr={}",
+        run.stderr
+    );
+    assert!(run.success, "stderr={}", run.stderr);
+    let lines = ndjson_lines(&run);
+    assert_eq!(final_assistant_text(&lines), RETRY_ANSWER);
+    assert!(lines.iter().any(|v| v["type"] == "providerRetry"));
+}
