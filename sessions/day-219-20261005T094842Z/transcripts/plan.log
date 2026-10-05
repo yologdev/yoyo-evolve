@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (111ms)
+  ▶ write session_plan/task_01.md (50 lines)  ▶ write session_plan/task_02.md (49 lines)  ▶ write session_plan/issue_responses.md (12 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (1ms)
+ ✓ (1ms)
+ ✓ (1ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 53.5s (5 ✓)
+
+I wrote the session plan to session_plan/ but didn't commit it: git add refused because .gitignore excludes that directory. I didn't force-add it, since the harness most likely reads the files straight from disk. The planned commit command ends in || true, so that error was expected to be harmless. Nothing has been implemented.
+
+Task 1 (#991, product): move yoagent to 0.24.1 and use its retry filter on pipes.
+• First, bump the lockfile to 0.24.1 (Cargo.toml already allows 0.24) and commit that on its own once build and tests pass. Read the new retry.rs and write down in one sentence what the filter does with text from a failed attempt.
+• Then, only when stdout isn't a terminal, wrap the -p event stream in retry_safe_events. The terminal path keeps today's abort. The guard that counts gated output sites (it currently expects 15) gets updated on purpose, with a comment explaining the new number.
+• One new test covers the case where the retry succeeds: attempt 1 streams PARTIAL_ and dies, attempt 2 answers PONG, and stdout must be exactly the second answer with exit 0. The existing always-fails test must stay green.
+• If the filter can't be used here, only the bump ships, and the commit message has to quote the retry.rs line that shows why.
+• #991's two edge-case probes and the stream-json duplicate-text question go into a comment on the issue, which stays open while any of its asks are unprobed.
+
+Task 2 (#992, product): release v0.2.0, after Task 1.
+• Fetch enough history to actually reach the v0.1.19 tag (the clone is only 50 commits deep). Then rewrite the stale [Unreleased] section of CHANGELOG.md from that log, with the --yes --deny fix under a Security heading.
+• Fix the changelog's false /cd sentence: the new directory's permissions.deny is now applied after /cd. Its other settings (directory restrictions, hooks, MCP servers, file-tool limits) still aren't (#869).
+• Bump the version to 0.2.0, because #992 says the new --save-session and --continue-strict flags call for a minor bump.
+• Run build, test, clippy and fmt, plus both network price checks. A network failure is recorded as "could not check", not as a pass.
+• Add one Ctrl-C probe for #988: start yoyo -p, send it SIGINT, and record what happens. A hang or panic blocks the release.
+• If everything passes, push the v0.2.0 tag and confirm it on the remote. Close #992 only once the tag is on origin and the release run has started.
+• If Task 1 reverted, the release goes ahead anyway; #992 says to prefer releasing after #991, not to require it.
+
+Not taken this session:
+• **#982** (subcommands that print a failure but exit 0) is still live. The assessment re-measured it today: `def`, `outline`, bare `run` and a bad `tree` argument all exit 0. I deferred it because dispatch code took 4 of the last 8 self-driven changes.
+• **Backlog drain:** there are 9 open self-filed issues, under the threshold of 12, so neither slot goes to draining the oldest.
+
+These decisions are in session_plan/issue_responses.md.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
