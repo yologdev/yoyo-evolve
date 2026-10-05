@@ -271,4 +271,95 @@ mod tests {
         // Near-miss: an ordinary file in R is untouched by a deny on O.
         assert_eq!(verdict(&deny, &f.root.join("ok.txt")), Ok(()));
     }
+
+    // ── #998: a configured ENTRY that is itself a symlink ──────────────────
+    // `check_path` resolves every configured entry with `resolve_path`, so an
+    // entry is judged at its link TARGET. These pin that for the entry side
+    // (the tests above pin the candidate side). Everything lives under
+    // `fence().root`, a canonical temp dir, never the repo.
+
+    fn entries(allow: &[&Path], deny: &[&Path]) -> DirectoryRestrictions {
+        let s = |v: &[&Path]| v.iter().map(|p| p.to_string_lossy().to_string()).collect();
+        DirectoryRestrictions {
+            allow: s(allow),
+            deny: s(deny),
+        }
+    }
+
+    /// (a) The consistency premise the #998 decision rests on: an allow entry
+    /// that is a link to an EXISTING directory has always matched at its
+    /// target (`fs::canonicalize` follows links), so a candidate inside the
+    /// target is allowed.
+    #[test]
+    fn entry_existing_link_allow_matches_at_its_target() {
+        let f = fence();
+        let real = f.root.join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = f.root.join("link");
+        symlink(&real, &link).unwrap();
+        let r = entries(&[&link], &[]);
+        assert_eq!(verdict(&r, &real.join("f.txt")), Ok(()));
+        // Near-miss: a sibling of the target is still outside the entry.
+        assert!(verdict(&r, &f.outside.join("f.txt")).is_err());
+    }
+
+    /// (b) A dangling deny entry denies at its (not-yet-created) target.
+    #[test]
+    fn entry_dangling_link_deny_denies_at_its_target() {
+        let f = fence();
+        let gone = f.root.join("gone");
+        let dlink = f.root.join("dlink");
+        symlink(&gone, &dlink).unwrap();
+        assert!(!gone.exists(), "fixture: the deny entry must dangle");
+        let r = entries(&[], &[&dlink]);
+        assert!(verdict(&r, &gone.join("f.txt")).is_err());
+        // Near-miss: a deny on `gone` says nothing about the rest of root.
+        assert_eq!(verdict(&r, &f.root.join("ok.txt")), Ok(()));
+    }
+
+    /// (c) The #998 decision: a dangling ALLOW entry also matches at its
+    /// target, the same as (a). Refusing here would make the entry's meaning
+    /// change the moment its target directory is created (inert today, wide
+    /// tomorrow), a time-dependent boundary.
+    #[test]
+    fn entry_dangling_link_allow_matches_at_its_target() {
+        let f = fence();
+        let later = f.root.join("later");
+        let alink = f.root.join("alink");
+        symlink(&later, &alink).unwrap();
+        assert!(!later.exists(), "fixture: the allow entry must dangle");
+        let r = entries(&[&alink], &[]);
+        assert_eq!(verdict(&r, &later.join("f.txt")), Ok(()));
+        // Same verdict once the target exists: the boundary does not move.
+        std::fs::create_dir(&later).unwrap();
+        assert_eq!(verdict(&r, &later.join("f.txt")), Ok(()));
+        // Near-miss: outside the target is still refused.
+        assert!(verdict(&r, &f.outside.join("f.txt")).is_err());
+    }
+
+    /// (d) A looping allow entry falls back to its literal path, and a
+    /// candidate under the loop is itself unresolvable, so it is refused;
+    /// the entry is inert rather than wide.
+    #[test]
+    fn entry_looping_link_allow_is_inert() {
+        let f = fence();
+        let a = f.root.join("a");
+        let b = f.root.join("b");
+        symlink(&b, &a).unwrap();
+        symlink(&a, &b).unwrap();
+        let r = entries(&[&a], &[]);
+        assert!(verdict(&r, &a.join("f.txt")).is_err());
+        assert!(verdict(&r, &f.root.join("f.txt")).is_err());
+        assert!(verdict(&r, &f.outside.join("f.txt")).is_err());
+    }
+
+    /// (e) Near-miss: an ordinary existing directory entry allows its own
+    /// child and refuses a sibling directory's child, exactly as before.
+    #[test]
+    fn entry_plain_directory_allow_is_unchanged() {
+        let f = fence();
+        let r = entries(&[&f.root], &[]);
+        assert_eq!(verdict(&r, &f.root.join("f.txt")), Ok(()));
+        assert!(verdict(&r, &f.outside.join("f.txt")).is_err());
+    }
 }
