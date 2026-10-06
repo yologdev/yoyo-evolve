@@ -1,6 +1,6 @@
 //! Prompt execution and agent interaction.
 
-use crate::cli::is_verbose;
+use crate::cli::{is_retry_after_partial, is_verbose};
 use crate::format::*;
 use std::collections::HashMap;
 use std::io::{self, IsTerminal, Write};
@@ -19,7 +19,7 @@ mod stream_external_servers;
 mod stream_session_restored;
 pub(crate) use stream_session_restored::record_session_restored;
 mod turn_prefix;
-use retry_after_partial::{should_retry_after_partial, RETRY_SKIPPED_AFTER_PARTIAL_NOTE};
+use retry_after_partial::{retry_blocked_by_streamed_partial, RETRY_SKIPPED_AFTER_PARTIAL_NOTE};
 pub(crate) use turn_prefix::{
     apply_effort_hint, apply_external_failure_note_with, prepend_external_failure_block_with,
 };
@@ -184,14 +184,6 @@ pub struct PromptOutcome {
 /// for `external_servers` one subsystem over).
 fn fatal_handoff(collected_text: String, error_msg: String) -> (String, Option<String>) {
     (collected_text, Some(error_msg))
-}
-
-/// Live-state wrapper both retry loops call: one condition, never two copies.
-/// The dying attempt's text reached stdout only when stdout is NOT reserved for
-/// a final payload (`--print`/json hold it back, so they retry safely).
-fn retry_blocked_by_streamed_partial(dying_text: &str) -> bool {
-    let streamed = !stdout_reserved() && !dying_text.is_empty();
-    !should_retry_after_partial(io::stdout().is_terminal(), streamed)
 }
 
 /// Assemble the value a caller of the two prompt loops actually receives.
@@ -987,7 +979,8 @@ impl PromptEventState {
     fn handle_provider_retry(&mut self, error: &str) -> bool {
         let start = self.attempt_text_start.min(self.collected_text.len());
         let dying = self.collected_text.get(start..).unwrap_or("").to_string();
-        if retry_blocked_by_streamed_partial(&dying) {
+        // `false`: this door ignores the #997 opt-in on purpose (#991; see retry_after_partial.rs).
+        if retry_blocked_by_streamed_partial(&dying, false) {
             if let Some(s) = self.spinner.take() {
                 s.stop();
             }
@@ -1337,7 +1330,9 @@ pub async fn run_prompt_with_changes(
             } => {
                 accumulate_usage(&mut total_usage, &usage);
 
-                if attempt < MAX_RETRIES && retry_blocked_by_streamed_partial(&dying_text) {
+                if attempt < MAX_RETRIES
+                    && retry_blocked_by_streamed_partial(&dying_text, is_retry_after_partial())
+                {
                     // #976: a pipe already holds this attempt's partial answer;
                     // a retry would write it again. Stop with the real error.
                     eprintln!("\n{RED}  error: {error_msg}{RESET}");
@@ -1490,7 +1485,7 @@ pub async fn run_prompt_with_changes(
                 {
                     // #976: a resample re-runs the same prompt, so it would
                     // re-stream this attempt's partial onto a pipe too.
-                    if retry_blocked_by_streamed_partial(&fatal_text) {
+                    if retry_blocked_by_streamed_partial(&fatal_text, is_retry_after_partial()) {
                         eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
                         (collected_text, api_error) = fatal_handoff(fatal_text, error_msg);
                         break;
@@ -1752,7 +1747,9 @@ pub async fn run_prompt_with_content_and_changes(
             } => {
                 accumulate_usage(&mut total_usage, &usage);
 
-                if attempt < MAX_RETRIES && retry_blocked_by_streamed_partial(&dying_text) {
+                if attempt < MAX_RETRIES
+                    && retry_blocked_by_streamed_partial(&dying_text, is_retry_after_partial())
+                {
                     // #976: same shared rule as `run_prompt_auto_retry` above.
                     eprintln!("\n{RED}  error: {error_msg}{RESET}");
                     eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
@@ -1828,7 +1825,7 @@ pub async fn run_prompt_with_content_and_changes(
                 {
                     // #976: a resample re-runs the same prompt, so it would
                     // re-stream this attempt's partial onto a pipe too.
-                    if retry_blocked_by_streamed_partial(&fatal_text) {
+                    if retry_blocked_by_streamed_partial(&fatal_text, is_retry_after_partial()) {
                         eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
                         (collected_text, api_error) = fatal_handoff(fatal_text, error_msg);
                         break;

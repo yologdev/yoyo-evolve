@@ -56,6 +56,22 @@ pub fn is_continue_on_silence() -> bool {
     *CONTINUE_ON_SILENCE.get_or_init(|| false)
 }
 
+/// #997: opt-in `retry_after_partial` (config key only). Default **off**:
+/// when stdout is not a terminal and an attempt already streamed text, the
+/// #976 rule refuses yoyo's own retry. Opted in, the retry runs anyway, and
+/// the pipe may carry the dying attempt's partial before the retried answer.
+static RETRY_AFTER_PARTIAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Enable the `retry_after_partial` opt-in.
+pub fn set_retry_after_partial() {
+    let _ = RETRY_AFTER_PARTIAL.set(true);
+}
+
+/// Whether `retry_after_partial` is enabled (default false).
+pub fn is_retry_after_partial() -> bool {
+    *RETRY_AFTER_PARTIAL.get_or_init(|| false)
+}
+
 /// Whether `--wait-for-reset` was passed. Default **off**.
 ///
 /// When on, a provider-supplied rate-limit reset time is honoured up to
@@ -2297,6 +2313,14 @@ pub(crate) fn parse_args_with_config(
         || crate::config::parse_continue_on_silence_from_config(&file_config)
     {
         set_continue_on_silence();
+    }
+
+    // retry_after_partial: opt-in (#997), config key only — no flag. When on,
+    // yoyo's own retry loops retry a transient error even after text already
+    // streamed to a non-terminal stdout (accepting a duplicate partial there
+    // rather than losing the turn). Default off keeps #976's refusal.
+    if crate::config::parse_retry_after_partial_from_config(&file_config) {
+        set_retry_after_partial();
     }
 
     // --wait-for-reset: opt-in. Honour a provider-supplied rate-limit reset

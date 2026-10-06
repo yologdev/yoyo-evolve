@@ -877,6 +877,123 @@ fn armed_door_completed_stream_of_partial_line_is_byte_identical() {
     assert_eq!(String::from_utf8_lossy(&run.stdout), PARTIAL_LINE);
 }
 
+// ---------------------------------------------------------------------------
+// #997: the opt-in `retry_after_partial = true` (project `.yoyo.toml`).
+// The default rows are the #976 tests above, left unedited; these pin what the
+// opt-in changes on the armed `-p` door with stdout a pipe.
+// ---------------------------------------------------------------------------
+
+/// Answer of the attempt that succeeds after the opt-in retry.
+const OPT_IN_ANSWER: &str = "PONG\n";
+
+/// The opt-in seeded as a project config in the run's cwd.
+const OPT_IN_CONFIG: (&str, &str) = (".yoyo.toml", "retry_after_partial = true\n");
+
+fn run_opt_in(bodies: Vec<String>) -> Run {
+    let run = run_yoyo_seeded(
+        &[OPT_IN_CONFIG],
+        &["--no-tools", "--max-turns", "1"],
+        &["-p", "hi"],
+        None,
+        bodies,
+        Duration::from_secs(150),
+    );
+    eprintln!(
+        "PROBE #997: stdout={:?} success={} requests={} stderr_tail={:?}",
+        String::from_utf8_lossy(&run.stdout),
+        run.success,
+        run.requests,
+        run.stderr.lines().rev().take(6).collect::<Vec<_>>()
+    );
+    run
+}
+
+/// The row #997 exists for: text streamed, then a transient Overloaded, then
+/// a clean answer. Default: exit 1 after 1 request (the #976 test above).
+/// Opt-in: the turn is retried and succeeds. The cost is named, not hidden:
+/// the dying attempt's partial already sits in the pipe, so stdout carries it
+/// once, followed by the retried answer.
+#[test]
+fn opt_in_retries_after_streamed_partial_and_succeeds() {
+    let run = run_opt_in(vec![
+        sse_dies_mid_stream_body_with(PARTIAL_LINE),
+        sse_text_body(OPT_IN_ANSWER),
+    ]);
+    assert_eq!(
+        run.requests, 2,
+        "#997: opted in, the dying attempt is retried; stderr={}",
+        run.stderr
+    );
+    assert!(
+        run.success,
+        "#997: the retry succeeded, so exit 0; stderr={}",
+        run.stderr
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "PARTIAL_ANSWER_7Q\n\n\nPONG\n",
+        "#997: the partial once (already in the pipe), the retry path's existing blank-line \
+         separator, then the answer; stderr={}",
+        run.stderr
+    );
+    assert!(
+        !run.stderr
+            .contains("not retrying: part of the answer was already written"),
+        "#997: the #976 skip note must not print when the retry happens; stderr={}",
+        run.stderr
+    );
+}
+
+/// Sibling coupling (#991's motivating input): a death BEFORE any text must
+/// still give exactly the clean answer when the opt-in is on.
+#[test]
+fn opt_in_death_before_text_still_yields_exactly_the_answer() {
+    let early_death = sse_events(vec![
+        (
+            "message_start",
+            r#"{"type":"message_start","message":{"id":"msg_die0","type":"message","role":"assistant","model":"claude-stub","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":1}}}"#.to_string(),
+        ),
+        (
+            "error",
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#.to_string(),
+        ),
+    ]);
+    assert!(!early_death.contains("text_delta"), "anti-vacuous: no text");
+    let run = run_opt_in(vec![early_death, sse_text_body(OPT_IN_ANSWER)]);
+    assert_eq!(run.requests, 2, "stderr={}", run.stderr);
+    assert!(run.success, "stderr={}", run.stderr);
+    assert_eq!(String::from_utf8_lossy(&run.stdout), OPT_IN_ANSWER);
+}
+
+/// Day-216 row: the case the widened retry does NOT save. Every attempt dies
+/// after streaming text; the opt-in must still terminate, nonzero, within the
+/// existing retry cap (6 attempts = MAX_RETRIES + 1), never loop.
+#[test]
+fn opt_in_every_attempt_dying_after_text_terminates_nonzero_within_the_cap() {
+    let run = run_opt_in(vec![sse_dies_mid_stream_body_with(PARTIAL_LINE)]);
+    assert!(
+        !run.success,
+        "every attempt failed, so exit nonzero; stderr={}",
+        run.stderr
+    );
+    assert_eq!(
+        run.requests, 6,
+        "bounded by MAX_RETRIES + 1; stderr={}",
+        run.stderr
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        [PARTIAL_LINE; 6].join("\n\n"),
+        "the cost of the opt-in at its worst: one partial per attempt; stderr={}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("Overloaded"),
+        "stderr carries the failure; stderr={}",
+        run.stderr
+    );
+}
+
 // ── The whole contract in one scenario ───────────────────────────────────
 //
 // Five point fixes in two days (#966 duplication, the tool-progress leak,

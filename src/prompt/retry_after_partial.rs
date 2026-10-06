@@ -7,6 +7,8 @@
 //! Bytes on a pipe cannot be retracted, so the fix is a decision made BEFORE
 //! the retry. Every retry site in `prompt.rs` asks this one function.
 
+use std::io::IsTerminal;
+
 /// May a turn that died with a retriable error be re-run?
 ///
 /// Only `(false, true)` says no: stdout is not a terminal AND the dying attempt
@@ -19,6 +21,38 @@ pub(super) fn should_retry_after_partial(
     streamed_this_attempt: bool,
 ) -> bool {
     stdout_is_terminal || !streamed_this_attempt
+}
+
+/// [`should_retry_after_partial`] widened by the `retry_after_partial` opt-in
+/// (#997, default **off**, so the default is byte-identical to #976).
+///
+/// The trade, named rather than hidden: opted in, a pipe that already holds the
+/// dying attempt's partial text gets that text AGAIN from the retry (duplicate
+/// partial on stdout) in exchange for not losing the turn to one transient
+/// `Overloaded`. The dying attempt's text is still dropped from the returned
+/// answer — only the bytes already written to the pipe stay. The retry cap is
+/// unchanged, so an every-attempt failure still ends nonzero.
+///
+/// Scope: yoyo's own retry loops only. yoagent's internal `ProviderRetry`
+/// door (`handle_provider_retry`, #989) does not consult the opt-in, because
+/// #991 (`retry_safe_events`) answers that door by making duplicates
+/// impossible rather than accepting them. That asymmetry is deliberate, not a
+/// "two doors, one deaf" miss.
+pub(super) fn retry_after_partial_allowed(
+    opted_in: bool,
+    stdout_is_terminal: bool,
+    streamed_this_attempt: bool,
+) -> bool {
+    opted_in || should_retry_after_partial(stdout_is_terminal, streamed_this_attempt)
+}
+
+/// Live-state wrapper both retry loops call: one condition, never two copies.
+/// The dying attempt's text reached stdout only when stdout is NOT reserved for
+/// a final payload (`--print`/json hold it back, so they retry safely).
+/// `opted_in`: the #997 opt-in (yoyo's loops) or `false` (`handle_provider_retry`).
+pub(super) fn retry_blocked_by_streamed_partial(dying_text: &str, opted_in: bool) -> bool {
+    let streamed = !crate::format::stdout_reserved() && !dying_text.is_empty();
+    !retry_after_partial_allowed(opted_in, std::io::stdout().is_terminal(), streamed)
 }
 
 /// The one stderr line printed when [`should_retry_after_partial`] refuses.
@@ -45,6 +79,28 @@ mod tests {
                 should_retry_after_partial(tty, streamed),
                 want,
                 "tty={tty} streamed={streamed}"
+            );
+        }
+    }
+
+    #[test]
+    fn opt_in_only_lifts_the_one_refusing_row() {
+        // (opted_in, tty, streamed) -> retry?
+        let table = [
+            (false, true, true, true),
+            (false, true, false, true),
+            (false, false, false, true),
+            (false, false, true, false), // default: #976 refusal unchanged
+            (true, true, true, true),
+            (true, true, false, true),
+            (true, false, false, true),
+            (true, false, true, true), // #997: opted in, the pipe retries
+        ];
+        for (opted_in, tty, streamed, want) in table {
+            assert_eq!(
+                retry_after_partial_allowed(opted_in, tty, streamed),
+                want,
+                "opted_in={opted_in} tty={tty} streamed={streamed}"
             );
         }
     }

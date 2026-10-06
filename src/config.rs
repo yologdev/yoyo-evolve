@@ -1054,6 +1054,16 @@ pub fn parse_auto_continue_from_config(config: &std::collections::HashMap<String
     config_flag(config, "auto_continue", true)
 }
 
+/// Check whether `retry_after_partial` is enabled in the config (#997).
+/// Defaults to `false`: with stdout not a terminal, a turn that already
+/// streamed text is not retried (#976). `true` retries it anyway, accepting
+/// a duplicate partial on stdout instead of losing the turn.
+pub fn parse_retry_after_partial_from_config(
+    config: &std::collections::HashMap<String, String>,
+) -> bool {
+    config_flag(config, "retry_after_partial", false)
+}
+
 /// Check whether continue-on-silence is enabled in the config.
 ///
 /// Defaults to **false** when the key is absent — this is opt-in (issue #631),
@@ -1361,6 +1371,10 @@ pub const SETTABLE_KEYS: &[(&str, &str)] = &[
         "wait_for_reset",
         "wait out a provider rate-limit reset instead of giving up (true/false)",
     ),
+    (
+        "retry_after_partial",
+        "retry a failed turn even after its text reached a non-terminal stdout (true/false)",
+    ),
     ("lite", "enable lite mode for small/local LLMs (true/false)"),
     ("no_bell", "suppress terminal bell (true/false)"),
     (
@@ -1459,6 +1473,16 @@ pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
                 "false" | "0" | "no" | "off" => Ok("false".to_string()),
                 _ => Err(format!(
                     "invalid continue_on_silence value '{value}' — use true or false"
+                )),
+            }
+        }
+        "retry_after_partial" => {
+            let lower = value.to_ascii_lowercase();
+            match lower.as_str() {
+                "true" | "1" | "yes" | "on" => Ok("true".to_string()),
+                "false" | "0" | "no" | "off" => Ok("false".to_string()),
+                _ => Err(format!(
+                    "invalid retry_after_partial value '{value}' — use true or false"
                 )),
             }
         }
@@ -3054,6 +3078,30 @@ env = { API_KEY = "secret" }
         let mut config = std::collections::HashMap::new();
         config.insert("auto_continue".to_string(), "true".to_string());
         assert!(parse_auto_continue_from_config(&config));
+    }
+
+    #[test]
+    fn retry_after_partial_defaults_to_false_and_parses_both_ways() {
+        let mut config = std::collections::HashMap::new();
+        assert!(!parse_retry_after_partial_from_config(&config));
+        config.insert("retry_after_partial".to_string(), "false".to_string());
+        assert!(!parse_retry_after_partial_from_config(&config));
+        config.insert("retry_after_partial".to_string(), "true".to_string());
+        assert!(parse_retry_after_partial_from_config(&config));
+        assert_eq!(
+            validate_config_value("retry_after_partial", "on"),
+            Ok("true".to_string())
+        );
+        assert!(validate_config_value("retry_after_partial", "maybe").is_err());
+    }
+
+    /// #997: the evolve loop turns the opt-in on in the repo's own config.
+    #[test]
+    fn repo_yoyo_toml_opts_into_retry_after_partial() {
+        let text = include_str!("../.yoyo.toml");
+        assert!(parse_retry_after_partial_from_config(&parse_config_file(
+            text
+        )));
     }
 
     #[test]
