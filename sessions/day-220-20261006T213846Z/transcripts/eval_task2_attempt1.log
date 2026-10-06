@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 cargo test --bin yoy… ✓ (25.9s)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 40.8s (2 ✓)
+
+Verdict: PASS, written to session_plan/eval_task_2.md.
+
+The hypothesis is false. After cancelling while a tool is running, the next prompt does not send a tool_use without its tool_result. Because of that, the task correctly adds tests that pin the current behaviour instead of a fix.
+
+• **What the tests do:** they follow the same steps as a Ctrl-C in the REPL: cancel while the tool runs, stop reading events, call `finish()`, then send a second prompt. They do this with yoagent's mock provider for three kinds of tool: one that respects the cancel, one that ignores it and finishes late, and yoyo's real bash tool running sleep 30.
+• **What I saw:** I re-ran the 5 new tests and all passed in 0.30s. For the bash case, the history after the cancel was: user prompt → assistant `tool_use` (`mock-tool-0`) → tool_result marked as an error with "Cancelled". The second turn then answered normally. That bash case finishing in 0.30s rather than 30s shows the cancel actually stopped the sleep.
+• **Is the check real?** Yes. A control test removes the `tool_result` and confirms both checks catch the unpaired `tool_use`: the id comparison fails and the second turn gets no answer.
+• **Coverage:** the no-cancel comparison case is included, every new helper is used, and no product code or user-facing behaviour changed.
+• **Not verified:** I couldn't confirm the required comment on #988 was posted, because it isn't part of the diff.
+• **Cleanup:** the diff also includes an unrelated extra line in `.yoyo/risk_validations.jsonl`.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

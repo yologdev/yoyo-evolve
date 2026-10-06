@@ -1,0 +1,34 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; mkdir -p sessio… ✓ (8ms)
+  ▶ write session_plan/task_01.md (31 lines)  ▶ write session_plan/task_02.md (19 lines)  ▶ write session_plan/issue_responses.md (9 lines)  ▶ $ git add session_plan/ && git commit -q -m "Day 220 (20:48): session plan" && git… ✓ (1ms)
+ ✓ (1ms)
+ ✓ (1ms)
+ ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 43.7s (5 ✓)
+
+I wrote the session plan: two task files and an issue-responses file in session_plan/. The commit didn't happen because session_plan/ is gitignored. The files are on disk, and the instruction's || true already allows for the commit failing this way.
+
+Task 1 (evolve, `scripts/extract_trajectory.py` only): this session's trajectory said "these are live" about CI failures, but CI has been green for a week. The log line from that check shows why. gh returned a list of runs from a week ago, and its newest run was the failure itself. The function that spots an out-of-date list (page_is_stale) counts that tie as up to date, so the old failure read as still live. The fix doesn't turn a tie into "could not check", because a tie is also exactly what a real live failure looks like. Instead, on a tie it runs a second, unfiltered run listing to settle it:
+• If that listing shows a newer run, the first list was out of date and the failure is no longer reported as live.
+• If it agrees, the failure is reported as live, the same as today.
+• If it fails, the result is "could not check".
+
+The test cases use the real values from today's log line. One case checks that a real live failure is still reported word for word as before. The task also includes deliberately breaking the check once to confirm a test catches it.
+
+Task 2 (product, part of #988): after Ctrl-C while a tool is running, does the next turn send a tool_use with no matching tool_result? If it does, every later turn in that REPL session would fail with an API 400. The task measures this first with a stub provider and records the raw messages.
+• If the gap is real: add a tool_result marked as an error and cancelled for each unpaired call, and pin it with a test.
+• If it isn't: keep the probe as a regression test and record the result only as "no unpaired tool_use after a mid-tool cancel".
+
+It stays out of main.rs, because the trajectory warned that main took 4 of the last 7 changes.
+
+Issue responses:
+• **#988:** the task itself will post a comment with the reading.
+• **#997, #991, #982:** deferred, with no comment.
+
+Release: not due (v0.2.0 shipped yesterday), so I'm not releasing.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

@@ -1,0 +1,96 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~ 2>/dev/null; cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && Y=$(ls -d ~/.cargo/registry/src/… ✓ (10ms)
+ ✓ (22ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.24.2/src; grep -n "Aborted\|cancel\|is_canc… ✓ (4ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.24.2/src; sed -n 80,200p provider/mock.rs; … ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.24.2/src; sed -n 485,510p agent_loop.rs | c… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "\.abort()\|cancel\b\|\.ca… ✓ (3ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.24.2/src; grep -n "pub fn abort\|pub async … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls src/lib.rs 2>&1; grep -rn "tool… ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^mod \|^pub mod \|^#\[cfg… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 480,500p tests/module_size.… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '"src/prompt.rs"' tests/mo… ✓ (5ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.24.2/src; grep -n "pub trait AgentTool" -A3… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1180,1215p src/prompt.rs; g… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,110p src/tool_wrappers_ca… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  14 tools completed in 44.3s (14 ✓)
+
+Now write the probe test (measurement first, with raw dump).
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ write src/prompt/cancel_mid_tool_tests.rs (324 lines)  ▶ edit src/prompt.rs (2 → 4 lines)
+  + #[cfg(test)]
+  + mod cancel_mid_tool_tests;
+    mod interrupt;
+    mod retry_after_partial;
+ ✓ (1m 36s)
+ ✓ (4m 22s)
+  + #[cfg(test)]
+  + mod cancel_mid_tool_tests;
+    mod interrupt;
+    mod retry_after_partial;
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo cancel_mid_t… ✓ (549ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4m 31s (3 ✓)
+
+H is false: yoagent pairs the tool_use itself in all three shapes. Now a positive control so the pairing check is proven capable of seeing an unpaired history (not just agreeing with itself).
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.24.2/src; grep -n "pub fn with_messages\|pu… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> src/pro… (36 lines) ✓ (26.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 36.5s (2 ✓)
+
+Positive control is green, so both checks can detect an unpaired history. Now the full gate:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo fmt -- --check … ✓ (2m 48s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "test re… ✓ (1m 49s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4m 42s (2 ✓)
+
+All green. Comment on #988 with the raw reading, then commit.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/c98… (31 lines) ✓ (937ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (8 lines) ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.2s (2 ✓)
+
+The hypothesis is false. When a Ctrl-C lands while a tool is running, the next prompt does not send a tool_use without its tool_result, so nothing needed fixing. I committed a regression test that pins this (25160e9f, "Part of #988").
+
+How I tested it: I used yoagent's own mock provider, which panics on an unpaired tool_use the same way a real provider returns a 400. The test copies the REPL's Ctrl-C path: start a prompt, wait until the tool starts, call agent.abort(), return without draining, call finish(), then send a second prompt. I ran it against three tools:
+
+| Tool | History after cancel | Second prompt |
+|---|---|---|
+| yoyo's real bash tool running sleep 30 | tool_use + toolResult marked as an error, text "Cancelled" | answered |
+| a stub that stops when cancelled | tool_use + toolResult marked as an error, text "Cancelled" | answered |
+| a stub that ignores the cancel (finishes 300ms later) | tool_use + a normal (non-error) toolResult | answered |
+
+Why it holds: yoagent 0.24.2 waits for each tool to finish and records its result before checking for cancellation, so the pair is complete before the run ends. That also means no Aborted message is ever created on this path: the assistant's stop reason is ToolUse. The way yoyo treats Aborted stop reasons, which prompted the task, never comes into play here.
+
+What the tests check:
+• On both turns, every tool_use id has a matching tool_result id, and the second turn's answer actually arrives. The second check matters because a rejected history would otherwise fail silently inside the background task.
+• A run with no cancel produces exactly user → assistant (tool call) → tool result → assistant (answer).
+• A positive control removes the tool result from the measured history and confirms both checks catch it. Without that, the "paired" result could have been passing for the wrong reason.
+
+Files: a new src/prompt/cancel_mid_tool_tests.rs, plus a two-line test-only mod line in src/prompt.rs. fmt, clippy (-D warnings), build and the full test suite all passed.
+
+On #988: I posted the raw readings and the result. I filed no new issues: the raw readings showed no other defect. I noted two things on #988 without filing them. The cancelled result text is just "Cancelled", and a tool that ignores cancellation keeps running to the end after Ctrl-C. Q1 (is the interrupt message printed?) and Q2 (side effects of the error path) are still open.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/2 changed files were in top-10 predictions (50.0% accuracy)
+     Predicted correctly: src/prompt.rs
+     Surprises (not predicted): src/prompt/cancel_mid_tool_tests.rs
