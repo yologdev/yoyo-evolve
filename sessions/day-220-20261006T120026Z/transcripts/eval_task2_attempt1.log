@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.24*/src/ 2>/dev/null && pwd && grep -n "Can… ✓ (819ms)
+  ▶ $ d=$(ls -d ~/.cargo/registry/src/*/yoagent-0.24.2/src 2>/dev/null | head -1); ech… ✓ (7ms)
+  ▶ $ mkdir -p session_plan && cat > session_plan/eval_task_2.md <… (9 lines) ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 19.0s (3 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md.
+
+The change does what the task asked. When the user presses Ctrl-C, a sub-agent child is no longer re-run on the fallback model, and the parent's model is no longer told the child "failed".
+
+• **yoagent's actual behaviour (checked in the 0.24.2 source, not taken from the issue):**
+  • The parent's cancellation token is passed down to the child (sub_agent.rs:469).
+  • When a run is cancelled with no error message, the text is the literal "Cancelled" (sub_agent.rs:739).
+  • A run is marked as aborted whenever the token is cancelled, whatever error the provider returned (agent_loop.rs:1423).
+
+  So a cancel that lands during a 404 arrives with the 404's error text. That is why it was re-run on the fallback before the fix, and why the diff decides by checking the token instead of looking for the word "Cancelled".
+• **The fix:**
+  • `FallbackSubAgentTool` returns the error untouched when the token is cancelled, before it checks whether the model is unavailable.
+  • `DiagnosticSubAgentTool now gives a cancelled child a "cancelled, do not re-run unless the user asks" note (from the new sub_agent_cancelled_report`) instead of the "failed" note.
+  • `classify_sub_agent_error` is unchanged and no enum variant was added.
+• **Test rows:** the cancel string and the real `overloaded` / `model not found` errors are each checked with `assert_eq!` against an exact expected value. With an uncancelled token, four errors produce exactly the same report as before the fix: overloaded, the 404, a message that only contains the word "cancelled", and the exact cancel string. An uncancelled 404 still falls back exactly once.
+• **Other checks:**
+  • The new function is called in the same diff, and the test module is registered in main.rs.
+  • The tool_wrappers.rs line-count entry in tests/module_size.rs was raised to 5622.
+  • `ARCHITECTURE.md` has a new Day 220 paragraph for the fix.
+  • The #988 comment is posted and lists Q1 and Q2 as still open.
+• **Not run by me:** I didn't re-run the build or tests (the harness already reported both passing). I also didn't repeat the positive controls, where each check is deliberately broken to confirm the tests fail; the commit says they were run.
+  watch: no files changed this turn — skipping

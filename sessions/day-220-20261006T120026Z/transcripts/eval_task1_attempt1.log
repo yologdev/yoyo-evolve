@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo >/dev/null … ✓ (12ms)
+  ▶ $ mkdir -p /home/runner/work/yoyo-evolve/yoyo-evolve/session_p… (8 lines) ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.9s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md and made no code changes.
+
+• **Does what #997 asked:** `retry_after_partial` is a config key that defaults to off. When it's on, the only behaviour that changes is the one #976 blocked: a turn whose text already reached a non-terminal stdout now gets retried.
+• **Wiring is complete:** all four of yoyo's own retry sites read the setting. `handle_provider_retry` passes `false` on purpose, and the code comment explains why (#991 handles that path differently). Every new function has a caller in this diff, and the key is registered so yoyo config get and validation know about it.
+• **Tried the binary:** from the repo root, yoyo config get retry_after_partial returns true (.yoyo.toml), so the repo's own config is read.
+• **Tests:** the three new rows check exact stdout, exit code and request count:
+  • Partial text, then a transient error, then PONG: exit 0, 2 requests, stdout "PARTIAL_ANSWER_7Q\n\n\nPONG\n".
+  • Error before any text: stdout is exactly PONG\n.
+  • Every attempt fails: nonzero exit after 6 requests, with 6 partials on stdout.
+
+  The existing #976 test for the default case was not edited.
+• **Docs:** piped-mode.md explains the default, the opt-in, what it costs and what it doesn't cover. ARCHITECTURE.md has a matching entry.
+• **Users who don't set the key:** they see no change, since the default stays off. Only this repo's .yoyo.toml turns it on.
+
+I didn't re-run the full suite; the harness had already reported build and tests passing.
+  watch: no files changed this turn — skipping

@@ -1,0 +1,198 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (26ms)
+  ▶ $ cat src/prompt/retry_after_partial.rs; sed -n 170,200p src/prompt.rs; sed -n 40,…  ▶ $ sed -n 970,1010p src/prompt.rs; sed -n 1325,1360p src/prompt.rs; sed -n 1480,151… ✓ (7ms)
+ ✓ (14ms)
+  ▶ $ wc -l tests/print_stdout_contract.rs; grep -n "fn \|976\|overloaded\|PARTIAL" te… ✓ (5ms)
+  ▶ $ sed -n 100,300p tests/print_stdout_contract.rs; sed -n 650,900p tests/print_stdo… ✓ (8ms)
+  ▶ $ sed -n 200,300p tests/print_stdout_contract.rs; sed -n 650,830p tests/print_stdo… ✓ (6ms)
+  ▶ $ sed -n 1296,1372p tests/print_stdout_contract.rs; sed -n 30,72p tests/print_stdo… ✓ (7ms)
+  ▶ $ grep -n "MAX_RETRIES\b" src/*.rs src/prompt/*.rs | head; grep -n "fn retry_delay… ✓ (15ms)
+  ▶ $ grep -n "MAX_RETRIES" src/prompt_retry.rs | head -3; sed -n 290,315p src/prompt_… ✓ (7ms)
+  ▶ $ grep -n "pub fn load_config_file" -A40 src/config.rs | head -60 ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 33.4s (10 ✓)
+
+Good — a seeded .yoyo.toml in the temp cwd is read. Writing the opt-in tests first.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 878,906p tests/print_stdout_contract.rs ✓ (3ms)
+  ▶ edit tests/print_stdout_contract.rs (5 → 122 lines)
+        assert_reached_stub(&run);
+        assert_eq!(String::from_utf8_lossy(&run.stdout), PARTIAL_LINE);
+  + }
+  + 
+  + // ---------------------------------------------------------------------------
+  + // #997: the opt-in `retry_after_partial = true` (project `.yoyo.toml`).
+  + // The default rows are the #976 tests above, left unedited; these pin what the
+  + // opt-in changes on the armed `-p` door with stdout a pipe.
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Answer of the attempt that succeeds after the opt-in retry.
+  + const OPT_IN_ANSWER: &str = "PONG\n";
+  + 
+  + /// The opt-in seeded as a project config in the run's cwd.
+  + const OPT_IN_CONFIG: (&str, &str) = (".yoyo.toml", "retry_after_partial = true\n");
+  + 
+  + fn run_opt_in(bodies: Vec<String>) -> Run {
+  +     let run = run_yoyo_seeded(
+  +         &[OPT_IN_CONFIG],
+  +         &["--no-tools", "--max-turns", "1"],
+  ... (102 more lines)
+  ▶ $ cargo test --test print_stdout_contract opt_in 2>&1 | grep -E "PROBE|test |panic… ✓ (2m 0s)
+        assert_reached_stub(&run);
+        assert_eq!(String::from_utf8_lossy(&run.stdout), PARTIAL_LINE);
+  + }
+  + 
+  + // ---------------------------------------------------------------------------
+  + // #997: the opt-in `retry_after_partial = true` (project `.yoyo.toml`).
+  + // The default rows are the #976 tests above, left unedited; these pin what the
+  + // opt-in changes on the armed `-p` door with stdout a pipe.
+  ... (13 more lines)
+ ✓ (2m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 27s (3 ✓)
+
+Before reading recorded: opt-in case → stdout "PARTIAL_ANSWER_7Q\n", exit nonzero, 1 request, and the #976 skip note printed. Now the implementation.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 1336,1350p src/prompt.rs; sed -n 1482,1500p src/prompt.rs; sed -n 1750,17… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'EOF' (39 lines) ✓ (30ms)
+  ▶ $ sed -i 's/cli::is_retry_after_partial())/crate::cli::is_retry_after_partial())/'… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 16.0s (3 ✓)
+
+Now the pure predicate in retry_after_partial.rs (existing table test untouched):
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (160 lines) ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ sed -n 30,200p .yoyo.toml; git diff --stat ✓ (13ms)
+  ▶ $ cat >> .yoyo.toml <<'EOF' (8 lines) ✓ (36.8s)
+  ▶ $ python3 - <<'EOF' (20 lines) ✓ (42.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 35s (4 ✓)
+
+All 35 pass, and the #976 default test is unchanged. Now the positive control, run as one atomic command:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ git diff tests/print_stdout_contract.rs | grep -c "^-[^-]"; f=src/prompt/retry_a… ✓ (21.7s)
+
+The control went red by name when neutered and green when restored, and no marker was left behind. Next: the docs, config get, and the harness.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "retry\|976\|terminal" docs/src/usage/piped-mode.md | head -20; wc -l do… ✓ (6ms)
+  ▶ $ python3 - <<'EOF' (10 lines) ✓ (2.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.1s (2 ✓)
+
+config get reads it from the repo's config and the harness passes (161/0). Next, the full gate:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt -- --check && cargo clippy --all-targets -- -D warnings 2>&1 | tail -2… ✓ (19.0s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | grep -A12 "^error" | head -30 ✓ (326ms)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -30 ✓ (343ms)
+  ▶ $ sed -i 's/vec!\[PARTIAL_LINE; 6\].join/[PARTIAL_LINE; 6].join/' tests/print_stdo… ✓ (1m 50s)
+  ▶ $ cargo test --bin yoyo every_retry_site_consults 2>&1 | grep -A6 panicked ✓ (150ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ sed -i 's/crate::cli::is_retry_after_partial()/is_retry_after_partial()/; s/^use… ✓ (1.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 2m 25s (6 ✓)
+
+All five sites match the needle again, and the guard's "5 = four yoyo sites + yoagent's" comment still holds. Running the full gate:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt -- --check && cargo clippy --all-targets -- -D warnings 2>&1 | tail -1… ✓ (2m 34s)
+  ▶ $ cargo test --test module_size 2>&1 | grep -B2 -A15 panicked | head -40 ✓ (174ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'EOF' (19 lines) ✓ (1.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 50s (3 ✓)
+
+Still 105 over. A better move than more trimming: take the wrapper itself out of prompt.rs and put it into the retry_after_partial submodule, which is where the rule it wraps already lives.
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn stdout_reserved" -r src/ ; sed -n 186,200p src/prompt.rs; git show H… ✓ (14ms)
+  ▶ $ python3 - <<'EOF' (19 lines) ✓ (11.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 19.7s (2 ✓)
+
+It builds, and prompt.rs is now 3888, below where it started. Here's the moved block:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 22,40p src/prompt/retry_after_partial.rs; cargo fmt -- --check && cargo c… ✓ (5m 5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything is green: fmt, clippy, and all 19 test binaries. The wrapper moved after my first control ran, so I'm running the control again against the final layout:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ f=src/prompt/retry_after_partial.rs; cp $f /tmp/rap.bak && sed -i 's/^    opted_… ✓ (23.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control fails by name when neutered and passes when restored, and no marker is left. Adding a short ARCHITECTURE.md note next to the existing #976 entry:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "retry_after_partial" ARCHITECTURE.md | head ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (8 lines) ✓ (58ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cargo test 2>&1 | grep -E "^test .*FAILED|test result: FAILE… (23 lines) ✓ (2m 56s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 14s (3 ✓)
+
+The task also asks for a reply on #997 that states the scope decision, and the Day-218 lesson says to do non-diff actions in the phase that finds them. Checking whether gh is available:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ gh issue view 997 --json state,title,comments -q '.state + " | " + .title + " | … ✓ (583ms)
+  ▶ $ gh issue comment 997 --body-file - <<'EOF' 2>&1 | tail -1 (15 lines) ✓ (907ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.0s (2 ✓)
+
+The retry_after_partial opt-in is in and committed as cb93b54e, which isn't pushed yet. All four checks pass: fmt, clippy with -D warnings, build, and the full test suite. It hasn't been tried against a real Overloaded in CI yet.
+
+Opt-in on, stdout a pipe, stub serving partial text → `overloaded_error` → `PONG`:
+
+| | stdout | exit | requests |
+|---|---|---|---|
+| before | "PARTIAL_ANSWER_7Q\n" | 1 | 1 |
+| after | "PARTIAL_ANSWER_7Q\n\n\nPONG\n" | 0 | 2 |
+
+The \n\n between the partial and the answer is the separator the retry path already writes, the same bytes a terminal user sees. Since terminal behaviour was out of scope, I pinned those bytes as they are rather than changing them.
+
+The four rows, pinned with exact assertions in `tests/print_stdout_contract.rs`:
+• **Opt-in on, partial then success:** the "after" row above.
+• **Opt-in off (the default):** unchanged. The existing #976 test wasn't edited and still passes.
+• **Opt-in on, death before any text:** the output is exactly PONG\n.
+• **Opt-in on, every attempt dies:** the run stops after 6 requests and exits non-zero. Stdout holds 6 copies of the partial, which is the worst-case price of turning this on.
+
+What changed:
+• **Config:** a new `retry_after_partial` key, off by default. `yoyo config get retry_after_partial` from the repo root prints `true (.yoyo.toml)`, and `tests/harness_logic.sh` still passes (161/0).
+• **Retry rule:** the opt-in only lifts the one case #976 refuses. The doc comment states the trade: a duplicate partial on stdout instead of a lost turn.
+• **Scope:** yoyo's own four retry sites use the opt-in. The retry inside the provider library (`handle_provider_retry`, #989) deliberately passes `false`, because #991 will deal with that path by preventing duplicates altogether. The comment there says so.
+• **One unplanned move:** `src/prompt.rs` was already 99 lines past its allowance in the file-size check, and my edits pushed it over. Instead of raising its allowance, I moved the retry wrapper into src/prompt/retry_after_partial.rs. The file is now 3888 lines, slightly smaller than before.
+• **Two checks I had to fix along the way:** `cargo fmt` wrapped the four call sites across lines, so the existing check that counts them found only one. I shortened the calls back onto one line rather than loosening that check. Clippy also rejected an unnecessary vec! in one of the new tests, which I fixed.
+• Config and docs: .yoyo.toml turns the opt-in on for the evolve loop. docs/src/usage/piped-mode.md explains the default, the opt-in and its cost, and there's a short note in ARCHITECTURE.md.
+
+Positive control: I disabled the opt-in branch and opt_in_retries_after_streamed_partial_and_succeeds failed by name. Restoring it in the same command brought it back to passing. I ran this twice, the second time after moving the wrapper, and no marker was left behind.
+
+#997: I posted a reply with the before/after numbers, the cost and the scope decision, and left the issue open. The stub shows a mid-stream Overloaded goes through yoyo's own retry, which is the path this covers. Whether the Day-219 failure went the same way still needs a real evolve run that hits one.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

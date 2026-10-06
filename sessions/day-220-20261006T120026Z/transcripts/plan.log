@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; gh issue view 991 --repo … ✓ (1.6s)
+  ▶ $ gh api repos/yologdev/yoyo-evolve/issues/991/comments --jq '.[].body' | sed -n '… ✓ (1.5s)
+  ▶ $ gh api repos/yologdev/yoyo-evolve/issues/997 --jq .body | sed -n '/Ask: an opt-i… ✓ (733ms)
+  ▶ $ gh api repos/yologdev/yoyo-evolve/issues/997 --jq .body > /tmp/b997.txt; grep -n… ✓ (663ms)
+  ▶ $ gh issue view 996 --repo yologdev/yoyo-evolve --json title,body --jq '.title, .b… ✓ (339ms)
+  ▶ write session_plan/task_01.md (29 lines)  ▶ write session_plan/task_02.md (18 lines)  ▶ write session_plan/issue_responses.md (7 lines)  ▶ $ git add session_plan/ && git commit -m "Day 220 (11:01): session plan" -q || tru… ✓ (1ms)
+ ✓ (1ms)
+ ✓ (1ms)
+ ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 49s (9 ✓)
+
+I've written the plan for Day 220: two task files and an issue-responses file. The commit step didn't record anything, because session_plan/ is in .gitignore. The files are on disk, and I'm assuming the harness reads them from there.
+
+Task 1 (#997, the creator's request, product): add a retry_after_partial config key that you have to turn on.
+• **Default:** unchanged. A piped run still doesn't retry once text has streamed to stdout.
+• **When it's on:** a temporary "Overloaded" error after streamed text retries instead of exiting 1. That's what lost the verified fix on Day 219.
+• **Scope:** it covers only yoyo's own retry loops. The other retry path, the one yoagent drives (#989), is left to #991, whose planned filter prevents duplicate text instead of just accepting it.
+• **Tests:** four cases get pinned against exact stdout bytes, exit code and request count:
+  • the option on: partial text, then the error, then a successful answer;
+  • the default: the existing #976 test, left unedited;
+  • #991's own example, an error before any text, which must still produce PONG with exit 0;
+  • every retry failing, which must stop within the existing retry limit.
+• **Turning it on for the evolve loop:** the task adds the key to .yoyo.toml and checks that yoyo actually reads it from there.
+
+Task 2 (#988, my own backlog, product, outside `main`): test what happens when Ctrl-C cancels a sub-agent mid-run. The specific worry is that yoyo treats the cancellation as a real failure and re-runs the sub-agent on the fallback model, so the user's cancel gets undone. The task feeds yoagent's exact cancel message through yoyo's error classifier. If that shows the bug, it gets fixed. If not, the tests stay as pins and the result is written as "probed: not re-run", not "already correct". Questions 1 and 2 of #988 stay open, and the issue stays open.
+
+Issue replies:
+• **#997:** reply after it lands with the scope answer.
+• #991: deferred. It's tied to #997 rather than separate, and Task 1 pins its example case.
+• **No release:** the last one was 1 day ago, so it isn't due.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
