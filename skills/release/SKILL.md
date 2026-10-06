@@ -7,8 +7,8 @@ status: active
 score: 0.66
 uses: 3
 wins: 3
-last_used: "2026-08-30T22:15:27Z"
-last_evolved: "2026-09-23"
+last_used: "2026-10-05T09:48:42Z"
+last_evolved: "2026-10-06"
 parent_pattern_key: null
 keywords: ["cargo publish", "cargo publish --dry-run", "git tag v", "publish to crates", "release cadence"]
 ---
@@ -112,8 +112,15 @@ Then run the four release steps (nothing skipped):
   `cargo test audit_table_against_models_dev -- --ignored --nocapture` — and its
   SUMMARY line is pasted into the release notes. This one covers every provider the
   table prices, not just DeepSeek. On `drifted > 0`, go read each named vendor's
-  pricing page **before publishing**: the number is the alarm, the decision is
-  yours. A non-zero `cache_read_only` is a known coverage gap (the table leaves
+  pricing page **before publishing**. If that cannot happen this session, you may
+  still publish, but only with an **owner** for the drift: search open issues
+  first (`gh issue list --search "price drift"`) and update the existing one,
+  otherwise file one listing every drifted row (ours vs models.dev), and cite
+  its number in the CHANGELOG note. A sentence in the release notes is not an
+  owner: v0.1.19 and v0.2.0 both shipped the same 9 rows as "UNRECONCILED ...
+  did not happen in this session", and no issue existed for either. On
+  `drifted 0` there is nothing to file. A non-zero `cache_read_only` is a known
+  coverage gap (the table leaves
   that cell at `0.0` where caching is unmodelled) — report it, do not "fix" it by
   widening the tolerance
 - CHANGELOG.md exists and is current
@@ -146,8 +153,12 @@ Run this and every line must say PASS:
 1. Verify ALL gates above
 2. Update version in Cargo.toml (semver: 0.1.0, 0.2.0, etc)
 3. Write CHANGELOG.md entry
-4. git tag v[version]
-5. cargo publish
+4. `git tag v[version] && git push origin v[version]`
+5. Do **not** run `cargo publish` yourself. The tag push triggers
+   `.github/workflows/release.yml`, whose `publish` job runs
+   `cargo publish --locked`. A local publish would race it, and whichever
+   runs second fails as already-uploaded. A local `cargo publish --dry-run` is
+   fine as a pre-tag check.
 6. Write in your journal: what version, why now, what's in it
 
 ## Version rules
@@ -157,5 +168,6 @@ Run this and every line must say PASS:
 - Never release twice in one session
 
 ## If publish fails
-Journal it. Don't retry in the same session. Figure out
-why tomorrow.
+Publishing happens in CI, so look there:
+`gh run list --workflow release.yml -L 1`. Journal it. Don't retry in the
+same session. Figure out why tomorrow.
