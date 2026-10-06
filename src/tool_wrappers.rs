@@ -1565,6 +1565,13 @@ impl AgentTool for FallbackSubAgentTool {
 
         let text = err.to_string();
 
+        // A cancel first (#988 Q3): the user's Ctrl-C must never re-run the
+        // child on another model. Keyed on the parent's token, not the text —
+        // a cancel racing a provider error is spelled like that error.
+        if ctx.cancel.is_cancelled() {
+            return Err(err);
+        }
+
         // Guard first, availability second — see the type doc: retrying a
         // deliberate refusal on another model is a bypass, not a fallback.
         if is_deterministic_refusal(&text) || !is_model_unavailable_error(&text) {
@@ -1655,6 +1662,25 @@ pub(crate) fn sub_agent_failure_report(model_label: &str, err: &str) -> String {
     format!("{err}\n\n{tail}")
 }
 
+/// The note a **cancelled** sub-agent call reaches the parent's model with
+/// (#988 Q3), instead of [`sub_agent_failure_report`]'s "the sub-agent failed".
+///
+/// A cancel is the run being aborted — `agent.abort()`, from Ctrl-C or from
+/// yoyo stopping the turn itself — so it is neither a failure of the delegated
+/// work nor a model problem, and a model told it "failed" retries the very work
+/// the user just cancelled. The decision is made on the parent's cancellation
+/// token, never on this string: a cancel that raced a provider error arrives
+/// spelled like that error (see `src/tool_wrappers_cancel_tests.rs`). `err` is
+/// kept verbatim; no class or status is claimed.
+pub(crate) fn sub_agent_cancelled_report(model_label: &str, err: &str) -> String {
+    format!(
+        "{err}\n\n[yoyo: the sub-agent was cancelled before it finished — the run was \
+         aborted (usually by the user pressing Ctrl-C). This is not a failure of the \
+         delegated work and not a model problem; do not re-run it unless the user asks; \
+         model: {model_label}]"
+    )
+}
+
 /// Annotates a failed `sub_agent` call with the failure's class, the model
 /// configuration it ran under, and any HTTP status actually present — so the
 /// parent agent can tell a dead model from a bad key from a rate limit from
@@ -1712,6 +1738,9 @@ impl AgentTool for DiagnosticSubAgentTool {
         params: serde_json::Value,
         ctx: yoagent::types::ToolContext,
     ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        // Cloned before `ctx` moves: the token is shared, so this reads the
+        // parent's cancellation state after the child returns (#988 Q3).
+        let cancel = ctx.cancel.clone();
         let err = match self.inner.execute(params, ctx).await {
             // A result that finished normally is byte-identical — the entire
             // regression surface. A result yoagent cut short on a bound comes
@@ -1731,6 +1760,13 @@ impl AgentTool for DiagnosticSubAgentTool {
         // than the outcome of a sub-agent run — a model class is noise there —
         // and `Cancelled` carries no payload to annotate.
         match err {
+            // A cancelled child is not a failure: say so, or the model retries
+            // the work the user just cancelled (#988 Q3).
+            yoagent::types::ToolError::Failed(msg) if cancel.is_cancelled() => {
+                Err(yoagent::types::ToolError::Failed(
+                    sub_agent_cancelled_report(&self.model_label, &msg),
+                ))
+            }
             yoagent::types::ToolError::Failed(msg) => Err(yoagent::types::ToolError::Failed(
                 sub_agent_failure_report(&self.model_label, &msg),
             )),

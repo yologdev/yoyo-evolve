@@ -110,6 +110,8 @@ mod format;
 #[cfg(feature = "gasp")]
 mod gasp;
 #[cfg(test)]
+mod tool_wrappers_cancel_tests;
+#[cfg(test)]
 mod tools_child_bash_tests;
 #[cfg(test)]
 mod tools_search_flag_tests;

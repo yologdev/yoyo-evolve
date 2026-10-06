@@ -559,7 +559,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // no-text-block pass-through). Registered rather than split: the wrapper
     // belongs beside the two sub-agent decorators it sits outside of, and a
     // split would scatter one seam's three layers across two files.
-    ("src/tool_wrappers.rs", 5574),
+    ("src/tool_wrappers.rs", 5622), // Day 220 (#988 Q3): 5574 -> 5622 — +12 earlier unregistered drift, +36 for the cancel short-circuits in FallbackSubAgentTool/DiagnosticSubAgentTool and `sub_agent_cancelled_report`; tests live in src/tool_wrappers_cancel_tests.rs.
     // Day 162 (#709): raised 3245 -> 3264 to wrap the sub-agent tool list in
     // the mode guard, plus the comment stating what is enforced and what is not.
     // Day 163 (#714): raised 3264 -> 3290 — RenameSymbolTool now carries the
