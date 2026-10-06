@@ -792,6 +792,23 @@ class GreenScan:
     successes: int = 0
     unreadable: int = 0
     newest_row_ts: str | None = None
+    # Day 220: the independent cross-check, filled ONLY when `newest_row_ts`
+    # ties the newest failure (see `is_tie` / `tie_cross_check`). None means it
+    # was never asked, which on a tie is "could not check", never "still live".
+    tie_check: "TieCheck | None" = None
+
+
+@dataclass
+class TieCheck:
+    """What the independent tie listing saw. Observation plus one state word.
+
+    `state` is one of TIE_CHECK_NEWER / _AGREES / _FAILED. The two stamps are
+    kept so the receipt and the prose can name what was compared rather than
+    re-deriving it."""
+
+    state: str
+    newest_completed_ts: str | None = None
+    newest_success_ts: str | None = None
 
 
 # Branch names for the green-since decision. These are the receipt's payload.
@@ -976,6 +993,124 @@ def newest_successful_run(repo: str) -> GreenScan:
     return newest_success_from_runs(runs, GREEN_PROBE_LIMIT)
 
 
+# Day 220 — the tie cross-check. States of the independent listing, verbatim in
+# the receipt as `tie_check=<state>`.
+TIE_CHECK_NEWER = "newer"      # a completed row newer than the failure exists
+TIE_CHECK_AGREES = "agrees"    # newest completed row IS the failure: live
+TIE_CHECK_FAILED = "failed"    # no usable answer — never live, never green
+# Small on purpose: the question is only "what is the newest COMPLETED run?",
+# and the slack over 1 absorbs queued / in-progress rows, which this listing
+# (unlike the `--status completed` one) returns and must skip client-side.
+TIE_CHECK_LIMIT = 10
+
+
+def is_tie(newest_row_ts, newest_failure_ts) -> bool:
+    """Is the completed page's newest row exactly the newest failure? Pure.
+
+    That is the one shape `page_is_stale` cannot see: a page FROZEN at the
+    moment of the failure. Measured Day 220 20:52 — the harness receipt read
+    `newest_row=2026-09-29T08:39:25Z newest_failure=2026-09-29T08:39:25Z` and
+    rendered "these are live" while CI had been green for a week (newest run
+    2026-10-06T16:54:32Z, success). But a tie is ALSO exactly what a genuinely
+    live failure looks like, so a tie is a reason to ASK AGAIN, not a verdict.
+    Unknown stamps on either side are not a tie."""
+    if not newest_row_ts or not newest_failure_ts:
+        return False
+    now = datetime.now(timezone.utc)
+    row_age = run_age_days(newest_row_ts, now)
+    fail_age = run_age_days(newest_failure_ts, now)
+    if row_age is None or fail_age is None:
+        return False
+    return row_age == fail_age
+
+
+def tie_cross_check(newest_failure_ts, runs) -> TieCheck:
+    """Read the independent listing against the tied failure. Pure.
+
+    `runs` is the parsed payload of `tie_check_argv` (or None when the call
+    failed). Only rows with `status == "completed"` and a parseable `createdAt`
+    count; the newest of them decides:
+      * newer than the failure  -> NEWER  (the first page was stale)
+      * exactly the failure     -> AGREES (the failure really is the newest)
+      * older than the failure, or no usable row, or no payload -> FAILED —
+        a listing that cannot see a failure we already hold is no more current
+        than the page it was meant to check, so it confirms nothing."""
+    if not newest_failure_ts or not isinstance(runs, list):
+        return TieCheck(state=TIE_CHECK_FAILED)
+    now = datetime.now(timezone.utc)
+    fail_age = run_age_days(newest_failure_ts, now)
+    if fail_age is None:
+        return TieCheck(state=TIE_CHECK_FAILED)
+    best_ts = best_age = succ_ts = succ_age = None
+    for record in runs:
+        if not isinstance(record, dict) or record.get("status") != "completed":
+            continue
+        age = run_age_days(record.get("createdAt"), now)
+        if age is None:
+            continue
+        if best_age is None or age < best_age:
+            best_ts, best_age = record["createdAt"], age
+        if record.get("conclusion") == "success" and (succ_age is None or age < succ_age):
+            succ_ts, succ_age = record["createdAt"], age
+    if best_age is None:
+        return TieCheck(state=TIE_CHECK_FAILED)
+    if best_age < fail_age:
+        state = TIE_CHECK_NEWER
+    elif best_age == fail_age:
+        state = TIE_CHECK_AGREES
+    else:
+        state = TIE_CHECK_FAILED
+    return TieCheck(state=state, newest_completed_ts=best_ts, newest_success_ts=succ_ts)
+
+
+def tie_check_argv(repo: str) -> list[str]:
+    """argv for the independent tie listing. Pure, so a test can assert its shape.
+
+    Deliberately WITHOUT `--status completed`: the page being checked came
+    through that filter, and a second reading through the same filter is not
+    independent. `status` is fetched so completed rows are kept client-side.
+    `--workflow` stays, for the reason `green_probe_argv` gives."""
+    return [
+        "gh", "run", "list", "--repo", repo,
+        "--workflow", CI_WORKFLOW_FILE,
+        "--limit", str(TIE_CHECK_LIMIT),
+        "--json", "conclusion,createdAt,status",
+    ]
+
+
+def run_tie_cross_check(repo: str, newest_failure_ts) -> TieCheck:
+    """I/O half of the tie cross-check: one `gh` call, fail-soft to FAILED."""
+    if not repo:
+        return TieCheck(state=TIE_CHECK_FAILED)
+    rc, stdout, _stderr = run_cmd(tie_check_argv(repo), timeout=GH_RUN_LIST_TIMEOUT)
+    if rc != 0:
+        warn(f"gh run list (tie cross-check) rc={rc} — tie left unverified")
+        return tie_cross_check(newest_failure_ts, None)
+    try:
+        runs = json.loads(stdout)
+    except json.JSONDecodeError as e:
+        warn(f"gh run list (tie cross-check) returned non-JSON: {e}")
+        runs = None
+    return tie_cross_check(newest_failure_ts, runs)
+
+
+def tie_success_ts(green: "GreenScan") -> str | None:
+    """The newest success either listing saw. Pure; used only for prose/age."""
+    tc = green.tie_check
+    if tc is None or tc.state != TIE_CHECK_NEWER or not tc.newest_success_ts:
+        return green.newest_success_ts
+    if not green.newest_success_ts:
+        return tc.newest_success_ts
+    now = datetime.now(timezone.utc)
+    a = run_age_days(tc.newest_success_ts, now)
+    b = run_age_days(green.newest_success_ts, now)
+    if a is None:
+        return green.newest_success_ts
+    if b is None or a < b:
+        return tc.newest_success_ts
+    return green.newest_success_ts
+
+
 def green_verdict_branch(newest_failure_ts, green: "GreenScan | None",
                          now: datetime) -> str:
     """Which branch of the green-since decision fires. Pure.
@@ -1011,6 +1146,22 @@ def green_verdict_branch(newest_failure_ts, green: "GreenScan | None",
     # clean", and equally must never read as "confirmed red".
     if page_is_stale(green.newest_row_ts, newest_failure_ts):
         return GREEN_BRANCH_STALE_PAGE
+    # Day 220: the TIE, which `page_is_stale` reads as fresh. It is either a
+    # page frozen at the failure or a real live failure, and only a second,
+    # independent listing can tell them apart — so it is consulted, never
+    # guessed. Unverified (not asked, or the probe failed) is could-not-check.
+    if is_tie(green.newest_row_ts, newest_failure_ts):
+        tc = green.tie_check
+        if tc is None or tc.state not in (TIE_CHECK_NEWER, TIE_CHECK_AGREES):
+            return GREEN_BRANCH_COULD_NOT_CHECK
+        if tc.state == TIE_CHECK_NEWER:
+            tie_succ_age = (
+                run_age_days(tc.newest_success_ts, now) if tc.newest_success_ts else None
+            )
+            if tie_succ_age is not None and tie_succ_age < fail_age:
+                return GREEN_BRANCH_GONE_GREEN
+            return GREEN_BRANCH_STALE_PAGE
+        # AGREES falls through: the failure really is the newest completed run.
     return GREEN_BRANCH_STILL_LIVE
 
 
@@ -1032,13 +1183,22 @@ def green_since_verdict(newest_failure_ts, green: "GreenScan | None", now: datet
     if branch == GREEN_BRANCH_COULD_NOT_CHECK:
         return GREEN_COULD_NOT_RUN_SENTENCE
     if branch == GREEN_BRANCH_GONE_GREEN:
-        success_age = run_age_days(green.newest_success_ts, now)
+        success_age = run_age_days(tie_success_ts(green), now)
         return (
             f"CI has gone green since ({format_run_age(success_age)}): every failure "
             "below predates it. Not proof the causes are fixed — a flaky test passes "
             "sometimes — only that CI is not red on these patterns now."
         )
     if branch == GREEN_BRANCH_STALE_PAGE:
+        if green.tie_check is not None and green.tie_check.state == TIE_CHECK_NEWER:
+            return (
+                "green-since check could not run — the completed-runs listing "
+                f"stopped exactly at the newest failure ({newest_failure_ts}), but an "
+                "independent listing shows a newer completed run "
+                f"({green.tie_check.newest_completed_ts}), so the page cannot be "
+                "current and CI's state could not be determined. This claims "
+                "neither that the failures below are live nor that they are cured."
+            )
         return (
             "green-since check could not run — the completed-runs listing's newest "
             f"row ({green.newest_row_ts}) predates a failure this same run already "
@@ -1064,6 +1224,14 @@ def green_probe_receipt(scan: "CiScan | None", green: "GreenScan | None",
     failures while a hand-run three minutes later said green, and WHICH BRANCH
     fired is unrecoverable because the probe recorded nothing.
 
+    Day 220, one more instance, and this receipt is what diagnosed it: the
+    20:52 line read `branch=still-live ... newest_row=2026-09-29T08:39:25Z
+    newest_failure=2026-09-29T08:39:25Z` while CI had been green for a week. A
+    page frozen AT the newest failure ties it, and `page_is_stale` sends ties
+    to "fresh". A cross-check was ADDED (`is_tie` / `tie_cross_check`), not a
+    fix declared: a tie now asks one independent listing, and a real live
+    failure, where that listing agrees, still reads still-live.
+
     So it names, verbatim, every input the verdict was computed from:
       * branch      — the one fact the 21:30 render did not preserve
       * green_rows  — page size returned ("not-asked" when the cost guard skipped
@@ -1077,6 +1245,9 @@ def green_probe_receipt(scan: "CiScan | None", green: "GreenScan | None",
                         earned its keep by showing a page whose newest row was
                         four hours older than a failure the same run had already
                         fetched, so it must carry that input too
+      * tie_check / tie_newest_completed — Day 220: the independent listing's
+                        state (newer|agrees|failed, "not-asked" off a tie) and
+                        the newest completed stamp it read
       * in_window / too_old / undated   — the failure side's own partition
     """
     if green is None:
@@ -1099,6 +1270,11 @@ def green_probe_receipt(scan: "CiScan | None", green: "GreenScan | None",
         # The freshness input the stale-page decision reads. The receipt is the
         # grader, so it must carry every input the verdict was computed from.
         row_ts = green.newest_row_ts or "none"
+    # Day 220: the tie cross-check, the input that separates a page frozen at
+    # the newest failure from a real live failure. "not-asked" when no tie.
+    tc = None if green is None else green.tie_check
+    tie_state = "not-asked" if tc is None else tc.state
+    tie_ts = "n/a" if tc is None else (tc.newest_completed_ts or "none")
     if scan is None:
         fail_ts, in_window, too_old, undated = "n/a", "n/a", "n/a", "n/a"
     else:
@@ -1111,6 +1287,7 @@ def green_probe_receipt(scan: "CiScan | None", green: "GreenScan | None",
         f"green_rows={rows} page={page} limit={limit} successes={successes} "
         f"unreadable={unreadable} checked={checked} newest_success={success_ts} "
         f"newest_row={row_ts} newest_failure={fail_ts} "
+        f"tie_check={tie_state} tie_newest_completed={tie_ts} "
         f"failures_in_window={in_window} too_old={too_old} undated={undated}"
     )
 
@@ -3963,6 +4140,15 @@ def main() -> int:
     green_scan = (
         newest_successful_run(repo) if (ci_scan.ok and ci_scan.clusters) else None
     )
+    # Day 220: a page whose newest row IS the newest failure is either frozen
+    # at that failure or genuinely live; one independent listing decides which.
+    # Fires only on a tie, so every other session makes no extra call.
+    if (
+        green_scan is not None
+        and green_scan.checked
+        and is_tie(green_scan.newest_row_ts, ci_scan.newest_failure_ts)
+    ):
+        green_scan.tie_check = run_tie_cross_check(repo, ci_scan.newest_failure_ts)
 
     sections: list[str] = []
     s = render_outcomes(outcomes, session_claims, clone_depth)
@@ -5802,6 +5988,167 @@ src/commands_config.rs
         "an unreadable-only page reports no newest_row_ts, never a guess",
         newest_success_from_runs([{"conclusion": "failure"}], 20).newest_row_ts is None
         and newest_success_from_runs({"a": 1}, 4).newest_row_ts is None,
+    )
+
+    # Day 220 — a page frozen AT the newest failure. `page_is_stale` sends ties
+    # to "not stale", so a listing whose newest row IS the newest failure was
+    # read as confirmed red. A tie is ALSO what a real live failure looks like,
+    # so it is not re-routed: it is cross-checked against an independent listing.
+    print("\n=== tie cross-check (page frozen at the newest failure) ===\n")
+    # The harness receipt, day 220 20:52, verbatim: branch=still-live
+    # green_rows=20 page=full successes=19 newest_success=2026-09-29T02:02:06Z
+    # newest_row=2026-09-29T08:39:25Z newest_failure=2026-09-29T08:39:25Z
+    tie_fail = "2026-09-29T08:39:25Z"
+    tie_now = datetime(2026, 10, 6, 21, 0, tzinfo=timezone.utc)
+    # The independent listing (`tie_check_argv`'s shape, no --status filter),
+    # captured by hand at ~21:00 the same evening, verbatim.
+    independent_payload = json.loads(
+        '[{"conclusion":"success","createdAt":"2026-10-06T16:54:32Z","status":"completed"},'
+        '{"conclusion":"success","createdAt":"2026-10-06T13:46:27Z","status":"completed"},'
+        '{"conclusion":"success","createdAt":"2026-10-06T12:00:36Z","status":"completed"},'
+        '{"conclusion":"success","createdAt":"2026-10-06T01:38:09Z","status":"completed"},'
+        '{"conclusion":"success","createdAt":"2026-10-05T23:36:02Z","status":"completed"}]'
+    )
+
+    def frozen_scan(tie_check):
+        return GreenScan(
+            newest_success_ts="2026-09-29T02:02:06Z", checked=True, rows=20,
+            successes=19, newest_row_ts=tie_fail, tie_check=tie_check,
+        )
+
+    assert_true("the receipt's two stamps are a tie", is_tie(tie_fail, tie_fail))
+    assert_true(
+        "NEAR-MISS: one second apart is not a tie",
+        not is_tie("2026-09-29T08:39:24Z", tie_fail),
+    )
+    assert_true(
+        "unknown stamps are not a tie",
+        not is_tie(None, tie_fail) and not is_tie("bogus", tie_fail)
+        and not is_tie(tie_fail, None),
+    )
+    newer = tie_cross_check(tie_fail, independent_payload)
+    assert_eq("the real independent listing reads newer", newer.state, TIE_CHECK_NEWER)
+    assert_eq(
+        "the newer row is the real newest success",
+        newer.newest_success_ts or "none", "2026-10-06T16:54:32Z",
+    )
+    frozen_newer = frozen_scan(newer)
+    assert_eq(
+        "the day-220 frozen page + a newer independent success reads gone-green, "
+        "NOT still-live",
+        green_verdict_branch(tie_fail, frozen_newer, tie_now),
+        GREEN_BRANCH_GONE_GREEN,
+    )
+    frozen_green_sentence = green_since_verdict(tie_fail, frozen_newer, tie_now)
+    assert_true(
+        "gone-green prose ages the INDEPENDENT success, not the page's stale one",
+        "these are live" not in frozen_green_sentence
+        and "gone green since (last <1d ago)" in frozen_green_sentence,
+    )
+    # Newer, but the newer completed rows are all failures: the page was stale,
+    # and nothing says green — stale-page, with prose true of a tie.
+    newer_red = tie_cross_check(tie_fail, [
+        {"conclusion": "failure", "createdAt": "2026-10-06T16:54:32Z", "status": "completed"},
+        {"conclusion": "failure", "createdAt": tie_fail, "status": "completed"},
+    ])
+    assert_eq("newer completed failure reads newer", newer_red.state, TIE_CHECK_NEWER)
+    frozen_red = frozen_scan(newer_red)
+    assert_eq(
+        "a newer independent FAILURE routes to stale-page, never gone-green",
+        green_verdict_branch(tie_fail, frozen_red, tie_now),
+        GREEN_BRANCH_STALE_PAGE,
+    )
+    tie_stale_sentence = green_since_verdict(tie_fail, frozen_red, tie_now)
+    assert_true(
+        "tie stale-page prose does not claim the row PREDATES the failure",
+        "predates" not in tie_stale_sentence
+        and "2026-10-06T16:54:32Z" in tie_stale_sentence
+        and "these are live" not in tie_stale_sentence
+        and "could not be determined" in tie_stale_sentence,
+    )
+    # NEAR-MISS THAT MUST STILL FIRE: a genuinely live failure. The independent
+    # listing's newest completed row IS the failure (in-progress rows ignored).
+    agrees = tie_cross_check(tie_fail, [
+        {"conclusion": "", "createdAt": "2026-10-06T16:54:32Z", "status": "in_progress"},
+        {"conclusion": "failure", "createdAt": tie_fail, "status": "completed"},
+        {"conclusion": "success", "createdAt": "2026-09-29T02:02:06Z", "status": "completed"},
+    ])
+    assert_eq("independent listing agreeing reads agrees", agrees.state, TIE_CHECK_AGREES)
+    frozen_live = frozen_scan(agrees)
+    assert_eq(
+        "a REAL live failure (tie confirmed) still reads still-live",
+        green_verdict_branch(tie_fail, frozen_live, tie_now),
+        GREEN_BRANCH_STILL_LIVE,
+    )
+    assert_eq(
+        "a confirmed tie renders the still-live sentence byte-identically",
+        green_since_verdict(tie_fail, frozen_live, tie_now),
+        "no successful run has landed since the newest failure below — these are live",
+    )
+    # The probe that cannot answer: never still-live, never green.
+    for label, payload in [
+        ("None (gh failed)", None),
+        ("not a list", {"a": 1}),
+        ("empty list", []),
+        ("only in-progress rows", [
+            {"conclusion": "", "createdAt": "2026-10-06T16:54:32Z", "status": "in_progress"},
+        ]),
+        ("unparseable stamps", [
+            {"conclusion": "success", "createdAt": "bogus", "status": "completed"},
+        ]),
+        ("independent newest predates the failure (itself stale)", [
+            {"conclusion": "success", "createdAt": "2026-09-28T00:00:00Z", "status": "completed"},
+        ]),
+    ]:
+        tc = tie_cross_check(tie_fail, payload)
+        assert_eq(f"tie probe {label} reads failed", tc.state, TIE_CHECK_FAILED)
+        assert_eq(
+            f"tie probe {label} -> could-not-check",
+            green_verdict_branch(tie_fail, frozen_scan(tc), tie_now),
+            GREEN_BRANCH_COULD_NOT_CHECK,
+        )
+    assert_eq(
+        "a tie that was never cross-checked is could-not-check, not still-live",
+        green_verdict_branch(tie_fail, frozen_scan(None), tie_now),
+        GREEN_BRANCH_COULD_NOT_CHECK,
+    )
+    # The existing non-tie readings ignore the tie field entirely.
+    assert_eq(
+        "non-tie fresh page with no newer success is still-live (tie_check unread)",
+        green_verdict_branch(harness_fail, genuinely_red, rnow),
+        GREEN_BRANCH_STILL_LIVE,
+    )
+    assert_eq(
+        "non-tie stale page is still stale-page",
+        green_verdict_branch(harness_fail, stale_scan, rnow),
+        GREEN_BRANCH_STALE_PAGE,
+    )
+    # The receipt carries the cross-check, so the next false alarm is
+    # diagnosable from stderr alone.
+    for tc, want in [
+        (newer, "tie_check=newer tie_newest_completed=2026-10-06T16:54:32Z"),
+        (agrees, f"tie_check=agrees tie_newest_completed={tie_fail}"),
+        (tie_cross_check(tie_fail, None), "tie_check=failed tie_newest_completed=none"),
+    ]:
+        line = green_probe_receipt(
+            rscan, frozen_scan(tc),
+            green_verdict_branch(tie_fail, frozen_scan(tc), tie_now), GREEN_PROBE_LIMIT,
+        )
+        assert_true(f"receipt carries {want}", want in line and len(line.splitlines()) == 1)
+    assert_true(
+        "receipt says tie_check=not-asked when no cross-check ran",
+        "tie_check=not-asked " in green_probe_receipt(
+            rscan, genuinely_red, GREEN_BRANCH_STILL_LIVE, 20
+        )
+        and "tie_check=not-asked " in green_probe_receipt(
+            rscan, None, GREEN_BRANCH_COULD_NOT_CHECK, 20
+        ),
+    )
+    assert_true(
+        "tie_check_argv drops --status but keeps --workflow and the status field",
+        "--status" not in tie_check_argv("o/r")
+        and CI_WORKFLOW_FILE in tie_check_argv("o/r")
+        and "conclusion,createdAt,status" in tie_check_argv("o/r"),
     )
 
     # 14. The rendered block must not move by ONE BYTE. TOTAL_LINE_CAP /
