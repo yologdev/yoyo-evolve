@@ -12,6 +12,8 @@ use yoagent::*;
 use crate::prompt_budget::{audit_log_tool_call, is_audit_enabled, session_budget_exhausted};
 use crate::session::{ChangeKind, SessionChanges};
 
+#[cfg(test)]
+mod cancel_mid_tool_tests;
 mod interrupt;
 mod retry_after_partial;
 pub use interrupt::{mark_single_shot, was_interrupted};
