@@ -88,6 +88,8 @@ mod commands_risk_unhittable_tests;
 mod commands_risk_weights;
 mod commands_run;
 mod commands_search;
+#[cfg(test)]
+mod commands_search_grep_status_tests;
 mod commands_session;
 mod commands_skill;
 mod commands_spawn;
@@ -125,6 +127,7 @@ mod tools_user_deny_tests;
 mod gasp_cli;
 mod git;
 mod git_commit_msg;
+mod grep_status;
 mod hard_deny;
 mod help;
 mod help_data;

@@ -381,7 +381,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "grep" => {
                 let input = quote_args_as_command(args);
-                crate::commands_search::handle_grep(&input);
+                exit_if_nonzero(crate::commands_search::handle_grep_status(&input));
                 return Some(None);
             }
             "find" => {
@@ -1607,12 +1607,13 @@ mod tests {
 
     #[test]
     fn test_try_dispatch_subcommand_grep() {
-        let args = vec!["yoyo".into(), "grep".into(), "TODO".into()];
-        let result = try_dispatch_subcommand(&args);
-        assert!(
-            matches!(result, Some(None)),
-            "expected Some(None) for `grep` subcommand"
-        );
+        // #982: the `grep` arm now calls `exit_if_nonzero`, which would kill
+        // the test binary if grep ever errored, so test the status core the
+        // arm calls (see the `diff` test). The arm's input is exactly this.
+        let args: Vec<String> = vec!["yoyo".into(), "grep".into(), "TODO".into()];
+        let input = quote_args_as_command(&args);
+        assert_eq!(input, "/grep TODO");
+        assert_eq!(crate::commands_search::handle_grep_status(&input), 0);
     }
 
     #[test]

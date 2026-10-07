@@ -7,6 +7,7 @@ use crate::commands_map::{
     build_repo_map, detect_language, extract_symbols, FileSymbols, SymbolKind,
 };
 use crate::format::*;
+use crate::grep_status::{grep_output_parts, GrepRun};
 
 // ── shell-like tokenizer ─────────────────────────────────────────────────
 
@@ -1215,7 +1216,7 @@ pub struct GrepMatch {
 ///
 /// Uses `git grep` when inside a git repo (faster, respects .gitignore),
 /// falls back to `grep -rn` with common directory exclusions.
-pub fn run_grep(args: &GrepArgs) -> Result<Vec<GrepMatch>, String> {
+pub fn run_grep(args: &GrepArgs) -> Result<GrepRun<Vec<GrepMatch>>, String> {
     run_grep_in(std::path::Path::new("."), args)
 }
 
@@ -1230,7 +1231,10 @@ pub fn run_grep(args: &GrepArgs) -> Result<Vec<GrepMatch>, String> {
 /// *on* and a file named `src/näme.rs` comes back as the literal bytes
 /// `"src/n\303\244me.rs"` — quotes and octal escapes included — which no consumer
 /// can use as a path.
-fn run_grep_in(root: &std::path::Path, args: &GrepArgs) -> Result<Vec<GrepMatch>, String> {
+pub(crate) fn run_grep_in(
+    root: &std::path::Path,
+    args: &GrepArgs,
+) -> Result<GrepRun<Vec<GrepMatch>>, String> {
     let root_str = root.to_string_lossy().into_owned();
 
     // `-C <dir>` sits BEFORE the subcommand because it is a git *global* —
@@ -1316,7 +1320,7 @@ fn run_grep_in(root: &std::path::Path, args: &GrepArgs) -> Result<Vec<GrepMatch>
 
     match output {
         Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
+            let (stdout, error) = grep_output_parts(&out, &args.path);
             let matches: Vec<GrepMatch> = stdout
                 .lines()
                 .filter(|l| !l.is_empty())
@@ -1335,7 +1339,10 @@ fn run_grep_in(root: &std::path::Path, args: &GrepArgs) -> Result<Vec<GrepMatch>
                     })
                 })
                 .collect();
-            Ok(matches)
+            Ok(GrepRun {
+                found: matches,
+                error,
+            })
         }
         // Both arms already wrapped their own error above, so no second wrap here.
         Err(e) => Err(e),
@@ -1353,7 +1360,7 @@ pub struct GrepCountEntry {
 ///
 /// Uses `git grep -c` or `grep -rc` depending on whether we're in a git repo.
 /// Filters out files with 0 matches (plain grep includes them, git grep doesn't).
-fn run_grep_count(args: &GrepArgs) -> Result<Vec<GrepCountEntry>, String> {
+fn run_grep_count(args: &GrepArgs) -> Result<GrepRun<Vec<GrepCountEntry>>, String> {
     run_grep_count_in(std::path::Path::new("."), args)
 }
 
@@ -1369,10 +1376,10 @@ fn run_grep_count(args: &GrepArgs) -> Result<Vec<GrepCountEntry>, String> {
 /// `run_git_output` is the right helper for the same reason the two prior payments
 /// chose it: it hands back a raw `Output` with **no** blob trim, so the existing
 /// `lines()`/`filter_map` parsing is preserved byte-for-byte.
-fn run_grep_count_in(
+pub(crate) fn run_grep_count_in(
     root: &std::path::Path,
     args: &GrepArgs,
-) -> Result<Vec<GrepCountEntry>, String> {
+) -> Result<GrepRun<Vec<GrepCountEntry>>, String> {
     let root_str = root.to_string_lossy().into_owned();
 
     // `-C <dir>` sits BEFORE the subcommand because it is a git *global* —
@@ -1448,7 +1455,7 @@ fn run_grep_count_in(
 
     match output {
         Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
+            let (stdout, error) = grep_output_parts(&out, &args.path);
             let entries: Vec<GrepCountEntry> = stdout
                 .lines()
                 .filter(|l| !l.is_empty())
@@ -1463,7 +1470,10 @@ fn run_grep_count_in(
                     Some(GrepCountEntry { file, count })
                 })
                 .collect();
-            Ok(entries)
+            Ok(GrepRun {
+                found: entries,
+                error,
+            })
         }
         Err(e) => Err(e),
     }
@@ -1506,7 +1516,7 @@ pub fn format_grep_count_results(entries: &[GrepCountEntry]) -> String {
 /// When context lines are requested, the output includes match lines,
 /// context lines, and `--` group separators. We return the raw string
 /// for formatting rather than parsing into `GrepMatch` structs.
-fn run_grep_with_context(args: &GrepArgs) -> Result<String, String> {
+fn run_grep_with_context(args: &GrepArgs) -> Result<GrepRun<String>, String> {
     run_grep_with_context_in(std::path::Path::new("."), args)
 }
 
@@ -1522,7 +1532,10 @@ fn run_grep_with_context(args: &GrepArgs) -> Result<String, String> {
 /// `"src/n\303\244me.rs"` — surrounding quotes and octal escapes included — which no
 /// consumer can use as a path, so `/grep --context`'s own result surface attributed
 /// real matches to filenames that do not exist.
-fn run_grep_with_context_in(root: &std::path::Path, args: &GrepArgs) -> Result<String, String> {
+pub(crate) fn run_grep_with_context_in(
+    root: &std::path::Path,
+    args: &GrepArgs,
+) -> Result<GrepRun<String>, String> {
     let (before, after) = args.context_lines.unwrap_or((0, 0));
     let root_str = root.to_string_lossy().into_owned();
 
@@ -1620,7 +1633,10 @@ fn run_grep_with_context_in(root: &std::path::Path, args: &GrepArgs) -> Result<S
     };
 
     match output {
-        Ok(out) => Ok(String::from_utf8_lossy(&out.stdout).to_string()),
+        Ok(out) => {
+            let (found, error) = grep_output_parts(&out, &args.path);
+            Ok(GrepRun { found, error })
+        }
         // Both arms already wrapped their own error above, so no second wrap here.
         Err(e) => Err(e),
     }
@@ -1946,8 +1962,19 @@ fn highlight_grep_match(text: &str, pattern: &str, case_sensitive: bool) -> Stri
     result
 }
 
-/// Handle the `/grep` command.
+/// Exit status for `yoyo grep` when grep could not search (#982). 2 is grep's
+/// own error status; 1 would read as grep's "no match" to a script.
+pub(crate) const GREP_ERROR_EXIT: i32 = 2;
+
+/// Handle the `/grep` command (REPL door; the status is for the shell door).
 pub fn handle_grep(input: &str) {
+    let _ = handle_grep_status(input);
+}
+
+/// `/grep` core returning an exit status (#982): 0 for matches or a genuine
+/// no-match (unchanged), [`GREP_ERROR_EXIT`] when grep reported an error or
+/// could not be spawned. A usage line returns 0, as before.
+pub fn handle_grep_status(input: &str) -> i32 {
     let args = match parse_grep_args(input) {
         Some(a) => a,
         None => {
@@ -1977,43 +2004,62 @@ pub fn handle_grep(input: &str) {
             println!("    /grep --exclude \"*.md\" TODO");
             println!("    /grep -c fn src/");
             println!("    /grep -C 3 --include \"*.toml\" version{RESET}\n");
-            return;
+            return 0;
         }
+    };
+
+    // #982: each mode prints what grep found, then any error grep reported,
+    // and the status says which. An error with no results must NOT render
+    // "No matches found." — that is the false success this replaces.
+    let report = |formatted: String, empty: bool, error: Option<String>| -> i32 {
+        match error {
+            None => {
+                print!("{formatted}");
+                0
+            }
+            Some(e) => {
+                if !empty {
+                    print!("{formatted}");
+                }
+                eprintln!("{RED}  Error: {e}{RESET}\n");
+                GREP_ERROR_EXIT
+            }
+        }
+    };
+    let spawn_failed = |e: String| -> i32 {
+        eprintln!("{RED}  Error: {e}{RESET}\n");
+        GREP_ERROR_EXIT
     };
 
     if args.count_only {
         // Count mode: show per-file match counts
         match run_grep_count(&args) {
-            Ok(entries) => {
-                let formatted = format_grep_count_results(&entries);
-                print!("{formatted}");
-            }
-            Err(e) => {
-                println!("{RED}  Error: {e}{RESET}\n");
-            }
+            Ok(run) => report(
+                format_grep_count_results(&run.found),
+                run.found.is_empty(),
+                run.error,
+            ),
+            Err(e) => spawn_failed(e),
         }
     } else if args.context_lines.is_some() {
         // Context mode: use raw output with context-aware formatting
         match run_grep_with_context(&args) {
-            Ok(raw) => {
-                let formatted =
-                    format_grep_results_with_context(&raw, &args.pattern, args.case_sensitive);
-                print!("{formatted}");
-            }
-            Err(e) => {
-                println!("{RED}  Error: {e}{RESET}\n");
-            }
+            Ok(run) => report(
+                format_grep_results_with_context(&run.found, &args.pattern, args.case_sensitive),
+                run.found.trim().is_empty(),
+                run.error,
+            ),
+            Err(e) => spawn_failed(e),
         }
     } else {
         // Standard mode: structured parsing
         match run_grep(&args) {
-            Ok(matches) => {
-                let formatted = format_grep_results(&matches, &args.pattern, args.case_sensitive);
-                print!("{formatted}");
-            }
-            Err(e) => {
-                println!("{RED}  Error: {e}{RESET}\n");
-            }
+            Ok(run) => report(
+                format_grep_results(&run.found, &args.pattern, args.case_sensitive),
+                run.found.is_empty(),
+                run.error,
+            ),
+            Err(e) => spawn_failed(e),
         }
     }
 }
@@ -2901,7 +2947,7 @@ mod tests {
             exclude: None,
             count_only: false,
         };
-        let matches = run_grep(&args).unwrap();
+        let matches = run_grep(&args).unwrap().found;
         assert!(
             !matches.is_empty(),
             "Should find 'fn main' in src/ of this project"
@@ -3028,7 +3074,7 @@ mod tests {
             exclude: None,
             count_only: false,
         };
-        let matches = run_grep(&args).unwrap();
+        let matches = run_grep(&args).unwrap().found;
         assert!(
             !matches.is_empty(),
             "Should find 'fn main' in *.rs files under src/"
@@ -3055,7 +3101,7 @@ mod tests {
             exclude: None,
             count_only: false,
         };
-        let matches = run_grep(&args).unwrap();
+        let matches = run_grep(&args).unwrap().found;
         // All results should be .toml files (no .rs, .md, etc.)
         for m in &matches {
             assert!(
@@ -3127,7 +3173,7 @@ src/b.rs:20:match two";
             exclude: None,
             count_only: false,
         };
-        let result = run_grep_with_context(&args).unwrap();
+        let result = run_grep_with_context(&args).unwrap().found;
         assert!(
             !result.is_empty(),
             "Should find 'fn main' with context in src/main.rs"
@@ -3251,7 +3297,7 @@ src/b.rs:20:match two";
             exclude: None,
             count_only: true,
         };
-        let entries = run_grep_count(&args).unwrap();
+        let entries = run_grep_count(&args).unwrap().found;
         assert!(!entries.is_empty(), "Should find 'fn main' counts in src/");
         assert!(entries.iter().any(|e| e.file.contains("main.rs")));
         assert!(entries.iter().all(|e| e.count > 0));
@@ -3318,7 +3364,9 @@ src/b.rs:20:match two";
         );
 
         let tmp = grep_scratch_repo(&[name], "fn f() { needle_marker(); }\n");
-        let entries = run_grep_count_in(tmp.path(), &count_args("needle_marker")).unwrap();
+        let entries = run_grep_count_in(tmp.path(), &count_args("needle_marker"))
+            .unwrap()
+            .found;
 
         assert_eq!(
             entries,
@@ -3340,7 +3388,9 @@ src/b.rs:20:match two";
             &["src/plain.rs", "src/we ird.rs"],
             "fn f() { needle_marker(); }\n",
         );
-        let mut entries = run_grep_count_in(tmp.path(), &count_args("needle_marker")).unwrap();
+        let mut entries = run_grep_count_in(tmp.path(), &count_args("needle_marker"))
+            .unwrap()
+            .found;
         entries.sort_by(|a, b| a.file.cmp(&b.file));
 
         // Whole-vector equality, never a `contains`: that is every existing user.
@@ -3372,7 +3422,9 @@ src/b.rs:20:match two";
         )
         .expect("write fixture");
 
-        let entries = run_grep_count_in(tmp.path(), &count_args("needle_marker")).unwrap();
+        let entries = run_grep_count_in(tmp.path(), &count_args("needle_marker"))
+            .unwrap()
+            .found;
         assert_eq!(entries.len(), 1, "plain-grep fallback should still match");
         assert!(entries[0].file.ends_with("plain.rs"));
         assert_eq!(entries[0].count, 1);
@@ -3409,7 +3461,9 @@ src/b.rs:20:match two";
         );
 
         let tmp = grep_scratch_repo(&[name], "fn f() { needle_marker(); }\n");
-        let matches = run_grep_in(tmp.path(), &match_args("needle_marker")).unwrap();
+        let matches = run_grep_in(tmp.path(), &match_args("needle_marker"))
+            .unwrap()
+            .found;
 
         assert_eq!(
             matches,
@@ -3433,7 +3487,9 @@ src/b.rs:20:match two";
             &["src/plain.rs", "src/we ird.rs"],
             "fn f() { needle_marker(); }\n",
         );
-        let mut matches = run_grep_in(tmp.path(), &match_args("needle_marker")).unwrap();
+        let mut matches = run_grep_in(tmp.path(), &match_args("needle_marker"))
+            .unwrap()
+            .found;
         matches.sort_by(|a, b| a.file.cmp(&b.file));
 
         // Whole-vector equality, never a `contains`: that is every existing user.
@@ -3468,7 +3524,9 @@ src/b.rs:20:match two";
         )
         .expect("write fixture");
 
-        let matches = run_grep_in(tmp.path(), &match_args("needle_marker")).unwrap();
+        let matches = run_grep_in(tmp.path(), &match_args("needle_marker"))
+            .unwrap()
+            .found;
         assert_eq!(matches.len(), 1, "plain-grep fallback should still match");
         assert!(matches[0].file.ends_with("plain.rs"));
         assert_eq!(matches[0].line_num, 1);
@@ -3503,7 +3561,9 @@ src/b.rs:20:match two";
         );
 
         let tmp = grep_scratch_repo(&[name], CONTEXT_BODY);
-        let out = run_grep_with_context_in(tmp.path(), &context_args("needle_marker")).unwrap();
+        let out = run_grep_with_context_in(tmp.path(), &context_args("needle_marker"))
+            .unwrap()
+            .found;
 
         // Whole-string equality at the emission point — the `String` a caller
         // receives, never the argv one layer below.
@@ -3524,7 +3584,9 @@ src/b.rs:20:match two";
         // what makes it prove this is a pure narrowing rather than a rewrite. A
         // discriminator tested only on the side that fires is vacuous green.
         let tmp = grep_scratch_repo(&["src/plain.rs", "src/we ird.rs"], CONTEXT_BODY);
-        let out = run_grep_with_context_in(tmp.path(), &context_args("needle_marker")).unwrap();
+        let out = run_grep_with_context_in(tmp.path(), &context_args("needle_marker"))
+            .unwrap()
+            .found;
 
         // Whole-string equality, never a `contains`, and it pins the `--` group
         // separator too: the context arm returns raw output for formatting, so the
@@ -3551,7 +3613,9 @@ src/b.rs:20:match two";
         std::fs::create_dir_all(tmp.path().join("src")).expect("mkdir src");
         std::fs::write(tmp.path().join("src/plain.rs"), CONTEXT_BODY).expect("write fixture");
 
-        let out = run_grep_with_context_in(tmp.path(), &context_args("needle_marker")).unwrap();
+        let out = run_grep_with_context_in(tmp.path(), &context_args("needle_marker"))
+            .unwrap()
+            .found;
         assert!(
             out.contains("line_before")
                 && out.contains("needle_marker")
@@ -3573,7 +3637,7 @@ src/b.rs:20:match two";
             exclude: Some("*.rs".to_string()),
             count_only: false,
         };
-        let matches = run_grep(&args).unwrap();
+        let matches = run_grep(&args).unwrap().found;
         for m in &matches {
             assert!(
                 !m.file.ends_with(".rs"),

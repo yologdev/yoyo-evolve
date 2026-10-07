@@ -872,6 +872,7 @@ Features:
 - **Truncated results** — shows up to 50 matches with a "narrow your search" hint
 - **Optional path** — `/grep pattern src/` restricts search to a specific file or directory
 - **Literal flag names** — `--` ends flag parsing, so `/grep -- -C src/` searches for the literal text `-C`. A value-taking flag whose value is missing or unparseable (e.g. `/grep -C src/`) is treated as the search pattern rather than being silently dropped.
+- **Errors are not "no matches"** — if the path does not exist or cannot be read, `/grep` prints grep's error (to stderr) instead of `No matches found.`, and `yoyo grep` exits 2. Matches found before the error are still shown. A genuine search with zero matches still prints `No matches found.` and exits 0. Inside a git repo the search runs through `git grep`, which cannot search a path outside the repository, so that also reports an error.
 
 The `/tree` command uses `git ls-files` to show tracked files in a visual tree structure, automatically respecting your `.gitignore`. You can specify a depth limit:
 
