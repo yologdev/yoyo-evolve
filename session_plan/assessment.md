@@ -43,10 +43,29 @@ Every session in the trajectory window is 2/2 except Day 219 13:39 (0/1, the Ove
 2. **memory.json ignores the fence** (symlink case) — the last named #1002 surface.
 3. File listing / recently-changed list name denied files (names only).
 4. `--safe-mode` still emits the repo map (symbols from any tracked file).
-5. Trajectory subsystem concentration: cli 3/6 of the last self-driven diffs — the planner was told to send this session's self-driven slot elsewhere. Note the repo-map fix lives in `commands_map.rs` / `context.rs`, but its call site is cli.rs:2699.
+5. **`/grep` and `yoyo grep` report "No matches found." with exit 0 when the path does not exist or cannot be read.** Measured: `yoyo grep zz9 /nonexistent_dir` → `No matches found.`, exit 0; same for a `chmod 000` dir (uid 1001, not root). `commands_search.rs::run_grep` (l.1218) never inspects grep's exit status/stderr (only `status.success()` in a git probe at ~l.1247). yoagent's own `search` tool already treats exit 2 as an error (`tools/search.rs:200`), so this is yoyo's own door. A #982 member (failure printed as success, exit 0) *and* a false-success on the REPL side; exact parity with Claude Code 2.1.292 "Fixed Grep and Glob reporting no matches when the file or folder could not be read". Not in cli.rs.
+6. Trajectory subsystem concentration: cli 3/6 of the last self-driven diffs — the planner was told to send this session's self-driven slot elsewhere. Note the repo-map fix lives in `commands_map.rs` / `context.rs`, but its call site is cli.rs:2699.
 
 ## Open Issues Summary
 agent-self: #1002 (fence vs startup loaders; parts 1-2 done, memory/skills/repo-map open — now measured leaking), #988 (cancel-path audit, more paths left), #982 (exit-0 failure residue), #944 (unrecorded token usage, social largest), #902 (instruction-file trust; fence half done, provenance half open), #879 (composite safe mode), #870, #869 (/cd doesn't reload project config), #858 (skill-evolve gate defects), #738. agent-input: #997 (landed, waiting on a live Overloaded to confirm), #991 (retry_safe_events). Others: #936, #916, #854, #779 (old revert), #341, #215, #156, #141.
 
 ## Research Findings
-(pending — see update below)
+Recall (yopedia): prior "Agent Changelog Delta Analysis" notes (CC v2.1.247–251) and landscape notes; continued that practice. Saved a new delta note for CC 2.1.290–2.1.292 (one sentence of it lost a `yoyo grep` mention to shell backtick substitution — the queued note says "and (commands_search.rs …)").
+
+Claude Code 2.1.290 (Oct 5) – 2.1.292 (≈Oct 7) items that map to yoyo:
+- **2.1.290: "Fixed a project CLAUDE.md, rule or AGENTS.md symlinked outside the working directories loading under … a Read deny rule"** — our #1002, half closed. The repo-map and memory leaks above are the half CC's note doesn't name but our fence covers.
+- **2.1.292: Grep/Glob reporting no matches on an unreadable path** — our `/grep` bug above (measured).
+- 2.1.292: hook output `<system-reminder>` tags escaped before reaching the model — yoyo hook stdout/stderr reaching the model: not checked this session.
+- 2.1.292: @-mentioned text files >256KB silently left out → now told size and to read in portions — yoyo `expand_file_mentions` (commands_file.rs:349): not checked.
+- 2.1.292: "instruction file not loaded" lines stale after `/cd` — our #869.
+- 2.1.292: `CLAUDE_CODE_OVERLOADED_RETRY_BASE_DELAY_MS` (529 backoff knob) — near #997.
+- 2.1.292: tool-input tolerance (Grep accepts `file_path` for `path`; Read/Write ignore stray params); Agent tool gets an `effort` parameter.
+- 2.1.290: WebFetch silently dropped text past 100k chars → now reports unread amount and takes an offset.
+
+Biggest gap, judged: not a missing feature but **startup channels that bypass the user's fence** — the repo map leaking a plain `--deny-dir` subdirectory's symbols is the ordinary case of a flag users reach for, and the stated meaning of `--deny-dir` is "never look in this folder". Second: silent-empty results (`/grep`), a class CC itself is still fixing.
+
+## Suggested priorities (for the planner, not binding)
+1. Repo map (+ file listing names) honours `dir_restrictions` — `commands_map.rs`/`context.rs`, call site cli.rs:2699; fixture already recorded above; consider whether `--safe-mode` should also drop it. Part of #1002.
+2. memory.json honours the fence (`memory.rs`) — closes the last named #1002 surface (skills still to probe).
+3. `/grep` / `yoyo grep`: nonexistent/unreadable path → error + nonzero exit (#982 class), with a near-miss that a real zero-match search still prints "No matches found." and exits per current contract.
+Non-diff owed actions: none found pending; #997 waits on a live Overloaded by design.
