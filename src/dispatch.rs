@@ -1020,7 +1020,10 @@ async fn dispatch_utility_command(
             }
             Some(CommandResult::Continue)
         }
-        CommandRoute::Goal => Some(commands::handle_goal(ctx.input)),
+        CommandRoute::Goal => Some(commands::handle_goal_fenced(
+            ctx.input,
+            &ctx.agent_config.dir_restrictions,
+        )),
         CommandRoute::Revisit => {
             let result = commands::handle_revisit(ctx.input);
             println!("{result}\n");

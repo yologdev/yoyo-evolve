@@ -2704,7 +2704,9 @@ directory ({e}); this run is trusted, later runs will not be."
     // Append current goal for persistent awareness
     // Capped: this lands in the system prompt, so it is paid on every turn of
     // every session until cleared (#755). Display paths keep the full text.
-    if let Some(goal) = crate::commands_goal::goal_for_prompt() {
+    // Behind the directory fence (#1002): a goal.md linking into --deny-dir
+    // (or outside --allow-dir) is dropped with a warning, like CLAUDE.md above.
+    if let Some(goal) = crate::commands_goal::goal_for_prompt(&dir_restrictions) {
         system_prompt.push_str("\n\n# Current Goal\n\n");
         system_prompt.push_str(&goal);
         system_prompt

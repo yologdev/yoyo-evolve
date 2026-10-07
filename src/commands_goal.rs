@@ -139,8 +139,54 @@ fn truncate_goal_for_prompt(goal: &str) -> String {
 ///
 /// Prompt call sites must use this instead of [`load_goal`]; display call sites
 /// must not.
-pub fn goal_for_prompt() -> Option<String> {
-    goal_for_prompt_in(&goal_base())
+///
+/// Behind the session's directory fence (#1002): a goal file whose resolved
+/// target `restrictions` refuses is not loaded, and one warning says so. Taking
+/// the fence as a parameter means no prompt caller can forget it.
+pub fn goal_for_prompt(restrictions: &crate::config::DirectoryRestrictions) -> Option<String> {
+    let (goal, refused) = goal_for_prompt_fenced_in(&goal_base(), restrictions);
+    if let Some(reason) = refused {
+        report_goal_refusal(&reason);
+    }
+    goal
+}
+
+/// The fence check for the goal file (#1002 part 2), returning the goal plus
+/// the refusal reason when the fence dropped it. Uses the one resolver the file
+/// tools use (`DirectoryRestrictions::check_path`, #996), so a symlinked
+/// `.yoyo/goal.md` is judged at its target. No goal file means no check and no
+/// reason; with no restrictions `check_path` short-circuits, so the result is
+/// byte-identical to [`goal_for_prompt_in`].
+fn goal_for_prompt_fenced_in(
+    dir: &Path,
+    restrictions: &crate::config::DirectoryRestrictions,
+) -> (Option<String>, Option<String>) {
+    let path = dir.join(GOAL_FILE);
+    if !path.exists() {
+        return (None, None);
+    }
+    if let Err(reason) = restrictions.check_path(&path.to_string_lossy()) {
+        return (None, Some(reason));
+    }
+    (goal_for_prompt_in(dir), None)
+}
+
+/// The warning printed when the directory fence drops the goal file (#1002).
+/// A safety fact, so it is a normal-volume warning (never DIM, never
+/// quiet-gated). `reason` embeds user- and repository-authored paths, so it is
+/// sanitized; plain output is glyph-free.
+pub(crate) fn goal_file_refused_warning(reason: &str, plain: bool) -> String {
+    let reason = crate::cli::sanitize_for_display(reason);
+    if plain {
+        format!("warning: goal file {GOAL_FILE} not loaded into the prompt - {reason}")
+    } else {
+        format!("⚠ goal file {GOAL_FILE} not loaded into the prompt — {reason}")
+    }
+}
+
+fn report_goal_refusal(reason: &str) {
+    let msg = goal_file_refused_warning(reason, crate::format::is_plain_output());
+    eprintln!("{YELLOW}{msg}{RESET}");
 }
 
 /// Load the goal under `dir` for **prompt** use, capped by [`GOAL_PROMPT_MAX_BYTES`].
@@ -412,7 +458,21 @@ fn format_goal(goal: &str) -> String {
 /// Handle the `/goal` command and its subcommands.
 ///
 /// Returns `CommandResult` because `/goal check` needs to send a prompt to the agent.
+///
+/// Unfenced entry point. Its only production caller is the shell dispatcher
+/// (`dispatch_sub.rs`), which refuses `check` before calling (#754), so the one
+/// arm that feeds a prompt never runs through here outside tests. The REPL
+/// calls [`handle_goal_fenced`] with the session's directory fence.
 pub fn handle_goal(input: &str) -> CommandResult {
+    handle_goal_fenced(input, &crate::config::DirectoryRestrictions::default())
+}
+
+/// [`handle_goal`] behind the session's directory fence (#1002): `/goal check`
+/// sends the goal to the agent, so it must not send one the fence refuses.
+pub fn handle_goal_fenced(
+    input: &str,
+    restrictions: &crate::config::DirectoryRestrictions,
+) -> CommandResult {
     let arg = input.strip_prefix("/goal").unwrap_or("").trim();
 
     if arg.is_empty() || arg == "show" {
@@ -529,7 +589,13 @@ pub fn handle_goal(input: &str) -> CommandResult {
             CommandResult::Continue
         }
     } else if arg == "check" {
-        match goal_for_prompt() {
+        let (goal, refused) = goal_for_prompt_fenced_in(&goal_base(), restrictions);
+        if let Some(reason) = refused {
+            // Not "No goal set": there is one, and the fence dropped it.
+            report_goal_refusal(&reason);
+            return CommandResult::Continue;
+        }
+        match goal {
             Some(goal) => {
                 let verify_section = if let Some(vcmd) = verify_command_if_permitted() {
                     let (code, output) = run_verify_command(&vcmd);
@@ -1103,10 +1169,13 @@ mod tests {
         with_temp_dir(|| {
             let goal = "Ship the ✓ gate and keep the tests green";
             save_goal(goal).unwrap();
-            assert_eq!(goal_for_prompt().unwrap(), goal);
+            assert_eq!(
+                goal_for_prompt(&crate::config::DirectoryRestrictions::default()).unwrap(),
+                goal
+            );
             // No goal at all stays `None` rather than becoming an empty string.
             clear_goal().unwrap();
-            assert!(goal_for_prompt().is_none());
+            assert!(goal_for_prompt(&crate::config::DirectoryRestrictions::default()).is_none());
         });
     }
 
@@ -1118,7 +1187,8 @@ mod tests {
             assert!(goal.len() > GOAL_PROMPT_MAX_BYTES);
             save_goal(&goal).unwrap();
 
-            let prompt = goal_for_prompt().expect("goal is set");
+            let prompt = goal_for_prompt(&crate::config::DirectoryRestrictions::default())
+                .expect("goal is set");
             let (kept, tail) =
                 split_at_marker(&prompt, "\n\n… [yoyo: goal truncated for the prompt");
             assert!(goal.starts_with(kept));
@@ -1339,6 +1409,125 @@ mod tests {
             let (passed, output) = run_goal_verify_after_prompt().expect("runs after being typed");
             assert!(passed);
             assert!(output.contains("typed_by_the_user"));
+        });
+    }
+}
+
+/// #1002 part 2: the goal file is the third door onto the directory fence
+/// (after `read_file` and the instruction-file loader). A `.yoyo/goal.md` that
+/// links into a `--deny-dir` directory must not reach any prompt.
+#[cfg(all(test, unix))]
+mod fence_tests {
+    use super::*;
+    use crate::config::DirectoryRestrictions;
+    use serial_test::serial;
+    use tempfile::TempDir;
+
+    const TOKEN: &str = "GOAL_SECRET_QQ7";
+
+    /// `root/secret/goal.md` holds the token; `root/proj/.yoyo/goal.md` links to it.
+    fn linked_fixture() -> (TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let secret = root.join("secret");
+        let proj = root.join("proj");
+        std::fs::create_dir_all(&secret).unwrap();
+        std::fs::create_dir_all(proj.join(".yoyo")).unwrap();
+        std::fs::write(secret.join("goal.md"), format!("{TOKEN}\n")).unwrap();
+        std::os::unix::fs::symlink("../../secret/goal.md", proj.join(GOAL_FILE)).unwrap();
+        // Anti-vacuous: the link really does carry the token when nothing fences it.
+        assert_eq!(load_goal_in(&proj).as_deref(), Some(TOKEN));
+        (tmp, proj, secret)
+    }
+
+    fn deny(dir: &std::path::Path) -> DirectoryRestrictions {
+        DirectoryRestrictions {
+            allow: vec![],
+            deny: vec![dir.display().to_string()],
+        }
+    }
+
+    fn allow(dirs: &[&std::path::Path]) -> DirectoryRestrictions {
+        DirectoryRestrictions {
+            allow: dirs.iter().map(|d| d.display().to_string()).collect(),
+            deny: vec![],
+        }
+    }
+
+    #[test]
+    fn denied_link_target_is_not_loaded_and_the_refusal_is_reported() {
+        let (_tmp, proj, secret) = linked_fixture();
+        let (goal, refused) = goal_for_prompt_fenced_in(&proj, &deny(&secret));
+        assert_eq!(goal, None);
+        let reason = refused.expect("the fence must report why the goal was dropped");
+        assert!(
+            !reason.contains(TOKEN),
+            "the reason must not carry the content"
+        );
+    }
+
+    #[test]
+    fn allow_set_that_excludes_the_target_refuses_it() {
+        let (_tmp, proj, _secret) = linked_fixture();
+        let (goal, refused) = goal_for_prompt_fenced_in(&proj, &allow(&[&proj]));
+        assert_eq!(goal, None);
+        assert!(refused.is_some());
+    }
+
+    #[test]
+    fn link_resolving_inside_the_allowed_set_loads() {
+        let (_tmp, proj, secret) = linked_fixture();
+        let (goal, refused) = goal_for_prompt_fenced_in(&proj, &allow(&[&proj, &secret]));
+        assert_eq!(goal.as_deref(), Some(TOKEN));
+        assert_eq!(refused, None);
+    }
+
+    #[test]
+    fn regular_file_without_restrictions_is_byte_identical() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".yoyo")).unwrap();
+        std::fs::write(tmp.path().join(GOAL_FILE), "  ship the parser ✓\n").unwrap();
+        let (goal, refused) =
+            goal_for_prompt_fenced_in(tmp.path(), &DirectoryRestrictions::default());
+        assert_eq!(goal, goal_for_prompt_in(tmp.path()));
+        assert_eq!(goal.as_deref(), Some("ship the parser ✓"));
+        assert_eq!(refused, None);
+    }
+
+    #[test]
+    fn no_goal_file_is_silent_even_behind_a_fence() {
+        let tmp = TempDir::new().unwrap();
+        let (goal, refused) = goal_for_prompt_fenced_in(tmp.path(), &deny(tmp.path()));
+        assert_eq!((goal, refused), (None, None));
+    }
+
+    #[test]
+    fn refusal_warning_is_sanitized_and_glyph_free_when_plain() {
+        let hostile = "Access denied: '/x/\u{1b}[31mred' is under restricted directory '/x'";
+        assert!(hostile.as_bytes().contains(&0x1b), "fixture must carry ESC");
+        let plain = goal_file_refused_warning(hostile, true);
+        assert!(!plain.as_bytes().contains(&0x1b));
+        assert!(plain.is_ascii(), "plain output must be glyph-free: {plain}");
+        assert!(plain.contains(GOAL_FILE));
+        let fancy = goal_file_refused_warning(hostile, false);
+        assert!(!fancy.as_bytes().contains(&0x1b));
+        assert!(fancy.contains(GOAL_FILE));
+    }
+
+    #[test]
+    #[serial]
+    fn goal_check_does_not_send_a_denied_goal_to_the_agent() {
+        let (_tmp, proj, secret) = linked_fixture();
+        with_goal_base_dir(&proj, || {
+            if let CommandResult::SendToAgent(p) = handle_goal_fenced("/goal check", &deny(&secret))
+            {
+                panic!("a denied goal must not be sent: {p}");
+            }
+            // Near-miss: with the target allowed, check does send the goal.
+            match handle_goal_fenced("/goal check", &allow(&[&proj, &secret])) {
+                CommandResult::SendToAgent(p) => assert!(p.contains(TOKEN)),
+                _ => panic!("an allowed goal must still be sent"),
+            }
         });
     }
 }

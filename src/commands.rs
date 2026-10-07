@@ -598,7 +598,7 @@ pub use crate::commands_git::{
     handle_commit, handle_commit_ai, handle_diff, handle_diff_explain, handle_git, handle_pr,
     handle_undo, parse_diff_args, wants_ai_commit,
 };
-pub use crate::commands_goal::handle_goal;
+pub use crate::commands_goal::handle_goal_fenced;
 
 // Git review/blame handlers
 pub use crate::commands_git_review::{handle_blame, handle_review};

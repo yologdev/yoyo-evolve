@@ -210,7 +210,9 @@ This affects `read_file`, `write_file`, `edit_file`, `list_files`, and `search`.
 
 The same fence applies to project instruction files (`YOYO.md`, `CLAUDE.md`, `AGENTS.md`, …) loaded into the
 system prompt: a `CLAUDE.md` whose resolved target is denied (or outside every allowed directory) is not loaded,
-and yoyo prints a warning naming it.
+and yoyo prints a warning naming it. The current goal (`.yoyo/goal.md`, set with `/goal set`) is fenced the same
+way: if its resolved target is refused, it is left out of the system prompt and out of `/goal check`, with a
+warning.
 
 ### Rules
 
