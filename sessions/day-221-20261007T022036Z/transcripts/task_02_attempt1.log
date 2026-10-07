@@ -1,0 +1,171 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; grep -rn "goal.… ✓ (21ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Task 1 landed. Let me see what it added and find the goal loader.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git show cf8ad734 --stat; git show cf8ad734 -- src/context.rs | head -200; grep … ✓ (37ms)
+  ▶ $ sed -n 1,200p src/commands_goal.rs; grep -rn "goal_for_prompt\|load_goal()\|load…  ▶ $ sed -n 560,700p src/context.rs; grep -n "dir_restrictions" src/cli.rs | head -20 ✓ (7ms)
+ ✓ (17ms)
+  3 tools completed in 6.4s (3 ✓)
+
+Let me see task 1's admission helper in context.rs.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn load_project_context\b\|fn load_project_context(\|instruction_file_r… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "load_goal\|goal_for_prompt" src/commands_goal.rs src/*.rs | grep -v "^s… ✓ (15ms)
+  ▶ $ grep -n "mod tests" src/commands_goal.rs; grep -n "load_goal\|goal_for_prompt" s… ✓ (6ms)
+  ▶ $ sed -n 410,580p src/commands_goal.rs; grep -rn "goal_verify_prompt\|build_verify… ✓ (20ms)
+  ▶ $ grep -rn "static.*DirectoryRestrictions\|fn session_dir_restrictions\|fn dir_res… ✓ (14ms)
+  ▶ $ grep -n "pub struct DispatchCtx\|pub struct .*Ctx" -A25 src/dispatch.rs | head -… ✓ (5ms)
+  ▶ $ cargo build 2>&1 | tail -2; T=$(mktemp -d); mkdir -p $T/secret $T/proj/.yoyo; ec… ✓ (175ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 42.7s (7 ✓)
+
+Before readings: 1 / 1 (safe-mode) / 1 (allow-dir proj). Now the tests.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "goal_for_prompt" src/commands_goal.rs src/*.rs tests/*.rs | awk -F: '!(… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ sed -n 1105,1145p src/commands_goal.rs; grep -n "DirectoryRestrictions {" -A4 sr… ✓ (6ms)
+  ▶ $ grep -rn "handle_goal(" src/ tests/ | grep -v "fn handle_goal" | wc -l; grep -rn… ✓ (19ms)
+  ▶ $ cat >> src/commands_goal.rs <<'EOF' (120 lines) ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 49.7s (4 ✓)
+
+Now the implementation in commands_goal.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (95 lines) ✓ (25ms)
+  ▶ $ python3 - <<'EOF' (18 lines) ✓ (9.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.3s (2 ✓)
+
+Builds. Clippy and the new tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | grep -E "^(error|w… ✓ (44.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy clean. Positive control — one atomic mutate→run→restore, neutering the check_path call:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/commands_goal.rs /tmp/cg.bak && sed -i 's/    if let Err(reason) = restri… ✓ (52.9s)
+  ▶ $ cp src/commands_goal.rs /tmp/cg.bak && sed -i 's/    if let Err(reason) = restri… ✓ (26.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 26s (2 ✓)
+
+Control reddened exactly the three refusal tests (denied link, allow-excludes, /goal check) and they went green again after the restore. Here are the end-to-end readings after the fix:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -1; T=$(cat /tmp/fx); B=$PWD/target/debug/yoyo; cd $T/pr… ✓ (9.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All as expected: --deny-dir 0 (and 0 with --safe-mode), allow-excludes 0, allowed target 1, no flags 1 with no warning. Full suite:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test 2>&1 | grep -E "test result|FAILED|panicked" | sort | uniq -c | head … ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cargo test 2>&1 | grep -E "test result|FAILED|panicked" | sort | uniq -c | head … ✓ (2m 20s)
+  ▶ $ cargo test 2>&1 | grep -E "test result" | grep -v " 0 failed" ; echo "---"; grep… ✓ (2m 29s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7m 7s (2 ✓, 1 ✗)
+
+Suite green. Now find commands_goal.rs's ARCHITECTURE entry:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^- \`commands_goal.rs\`\|^- \*\*\`commands_goal\|^### commands_goal\|^-… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'EOF' (14 lines) ✓ (37ms)
+  ▶ $ git show cf8ad734 -- docs/src/configuration/permissions.md | grep "^[+-]" ; sed … ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 21.6s (3 ✓)
+
+Confirmed. Update the doc paragraph:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (10 lines) ✓ (43ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Check the module-size gate, run final clippy/fmt, and take the safe-mode reading for the issue:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_goal.rs; cargo fmt -- --check && cargo clippy --all-targets -… ✓ (21.8s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | grep -E "^error" -A12 | head -4… ✓ (20.0s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -30 ✓ (19.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 9s (3 ✓)
+
+Good thing I re-ran it. Two fixes: a re-export that's now unused, and a clippy single_match:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "commands::handle_goal\|handle_goal" src/commands.rs | head ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'EOF' (27 lines) ✓ (19.5s)
+  ▶ $ cargo build 2>&1 | tail -1 && cargo test 2>&1 | grep -E "test result" | grep -v … ✓ (5m 9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 6m 3s (3 ✓)
+
+Everything is green. Now the issue comment (posted before the commit, so the commit message can say truthfully whether it went up):
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat > /tmp/c1002.md <<'EOF' (22 lines) ✓ (1.5s)
+
+Posted and verified. Commit:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat > /tmp/msg.txt <<'EOF' (52 lines) ✓ (61ms)
+
+A goal file that links into a --deny-dir directory no longer reaches the model. Before this fix, the secret went into the system prompt even under --safe-mode. Committed as a39737e0 with Part of #1002; build, test, clippy and fmt all pass.
+
+Before and after. Test setup: proj/.yoyo/goal.md is a symlink to secret/goal.md, which contains GOAL_SECRET_QQ7. I ran yoyo --print-system-prompt from proj and counted that token:
+
+| flags | before | after |
+|---|---|---|
+| --deny-dir secret | 1 | 0 |
+| --deny-dir secret --safe-mode | 1 | 0 |
+| --allow-dir proj (link target outside it) | 1 | 0 |
+| --allow-dir proj --allow-dir secret | — | 1 (target allowed, still loads) |
+| no flags | 1 | 1, no warning |
+
+What changed:
+• **Which reads are gated:** five places read the goal file. Two of them send it to the model, and both are now gated:
+  • the `# Current Goal block in the system prompt (cli.rs`)
+  • the /goal check prompt
+  
+  The other three (/goal show, the goal line in /status, the startup tip) only print to the user's own terminal, so I left them alone.
+• **How:** before reading the file, it calls `DirectoryRestrictions::check_path`, the same check `read_file` uses, so a link is judged by where it points. Task 1 didn't add a shared helper, so I called that check directly rather than writing a new one.
+• **Caller safety:** goal_for_prompt now requires the restrictions as an argument, so any future caller that leaves them out won't compile.
+• **/goal check:** when the file is refused, it now says so instead of the misleading "No goal set". The warning prints at normal volume, with display-safe text and no symbols in plain mode.
+• **Fourth file:** the task allowed three source files, and I touched a fourth: a one-line change in `commands.rs`. Clippy failed until the old `handle_goal` re-export was switched to the new fenced version.
+
+Testing: 7 new Unix tests, including one confirming that a normal goal file with no restrictions comes through byte-for-byte unchanged. As a check, I disabled the fence in one combined break-run-restore command. Exactly the three refusal tests failed, and all passed again once it was restored.
+
+Docs: dated note added to the commands_goal.rs entry in ARCHITECTURE.md, and one paragraph added to docs/src/configuration/permissions.md.
+
+Left open on purpose:
+• **--safe-mode:** with no directory flags it still loads the goal file (count 1), while it skips `CLAUDE.md` (count 0). Whether safe-mode should skip the goal too is a design question I didn't settle. I posted the readings and the question on #1002 and confirmed the comment shows up with gh issue view.
+• **`--restricted:** it adds the current folder to the allow list *after* the goal is loaded, so that limit doesn't apply to the goal file. Only the user's own --allow-dir/--deny-dir` do. I recorded this in ARCHITECTURE.md and the issue comment but didn't change it.
+• **Rest of #1002:** I haven't checked `memory.json`, skills, or the repo map yet.
+  watch: no files changed this turn — skipping
