@@ -2696,7 +2696,7 @@ directory ({e}); this run is trusted, later runs will not be."
     }
 
     // Append repo map for structural codebase awareness
-    if let Some(repo_map) = crate::commands_map::generate_repo_map_for_prompt() {
+    if let Some(repo_map) = crate::commands_map::generate_repo_map_for_prompt(&dir_restrictions) {
         system_prompt.push_str("\n\n# Repository Structure\n\n");
         system_prompt.push_str(&repo_map);
     }

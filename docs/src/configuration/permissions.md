@@ -225,6 +225,10 @@ warning.
   including a dangling link whose target does not exist yet (so `allow = ["./out"]` with
   `out -> /somewhere/else` allows `/somewhere/else`, not a directory inside your repo).
   A path caught in a symlink loop is refused.
+- The repository map in the system prompt honours the same fence: a file under a
+  `--deny-dir` (or outside every `--allow-dir`, symlinks resolved) is omitted before its
+  symbols are read, and yoyo prints how many files were omitted (a count, never the names).
+  The project file listing in the prompt can still *name* such files; their contents stay out.
 
 ### Example: lock yoyo to your project
 

@@ -24,11 +24,42 @@ pub fn build_repo_map_with_backend(
     force_regex: bool,
 ) -> (Vec<FileSymbols>, MapBackend) {
     let files = list_project_files();
-    let mut result = Vec::new();
 
     // Resolve git toplevel so file reads use absolute paths,
     // preventing CWD races when parallel tests call set_current_dir.
     let toplevel = crate::git::run_git(&["rev-parse", "--show-toplevel"]).ok();
+
+    let (result, backend, _omitted) = build_repo_map_core(
+        &files,
+        toplevel.as_deref(),
+        root,
+        public_only,
+        force_regex,
+        None,
+    );
+    (result, backend)
+}
+
+/// The shared body of every repo-map build: `files` are paths relative to
+/// `toplevel` (or to the CWD when `None`).
+///
+/// `fence` is the session's directory fence (#1002). Each file's absolute path
+/// goes through [`crate::config::DirectoryRestrictions::check_path`] — the one
+/// resolver, symlinks included (#996) — **before** the file is read, so a denied
+/// file's symbols are never extracted, not merely filtered after rendering.
+/// The third return value counts the files the fence omitted. `None` (and an
+/// empty fence, which `check_path` short-circuits) takes the unfenced path.
+fn build_repo_map_core(
+    files: &[String],
+    toplevel: Option<&str>,
+    root: Option<&str>,
+    public_only: bool,
+    force_regex: bool,
+    fence: Option<&crate::config::DirectoryRestrictions>,
+) -> (Vec<FileSymbols>, MapBackend, usize) {
+    let mut result = Vec::new();
+    let mut omitted = 0usize;
+    let fence = fence.filter(|f| !f.is_empty());
 
     // Check ast-grep availability once upfront
     let use_ast_grep = !force_regex && is_ast_grep_available();
@@ -38,7 +69,7 @@ pub fn build_repo_map_with_backend(
         MapBackend::Regex
     };
 
-    for path in &files {
+    for path in files {
         // If a root filter is given, only include matching files
         if let Some(root_path) = root {
             if !path.starts_with(root_path) {
@@ -54,7 +85,7 @@ pub fn build_repo_map_with_backend(
             None => continue,
         };
         // Use absolute path for file I/O to avoid CWD dependency
-        let abs_path = if let Some(ref tl) = toplevel {
+        let abs_path = if let Some(tl) = toplevel {
             std::path::Path::new(tl)
                 .join(path)
                 .to_string_lossy()
@@ -62,6 +93,13 @@ pub fn build_repo_map_with_backend(
         } else {
             path.clone()
         };
+        // The fence is checked before the read: symbol names are file content.
+        if let Some(f) = fence {
+            if f.check_path(&abs_path).is_err() {
+                omitted += 1;
+                continue;
+            }
+        }
         let content = match std::fs::read_to_string(&abs_path) {
             Ok(c) => c,
             Err(_) => continue,
@@ -89,7 +127,7 @@ pub fn build_repo_map_with_backend(
 
     // Sort by line count descending (biggest/most important files first)
     result.sort_by_key(|b| std::cmp::Reverse(b.lines));
-    (result, backend)
+    (result, backend, omitted)
 }
 
 /// Format the repo map with ANSI colors for REPL display.
@@ -218,8 +256,17 @@ fn relevance_score(entry: &FileSymbols, recent_files: &[String]) -> usize {
 /// truncation is needed, the most architecturally important files survive.
 ///
 /// Returns `None` if no supported source files are found.
+///
+/// **Unfenced and test-only since #1002**: production builds the prompt map
+/// through [`generate_repo_map_for_prompt`], which takes the directory fence, so
+/// no shipped path can put a denied file's symbols in the prompt.
+#[cfg(test)]
 pub fn generate_repo_map_for_prompt_with_limit(max_chars: usize) -> Option<String> {
-    let mut entries = build_repo_map(None, true);
+    render_repo_map_for_prompt(build_repo_map(None, true), max_chars)
+}
+
+/// Render already-built entries into the capped system-prompt map.
+fn render_repo_map_for_prompt(mut entries: Vec<FileSymbols>, max_chars: usize) -> Option<String> {
     if entries.is_empty() {
         return None;
     }
@@ -270,9 +317,62 @@ pub fn generate_repo_map_for_prompt_with_limit(max_chars: usize) -> Option<Strin
 /// Default max characters for the system prompt repo map (~16K chars ≈ ~4K tokens).
 const REPO_MAP_MAX_CHARS: usize = 16_000;
 
-/// Generate a repo map for the system prompt with the default size cap.
-pub fn generate_repo_map_for_prompt() -> Option<String> {
-    generate_repo_map_for_prompt_with_limit(REPO_MAP_MAX_CHARS)
+/// Generate a repo map for the system prompt with the default size cap,
+/// behind the session's directory fence (#1002).
+///
+/// Every file the map would include is checked against `restrictions` before
+/// its symbols are extracted; a file under `--deny-dir` (or outside
+/// `--allow-dir`) is omitted, symlinks resolved by the same resolver the file
+/// tools use. One YELLOW stderr line — not quiet-gated, like the instruction-file
+/// and goal refusals — states how many files were omitted, **count only**:
+/// naming them would leak exactly what the fence hides. An empty fence takes
+/// the unfenced path and is byte-identical to it.
+pub fn generate_repo_map_for_prompt(
+    restrictions: &crate::config::DirectoryRestrictions,
+) -> Option<String> {
+    let files = list_project_files();
+    let toplevel = crate::git::run_git(&["rev-parse", "--show-toplevel"]).ok();
+    let (map, omitted) = repo_map_for_prompt_fenced(
+        &files,
+        toplevel.as_deref(),
+        restrictions,
+        false,
+        REPO_MAP_MAX_CHARS,
+    );
+    if let Some(msg) = repo_map_fence_note(omitted, crate::format::is_plain_output()) {
+        eprintln!("{YELLOW}{msg}{RESET}");
+    }
+    map
+}
+
+/// The fenced prompt map over an explicit file list (the testable seam behind
+/// [`generate_repo_map_for_prompt`]). Returns the map and how many files the
+/// fence omitted.
+fn repo_map_for_prompt_fenced(
+    files: &[String],
+    toplevel: Option<&str>,
+    restrictions: &crate::config::DirectoryRestrictions,
+    force_regex: bool,
+    max_chars: usize,
+) -> (Option<String>, usize) {
+    let (entries, _backend, omitted) =
+        build_repo_map_core(files, toplevel, None, true, force_regex, Some(restrictions));
+    (render_repo_map_for_prompt(entries, max_chars), omitted)
+}
+
+/// The stderr note when the directory fence omitted files from the repo map.
+/// `None` when nothing was omitted (the whole regression surface). Count only,
+/// never names; glyph-free under plain output.
+pub(crate) fn repo_map_fence_note(omitted: usize, plain: bool) -> Option<String> {
+    if omitted == 0 {
+        return None;
+    }
+    let files = if omitted == 1 { "file" } else { "files" };
+    Some(if plain {
+        format!("warning: repo map omitted {omitted} {files} blocked by the directory fence (--deny-dir/--allow-dir)")
+    } else {
+        format!("⚠ repo map omitted {omitted} {files} blocked by the directory fence (--deny-dir/--allow-dir)")
+    })
 }
 
 /// Handle the `/map` REPL command: show structural symbols from the codebase.
@@ -475,7 +575,163 @@ mod tests {
     #[test]
     fn generate_repo_map_for_prompt_does_not_panic() {
         // Should not panic even if no source files exist
-        let _result = generate_repo_map_for_prompt();
+        let _result =
+            generate_repo_map_for_prompt(&crate::config::DirectoryRestrictions::default());
+    }
+
+    /// #1002: the repo map is a door onto the directory fence. Symbol names are
+    /// file content and go to the provider, so a denied file must never be read.
+    mod fence {
+        use super::super::*;
+        use crate::config::DirectoryRestrictions;
+        use tempfile::TempDir;
+
+        const DENIED_TOKEN: &str = "plain_private_qq4";
+        const ALLOWED_TOKEN: &str = "ok_fn_qq4";
+
+        /// `proj/private/keys.rs` (denied token) and `proj/src/ok.rs` (allowed token).
+        fn fixture() -> (TempDir, std::path::PathBuf, Vec<String>) {
+            let tmp = TempDir::new().unwrap();
+            let proj = tmp.path().join("proj");
+            std::fs::create_dir_all(proj.join("private")).unwrap();
+            std::fs::create_dir_all(proj.join("src")).unwrap();
+            std::fs::write(
+                proj.join("private/keys.rs"),
+                format!("pub fn {DENIED_TOKEN}() {{}}\n"),
+            )
+            .unwrap();
+            std::fs::write(
+                proj.join("src/ok.rs"),
+                format!("pub fn {ALLOWED_TOKEN}() {{}}\n"),
+            )
+            .unwrap();
+            let files = vec!["private/keys.rs".to_string(), "src/ok.rs".to_string()];
+            (tmp, proj, files)
+        }
+
+        fn deny(dir: &std::path::Path) -> DirectoryRestrictions {
+            DirectoryRestrictions {
+                allow: vec![],
+                deny: vec![dir.display().to_string()],
+            }
+        }
+
+        fn map(
+            files: &[String],
+            proj: &std::path::Path,
+            fence: &DirectoryRestrictions,
+        ) -> (String, usize) {
+            let (m, omitted) = repo_map_for_prompt_fenced(
+                files,
+                Some(&proj.to_string_lossy()),
+                fence,
+                true,
+                REPO_MAP_MAX_CHARS,
+            );
+            (m.unwrap_or_default(), omitted)
+        }
+
+        #[test]
+        fn denied_plain_subdirectory_is_omitted_and_its_sibling_is_kept() {
+            let (_tmp, proj, files) = fixture();
+            // Anti-vacuous: unfenced, the denied token really is in the map.
+            let (open, _) = map(&files, &proj, &DirectoryRestrictions::default());
+            assert!(
+                open.contains(DENIED_TOKEN),
+                "fixture must carry the token: {open}"
+            );
+
+            let (fenced, omitted) = map(&files, &proj, &deny(&proj.join("private")));
+            assert!(
+                !fenced.contains(DENIED_TOKEN),
+                "denied symbol leaked: {fenced}"
+            );
+            assert!(
+                !fenced.contains("private/keys.rs"),
+                "denied path leaked: {fenced}"
+            );
+            assert_eq!(omitted, 1);
+            // Near-miss: the allowed sibling is exactly what an unfenced map of it says.
+            assert_eq!(
+                fenced,
+                format!("src/ok.rs (1 lines)\n  fn {ALLOWED_TOKEN}\n")
+            );
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn symlinked_file_whose_target_is_denied_is_omitted() {
+            let tmp = TempDir::new().unwrap();
+            let secret = tmp.path().join("secret");
+            let proj = tmp.path().join("proj");
+            std::fs::create_dir_all(&secret).unwrap();
+            std::fs::create_dir_all(proj.join("src")).unwrap();
+            std::fs::write(
+                secret.join("lib.rs"),
+                format!("pub fn {DENIED_TOKEN}() {{}}\n"),
+            )
+            .unwrap();
+            std::os::unix::fs::symlink("../../secret/lib.rs", proj.join("src/lib.rs")).unwrap();
+            let files = vec!["src/lib.rs".to_string()];
+            let (open, _) = map(&files, &proj, &DirectoryRestrictions::default());
+            assert!(
+                open.contains(DENIED_TOKEN),
+                "link must carry the token: {open}"
+            );
+
+            let (fenced, omitted) = map(&files, &proj, &deny(&secret));
+            assert!(
+                !fenced.contains(DENIED_TOKEN),
+                "linked denied symbol leaked: {fenced}"
+            );
+            assert_eq!(omitted, 1);
+
+            // --allow-dir proj alone also refuses the link that lands outside it.
+            let allow_only = DirectoryRestrictions {
+                allow: vec![proj.display().to_string()],
+                deny: vec![],
+            };
+            let (fenced, omitted) = map(&files, &proj, &allow_only);
+            assert!(
+                !fenced.contains(DENIED_TOKEN),
+                "allow-dir escape leaked: {fenced}"
+            );
+            assert_eq!(omitted, 1);
+        }
+
+        #[test]
+        fn empty_fence_is_byte_identical_to_the_unfenced_build() {
+            let (_tmp, proj, files) = fixture();
+            let tl = proj.to_string_lossy().to_string();
+            let (entries, _, _) = build_repo_map_core(&files, Some(&tl), None, true, true, None);
+            let unfenced = render_repo_map_for_prompt(entries, REPO_MAP_MAX_CHARS);
+            let (fenced, omitted) = repo_map_for_prompt_fenced(
+                &files,
+                Some(&tl),
+                &DirectoryRestrictions::default(),
+                true,
+                REPO_MAP_MAX_CHARS,
+            );
+            assert!(unfenced.as_deref().unwrap_or("").contains(DENIED_TOKEN));
+            assert_eq!(fenced, unfenced);
+            assert_eq!(omitted, 0);
+        }
+
+        #[test]
+        fn fence_note_counts_without_naming_and_is_silent_at_zero() {
+            assert_eq!(repo_map_fence_note(0, false), None);
+            assert_eq!(repo_map_fence_note(0, true), None);
+            assert_eq!(
+                repo_map_fence_note(1, true).as_deref(),
+                Some("warning: repo map omitted 1 file blocked by the directory fence (--deny-dir/--allow-dir)")
+            );
+            assert_eq!(
+                repo_map_fence_note(3, false).as_deref(),
+                Some("⚠ repo map omitted 3 files blocked by the directory fence (--deny-dir/--allow-dir)")
+            );
+            let plain = repo_map_fence_note(2, true).unwrap();
+            assert!(plain.is_ascii(), "plain note must be glyph-free: {plain}");
+        }
     }
 
     // ── handle_map ──────────────────────────────────────────────────
