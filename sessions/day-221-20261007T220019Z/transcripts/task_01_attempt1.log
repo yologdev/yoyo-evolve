@@ -1,0 +1,113 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (41ms)
+  ▶ $ sed -n 155,460p src/context.rs; wc -l src/context_fence_tests.rs; grep -n "fn \|… ✓ (9ms)
+  ▶ $ sed -n 296,345p src/context.rs; cat src/context_fence_tests.rs; grep -n "load_pr… ✓ (15ms)
+  ▶ $ grep -n "pub fn memory_file_path\|pub fn load_memories_from\… (6 lines) ✓ (184ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 15.1s (4 ✓)
+
+Reproduced: 1 hit, no warning. Now the fix — write tests first.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 40,60p src/memory.rs; grep -n "fn format_memories_for_prompt" -A25 src/me… ✓ (6ms)
+
+Tests first:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat >> src/context_fence_tests.rs <<'EOF' (102 lines) ✓ (118ms)
+  ▶ $ cargo test --lib context_fence 2>&1 | tail -30 ✓ (116ms)
+  ▶ $ cargo test --bin yoyo context_fence 2>&1 | grep -E "^test |test result|panicked"… ✓ (30.0s)
+  3 tools completed in 35.1s (3 ✓)
+  ⚡ retrying (attempt 2/6, waiting 1s)...
+  ⚡ retrying (attempt 3/6, waiting 1s)...
+  ⚡ retrying (attempt 4/6, waiting 3s)...
+  ⚡ retrying (attempt 5/6, waiting 5s)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tests are red for the three right reasons. Now the fix: route memory.json through the same admit callback as the instruction files.
+  ▶ $ python3 - <<'EOF' (51 lines) ✓ (29.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 11 green. Positive control, atomic and serial — neuter the admit call, expect (a) red by name, restore:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/context.rs /tmp/ctx.bak && sed -i 's|    let memory = if memory_path.exis… ✓ (1m 0s)
+
+Control fired by name and restored green. Now the end-to-end re-run with the recorded invocation:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -1; B=/tmp/p221m; Y=$PWD/target/debu… (5 lines) ✓ (10.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "instruction\|CLAUDE.md\|goal\|1002" docs/src/configuration/permissions.… ✓ (4ms)
+  ▶ $ sed -n 211,220p docs/src/configuration/permissions.md ✓ (3ms)
+  ▶ edit docs/src/configuration/permissions.md (2 → 5 lines)
+    out of `/goal check`, with a
+  - warning.
+  + warning. Project memories (`.yoyo/memory.json`) get the same treatment: if the memory file's resolved target is
+  + refused, no memories are added to the system prompt and yoyo prints a warning. (The REPL `/memories` and
+  + `/remember` commands are not fenced yet. They show on your terminal or write to disk, and nothing they do is sent
+  + to the model.)
+  ▶ $ cargo fmt && cargo build 2>&1 | tail -1 && cargo clippy --all-targets -- -D warn… ✓ (1ms)
+    out of `/goal check`, with a
+  - warning.
+  + warning. Project memories (`.yoyo/memory.json`) get the same treatment: if the memory file's resolved target is
+  + refused, no memories are added to the system prompt and yoyo prints a warning. (The REPL `/memories` and
+  + `/remember` commands are not fenced yet. They show on your terminal or write to disk, and nothing they do is sent
+  + to the model.)
+ ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -2 && cargo fmt -- --check… ✓ (38.9s)
+  ▶ $ cargo test 2>&1 | grep -E "^test result|FAILED|panicked" | sort | uniq -c | head… ✓ (2m 28s)
+  ▶ $ cargo test 2>&1 | grep -E "^test result" | grep -v " 0 failed" ; echo "nonzero-f… ✓ (2m 7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 7m 56s (7 ✓, 1 ✗)
+
+Everything is green: build, the full test suite, clippy with -D warnings, and the fmt check. Committing:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -q -F - <<'EOF' (39 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+A .yoyo/memory.json that symlinks into a fenced directory no longer reaches the system prompt. Committed as 2a7c07f5, ending in Part of #1002, because skills are still unprobed and the issue should stay open.
+
+Before and after, using the recorded command:
+
+| Run | Token count | Warning |
+|---|---|---|
+| --deny-dir <abs>/secret, before the fix | 1 | none |
+| --deny-dir <abs>/secret, after | 0 | ⚠ project memory file .yoyo/memory.json not loaded — Access denied: … under restricted directory … |
+| --allow-dir <abs>/proj, after | 0 | the "not under any allowed directory" warning |
+| No fence, after | 1 | none (unchanged) |
+
+The change (in `src/context.rs`):
+• The memory read now goes through the same admit callback cf8ad734 added for the instruction files, so it's judged at its resolved target. There is still only one fence helper.
+• It is only checked when the file exists, so a missing memory.json stays silent as before.
+• The shared warning helper now says "memory file" for this one name, so it doesn't call memories instructions. I added a MEMORY_CONTEXT_NAME constant for that.
+
+Tests (`src/context_fence_tests.rs`, tempdirs only, checked on the context string the loader returns):
+• A symlink into a denied directory, or outside the allow-list, drops the token and records the refusal.
+• A deny list that doesn't cover the target still loads the memory.
+• A plain `memory.json is byte-identical to before (assert_eq!` on the section), both with no fence and inside an allow-list.
+• A missing file doesn't warn.
+• Anti-vacuous: the fixture really contains the token, and the unfenced loader reads it.
+
+Positive control: I neutered the check (with a NEUTERED marker), ran the tests, and restored the file in one command, run serially. The two refusal tests failed by name, and after restoring all 11 passed with no marker left.
+
+`/spawn`: commands_spawn.rs:510 goes through load_project_context(restrictions), which uses the same loading code, so it gets the fence too.
+
+Docs: one added sentence in docs/src/configuration/permissions.md, which also says that /memories and /remember aren't fenced.
+
+Build, full cargo test, clippy -D warnings and fmt --check all pass.
+
+Still open: the REPL /memories and /remember commands (they show on the terminal or write to disk, not to the model) and skills directories, which still need a way to see what the provider actually receives.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

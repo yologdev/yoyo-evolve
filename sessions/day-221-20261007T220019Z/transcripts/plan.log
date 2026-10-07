@@ -1,0 +1,50 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; gh issue view 997 --repo … ✓ (363ms)
+  ▶ $ git branch -r --contains cb93b54e 2>&1 | head; gh issue view 997 --repo yologdev… ✓ (601ms)
+  ▶ $ f=$(ls -d ~/.cargo/registry/src/*/yoagent-0.24.2/src/tools/list.rs 2>/dev/null |… ✓ (6ms)
+  ▶ $ sed -n 95,175p /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f… ✓ (499ms)
+  ▶ $ cat > /tmp/yoagent_issue.md <<'EOF' (10 lines) ✓ (631ms)
+  ▶ $ git show --stat --format='%h %s' cf8ad734 a39737e0 | cat; grep -rn "load_memorie… ✓ (53ms)
+  ▶ write session_plan/task_01.md (29 lines)  ▶ write session_plan/task_02.md (28 lines)  ▶ write session_plan/issue_responses.md (11 lines)  ▶ $ ls session_plan/ && git add session_plan/ && git commit -q -m "Day 221 (20:59): … ✓ (1ms)
+ ✓ (1ms)
+ ✓ (1ms)
+ ✓ (6ms)
+  ▶ $ git ls-files session_plan | cat; git show --stat --format=%s HEAD | cat ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 1m 13s (11 ✓)
+
+The assessment is already tracked through a forced add, so I'll commit the plan files the same way.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git add -f session_plan/task_01.md session_plan/task_02.md session_plan/issue_re… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The session plan is written and committed as 76608566. session_plan/ is gitignored, so I force-added the files the same way the assessment commit already does. Nothing was implemented or built this phase.
+
+Task 1 (product, #1002 part 3): make .yoyo/memory.json honour --deny-dir/--allow-dir at its resolved target. The assessment measured it at HEAD: a symlinked memory.json pointing into a denied dir still puts its contents into the system prompt (1 hit, no warning). It's the last measured startup reader with that leak. The fix goes where src/context.rs:410 reads memories into the prompt, reusing the check and ⚠ warning that this morning's cf8ad734 added for CLAUDE.md/AGENTS.md. The task requires:
+• re-running the recorded command exactly before changing anything;
+• tests on the prompt text itself, including one proving an ordinary memory.json still loads unchanged;
+• a deliberate break-then-restore check of the new test.
+
+The commit will say Part of #1002 because the skills dirs still haven't been probed.
+
+Task 2 (product, #982 slice): yoyo find and /find currently drop an unreadable directory without saying so and report "1 file matching" with exit 0. The plan follows find(1):
+• matches still print;
+• unreadable directories get named on stderr;
+• the shell exit code becomes 1;
+• a fully readable walk, including a no-match, behaves exactly as before.
+
+Tests go in a new sibling file because commands_search.rs is already 4373 lines. There's a skip in case the tests run as root, where chmod 000 doesn't block reads. Neither task touches cli.rs, which the trajectory flagged (5 of the last 8 changes).
+
+Actions taken this phase, outside the code tasks:
+• **Filed yologdev/yoagent#260.** yoagent's `list_files`, the model's version of `/find`, has the same silent gap: it captures `find`'s error output and never reads it or the exit status. That's from reading the 0.24.2 source, not from running it, and the issue says so.
+• **Checked #997 and left it open on purpose.** The fix (cb93b54e) is on origin/main. My last comment there keeps the issue open until a real Overloaded error in CI confirms it works.
+
+#991 is deferred, and no release is due (v0.2.0 was two days ago).
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

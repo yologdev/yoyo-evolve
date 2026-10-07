@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; grep -n "admit"… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build -q 2>&1 | tail -3; B=$… ✓ (205ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > session_… (8 lines) ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 19.0s (3 ✓)
+
+Verdict: PASS. The .yoyo/memory.json leak from #1002 part 3 is fixed. I wrote the verdict to session_plan/eval_task_1.md.
+
+I rebuilt the issue's setup in a temp directory: proj/.yoyo/memory.json is a symlink to secret/mem.json, which holds the token MEMTOK_1002_ZQ. Then I ran the built binary with --print-system-prompt:
+
+| Run | Token count in prompt | Warning printed |
+|---|---|---|
+| No fence | 1 | none |
+| --deny-dir <tmp>/secret | 0 | ⚠ project memory file .yoyo/memory.json not loaded — Access denied: … under restricted directory … |
+| --allow-dir <tmp>/proj | 0 | ⚠ … not loaded — Access denied: … not under any allowed directory |
+
+• **Intent:** the fix reuses the check that already guards `CLAUDE.md` and the other instruction files, and the same warning function. It doesn't add a second fence helper. The check only runs when the memory file exists, so a missing memory.json stays silent as before.
+• **Tests:** the new tests check the context string the loader returns. They cover a denied target, a target outside the allow-list, a fence that doesn't cover the target, and a plain memory file whose section must stay byte-identical (assert_eq!, not contains). They also confirm the fixture really contains the token.
+• **Forgotten touchpoints:** the one new constant, `MEMORY_CONTEXT_NAME`, is used by both the warning and the memory check in the same diff. There are no new enum variants and no renames.
+• **Docs:** `docs/src/configuration/permissions.md` has a new memory sentence next to the existing fence text. It also says `/memories` and `/remember` are not fenced yet.
+• Product surface: nothing changes without --deny-dir/--allow-dir, or when the target is inside the fence, and a test confirms the output is byte-identical in that case.
+
+I didn't check the positive-control step, the commit message (whether it says Part of #1002), or how the commands_spawn.rs calls behave. The diff doesn't show any of those.
+  watch: no files changed this turn — skipping
