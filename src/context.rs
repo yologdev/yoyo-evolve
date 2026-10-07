@@ -175,12 +175,23 @@ pub fn load_project_context(restrictions: &crate::config::DirectoryRestrictions)
 /// repository-authored paths, so it is sanitized; plain output is glyph-free.
 pub(crate) fn instruction_file_refused_warning(name: &str, reason: &str, plain: bool) -> String {
     let reason = crate::cli::sanitize_for_display(reason);
-    if plain {
-        format!("warning: project instruction file {name} not loaded - {reason}")
+    // The memory file shares this fence (#1002 part 3) but is not an
+    // instruction file, so the noun says which kind was dropped.
+    let kind = if name == MEMORY_CONTEXT_NAME {
+        "memory file"
     } else {
-        format!("⚠ project instruction file {name} not loaded — {reason}")
+        "instruction file"
+    };
+    if plain {
+        format!("warning: project {kind} {name} not loaded - {reason}")
+    } else {
+        format!("⚠ project {kind} {name} not loaded — {reason}")
     }
 }
+
+/// The label the fence warning and refusal list use for the project memory
+/// file `<dir>/.yoyo/memory.json` (#1002 part 3).
+pub(crate) const MEMORY_CONTEXT_NAME: &str = ".yoyo/memory.json";
 
 /// [`load_project_context_from`] behind the session's directory fence (#1002).
 /// Each instruction file is asked of `DirectoryRestrictions::check_path` — the
@@ -407,7 +418,16 @@ fn load_project_context_inner(
     // repo's `.yoyo/memory.json` — memory entries can contain arbitrary text
     // (including section-header-like strings), which made fixture-based test
     // assertions nondeterministic under parallel execution.
-    let memory = crate::memory::load_memories_from(&dir.join(crate::memory::memory_file_path()));
+    // #1002 part 3: the memory file is put to the same `admit` fence as the
+    // instruction files above (one policy, one door), judged at its resolved
+    // target. Only an existing file is asked: an absent memory.json is not a
+    // refusal and must stay silent, exactly as before.
+    let memory_path = dir.join(crate::memory::memory_file_path());
+    let memory = if memory_path.exists() && !admit(MEMORY_CONTEXT_NAME, &memory_path) {
+        crate::memory::ProjectMemory::default()
+    } else {
+        crate::memory::load_memories_from(&memory_path)
+    };
     if let Some(memories_section) = crate::memory::format_memories_for_prompt(&memory) {
         if !context.is_empty() {
             context.push_str("\n\n");

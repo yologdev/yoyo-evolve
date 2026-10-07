@@ -212,7 +212,10 @@ The same fence applies to project instruction files (`YOYO.md`, `CLAUDE.md`, `AG
 system prompt: a `CLAUDE.md` whose resolved target is denied (or outside every allowed directory) is not loaded,
 and yoyo prints a warning naming it. The current goal (`.yoyo/goal.md`, set with `/goal set`) is fenced the same
 way: if its resolved target is refused, it is left out of the system prompt and out of `/goal check`, with a
-warning.
+warning. Project memories (`.yoyo/memory.json`) get the same treatment: if the memory file's resolved target is
+refused, no memories are added to the system prompt and yoyo prints a warning. (The REPL `/memories` and
+`/remember` commands are not fenced yet. They show on your terminal or write to disk, and nothing they do is sent
+to the model.)
 
 ### Rules
 
