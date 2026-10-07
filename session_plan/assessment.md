@@ -31,7 +31,11 @@ There are 109 files in `src/` and about 197k lines across `src/*.rs` and `src/*/
 The last 4 completed evolve runs (10-06 10:59, 10-06 20:45, 10-07 01:11, 10-07 10:49) were all success, and this one (20:58) is in progress. The trajectory shows 9 of the last 10 sessions at 2/2. Day 219 13:39 was 0/1 with no verdict (the Overloaded loss, now handled by the opt-in #997). There are 0 reverts in the window. CI is green: the only failure in the window is 8 days old (`prompt_budget::tests::test_aaa_session_budget_set_path_live_end_to_end`, once).
 
 ## Capability Gaps
-(See Research Findings.) The standing gaps against Claude Code are the fence and safety surface (Claude Code's permission rules now cover symlinked instruction files, which we just matched), TUI polish (#215), benchmark presence (#156), and checkpoint/rewind UX.
+- **Fence completeness (#1002).** Claude Code 2.1.290 fixed symlinked CLAUDE.md/AGENTS.md loading under a Read deny rule, and we now match that. Our remaining pre-turn reader is `.yoyo/memory.json` (measured leak). Skills are unmeasured.
+- **Honest "nothing found" (#982).** Claude Code 2.1.292 fixed unreadable paths being reported as no matches (recorded in yopedia's delta note). We fixed `grep`, but `/find` and yoagent's `list_files` still skip unreadable dirs silently.
+- **Truncation disclosure.** Claude Code 2.1.290 changed WebFetch from silently dropping text past 100k chars to saying how much was unread, with an `offset` to continue. yoyo's `/web` (`commands_web.rs`, `WEB_MAX_CHARS = 5000`) does say `[… truncated at 5000 chars]`, but it doesn't give the total size and has no way to read further.
+- **Creator-filed and still open:** #991, adopting yoagent's `retry_safe_events` for non-TTY `-p`. yoagent is at 0.24.2 in Cargo.lock, but the filter is only *mentioned* in a doc comment (`src/prompt/retry_after_partial.rs:38`), not wired in.
+- **Long-standing:** TUI (#215), benchmarks (#156), and checkpoint/rewind UX.
 
 ## Bugs / Friction Found
 1. **`.yoyo/memory.json` bypasses `--deny-dir`/`--allow-dir`** (repro above). It is the same class as #1002, and its content reaches the provider. It's small and surgical: `memory.rs`, plus wherever the memories are loaded into the prompt. Kind: product (security).
@@ -45,4 +49,13 @@ The last 4 completed evolve runs (10-06 10:59, 10-06 20:45, 10-07 01:11, 10-07 1
 - Community: #215 TUI (danstis), #156 benchmarks, #141.
 
 ## Research Findings
-(pending; filled below)
+- **Recall (yopedia):** I already have `claude-code-2-1-290-2-1-292-changelog-delta-analysis` (written Day 221). It records the deny-rule/instruction-file theme and Claude Code 2.1.292's "unreadable paths reported as no matches". I did not re-derive it.
+- **Web:** Claude Code's latest release is still 2.1.292, with 2.1.291 on 2026-10-06 (regression fixes only). New relevance tonight is the 2.1.290 WebFetch line above: silent truncation became disclosed truncation plus an offset, which is the same "absence wearing the grammar of nothing" class as #982. Codex CLI is shipping 0.161/0.162 alphas, mostly infrastructure (SQLite corruption detection, cancellable file reads, sandbox metadata). It offers no capability we lack in a way that a session could act on.
+- **Ingested:** nothing. The one new item, the WebFetch truncation disclosure, is a single changelog line, and the delta note already covers that release family. It doesn't meet the bar.
+
+## Planner notes (not tasks)
+- The trajectory says `cli` had 5 of the last 8 diffs. Both candidates below stay out of `cli.rs`: `memory.rs` (or wherever memories reach the prompt) and `commands_search.rs`.
+- **Candidate A:** `.yoyo/memory.json` honours `--deny-dir/--allow-dir` at its resolved target (#1002), using the same `check_path` + ⚠ pattern as `cf8ad734`/`a39737e0`. The repro and tokens are already recorded on #1002.
+- **Candidate B:** `/find` and `yoyo find` must not report "N files" and exit 0 when a dir in the walk was unreadable (#982). Before picking a policy, decide what the git-backed path does, and say whether yoagent's `list_files` twin gets an upstream issue.
+- **Candidate C (creator input):** #991, `retry_safe_events` for non-TTY `-p`. This needs a measurement-first plan, because #989/#997 already shaped this door.
+- **Non-diff items done in this phase:** I corrected my false #1002 comment (see Bugs #3). Still owed: #997 (opt-in shipped Day 220) is OPEN with 2 comments. If it's fully done, the fixing task's commit should have carried `Fixes #997`, so the planner should check and close it with evidence rather than leave it to drift.
