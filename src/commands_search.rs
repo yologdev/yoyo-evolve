@@ -110,8 +110,17 @@ pub fn fuzzy_score(path: &str, pattern: &str) -> Option<i32> {
 
 /// Find files matching a fuzzy pattern. Uses `git ls-files` if in a git repo,
 /// otherwise falls back to a recursive directory listing.
+#[cfg(test)]
 pub fn find_files(pattern: &str) -> Vec<FindMatch> {
-    let files = list_project_files();
+    find_files_in(".", pattern).0
+}
+
+/// [`find_files`] over `root`, plus every directory the fallback walk could
+/// not read as `(path, reason)` (#982). The git-backed listing never walks, so
+/// its list is always empty; callers must not read "empty" as "all readable"
+/// for anything but the walk.
+pub(crate) fn find_files_in(root: &str, pattern: &str) -> (Vec<FindMatch>, Vec<(String, String)>) {
+    let (files, unreadable) = list_project_files_reporting_in(root);
     let mut matches: Vec<FindMatch> = files
         .iter()
         .filter_map(|path| {
@@ -124,7 +133,7 @@ pub fn find_files(pattern: &str) -> Vec<FindMatch> {
 
     // Sort by score descending, then alphabetically for ties
     matches.sort_by(|a, b| b.score.cmp(&a.score).then(a.path.cmp(&b.path)));
-    matches
+    (matches, unreadable)
 }
 
 /// List all project files. Prefers `git ls-files`, falls back to walkdir-style listing.
@@ -159,6 +168,14 @@ pub(crate) fn list_project_files() -> Vec<String> {
 /// did before, and `git_command()` prepends the chokepoint flags. `ls-files` is not
 /// in `DESTRUCTIVE_GIT_COMMANDS`, so the `#[cfg(test)]` guard is a no-op here.
 pub(crate) fn list_project_files_in(root: &str) -> Vec<String> {
+    // Only `/find` reports unreadable dirs so far (#982); every other caller
+    // (index, completion, ...) keeps its pre-#982 behaviour on purpose.
+    list_project_files_reporting_in(root).0
+}
+
+/// [`list_project_files_in`] plus the directories the fallback walk could not
+/// read (#982). Always empty on the git paths, which do not walk.
+pub(crate) fn list_project_files_reporting_in(root: &str) -> (Vec<String>, Vec<(String, String)>) {
     let root_path = std::path::Path::new(root);
     // Use git toplevel to avoid CWD-dependency (prevents flaky tests when
     // another test calls set_current_dir during parallel execution).
@@ -172,7 +189,7 @@ pub(crate) fn list_project_files_in(root: &str) -> Vec<String> {
                     .map(|l| l.to_string())
                     .collect();
                 if !files.is_empty() {
-                    return files;
+                    return (files, Vec::new());
                 }
             }
         }
@@ -185,14 +202,17 @@ pub(crate) fn list_project_files_in(root: &str) -> Vec<String> {
             .map(|l| l.to_string())
             .collect();
         if !files.is_empty() {
-            return files;
+            return (files, Vec::new());
         }
     }
 
     // Last resort: recursive listing of current directory (respecting common ignores).
     // Depth 4 is plenty for a non-git fallback — depth 8 was excessive and caused hangs
     // when run from ~ (see issue #333).
-    walk_directory(root, 4)
+    let mut files = Vec::new();
+    let mut unreadable = Vec::new();
+    walk_directory_inner(root, 4, 0, &mut files, &mut unreadable);
+    (files, unreadable)
 }
 
 /// Maximum number of files returned by `walk_directory`. Prevents hangs when
@@ -217,19 +237,31 @@ const WALK_DIR_IGNORE: &[&str] = &[
 ];
 
 /// Simple recursive directory walk (fallback when not in a git repo).
+#[cfg(test)]
 fn walk_directory(dir: &str, max_depth: usize) -> Vec<String> {
     let mut files = Vec::new();
-    walk_directory_inner(dir, max_depth, 0, &mut files);
+    walk_directory_inner(dir, max_depth, 0, &mut files, &mut Vec::new());
     files
 }
 
-fn walk_directory_inner(dir: &str, max_depth: usize, depth: usize, files: &mut Vec<String>) {
+/// `unreadable` collects `(dir, reason)` for every `read_dir` that failed, so
+/// a caller can say the listing is incomplete instead of implying it is whole.
+fn walk_directory_inner(
+    dir: &str,
+    max_depth: usize,
+    depth: usize,
+    files: &mut Vec<String>,
+    unreadable: &mut Vec<(String, String)>,
+) {
     if depth > max_depth || files.len() >= WALK_DIR_FILE_CAP {
         return;
     }
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(_) => return,
+        Err(e) => {
+            unreadable.push((dir.to_string(), e.kind().to_string()));
+            return;
+        }
     };
     for entry in entries.flatten() {
         if files.len() >= WALK_DIR_FILE_CAP {
@@ -246,7 +278,7 @@ fn walk_directory_inner(dir: &str, max_depth: usize, depth: usize, files: &mut V
             format!("{dir}/{name}")
         };
         if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-            walk_directory_inner(&path, max_depth, depth + 1, files);
+            walk_directory_inner(&path, max_depth, depth + 1, files, unreadable);
         } else {
             files.push(path);
         }
@@ -305,36 +337,91 @@ pub fn highlight_match(path: &str, pattern: &str) -> String {
 }
 
 pub fn handle_find(input: &str) {
+    // REPL `/find`: the note is already on stderr and there is no process
+    // exit to set, so the status has no further reader here (#982).
+    let _status = handle_find_status(input);
+}
+
+/// Most unreadable directories a `/find` note names; the rest are counted.
+pub(crate) const FIND_UNREADABLE_MAX_SHOWN: usize = 5;
+/// Byte cap per shown directory path, cut on a char boundary (#250).
+pub(crate) const FIND_UNREADABLE_PATH_MAX_BYTES: usize = 200;
+
+/// `/find` / `yoyo find` printing core; returns the shell exit status (#982).
+/// Matches print exactly as before. If the walk could not read a directory,
+/// a note goes to stderr and the status is 1 even with matches: that is
+/// find(1)'s convention ("some files could not be visited"), whereas grep
+/// uses 2 for errors because grep's 1 already means "no match".
+pub(crate) fn handle_find_status(input: &str) -> i32 {
     let arg = input.strip_prefix("/find").unwrap_or("").trim();
     if arg.is_empty() {
         println!("{DIM}  usage: /find <pattern>");
         println!("  Fuzzy-search project files by name.");
         println!("  Examples: /find main, /find .toml, /find test{RESET}\n");
-        return;
+        return 0;
     }
-
-    let matches = find_files(arg);
-    if matches.is_empty() {
-        println!("{DIM}  No files matching '{arg}'.{RESET}\n");
-    } else {
-        let count = matches.len();
-        let shown = matches.iter().take(20);
-        println!(
-            "{DIM}  {count} file{s} matching '{arg}':",
-            s = if count == 1 { "" } else { "s" }
-        );
-        for m in shown {
-            let highlighted = highlight_match(&m.path, arg);
-            println!("    {highlighted}");
+    let (matches, unreadable) = find_files_in(".", arg);
+    print!("{}", render_find_matches(arg, &matches));
+    match find_unreadable_note(&unreadable) {
+        Some(note) => {
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            eprintln!("{note}");
+            1
         }
-        if count > 20 {
-            println!("    {DIM}... and {} more{RESET}", count - 20);
-        }
-        println!("{RESET}");
+        None => 0,
     }
 }
 
-// ── /index ───────────────────────────────────────────────────────────────
+/// The stdout text `/find` prints for `matches` — unchanged by #982.
+pub(crate) fn render_find_matches(arg: &str, matches: &[FindMatch]) -> String {
+    if matches.is_empty() {
+        return format!("{DIM}  No files matching '{arg}'.{RESET}\n\n");
+    }
+    let count = matches.len();
+    let mut out = format!(
+        "{DIM}  {count} file{s} matching '{arg}':\n",
+        s = if count == 1 { "" } else { "s" }
+    );
+    for m in matches.iter().take(20) {
+        out.push_str(&format!("    {}\n", highlight_match(&m.path, arg)));
+    }
+    if count > 20 {
+        out.push_str(&format!("    {DIM}... and {} more{RESET}\n", count - 20));
+    }
+    out.push_str(&format!("{RESET}\n"));
+    out
+}
+
+/// The stderr note for directories a `/find` walk could not read, or `None`
+/// when there were none (#982). Paths are repo-authored, so they are run
+/// through `sanitize_for_display` and capped on a char boundary.
+pub(crate) fn find_unreadable_note(unreadable: &[(String, String)]) -> Option<String> {
+    if unreadable.is_empty() {
+        return None;
+    }
+    let n = unreadable.len();
+    let mut note = format!(
+        "  find could not read {n} director{}; the list above may be incomplete:",
+        if n == 1 { "y" } else { "ies" }
+    );
+    for (path, reason) in unreadable.iter().take(FIND_UNREADABLE_MAX_SHOWN) {
+        let mut shown = crate::cli::sanitize_for_display(path);
+        if shown.len() > FIND_UNREADABLE_PATH_MAX_BYTES {
+            let mut b = FIND_UNREADABLE_PATH_MAX_BYTES;
+            while b > 0 && !shown.is_char_boundary(b) {
+                b -= 1;
+            }
+            shown.truncate(b);
+            shown.push('…');
+        }
+        note.push_str(&format!("\n    {shown} ({reason})"));
+    }
+    if n > FIND_UNREADABLE_MAX_SHOWN {
+        note.push_str(&format!("\n    (… {} more)", n - FIND_UNREADABLE_MAX_SHOWN));
+    }
+    Some(note)
+}
 
 /// An entry in the project index: path, line count, and first meaningful line.
 #[derive(Debug, Clone, PartialEq)]

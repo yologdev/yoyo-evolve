@@ -386,7 +386,8 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "find" => {
                 let input = quote_args_as_command(args);
-                crate::commands_search::handle_find(&input);
+                // #982: 1 when a directory could not be read (find(1)'s code).
+                exit_if_nonzero(crate::commands_search::handle_find_status(&input));
                 return Some(None);
             }
             "index" => {

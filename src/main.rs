@@ -89,6 +89,8 @@ mod commands_risk_weights;
 mod commands_run;
 mod commands_search;
 #[cfg(test)]
+mod commands_search_find_status_tests;
+#[cfg(test)]
 mod commands_search_grep_status_tests;
 mod commands_session;
 mod commands_skill;

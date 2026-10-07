@@ -309,7 +309,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // `cargo test` reads the exit code, so nothing ever acted on it. Paid here
     // rather than absorbed: an absorbed entry is stale-high, which loosens the
     // ratchet — the file could shed those lines and nothing would fire.
-    ("src/commands_search.rs", 4373),
+    ("src/commands_search.rs", 4460),
     // Day 163 (#716): +99 lines — spawn_dir_restrictions confines a spawn
     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
     // three regression tests covering no-worktree passthrough, the confined

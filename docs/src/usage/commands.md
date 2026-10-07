@@ -829,6 +829,8 @@ This is the fastest way to give the AI context about specific files without wait
 
 The `/find` command does fuzzy substring matching across all tracked files in your project (via `git ls-files`, falling back to a directory walk if not in a git repo). Results are ranked by relevance — filename matches score higher than directory matches, and matches at the start of the filename rank highest.
 
+If the directory walk cannot read a directory (for example, permission denied), the matches it did find are still printed, a note on stderr names the unreadable directories, and `yoyo find` exits 1, following `find(1)`. The git-backed listing does not walk the filesystem, so it is unaffected.
+
 ```
 /find main
   3 files matching 'main':
