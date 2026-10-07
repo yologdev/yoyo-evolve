@@ -505,9 +505,9 @@ pub(crate) fn spawn_project_context_with(
 /// already an `AtomicBool` (never a write-once `OnceLock` — the `TRUST_PROJECT`
 /// landmine) and already registered in `GLOBAL_SETTERS`, so this adds no new
 /// global writer for the race gate to miss.
-fn spawn_project_context() -> Option<String> {
+fn spawn_project_context(restrictions: &crate::config::DirectoryRestrictions) -> Option<String> {
     spawn_project_context_with(crate::cli_config::is_safe_mode(), &|| {
-        crate::cli::load_project_context()
+        crate::cli::load_project_context(restrictions)
     })
 }
 
@@ -854,7 +854,9 @@ pub async fn handle_spawn(
 
     // Load project context for the subagent, honouring the parent's --safe-mode
     // (#902 slice): a confined parent must not dispatch an unconfined worker.
-    let project_context = spawn_project_context();
+    // The parent's fence, not the child's: the context is read from the
+    // parent's cwd, where the parent's --deny-dir applies (#1002).
+    let project_context = spawn_project_context(&agent_config.dir_restrictions);
     let context_prompt = spawn_context_prompt(
         main_messages,
         project_context.as_deref(),
@@ -1006,7 +1008,9 @@ fn handle_spawn_bg(
 
     // Prepare everything the background task needs (clone before moving).
     // Honours the parent's --safe-mode (#902 slice), same as the foreground path.
-    let project_context = spawn_project_context();
+    // The parent's fence, not the child's: the context is read from the
+    // parent's cwd, where the parent's --deny-dir applies (#1002).
+    let project_context = spawn_project_context(&agent_config.dir_restrictions);
     let context_prompt = spawn_context_prompt(
         main_messages,
         project_context.as_deref(),
@@ -2515,8 +2519,13 @@ mod tests {
     #[test]
     fn both_spawn_call_sites_route_project_context_through_the_safe_mode_seam() {
         let src = include_str!("commands_spawn.rs");
-        let seam = format!("spawn_project_{}()", "context");
-        let raw = format!("crate::cli::load_project_{}()", "context");
+        // #1002: the seam is handed the PARENT's directory fence, so a
+        // CLAUDE.md linked into a --deny-dir directory never reaches a worker.
+        let seam = format!(
+            "spawn_project_{}(&agent_config.dir_restrictions)",
+            "context"
+        );
+        let raw = format!("crate::cli::load_project_{}(", "context");
 
         for (start, end) in [
             ("async fn handle_spawn(", "fn handle_spawn_bg("),
@@ -2603,17 +2612,17 @@ mod tests {
         // Warm whatever cold state there is without asserting anything about
         // it: it may legitimately be Some or None depending on this repo.
         crate::cli_config::set_safe_mode(false);
-        let _ = spawn_project_context();
+        let _ = spawn_project_context(&crate::config::DirectoryRestrictions::default());
 
         // A `--restricted` parent, which is the global `main.rs` sets when
         // `Config.safe_mode` is true — the same value `--safe-mode` alone sets.
         crate::cli_config::set_safe_mode(true);
-        let mut confined = spawn_project_context();
+        let mut confined = spawn_project_context(&crate::config::DirectoryRestrictions::default());
         for _ in 0..5 {
             if confined.is_none() {
                 break;
             }
-            confined = spawn_project_context();
+            confined = spawn_project_context(&crate::config::DirectoryRestrictions::default());
         }
         assert_eq!(
             confined, None,

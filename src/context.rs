@@ -3,7 +3,7 @@
 //! Extracted from `cli.rs` to keep context assembly separate from CLI argument parsing.
 
 use crate::commands_project::{detect_project_type, project_type_hints};
-use crate::format::{is_quiet, DIM, RESET};
+use crate::format::{is_quiet, DIM, RESET, YELLOW};
 
 /// Project instruction files, checked in order. All found files are concatenated.
 ///
@@ -160,8 +160,52 @@ pub fn get_recently_changed_files_from(
 /// origin so the model knows which file each block came from.
 /// Appends project file listing, recently changed files, git status, and memories
 /// when available.
-pub fn load_project_context() -> Option<String> {
-    load_project_context_from(std::path::Path::new("."))
+///
+/// `restrictions` is the session's `--allow-dir`/`--deny-dir` fence (#1002): an
+/// instruction file whose **resolved** target the fence refuses is skipped with
+/// a stderr warning, exactly as the file tools would refuse to read it (#996).
+pub fn load_project_context(restrictions: &crate::config::DirectoryRestrictions) -> Option<String> {
+    load_project_context_restricted(std::path::Path::new("."), restrictions).0
+}
+
+/// The warning printed when the directory fence refuses an instruction file
+/// (#1002). A security fact, so it is a normal warning, never DIM and never
+/// quiet-gated: a user who set `--deny-dir` must see that a CLAUDE.md pointing
+/// there was dropped. `reason` comes from `check_path` and embeds user- and
+/// repository-authored paths, so it is sanitized; plain output is glyph-free.
+pub(crate) fn instruction_file_refused_warning(name: &str, reason: &str, plain: bool) -> String {
+    let reason = crate::cli::sanitize_for_display(reason);
+    if plain {
+        format!("warning: project instruction file {name} not loaded - {reason}")
+    } else {
+        format!("⚠ project instruction file {name} not loaded — {reason}")
+    }
+}
+
+/// [`load_project_context_from`] behind the session's directory fence (#1002).
+/// Each instruction file is asked of `DirectoryRestrictions::check_path` — the
+/// one resolver the file tools use, so a symlink is judged at its target —
+/// before it is read. Returns the context plus every refused `(file, reason)`;
+/// each refusal is also printed to stderr. With no restrictions (`is_empty`),
+/// `check_path` short-circuits and the output is byte-identical to before.
+pub(crate) fn load_project_context_restricted(
+    dir: &std::path::Path,
+    restrictions: &crate::config::DirectoryRestrictions,
+) -> (Option<String>, Vec<(&'static str, String)>) {
+    let mut refused = Vec::new();
+    let ctx = load_project_context_inner(dir, &mut |name, path| match restrictions
+        .check_path(&path.to_string_lossy())
+    {
+        Ok(()) => true,
+        Err(reason) => {
+            let plain = crate::format::is_plain_output();
+            let msg = instruction_file_refused_warning(name, &reason, plain);
+            eprintln!("{YELLOW}{msg}{RESET}");
+            refused.push((name, reason));
+            false
+        }
+    });
+    (ctx, refused)
 }
 
 /// Directory-parameterized variant of [`load_project_context`].
@@ -264,14 +308,30 @@ pub(crate) fn wrap_project_instruction(path: &str, content: &str, boundary: &str
     out
 }
 
+#[cfg(test)]
 pub fn load_project_context_from(dir: &std::path::Path) -> Option<String> {
+    load_project_context_inner(dir, &mut |_, _| true)
+}
+
+/// Shared body: `admit(name, path)` is asked of every instruction file that
+/// exists, before it is read; `false` skips it.
+fn load_project_context_inner(
+    dir: &std::path::Path,
+    admit: &mut dyn FnMut(&'static str, &std::path::Path) -> bool,
+) -> Option<String> {
     let mut context = String::new();
     let mut found = Vec::new();
     // One boundary per process, shared by every file, so the block structure is
     // consistent across a session. This is the only site that reads the nonce.
     let boundary = instruction_boundary();
     for name in PROJECT_CONTEXT_FILES {
-        if let Ok(content) = std::fs::read_to_string(dir.join(name)) {
+        let path = dir.join(name);
+        // Only an existing file is put to the fence: an absent CLAUDE.md is not
+        // a refusal and must not warn. `exists()` follows links, as the read does.
+        if path.exists() && !admit(name, &path) {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(&path) {
             let content = content.trim();
             if !content.is_empty() {
                 if !context.is_empty() {
@@ -670,7 +730,7 @@ mod tests {
         // honestly only that: it orders this test against other #[serial] tests,
         // not against a non-serial test that chdir's. That gap is the whole
         // point of #780; the real fix is removing the remaining movers.
-        let result = load_project_context();
+        let result = load_project_context(&crate::config::DirectoryRestrictions::default());
         if let Some(context) = &result {
             // If we're in a git repo, context should include the file listing section
             if get_project_file_listing().is_some() {
@@ -1735,7 +1795,9 @@ mod tests {
         let branch_needle = format!("{branch_header} {{");
         let safe_mode_flag = runtime_needle(&["\"", "--safe", "-mode", "\""]);
         let restricted_local = runtime_needle(&["rest", "ricted", " ||"]);
-        let call_needle = runtime_needle(&["load_project", "_context", "()"]);
+        // #1002: the call now carries the session's directory fence, and the
+        // needle pins that too — a call that drops it would bypass --deny-dir.
+        let call_needle = runtime_needle(&["load_project", "_context", "(&dir_restrictions)"]);
         let consumed_needle = runtime_needle(&["push_str(&", "project", "_context", ")"]);
 
         // Anti-vacuous, FIRST: if one of these spellings moved, say so here
@@ -1829,8 +1891,12 @@ mod tests {
     fn the_spawn_paths_own_context_call_is_pinned_without_a_verdict() {
         let production = production_source("commands_spawn.rs");
 
-        let fn_needle = runtime_needle(&["fn spawn_project", "_context() -> Option<String>"]);
-        let call_needle = runtime_needle(&["crate::cli::load_project", "_context()"]);
+        // #1002: the wrapper takes the parent's directory fence and hands it on.
+        let fn_needle = runtime_needle(&[
+            "fn spawn_project",
+            "_context(restrictions: &crate::config::DirectoryRestrictions) -> Option<String>",
+        ]);
+        let call_needle = runtime_needle(&["crate::cli::load_project", "_context(restrictions)"]);
         let seam_needle = runtime_needle(&["spawn_project", "_context_with("]);
         let global_needle = runtime_needle(&["crate::cli_config::is_", "safe_mode()"]);
 

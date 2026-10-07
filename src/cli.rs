@@ -2682,8 +2682,14 @@ directory ({e}); this run is trusted, later runs will not be."
         crate::restricted::restricted_env_source().as_deref(),
     );
     let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");
+    // Parse permission and directory restriction config. Built BEFORE the
+    // project context load so instruction files honour the --deny-dir /
+    // --allow-dir fence at their resolved target (#1002); it reads only `args`
+    // and the raw config, so hoisting it changes nothing else.
+    let (permissions, mut dir_restrictions) =
+        parse_permission_and_dir_config(args, &raw_config_content);
     if !safe_mode {
-        if let Some(project_context) = load_project_context() {
+        if let Some(project_context) = load_project_context(&dir_restrictions) {
             system_prompt.push_str("\n\n# Project Instructions\n\n");
             system_prompt.push_str(&project_context);
         }
@@ -2745,10 +2751,6 @@ directory ({e}); this run is trusted, later runs will not be."
 
     // Parse boolean output flags
     let of = parse_output_flags(args, &file_config);
-
-    // Parse permission and directory restriction config
-    let (permissions, mut dir_restrictions) =
-        parse_permission_and_dir_config(args, &raw_config_content);
 
     // #879 clause B, and the ONE call site for the decision function. Placed
     // after the allow list is fully resolved (CLI flags *and* config file), so

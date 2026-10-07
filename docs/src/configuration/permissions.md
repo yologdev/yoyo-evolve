@@ -208,6 +208,10 @@ yoyo --allow-dir ./src --allow-dir ./tests --deny-dir ~/.ssh
 
 This affects `read_file`, `write_file`, `edit_file`, `list_files`, and `search`.
 
+The same fence applies to project instruction files (`YOYO.md`, `CLAUDE.md`, `AGENTS.md`, …) loaded into the
+system prompt: a `CLAUDE.md` whose resolved target is denied (or outside every allowed directory) is not loaded,
+and yoyo prints a warning naming it.
+
 ### Rules
 
 - If **`--allow-dir`** is set, *only* paths under allowed directories are accessible. Everything else is blocked.

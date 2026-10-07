@@ -99,6 +99,8 @@ mod commands_web;
 mod config;
 mod config_paths;
 mod context;
+#[cfg(test)]
+mod context_fence_tests;
 mod conversations;
 mod dispatch;
 mod dispatch_near_miss;
