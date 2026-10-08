@@ -1,0 +1,141 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; grep -n "fn ant… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'name = "yoagent"' -A1 Car… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1955,2070p src/agent_builde… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "agent_builder" tests/modu… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,60p tests/module_size.rs … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "agent_limits_tests" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "mod \|#\[path" src/main.r… ✓ (4ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,40p tests/module_size.rs;… ✓ (4ms)
+  ▶ read tests/module_size.rs (80 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  14 tools completed in 38.9s (14 ✓)
+
+Writing the failing test first, in a sibling file since agent_builder.rs sits exactly at its size-gate entry.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ write src/anthropic_preset_tests.rs (89 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^use … (6 lines) ✓ (2m 4s)
+ ✗ (2m 4s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 580 cargo test --bin yoyo … ✓ (138ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 8s (2 ✓, 1 ✗)
+
+Positive control: red on exactly the four Opus 5.5 / Fable 5.1 rows; every near-miss row already green. Now the fix:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (3 → 9 lines)
+  -     let mut config = if model.starts_with("claude-fable-5") {
+  +     // Most-specific first (#1003): `claude-opus-5-5` also starts with
+  +     // `claude-opus-5`, and `cost` is priced from the constructor's own id.
+  +     let mut config = if model.starts_with("claude-fable-5-1") {
+  +         ModelConfig::claude_fable_5_1()
+  +     } else if model.starts_with("claude-fable-5") {
+            ModelConfig::claude_fable_5()
+  +     } else if model.starts_with("claude-opus-5-5") {
+  +         ModelConfig::claude_opus_5_5()
+        } else if model.starts_with("claude-opus-5") {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 580 cargo test --bin yoyo … ✓ (2m 55s)
+  -     let mut config = if model.starts_with("claude-fable-5") {
+  +     // Most-specific first (#1003): `claude-opus-5-5` also starts with
+  +     // `claude-opus-5`, and `cost` is priced from the constructor's own id.
+  +     let mut config = if model.starts_with("claude-fable-5-1") {
+  +         ModelConfig::claude_fable_5_1()
+  +     } else if model.starts_with("claude-fable-5") {
+            ModelConfig::claude_fable_5()
+  +     } else if model.starts_with("claude-opus-5-5") {
+  +         ModelConfig::claude_opus_5_5()
+        } else if model.starts_with("claude-opus-5") {
+ ✓ (2m 55s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 57s (2 ✓)
+
+Tests green. The model info reading came from the stale debug binary, so I'm rebuilding before I trust it:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 580 cargo build 2>&1 | tai… ✓ (136ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Before: $5.00 in / $25.00 out. After: $4.00 in / $20.00 out. Opus 5 is unchanged. Next I'll update the size register and check the docs:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 186,193p tests/module_size.… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "agent_builder.rs" ARCHITE… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^- \`agent_builder.rs\`\|… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 50,80p docs/src/features/co… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 60,71p docs/src/features/co… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 62,70p docs/src/features/co… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for i in 63 64 65 66 67 68 69; do … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 -c " (3 lines) ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (14 lines) ✓ (31ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 32.2s (9 ✓)
+
+Now the size register:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l < src/ag… (7 lines) ✓ (3.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo clippy --all-tar… ✓ (15.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 | grep… ✓ (2m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 | grep… ✓ (1m 52s)
+  4 tools completed in 4m 33s (4 ✓)
+
+Every suite passes. Committing:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (42 lines) ✓ (49ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Opus 5.5 and Fable 5.1 are now billed at their own prices instead of their older sibling's. Build, full cargo test (0 failures), clippy with -D warnings and fmt all pass, and it's committed as 74b14ee3.
+
+The bug: anthropic_preset checked the shorter id prefix first. So claude-opus-5-5 was matched as Opus 5 and claude-fable-5-1 as Fable 5. The price was set from that older model before the id was renamed. Opus 5.5 is the model this loop runs on, so every session's cost was overstated: input and output by 25%, cache hits by 2.5x.
+
+The fix: I moved the Fable 5.1 check above Fable 5 and the Opus 5.5 check above Opus 5. Each now uses yoagent 0.24.2's own constructor for that model (claude_fable_5_1(), claude_opus_5_5()), which I confirmed exists before writing code.
+
+| yoyo model info claude-opus-5-5 | Pricing |
+|---|---|
+| before | $5.00 in / $25.00 out |
+| after | $4.00 in / $20.00 out |
+
+claude-opus-5 still shows $5.00 / $25.00.
+
+Tests: they're in a new file, src/anthropic_preset_tests.rs, because agent_builder.rs was already at its size limit.
+• One table covers every model id the preset recognises, including dated forms. Each row checks that the whole price equals the price from that exact model's own constructor.
+• One extra row uses the vendor's published Opus 5.5 prices, typed in by hand: $4 in, $20 out, $0.20 cache read, $5 cache write.
+• **Before the fix, the table failed on exactly the 4 Opus 5.5 / Fable 5.1 rows.** All the rows that should be unaffected passed: Opus 5, Fable 5, Sonnet 5, Haiku 4.5, Haiku 5.5's own price, and the dated forms. After the fix, everything passes.
+• To let the table compare against it, the Haiku 5.5 price function is now visible to the rest of the crate (claude_haiku_5_5 became pub(crate)).
+
+Other changes in the commit:
+• `docs/src/features/cost-tracking.md` now lists Opus 5.5 and Fable 5.1 with their prices and says what was wrong before.
+• `ARCHITECTURE.md has a dated line under the agent_builder.rs` entry.
+• The size limit recorded for agent_builder.rs went from 4787 to 4793 lines, with a comment saying why.
+
+Not fixed (the commit says "Part of #1003", not "Fixes"):
+• Sonnet 5.5 is still billed at Sonnet 5's price. yoagent has no Sonnet 5.5 price, and I had no confirmed vendor number, so I didn't make one up.
+• `/model info doesn't handle ids with a provider prefix (anthropic/claude-opus-5`).
+• The yoagent 0.25 upgrade.
+
+Spotted, not fixed: the docs' price table says Sonnet 5 costs $3 / $15, but yoagent's built-in price is $2 / $10.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/2 changed files were in top-10 predictions (50.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 50.0%
+     Predicted correctly: src/agent_builder.rs
+     Surprises (not predicted): src/anthropic_preset_tests.rs
