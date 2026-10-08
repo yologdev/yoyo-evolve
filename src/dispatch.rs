@@ -878,7 +878,8 @@ async fn dispatch_file_command(
 ) -> Option<CommandResult> {
     match route {
         CommandRoute::Add => {
-            let (results, added_paths) = commands::handle_add(ctx.input);
+            let (results, added_paths) =
+                commands::handle_add(ctx.input, &ctx.agent_config.dir_restrictions);
             if !results.is_empty() {
                 // Print summaries
                 for result in &results {
@@ -1230,7 +1231,9 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             CommandResult::Continue
         }
         CommandRoute::Explain => {
-            if let Some(prompt) = commands::build_explain_prompt(ctx.input) {
+            if let Some(prompt) =
+                commands::build_explain_prompt(ctx.input, &ctx.agent_config.dir_restrictions)
+            {
                 *ctx.last_input = Some(prompt.clone());
                 let prompt_start = Instant::now();
                 let outcome = run_prompt_with_changes(

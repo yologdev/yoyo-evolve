@@ -1139,7 +1139,8 @@ pub async fn run_repl(
         }
 
         // Expand @file mentions (e.g. "explain @src/main.rs") into file content
-        let (cleaned_text, file_results) = commands::expand_file_mentions(input);
+        let (cleaned_text, file_results) =
+            commands::expand_file_mentions(input, &agent_config.dir_restrictions);
 
         // If teach mode is active, prepend the teaching instruction to the user message
         let effective_input = if commands::is_teach_mode() {

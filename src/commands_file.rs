@@ -6,6 +6,8 @@ use crate::git::run_git_output;
 
 use std::io::IsTerminal;
 
+pub use crate::commands_file_fence::AddReadError;
+use crate::commands_file_fence::{add_read_error_line, admit_for_add};
 use crate::commands_web::{fetch_url, is_valid_url, strip_html_tags, WEB_MAX_CHARS};
 
 // ── /web ─────────────────────────────────────────────────────────────────
@@ -55,22 +57,25 @@ pub fn expand_add_paths(pattern: &str) -> Vec<String> {
 }
 
 /// Read a file (optionally a line range) for the /add command.
-/// Returns the file content and line count.
+/// Returns the file content and line count. Refuses, before reading, any
+/// path the session's directory fence forbids (#1002).
 pub fn read_file_for_add(
     path: &str,
     range: Option<(usize, usize)>,
-) -> Result<(String, usize), String> {
-    let content =
-        std::fs::read_to_string(path).map_err(|e| format!("could not read {path}: {e}"))?;
+    restrictions: &crate::config::DirectoryRestrictions,
+) -> Result<(String, usize), AddReadError> {
+    admit_for_add(path, restrictions)?;
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| AddReadError::Failed(format!("could not read {path}: {e}")))?;
 
     match range {
         Some((start, end)) => {
             let lines: Vec<&str> = content.lines().collect();
             let total = lines.len();
             if start > total {
-                return Err(format!(
+                return Err(AddReadError::Failed(format!(
                     "start line {start} is past end of file ({total} lines)"
-                ));
+                )));
             }
             let end = end.min(total);
             let selected: Vec<&str> = lines[start - 1..end].to_vec();
@@ -164,9 +169,15 @@ pub enum AddResult {
 }
 
 /// Read an image file from disk and return base64-encoded data and MIME type.
-pub fn read_image_for_add(path: &str) -> Result<(String, String), String> {
+/// Refuses, before reading, any path the session's directory fence forbids (#1002).
+pub fn read_image_for_add(
+    path: &str,
+    restrictions: &crate::config::DirectoryRestrictions,
+) -> Result<(String, String), AddReadError> {
     use base64::Engine;
-    let bytes = std::fs::read(path).map_err(|e| format!("failed to read {path}: {e}"))?;
+    admit_for_add(path, restrictions)?;
+    let bytes = std::fs::read(path)
+        .map_err(|e| AddReadError::Failed(format!("failed to read {path}: {e}")))?;
     let ext = path.rsplit('.').next().unwrap_or("");
     let mime = mime_type_for_extension(ext).to_string();
     let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -194,7 +205,10 @@ pub fn estimate_tokens_simple(text: &str) -> usize {
 /// - The list of file paths that were actually added successfully. Failed
 ///   reads and URL fetches are excluded, so related-file suggestions are
 ///   derived from what was really added, not a re-parse of the input (#697).
-pub fn handle_add(input: &str) -> (Vec<AddResult>, Vec<String>) {
+pub fn handle_add(
+    input: &str,
+    restrictions: &crate::config::DirectoryRestrictions,
+) -> (Vec<AddResult>, Vec<String>) {
     let args = input.strip_prefix("/add").unwrap_or("").trim();
 
     if args.is_empty() {
@@ -265,7 +279,7 @@ pub fn handle_add(input: &str) -> (Vec<AddResult>, Vec<String>) {
                     println!("{RED}  ✗ line ranges not supported for images: {path}{RESET}");
                     continue;
                 }
-                match read_image_for_add(path) {
+                match read_image_for_add(path, restrictions) {
                     Ok((data, mime_type)) => {
                         let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
                         let size_str = if size >= 1_048_576 {
@@ -284,13 +298,13 @@ pub fn handle_add(input: &str) -> (Vec<AddResult>, Vec<String>) {
                         added_paths.push(path.clone());
                     }
                     Err(e) => {
-                        println!("{RED}  ✗ {e}{RESET}");
+                        println!("{}", add_read_error_line(&e));
                     }
                 }
                 continue;
             }
 
-            match read_file_for_add(path, range) {
+            match read_file_for_add(path, range, restrictions) {
                 Ok((content, line_count)) => {
                     // Apply smart truncation for large files when no line range specified
                     let (content, was_truncated, original_lines) = if range.is_none() {
@@ -325,7 +339,7 @@ pub fn handle_add(input: &str) -> (Vec<AddResult>, Vec<String>) {
                     added_paths.push(path.clone());
                 }
                 Err(e) => {
-                    println!("{RED}  ✗ {e}{RESET}");
+                    println!("{}", add_read_error_line(&e));
                 }
             }
         }
@@ -346,7 +360,10 @@ pub fn handle_add(input: &str) -> (Vec<AddResult>, Vec<String>) {
 /// Mentions that don't resolve to an existing file are left unchanged
 /// (they might be usernames or other references). Email-like patterns
 /// (`word@domain`) are skipped.
-pub fn expand_file_mentions(input: &str) -> (String, Vec<AddResult>) {
+pub fn expand_file_mentions(
+    input: &str,
+    restrictions: &crate::config::DirectoryRestrictions,
+) -> (String, Vec<AddResult>) {
     let mut results = Vec::new();
     let mut output = String::with_capacity(input.len());
     let chars: Vec<char> = input.chars().collect();
@@ -408,7 +425,7 @@ pub fn expand_file_mentions(input: &str) -> (String, Vec<AddResult>) {
                 i = j;
                 continue;
             }
-            match read_image_for_add(raw_path) {
+            match read_image_for_add(raw_path, restrictions) {
                 Ok((data, mime_type)) => {
                     let size = std::fs::metadata(raw_path).map(|m| m.len()).unwrap_or(0);
                     let size_str = if size >= 1_048_576 {
@@ -432,18 +449,18 @@ pub fn expand_file_mentions(input: &str) -> (String, Vec<AddResult>) {
                     output.push_str(&filename);
                 }
                 Err(e) => {
-                    // Read failed — leave unchanged, but if the file exists
-                    // the user meant it as a file: warn instead of silently
-                    // absorbing the failure (#704).
+                    // Read failed or the fence refused it — leave unchanged,
+                    // but if the file exists the user meant it as a file:
+                    // warn instead of silently absorbing it (#704, #1002).
                     if path.exists() {
-                        eprintln!("{}", mention_read_warning(raw_path, &e));
+                        eprintln!("{}", mention_error_warning(raw_path, &e));
                     }
                     output.push('@');
                     output.push_str(mention);
                 }
             }
         } else {
-            match read_file_for_add(raw_path, range) {
+            match read_file_for_add(raw_path, range, restrictions) {
                 Ok((content, line_count)) => {
                     let formatted = format_add_content(raw_path, &content);
                     let token_est = estimate_tokens_simple(&content);
@@ -472,11 +489,11 @@ pub fn expand_file_mentions(input: &str) -> (String, Vec<AddResult>) {
                     }
                 }
                 Err(e) => {
-                    // Read failed — leave unchanged, but if the file exists
-                    // the user meant it as a file: warn instead of silently
-                    // absorbing the failure (#704).
+                    // Read failed or the fence refused it — leave unchanged,
+                    // but if the file exists the user meant it as a file:
+                    // warn instead of silently absorbing it (#704, #1002).
                     if path.exists() {
-                        eprintln!("{}", mention_read_warning(raw_path, &e));
+                        eprintln!("{}", mention_error_warning(raw_path, &e));
                     }
                     output.push('@');
                     output.push_str(mention);
@@ -496,6 +513,15 @@ pub fn expand_file_mentions(input: &str) -> (String, Vec<AddResult>) {
 /// user believes the file content did.
 fn mention_read_warning(raw_path: &str, err: &str) -> String {
     format!("{RED}  ✗ could not read @{raw_path}: {err}{RESET}")
+}
+
+/// [`mention_read_warning`] for a failed read; the fence's own yellow warning
+/// for a refusal (#1002), which already names the path and the fence entry.
+fn mention_error_warning(raw_path: &str, e: &AddReadError) -> String {
+    match e {
+        AddReadError::Refused(_) => add_read_error_line(e),
+        AddReadError::Failed(m) => mention_read_warning(raw_path, m),
+    }
 }
 
 /// Helper: get the byte offset corresponding to a char index.
@@ -813,7 +839,10 @@ pub fn handle_apply(input: &str) {
 /// line range), and wraps it in a clear "explain this code" prompt that gets
 /// sent to the agent. Returns `None` (after printing usage) when the input
 /// is empty or the file cannot be read.
-pub fn build_explain_prompt(input: &str) -> Option<String> {
+pub fn build_explain_prompt(
+    input: &str,
+    restrictions: &crate::config::DirectoryRestrictions,
+) -> Option<String> {
     let arg = input.strip_prefix("/explain").unwrap_or(input).trim();
 
     if arg.is_empty() {
@@ -825,9 +854,13 @@ pub fn build_explain_prompt(input: &str) -> Option<String> {
 
     let (path, range) = parse_add_arg(arg);
 
-    let (code, line_count) = match read_file_for_add(path, range) {
+    let (code, line_count) = match read_file_for_add(path, range, restrictions) {
         Ok(result) => result,
-        Err(e) => {
+        Err(AddReadError::Refused(m)) => {
+            eprintln!("{YELLOW}  {m}{RESET}\n");
+            return None;
+        }
+        Err(AddReadError::Failed(e)) => {
             eprintln!("{RED}  {e}{RESET}\n");
             return None;
         }
@@ -1213,6 +1246,11 @@ fn extract_file_path_candidates(output: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    /// No `--deny-dir`/`--allow-dir`: every pre-#1002 test reads unfenced.
+    const NO_FENCE: crate::config::DirectoryRestrictions = crate::config::DirectoryRestrictions {
+        allow: Vec::new(),
+        deny: Vec::new(),
+    };
     use super::*;
     use crate::commands::KNOWN_COMMANDS;
     use crate::help::help_text;
@@ -1423,7 +1461,7 @@ error[E0308]: second
     #[test]
     fn add_read_file_with_range() {
         // Read our own source with a line range
-        let result = read_file_for_add("src/commands_project.rs", Some((1, 3)));
+        let result = read_file_for_add("src/commands_project.rs", Some((1, 3)), &NO_FENCE);
         assert!(result.is_ok());
         let (content, count) = result.unwrap();
         assert_eq!(count, 3);
@@ -1432,7 +1470,7 @@ error[E0308]: second
 
     #[test]
     fn add_read_file_full() {
-        let result = read_file_for_add("Cargo.toml", None);
+        let result = read_file_for_add("Cargo.toml", None, &NO_FENCE);
         assert!(result.is_ok());
         let (content, count) = result.unwrap();
         assert!(count > 0);
@@ -1441,7 +1479,7 @@ error[E0308]: second
 
     #[test]
     fn add_read_file_not_found() {
-        let result = read_file_for_add("definitely_not_a_real_file.xyz", None);
+        let result = read_file_for_add("definitely_not_a_real_file.xyz", None, &NO_FENCE);
         assert!(result.is_err());
     }
 
@@ -1639,7 +1677,7 @@ error[E0308]: second
         fs::write(&png_path, &png_bytes).unwrap();
 
         let path_str = png_path.to_str().unwrap();
-        let result = read_image_for_add(path_str);
+        let result = read_image_for_add(path_str, &NO_FENCE);
         assert!(result.is_ok(), "should succeed reading a valid PNG file");
 
         let (data, mime_type) = result.unwrap();
@@ -1656,9 +1694,14 @@ error[E0308]: second
 
     #[test]
     fn read_image_for_add_nonexistent_file() {
-        let result = read_image_for_add("/tmp/definitely_does_not_exist_yoyo_test.png");
+        let result = read_image_for_add("/tmp/definitely_does_not_exist_yoyo_test.png", &NO_FENCE);
         assert!(result.is_err(), "should fail for nonexistent file");
         let err = result.unwrap_err();
+        assert!(
+            matches!(err, AddReadError::Failed(_)),
+            "a missing file is a failed read, not a fence refusal: {err:?}"
+        );
+        let err = err.to_string();
         assert!(
             err.contains("failed to read"),
             "error should mention failure: {err}"
@@ -1672,7 +1715,7 @@ error[E0308]: second
         // Just some bytes — we're testing MIME detection, not image validity
         fs::write(&jpg_path, b"fake jpg content").unwrap();
 
-        let (data, mime_type) = read_image_for_add(jpg_path.to_str().unwrap()).unwrap();
+        let (data, mime_type) = read_image_for_add(jpg_path.to_str().unwrap(), &NO_FENCE).unwrap();
         assert!(!data.is_empty());
         assert_eq!(mime_type, "image/jpeg");
     }
@@ -1683,7 +1726,7 @@ error[E0308]: second
         let webp_path = dir.path().join("image.webp");
         fs::write(&webp_path, b"fake webp content").unwrap();
 
-        let (_, mime_type) = read_image_for_add(webp_path.to_str().unwrap()).unwrap();
+        let (_, mime_type) = read_image_for_add(webp_path.to_str().unwrap(), &NO_FENCE).unwrap();
         assert_eq!(mime_type, "image/webp");
     }
 
@@ -1691,7 +1734,7 @@ error[E0308]: second
 
     #[test]
     fn expand_file_mentions_no_mentions() {
-        let (text, results) = expand_file_mentions("hello world, no mentions here");
+        let (text, results) = expand_file_mentions("hello world, no mentions here", &NO_FENCE);
         assert_eq!(text, "hello world, no mentions here");
         assert!(results.is_empty());
     }
@@ -1699,7 +1742,7 @@ error[E0308]: second
     #[test]
     fn expand_file_mentions_resolves_real_file() {
         // Cargo.toml should exist at the project root
-        let (text, results) = expand_file_mentions("explain @Cargo.toml");
+        let (text, results) = expand_file_mentions("explain @Cargo.toml", &NO_FENCE);
         assert_eq!(results.len(), 1);
         assert!(
             matches!(&results[0], AddResult::Text { summary, .. } if summary.contains("Cargo.toml"))
@@ -1709,14 +1752,14 @@ error[E0308]: second
 
     #[test]
     fn expand_file_mentions_nonexistent_file_unchanged() {
-        let (text, results) = expand_file_mentions("look at @nonexistent_xyz_file.rs");
+        let (text, results) = expand_file_mentions("look at @nonexistent_xyz_file.rs", &NO_FENCE);
         assert!(results.is_empty());
         assert_eq!(text, "look at @nonexistent_xyz_file.rs");
     }
 
     #[test]
     fn expand_file_mentions_with_line_range() {
-        let (text, results) = expand_file_mentions("review @Cargo.toml:1-3");
+        let (text, results) = expand_file_mentions("review @Cargo.toml:1-3", &NO_FENCE);
         assert_eq!(results.len(), 1);
         assert!(
             matches!(&results[0], AddResult::Text { summary, .. } if summary.contains("lines 1-3"))
@@ -1726,7 +1769,7 @@ error[E0308]: second
 
     #[test]
     fn expand_file_mentions_multiple_mentions() {
-        let (text, results) = expand_file_mentions("compare @Cargo.toml and @LICENSE");
+        let (text, results) = expand_file_mentions("compare @Cargo.toml and @LICENSE", &NO_FENCE);
         assert_eq!(results.len(), 2);
         assert_eq!(text, "compare Cargo.toml and LICENSE");
     }
@@ -1745,7 +1788,7 @@ error[E0308]: second
     fn expand_file_mentions_nonexistent_mention_is_freeform_text() {
         // Free-form mentions like @yuanhao must pass through untouched —
         // no results, no warning path taken (path doesn't exist).
-        let (text, results) = expand_file_mentions("thanks @yuanhao for the review");
+        let (text, results) = expand_file_mentions("thanks @yuanhao for the review", &NO_FENCE);
         assert!(results.is_empty());
         assert_eq!(text, "thanks @yuanhao for the review");
     }
@@ -1768,7 +1811,7 @@ error[E0308]: second
 
         let path_str = file_path.to_string_lossy();
         let input = format!("explain @{path_str}");
-        let (text, results) = expand_file_mentions(&input);
+        let (text, results) = expand_file_mentions(&input, &NO_FENCE);
 
         // The mention text must stay unchanged (only the silence was the bug).
         assert_eq!(text, input);
@@ -1780,21 +1823,21 @@ error[E0308]: second
 
     #[test]
     fn expand_file_mentions_at_end_of_string_no_path() {
-        let (text, results) = expand_file_mentions("trailing @");
+        let (text, results) = expand_file_mentions("trailing @", &NO_FENCE);
         assert!(results.is_empty());
         assert_eq!(text, "trailing @");
     }
 
     #[test]
     fn expand_file_mentions_at_followed_by_space() {
-        let (text, results) = expand_file_mentions("hello @ world");
+        let (text, results) = expand_file_mentions("hello @ world", &NO_FENCE);
         assert!(results.is_empty());
         assert_eq!(text, "hello @ world");
     }
 
     #[test]
     fn expand_file_mentions_skips_email_like() {
-        let (text, results) = expand_file_mentions("email user@example.com please");
+        let (text, results) = expand_file_mentions("email user@example.com please", &NO_FENCE);
         assert!(results.is_empty());
         assert_eq!(text, "email user@example.com please");
     }
@@ -1802,7 +1845,7 @@ error[E0308]: second
     #[test]
     fn expand_file_mentions_path_with_dirs() {
         // src/main.rs should exist
-        let (text, results) = expand_file_mentions("look at @src/main.rs");
+        let (text, results) = expand_file_mentions("look at @src/main.rs", &NO_FENCE);
         assert_eq!(results.len(), 1);
         assert!(
             matches!(&results[0], AddResult::Text { summary, .. } if summary.contains("src/main.rs"))
@@ -1812,7 +1855,8 @@ error[E0308]: second
 
     #[test]
     fn expand_file_mentions_mixed_real_and_fake() {
-        let (text, results) = expand_file_mentions("@Cargo.toml is real but @fake_abc.rs is not");
+        let (text, results) =
+            expand_file_mentions("@Cargo.toml is real but @fake_abc.rs is not", &NO_FENCE);
         assert_eq!(results.len(), 1);
         assert!(text.contains("Cargo.toml"));
         assert!(text.contains("@fake_abc.rs"));
@@ -2257,13 +2301,13 @@ diff --git a/clean.txt b/clean.txt
 
     #[test]
     fn test_handle_add_no_args_returns_empty() {
-        let (results, _) = handle_add("/add");
+        let (results, _) = handle_add("/add", &NO_FENCE);
         assert!(results.is_empty(), "No args should return empty results");
     }
 
     #[test]
     fn test_handle_add_with_space_no_args_returns_empty() {
-        let (results, _) = handle_add("/add   ");
+        let (results, _) = handle_add("/add   ", &NO_FENCE);
         assert!(
             results.is_empty(),
             "Whitespace-only args should return empty"
@@ -2274,7 +2318,7 @@ diff --git a/clean.txt b/clean.txt
     fn test_handle_add_real_file() {
         let root = env!("CARGO_MANIFEST_DIR");
         let cargo_path = format!("{}/Cargo.toml", root);
-        let (results, _) = handle_add(&format!("/add {}", cargo_path));
+        let (results, _) = handle_add(&format!("/add {}", cargo_path), &NO_FENCE);
         assert_eq!(results.len(), 1, "Should return one result for Cargo.toml");
         match &results[0] {
             AddResult::Text { summary, content } => {
@@ -2295,7 +2339,7 @@ diff --git a/clean.txt b/clean.txt
     fn test_handle_add_shows_token_estimate() {
         let root = env!("CARGO_MANIFEST_DIR");
         let cargo_path = format!("{}/Cargo.toml", root);
-        let (results, _) = handle_add(&format!("/add {}", cargo_path));
+        let (results, _) = handle_add(&format!("/add {}", cargo_path), &NO_FENCE);
         assert_eq!(results.len(), 1);
         match &results[0] {
             AddResult::Text { summary, .. } => {
@@ -2315,7 +2359,7 @@ diff --git a/clean.txt b/clean.txt
     #[test]
     fn test_handle_add_with_line_range() {
         let root = env!("CARGO_MANIFEST_DIR");
-        let (results, _) = handle_add(&format!("/add {}/Cargo.toml:1-3", root));
+        let (results, _) = handle_add(&format!("/add {}/Cargo.toml:1-3", root), &NO_FENCE);
         assert_eq!(results.len(), 1);
         match &results[0] {
             AddResult::Text { summary, content } => {
@@ -2335,20 +2379,23 @@ diff --git a/clean.txt b/clean.txt
     #[test]
     fn test_handle_add_glob_pattern() {
         let root = env!("CARGO_MANIFEST_DIR");
-        let (results, _) = handle_add(&format!("/add {}/src/*.rs", root));
+        let (results, _) = handle_add(&format!("/add {}/src/*.rs", root), &NO_FENCE);
         assert!(results.len() > 1, "Should match multiple .rs files in src/");
     }
 
     #[test]
     fn test_handle_add_nonexistent_file() {
-        let (results, _) = handle_add("/add nonexistent_xyz_file.rs");
+        let (results, _) = handle_add("/add nonexistent_xyz_file.rs", &NO_FENCE);
         assert!(results.is_empty(), "Nonexistent file should return empty");
     }
 
     #[test]
     fn test_handle_add_multiple_files() {
         let root = env!("CARGO_MANIFEST_DIR");
-        let (results, _) = handle_add(&format!("/add {}/Cargo.toml {}/LICENSE", root, root));
+        let (results, _) = handle_add(
+            &format!("/add {}/Cargo.toml {}/LICENSE", root, root),
+            &NO_FENCE,
+        );
         assert_eq!(results.len(), 2, "Should return results for both files");
     }
 
@@ -2361,9 +2408,12 @@ diff --git a/clean.txt b/clean.txt
         let good = format!("{root}/Cargo.toml");
         // The .invalid TLD is reserved (RFC 2606) and never resolves, so the
         // URL branch fails fast without depending on any real host.
-        let (results, added_paths) = handle_add(&format!(
-            "/add {good} nonexistent_file_697.rs https://nonexistent-host-697.invalid/page"
-        ));
+        let (results, added_paths) = handle_add(
+            &format!(
+                "/add {good} nonexistent_file_697.rs https://nonexistent-host-697.invalid/page"
+            ),
+            &NO_FENCE,
+        );
         assert_eq!(
             added_paths,
             vec![good],
@@ -2389,7 +2439,7 @@ diff --git a/clean.txt b/clean.txt
     fn explain_prompt_with_real_file() {
         let root = env!("CARGO_MANIFEST_DIR");
         let path = format!("{}/Cargo.toml", root);
-        let result = build_explain_prompt(&format!("/explain {path}"));
+        let result = build_explain_prompt(&format!("/explain {path}"), &NO_FENCE);
         assert!(result.is_some(), "Should return a prompt for a real file");
         let prompt = result.unwrap();
         assert!(
@@ -2412,7 +2462,7 @@ diff --git a/clean.txt b/clean.txt
 
     #[test]
     fn explain_prompt_nonexistent_file_returns_none() {
-        let result = build_explain_prompt("/explain nonexistent_xyz_file.rs");
+        let result = build_explain_prompt("/explain nonexistent_xyz_file.rs", &NO_FENCE);
         assert!(result.is_none(), "Nonexistent file should return None");
     }
 
@@ -2420,7 +2470,7 @@ diff --git a/clean.txt b/clean.txt
     fn explain_prompt_with_line_range() {
         let root = env!("CARGO_MANIFEST_DIR");
         let path = format!("{}/Cargo.toml", root);
-        let result = build_explain_prompt(&format!("/explain {path}:1-3"));
+        let result = build_explain_prompt(&format!("/explain {path}:1-3"), &NO_FENCE);
         assert!(result.is_some(), "Should return a prompt for a line range");
         let prompt = result.unwrap();
         assert!(
@@ -2437,9 +2487,9 @@ diff --git a/clean.txt b/clean.txt
 
     #[test]
     fn explain_prompt_empty_input_returns_none() {
-        let result = build_explain_prompt("/explain");
+        let result = build_explain_prompt("/explain", &NO_FENCE);
         assert!(result.is_none(), "Empty input should return None");
-        let result2 = build_explain_prompt("/explain   ");
+        let result2 = build_explain_prompt("/explain   ", &NO_FENCE);
         assert!(
             result2.is_none(),
             "Whitespace-only input should return None"
@@ -2458,7 +2508,7 @@ diff --git a/clean.txt b/clean.txt
         std::fs::write(&big_file, &content).unwrap();
 
         let path = big_file.to_str().unwrap();
-        let (results, _) = handle_add(&format!("/add {path}"));
+        let (results, _) = handle_add(&format!("/add {path}"), &NO_FENCE);
         assert_eq!(results.len(), 1);
 
         match &results[0] {
@@ -2509,7 +2559,7 @@ diff --git a/clean.txt b/clean.txt
         std::fs::write(&big_file, &content).unwrap();
 
         let path = big_file.to_str().unwrap();
-        let (results, _) = handle_add(&format!("/add {path}:1-600"));
+        let (results, _) = handle_add(&format!("/add {path}:1-600"), &NO_FENCE);
         assert_eq!(results.len(), 1);
 
         match &results[0] {
@@ -2610,7 +2660,7 @@ diff --git a/clean.txt b/clean.txt
         // so the result can be empty or contain one entry. Either is fine —
         // the important thing is it took the URL code-path rather than
         // trying to glob-expand the URL as a file path.
-        let (results, _) = handle_add("/add https://httpbin.org/status/404");
+        let (results, _) = handle_add("/add https://httpbin.org/status/404", &NO_FENCE);
         assert!(
             results.len() <= 1,
             "URL should produce at most one result, got {}",
@@ -2621,7 +2671,7 @@ diff --git a/clean.txt b/clean.txt
     #[test]
     fn test_handle_add_file_path_not_treated_as_url() {
         // Regular paths should still go through file-path expansion
-        let (results, _) = handle_add("/add nonexistent_file_that_does_not_exist.rs");
+        let (results, _) = handle_add("/add nonexistent_file_that_does_not_exist.rs", &NO_FENCE);
         // Should be empty because file doesn't exist (glob returns nothing)
         assert!(results.is_empty());
     }

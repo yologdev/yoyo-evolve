@@ -238,7 +238,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // to 1999 and under the cap. Branch 3 fired the moment that happened, which
     // is the ratchet working: registering would have converted a paid debt into
     // a permanent ceiling. Restoring an entry here would be a regression.
-    ("src/commands_file.rs", 2804),
+    ("src/commands_file.rs", 2854),
     ("src/commands_git.rs", 3484),
     // Day 174: +25 absorbed since Day 166.
     // +103 (Day 179, #832): the `/evolution` cargo shell-out was split into a

@@ -54,6 +54,9 @@ mod commands_config_get_tests;
 mod commands_config_mcp;
 mod commands_dev;
 mod commands_file;
+mod commands_file_fence;
+#[cfg(test)]
+mod commands_file_fence_tests;
 mod commands_fork;
 mod commands_git;
 mod commands_git_pr;
@@ -410,7 +413,7 @@ async fn run_single_prompt(
     if output_format == cli::OutputFormat::StreamJson {
         let mut session_total = Usage::default();
         let response = if let Some(ref img_path) = image_path {
-            match commands_file::read_image_for_add(img_path) {
+            match commands_file::read_image_for_add(img_path, &agent_config.dir_restrictions) {
                 Ok((data, mime_type)) => {
                     let content_blocks = vec![
                         Content::Text {
@@ -475,7 +478,7 @@ async fn run_single_prompt(
     let prompt_start = Instant::now();
     let response = if let Some(ref img_path) = image_path {
         // Multi-modal prompt: text + image
-        match commands_file::read_image_for_add(img_path) {
+        match commands_file::read_image_for_add(img_path, &agent_config.dir_restrictions) {
             Ok((data, mime_type)) => {
                 let content_blocks = vec![
                     Content::Text {

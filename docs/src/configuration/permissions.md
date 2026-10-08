@@ -216,6 +216,9 @@ warning. Project memories (`.yoyo/memory.json`) get the same treatment: if the m
 refused, no memories are added to the system prompt and yoyo prints a warning. (The REPL `/memories` and
 `/remember` commands are not fenced yet. They show on your terminal or write to disk, and nothing they do is sent
 to the model.)
+Files you name yourself (`@path` mentions, `/add`, `/explain`, `--image`) are fenced the same way: a file whose
+resolved target is refused is not sent to the model, yoyo prints a warning naming it, and the rest of the prompt
+still goes through.
 
 ### Rules
 
