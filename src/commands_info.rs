@@ -721,8 +721,24 @@ pub fn handle_model_list(current_model: &str, current_provider: &str, filter: &s
 
 /// Return the context window size (in tokens) for well-known models.
 /// Returns `None` when the model isn't in our registry.
+///
+/// Claude ids with a fleet preset report `anthropic_preset(model).context_window`
+/// — the same value the agent is actually built with — so this display cannot
+/// drift from the authority. Until Day 222 this was a substring table only,
+/// and it printed `200k` for 1M-window models (opus-5, sonnet-5, haiku-5-5,
+/// opus-4-8, fable-5). The table remains as the fallback for ids with no
+/// preset (other providers, older Claude ids, local models).
 pub fn model_context_window(model: &str) -> Option<u64> {
-    // Anthropic Claude family
+    if let Some(preset) = crate::agent_builder::anthropic_preset(model) {
+        return Some(u64::from(preset.context_window));
+    }
+    model_context_window_table(model)
+}
+
+/// Hand-kept substring table: the fallback for ids `anthropic_preset` does
+/// not know. Do not add Claude ids here that have a preset — the preset wins.
+fn model_context_window_table(model: &str) -> Option<u64> {
+    // Anthropic Claude family (non-preset ids only)
     if model.contains("claude") {
         // Sonnet 4+ all have 1M context
         if model.contains("sonnet-4") || model.contains("sonnet-4.") {
@@ -2695,6 +2711,92 @@ More text.
     fn test_model_context_window_unknown() {
         assert_eq!(model_context_window("totally-unknown-xyz"), None);
         assert_eq!(model_context_window(""), None);
+    }
+
+    /// Every id `anthropic_preset` matches (one per arm of its `starts_with`
+    /// chain, plus suffixed/dated forms that the same arms accept). Enumerated
+    /// from the preset match in `src/agent_builder.rs`, not from memory.
+    const PRESET_IDS: &[&str] = &[
+        "claude-fable-5",
+        "claude-fable-5-1",
+        "claude-opus-5",
+        "claude-opus-5-5",
+        "claude-opus-4-8",
+        "claude-sonnet-5",
+        "claude-sonnet-5-20260101",
+        "claude-haiku-4-5",
+        "claude-haiku-4-5-20251001",
+        "claude-haiku-5-5",
+    ];
+
+    #[test]
+    fn model_context_window_is_the_preset_window_for_every_preset_id() {
+        for id in PRESET_IDS {
+            let preset = crate::agent_builder::anthropic_preset(id)
+                .unwrap_or_else(|| panic!("{id} is listed as a preset id but has no preset"));
+            // Expected value is DERIVED from the authority, never a typed literal.
+            assert_eq!(
+                model_context_window(id),
+                Some(u64::from(preset.context_window)),
+                "{id}: /model info must report the preset's window"
+            );
+            // Emission point: the exact text `handle_model_info` prints.
+            assert_eq!(
+                format_context_size(model_context_window(id).unwrap()),
+                format_context_size(u64::from(preset.context_window)),
+                "{id}: rendered Context line"
+            );
+        }
+    }
+
+    /// Anti-vacuous: the fixture must include ids where the old substring
+    /// table disagrees with the preset, or the test above could pass against
+    /// the bug it exists to catch.
+    #[test]
+    fn preset_test_fixture_covers_ids_the_old_table_got_wrong() {
+        let disagreeing: Vec<&str> = PRESET_IDS
+            .iter()
+            .copied()
+            .filter(|id| {
+                let preset = crate::agent_builder::anthropic_preset(id).unwrap();
+                model_context_window_table(id) != Some(u64::from(preset.context_window))
+            })
+            .collect();
+        for must in ["claude-opus-5", "claude-haiku-5-5", "claude-sonnet-5"] {
+            assert!(
+                disagreeing.contains(&must),
+                "{must} should be a row where the table (200k) and preset disagree; got {disagreeing:?}"
+            );
+        }
+    }
+
+    /// Near-miss: ids with NO preset keep exactly the values the table
+    /// returned before the preset lookup was added (read off the table at
+    /// that commit), Claude ids included.
+    #[test]
+    fn non_preset_ids_keep_their_pre_change_table_values() {
+        let rows: &[(&str, Option<u64>)] = &[
+            ("claude-sonnet-4-20250514", Some(1_000_000)),
+            ("claude-sonnet-4-6", Some(1_000_000)),
+            ("claude-opus-4-7", Some(1_000_000)),
+            ("claude-opus-4-20250514", Some(200_000)),
+            ("claude-3-5-haiku-20241022", Some(200_000)),
+            ("gpt-4.1", Some(1_048_576)),
+            ("gpt-4o", Some(128_000)),
+            ("o3", Some(200_000)),
+            ("gemini-2.5-pro", Some(1_048_576)),
+            ("grok-4", Some(131_072)),
+            ("deepseek-v4-pro", Some(128_000)),
+            ("codestral", Some(128_000)),
+            ("totally-unknown-xyz", None),
+        ];
+        for (id, before) in rows {
+            assert!(
+                crate::agent_builder::anthropic_preset(id).is_none(),
+                "{id} has a preset, so it is not a near-miss row"
+            );
+            assert_eq!(model_context_window(id), *before, "{id}");
+        }
     }
 
     #[test]
