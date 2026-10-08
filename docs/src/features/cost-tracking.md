@@ -67,7 +67,14 @@ informational — the preset is the source of truth:
 | Opus 4/4.1 | $15/MTok | $18.75/MTok | $1.50/MTok | $75/MTok |
 | Sonnet | $3/MTok | $3.75/MTok | $0.30/MTok | $15/MTok |
 | Haiku 4.5 | $1/MTok | $1.25/MTok | $0.10/MTok | $5/MTok |
+| Haiku 5.5 | $0.10/MTok | $0.125/MTok | $0.01/MTok | $0.50/MTok |
 | Haiku 3.5 | $0.80/MTok | $1/MTok | $0.08/MTok | $4/MTok |
+
+Haiku 5.5 is not yet a yoagent preset, so yoyo carries its own (1M context,
+128K max output, prices from Anthropic's pricing page). Anthropic charges it
+more above 100,000 prompt tokens ($0.50 in, $0.625 cache write, $0.05 cache
+read, $2.50 out). `/cost` uses only the base rates above, so it **understates**
+a Haiku 5.5 session with very long prompts.
 
 ### OpenAI
 

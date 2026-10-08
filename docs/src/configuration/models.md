@@ -104,6 +104,7 @@ Cost estimation is built in for many providers:
 | Opus 4/4.1 | $15.00 | $75.00 |
 | Sonnet | $3.00 | $15.00 |
 | Haiku 4.5 | $1.00 | $5.00 |
+| Haiku 5.5 | $0.10 (prompts ≤100K tokens; $0.50 above) | $0.50 ($2.50 above) |
 | Haiku 3.5 | $0.80 | $4.00 |
 
 Cost estimates are also available for OpenAI, Google, DeepSeek, Mistral, xAI, Groq, ZAI and more.

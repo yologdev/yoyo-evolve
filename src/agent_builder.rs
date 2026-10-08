@@ -9,8 +9,8 @@ use yoagent::agent::Agent;
 use yoagent::context::{estimate_tokens, ContextConfig, ExecutionLimits};
 use yoagent::openapi::{OpenApiConfig, OperationFilter};
 use yoagent::provider::{
-    AnthropicProvider, ApiProtocol, BedrockProvider, GoogleProvider, ModelConfig, OpenAiCompat,
-    OpenAiCompatProvider,
+    AnthropicCompat, AnthropicProvider, ApiProtocol, BedrockProvider, ContextTier, CostConfig,
+    GoogleProvider, ModelConfig, OpenAiCompat, OpenAiCompatProvider,
 };
 use yoagent::tools::SharedStateTool;
 use yoagent::*;
@@ -766,6 +766,8 @@ pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
         ModelConfig::claude_sonnet_5()
     } else if model.starts_with("claude-haiku-4-5") {
         ModelConfig::claude_haiku_4_5()
+    } else if model.starts_with("claude-haiku-5-5") {
+        claude_haiku_5_5()
     } else {
         return None;
     };
@@ -774,6 +776,51 @@ pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
         config.name = model.to_string();
     }
     Some(config)
+}
+
+/// Claude Haiku 5.5 — yoagent 0.24.2 ships no preset (and no price-table row)
+/// for it, so without this arm it got the generic 200K config and `/cost`
+/// fell through to the Haiku 3.5 row, overstating its bill about 8x.
+///
+/// Every number below was measured on 2026-10-08, not copied from a changelog:
+/// - limits: <https://platform.claude.com/docs/en/about-claude/models/overview>
+///   ("Context window 1M tokens", "Max output 128K tokens"); the model page
+///   adds that it supports adaptive thinking with the effort parameter, so it
+///   takes `AnthropicCompat::default()` like the other 5.x presets, not
+///   Haiku 4.5's `legacy()`.
+/// - price: <https://platform.claude.com/docs/en/about-claude/pricing>, base
+///   input $0.10, 5-minute cache write $0.125, cache hit $0.01, output $0.50
+///   per MTok; "for prompts over 100,000 tokens" $0.50 / $0.625 / $0.05 /
+///   $2.50. <https://models.dev/api.json> agrees on every figure.
+///
+/// `max_tokens` follows the fleet convention (64K of the 128K maximum) and
+/// stays under [`anthropic_output_maximum`]. The >100K tier is recorded in
+/// `context_tiers`, but yoyo's own `/cost` estimate reads only the base rates
+/// (see `builtin_model_pricing` in `format/cost.rs`), so a long-prompt Haiku
+/// 5.5 session is **under**stated there — a stated limitation, not a tier
+/// mechanism this arm pretends to have.
+///
+/// The `cost` is assigned by hand, so `ModelConfig::reprice()` would replace it
+/// with yoagent's table entry (`None` today). yoyo never calls `reprice`; if it
+/// starts to, this arm needs its price re-checked.
+fn claude_haiku_5_5() -> ModelConfig {
+    // `ModelConfig` is `#[non_exhaustive]`, so start from the generic Anthropic
+    // config and overwrite the fields this model differs on.
+    let mut config = ModelConfig::anthropic("claude-haiku-5-5", "Claude Haiku 5.5");
+    config.context_window = 1_000_000;
+    config.max_tokens = 64_000;
+    config.anthropic = Some(AnthropicCompat::default().with_native_structured_output(true));
+    config.cost = Some(
+        CostConfig::new(0.10, 0.50)
+            .with_cache_read(0.01)
+            .with_cache_write(0.125)
+            .with_context_tier(
+                ContextTier::new(100_000, 0.50, 2.50)
+                    .with_cache_read(0.05)
+                    .with_cache_write(0.625),
+            ),
+    );
+    config
 }
 
 /// Build the ModelConfig for the default Anthropic path: fleet preset when
@@ -1161,14 +1208,17 @@ ceiling {ceiling}. The provider may reject the request with a 400. Lower max_tok
 /// yoagent 0.18.1's `ModelConfig` has no max-output field: its Anthropic
 /// presets' `max_tokens` is the request *default* (its own doc comments say
 /// "defaults to 64K of the model's 128K max output"), so it cannot serve as the
-/// ceiling. This is deliberately a single entry, not a table, and its one
+/// ceiling. This is deliberately a short list, not a table; its first
 /// number is cited from the provider's own rejection text quoted in #964:
 /// `max_tokens: 131072 > 128000, which is the maximum allowed` for
 /// `claude-opus-5-5`. **Nothing re-derives it** — if Anthropic raises the cap,
 /// this goes stale silently (it would warn on a value the API now accepts).
 /// Every other Anthropic id returns `None`: an unknown maximum stays unknown.
 pub(crate) fn anthropic_output_maximum(model: &str) -> Option<u32> {
-    if model.starts_with("claude-opus-5") {
+    // Second entry (Day 222): `claude-haiku-5-5`, cited from Anthropic's models
+    // overview ("Max output 128K tokens"; models.dev lists 128000), not from a
+    // rejection. Same staleness caveat as the first.
+    if model.starts_with("claude-opus-5") || model.starts_with("claude-haiku-5-5") {
         Some(128_000)
     } else {
         None
@@ -1956,6 +2006,61 @@ mod tests {
                 .expect("opus-5 preset is priced")
                 .input_per_million
         );
+    }
+
+    #[test]
+    fn test_anthropic_preset_claude_haiku_5_5_carries_the_measured_limits_and_price() {
+        // Measured 2026-10-08 from platform.claude.com/docs/en/about-claude/
+        // models/overview (1M context, 128K max output) and .../pricing
+        // ($0.10 in, $0.125 5m cache write, $0.01 cache hit, $0.50 out;
+        // above 100,000 prompt tokens $0.50 / $0.625 / $0.05 / $2.50).
+        // models.dev agreed on every number. yoagent 0.24.2 has no preset.
+        let preset = anthropic_preset("claude-haiku-5-5")
+            .expect("claude-haiku-5-5 must resolve to a preset, not the generic 200K config");
+        assert_eq!(preset.id, "claude-haiku-5-5");
+        assert_eq!(preset.context_window, 1_000_000);
+        assert_eq!(preset.max_tokens, 64_000);
+        // The request default must never exceed the model's real output cap,
+        // or every call 400s (CLAUDE.md "Changing the model" step 2).
+        assert_eq!(anthropic_output_maximum("claude-haiku-5-5"), Some(128_000));
+        assert!(preset.max_tokens <= 128_000);
+        let cost = preset.cost.as_ref().expect("haiku 5.5 preset is priced");
+        assert_eq!(
+            (
+                cost.input_per_million,
+                cost.cache_write_per_million,
+                cost.cache_read_per_million,
+                cost.output_per_million
+            ),
+            (0.10, 0.125, 0.01, 0.50)
+        );
+        assert_eq!(cost.context_tiers.len(), 1);
+        let tier = &cost.context_tiers[0];
+        assert_eq!(
+            (
+                tier.above_prompt_tokens,
+                tier.input_per_million,
+                tier.cache_write_per_million,
+                tier.cache_read_per_million,
+                tier.output_per_million
+            ),
+            (100_000, 0.50, 0.625, 0.05, 2.50)
+        );
+        // A dated id keeps the requested id and still hits the arm.
+        let dated = anthropic_preset("claude-haiku-5-5-20261001")
+            .expect("dated haiku 5.5 id should map to the preset");
+        assert_eq!(dated.id, "claude-haiku-5-5-20261001");
+        assert_eq!(dated.context_window, 1_000_000);
+        // Near miss: Haiku 4.5 is untouched (yoagent's own 200K preset).
+        let h45 = anthropic_preset("claude-haiku-4-5").expect("haiku 4.5 preset");
+        assert_eq!(
+            h45.context_window,
+            ModelConfig::claude_haiku_4_5().context_window
+        );
+        assert_eq!(h45.max_tokens, ModelConfig::claude_haiku_4_5().max_tokens);
+        assert_eq!(anthropic_output_maximum("claude-haiku-4-5"), None);
+        // Near miss: a hypothetical 5.x sibling is NOT claimed by this arm.
+        assert!(anthropic_preset("claude-haiku-5-6").is_none());
     }
 
     #[test]

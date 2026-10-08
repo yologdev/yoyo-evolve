@@ -1345,6 +1345,44 @@ mod tests {
     }
 
     #[test]
+    fn test_haiku_5_5_prices_at_its_own_rate_not_haiku_3_5() {
+        // Before: any haiku id that was not 4-5 fell to the Haiku 3.5 row
+        // (0.80, 1.0, 0.08, 4.0) — an ~8x overstatement. Measured price:
+        // platform.claude.com/docs/en/about-claude/pricing, base tier.
+        assert_eq!(
+            builtin_model_pricing("claude-haiku-5-5"),
+            Some((0.10, 0.125, 0.01, 0.50))
+        );
+        assert_eq!(
+            builtin_model_pricing("claude-haiku-5-5-20261001"),
+            Some((0.10, 0.125, 0.01, 0.50))
+        );
+        assert_eq!(
+            builtin_model_pricing("anthropic/claude-haiku-5-5"),
+            Some((0.10, 0.125, 0.01, 0.50))
+        );
+        // Near misses: 4.5 and 3.5 price exactly as before.
+        assert_eq!(
+            builtin_model_pricing("claude-haiku-4-5"),
+            Some((1.0, 1.25, 0.10, 5.0))
+        );
+        assert_eq!(
+            builtin_model_pricing("claude-3-5-haiku-20241022"),
+            Some((0.80, 1.0, 0.08, 4.0))
+        );
+        // Emission point: 1M in + 1M out = $0.10 + $0.50.
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let cost = estimate_cost(&usage, "claude-haiku-5-5").unwrap();
+        assert!((cost - 0.60).abs() < 1e-9, "got {cost}");
+    }
+
+    #[test]
     fn test_estimate_cost_unknown_model() {
         let usage = yoagent::Usage {
             input: 1000,

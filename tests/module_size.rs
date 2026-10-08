@@ -185,7 +185,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // near-miss guard on the preset's two numbers) compares the user's
     // configured `max_tokens` against it. The +166 is mostly comment and test:
     // the two deltas at the arm, the near-miss guard, and the warning table.
-    ("src/agent_builder.rs", 4623),
+    // Day 222: 4682 at HEAD (59 of drift already inside the grace band) plus
+    // the Claude Haiku 5.5 preset arm — measured limits and price with their
+    // source URLs in its doc comment — and its table test. Number pasted from
+    // the gate.
+    ("src/agent_builder.rs", 4787),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
