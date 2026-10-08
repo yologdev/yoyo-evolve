@@ -276,22 +276,39 @@ fn normalize_catalogue_id(id: &str) -> &str {
     id
 }
 
-/// The yoyo model id whose arm prices this catalogue row, or `None` when yoyo
-/// does not ship that model at all.
+/// The yoyo-side id to price this catalogue row by, or `None` when yoyo cannot
+/// price it.
 ///
-/// Only ids yoyo *ships* (`known_models_for_provider`) are compared. That is the
-/// honest population: yoyo's lookup is a chain of `contains` arms, so comparing
-/// the `f64` a fuzzy arm happens to produce against an arbitrary catalogue row
-/// would manufacture drift out of a substring.
-fn yoyo_id_for(provider: &str, catalogue_id: &str) -> Option<&'static str> {
-    let normalized = normalize_catalogue_id(catalogue_id);
-    if let Some((_, yoyo_id)) = ID_ALIASES.iter().find(|(cat, _)| *cat == normalized) {
-        return Some(yoyo_id);
+/// **"Can yoyo price this?" is asked of the resolver `/cost` uses** —
+/// [`price_of`], i.e. `model_pricing_with` → `builtin_model_pricing`, which
+/// strips router prefixes and consults `anthropic_preset` before the `f64` arms.
+/// It is deliberately NOT asked of `known_models_for_provider`'s literal list.
+///
+/// Superseded claim, recorded rather than erased (#1003, Day 222): this function
+/// used to say "Only ids yoyo *ships* (`known_models_for_provider`) are compared",
+/// on the grounds that comparing what a fuzzy `contains` arm produces would
+/// "manufacture drift out of a substring". That population was enumerated by a
+/// list that is not the thing being checked: `/cost` prices whatever the
+/// resolver prices, list or no list, so `claude-opus-5-5`, `claude-sonnet-5-5`,
+/// `claude-fable-5-1` and `claude-haiku-5-5` — all billed by `/cost`, three of
+/// them billed WRONG — were filed as "coverage gap" and never compared. A
+/// substring arm that prices a catalogue row is not manufactured drift; it is
+/// the number a user of that model is shown, and the alarm exists for it.
+///
+/// Two things are kept from before. The provider must be one this audit reads
+/// ([`PROVIDER_KEYS`]), so an aggregator's re-listing is still a coverage gap
+/// and `provider` stays part of the key; and [`ID_ALIASES`] still translates a
+/// catalogue spelling to the spelling yoyo prices.
+fn yoyo_id_for<'a>(provider: &str, catalogue_id: &'a str) -> Option<&'a str> {
+    if !PROVIDER_KEYS.contains(&provider) {
+        return None;
     }
-    crate::providers::known_models_for_provider(provider)
+    let normalized = normalize_catalogue_id(catalogue_id);
+    let yoyo_id = ID_ALIASES
         .iter()
-        .copied()
-        .find(|id| *id == normalized)
+        .find(|(cat, _)| *cat == normalized)
+        .map_or(normalized, |(_, yoyo_id)| *yoyo_id);
+    price_of(yoyo_id).map(|_| yoyo_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -862,10 +879,19 @@ fn the_mapping_covers_shipped_ids_and_refuses_unshipped_ones() {
         Some("gemini-3.0-pro"),
         "the alias table exists for exactly this: two spellings of one model"
     );
+    // Superseded expectation (#1003): this pinned `None` — "a catalogue model yoyo
+    // does not ship is a coverage gap" — while the widened `deepseek-flash` arm
+    // deliberately prices it (see that arm's comment in cost.rs). `/cost` bills it,
+    // so the audit compares it; an id the resolver cannot price is the gap.
     assert_eq!(
         yoyo_id_for("deepseek", "deepseek-v4-flash-vision-exp"),
+        Some("deepseek-v4-flash-vision-exp"),
+        "a catalogue id /cost prices is compared, shipped list or not"
+    );
+    assert_eq!(
+        yoyo_id_for("deepseek", "deepseek-imaginary-9"),
         None,
-        "a catalogue model yoyo does not ship is a coverage gap, not a comparison"
+        "a catalogue id /cost's resolver cannot price is a coverage gap, not a comparison"
     );
     assert_eq!(yoyo_id_for("deepseek", "not-a-model-at-all"), None);
 }
@@ -881,14 +907,16 @@ fn ours_from_catalogue_keeps_only_rows_this_repo_can_price() {
             id: "deepseek-flash".to_string(),
             price: (0.15, 0.0, 0.003, 0.60),
         },
+        // Was `deepseek-v4-flash-vision-exp` until #1003 — an id `/cost` DOES
+        // price, so it no longer specimens "cannot price".
         CatalogueRow {
             provider: "deepseek".to_string(),
-            id: "deepseek-v4-flash-vision-exp".to_string(),
+            id: "deepseek-imaginary-9".to_string(),
             price: (0.15, 0.0, 0.003, 0.60),
         },
     ];
     let ours = ours_from_catalogue(&catalogue);
-    assert_eq!(ours.len(), 1, "only the shipped id is on the yoyo side");
+    assert_eq!(ours.len(), 1, "only the priceable id is on the yoyo side");
     assert_eq!(ours[0].0, "deepseek/deepseek-flash");
     assert_eq!(ours[0].1, (0.15, 0.0, 0.003, 0.60));
 
@@ -898,7 +926,7 @@ fn ours_from_catalogue_keeps_only_rows_this_repo_can_price() {
     assert_eq!(report.matched, 1);
     assert_eq!(
         report.unpriced,
-        vec!["deepseek/deepseek-v4-flash-vision-exp".to_string()]
+        vec!["deepseek/deepseek-imaginary-9".to_string()]
     );
 }
 
@@ -1139,4 +1167,67 @@ fn estimated_arms_are_audited_by_the_same_path_with_no_skip_set() {
             report.drifted
         );
     }
+}
+
+/// #1003: the audit's "can yoyo price this?" must be the question `/cost`
+/// answers, asked of the same resolver — not of `known_models_for_provider`'s
+/// literal list, which carries none of these ids and so filed every one of them
+/// as a coverage gap while `/cost` billed them (three of them wrong).
+///
+/// Each priceable row is asserted against [`price_of`] on the SAME id, so the
+/// test cannot pass by agreeing with a typed-in rate: the expected value is the
+/// resolver's own output, and the only thing pinned is that the audit asks it.
+/// Near miss: an id the resolver cannot price stays `unpriced`, and a priceable
+/// id under a provider this audit does not read stays a coverage gap.
+#[test]
+fn the_audit_asks_the_pricing_resolver_not_the_shipped_list() {
+    let priceable = ["claude-opus-5-5", "claude-fable-5-1", "claude-haiku-5-5"];
+    for id in priceable {
+        // Anti-vacuous: the premise of #1003 is that these are NOT on the list.
+        assert!(
+            !crate::providers::known_models_for_provider("anthropic").contains(&id),
+            "`{id}` is now on the shipped list, so this row no longer tests the resolver path"
+        );
+        assert!(
+            price_of(id).is_some(),
+            "`{id}` must be priced by /cost's resolver for this test to mean anything"
+        );
+        assert_eq!(
+            yoyo_id_for("anthropic", id),
+            Some(id),
+            "`anthropic/{id}` is priced by /cost but the audit classified it as unpriceable"
+        );
+    }
+    // A dated catalogue spelling resolves through normalisation to the same id.
+    assert_eq!(
+        yoyo_id_for("anthropic", "claude-haiku-5-5-20261001"),
+        Some("claude-haiku-5-5")
+    );
+
+    // Emission point: the comparator compares them, and a repriced one drifts.
+    let catalogue: Vec<CatalogueRow> = priceable
+        .iter()
+        .map(|id| {
+            let ours = price_of(id).unwrap();
+            row("anthropic", id, (ours.0 * 3.0, ours.1, ours.2, ours.3))
+        })
+        .chain(std::iter::once(row(
+            "anthropic",
+            "acme-imaginary-9",
+            (1.0, 0.0, 0.0, 2.0),
+        )))
+        .collect();
+    let report = compare_catalogue(&ours_from_catalogue(&catalogue), &catalogue, REL_TOL);
+    assert_eq!(report.compared, 3, "{report:?}");
+    assert_eq!(report.drifted.len(), 3, "{report:?}");
+
+    // Near miss: a truly unknown id is still "cannot price", never a match.
+    assert_eq!(price_of("acme-imaginary-9"), None);
+    assert_eq!(yoyo_id_for("anthropic", "acme-imaginary-9"), None);
+    assert_eq!(
+        report.unpriced,
+        vec!["anthropic/acme-imaginary-9".to_string()]
+    );
+    // Near miss: priceable id, provider outside the audit — still a coverage gap.
+    assert_eq!(yoyo_id_for("openrouter", "claude-opus-5-5"), None);
 }
