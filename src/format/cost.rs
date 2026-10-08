@@ -64,12 +64,11 @@ pub fn model_pricing_with(
 /// general sweep, `cargo test price_drift_audit -- --ignored --nocapture` for the
 /// DeepSeek rows with their admitted-divergence register. Read them, do not
 /// auto-patch a constant from them — the alarm sends you to the vendor's page.
-fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
-    // Returns (input_per_MTok, cache_write_per_MTok, cache_read_per_MTok, output_per_MTok)
-    // For providers without caching, cache_write and cache_read are set to 0.0.
-
-    // Strip common OpenRouter prefixes (e.g. "anthropic/claude-sonnet-4-20250514")
-    let model = model
+/// Strip common OpenRouter prefixes (e.g. "anthropic/claude-sonnet-4-20250514").
+/// Shared by the flat table and the per-request tier lookup so both resolve
+/// the same preset for the same id.
+fn strip_router_prefix(model: &str) -> &str {
+    model
         .strip_prefix("anthropic/")
         .or_else(|| model.strip_prefix("openai/"))
         .or_else(|| model.strip_prefix("google/"))
@@ -77,7 +76,14 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
         .or_else(|| model.strip_prefix("mistralai/"))
         .or_else(|| model.strip_prefix("x-ai/"))
         .or_else(|| model.strip_prefix("meta-llama/"))
-        .unwrap_or(model);
+        .unwrap_or(model)
+}
+
+fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
+    // Returns (input_per_MTok, cache_write_per_MTok, cache_read_per_MTok, output_per_MTok)
+    // For providers without caching, cache_write and cache_read are set to 0.0.
+
+    let model = strip_router_prefix(model);
 
     // Fleet models (claude-fable-5, claude-opus-4-8, claude-sonnet-5,
     // claude-haiku-4-5): read pricing from yoagent 0.9's preset ModelConfig at
@@ -338,6 +344,49 @@ pub fn estimate_cost_with(
 ) -> Option<f64> {
     let (input_cost, cw_cost, cr_cost, output_cost) = cost_breakdown_with(overrides, usage, model)?;
     Some(input_cost + cw_cost + cr_cost + output_cost)
+}
+
+/// Price ONE request (one assistant message's usage), applying the preset's
+/// context tier (e.g. Claude Haiku 5.5 above 100K prompt tokens) when the
+/// prompt clears it. Returns `(cost, tiered)`.
+///
+/// Per request only: a tier is charged against a single request's prompt, so
+/// a session total fed here would bill a long session at the tier rate. The
+/// session-total displays keep calling [`estimate_cost_with`], which never tiers.
+///
+/// Tie: yoagent documents `ContextTier::above_prompt_tokens` as the prompt
+/// tokens *above which* the tier applies (vendors publish "over 100K"), so a
+/// prompt of exactly the threshold stays at the base rate. That comparison is
+/// yoagent's own (`CostConfig::cost_usd`), not retyped here: a turn is tiered
+/// exactly when the preset's tiered price differs from its tier-free price.
+///
+/// A user `[model_pricing]` override replaces pricing wholesale: no tier.
+pub fn estimate_request_cost_with(
+    overrides: &ModelPricingOverrides,
+    usage: &yoagent::Usage,
+    model: &str,
+) -> Option<(f64, bool)> {
+    let base = estimate_cost_with(overrides, usage, model)?;
+    if overrides.lookup(model).is_some() {
+        return Some((base, false));
+    }
+    let tiers = crate::agent_builder::anthropic_preset(strip_router_prefix(model))
+        .and_then(|preset| preset.cost)
+        .filter(|cost| !cost.context_tiers.is_empty());
+    let Some(cost) = tiers else {
+        return Some((base, false));
+    };
+    let mut flat = cost.clone();
+    flat.context_tiers.clear();
+    let tiered = cost.cost_usd(usage);
+    #[allow(clippy::float_cmp)] // same inputs, same arithmetic: equal iff no tier fired
+    let tier_fired = tiered != flat.cost_usd(usage);
+    if tier_fired {
+        Some((tiered, true))
+    } else {
+        // Below (or at) the threshold: byte-identical to the flat estimate.
+        Some((base, false))
+    }
 }
 
 /// Get individual cost components for a usage and model.
@@ -665,25 +714,44 @@ pub struct TurnCost {
     pub turn_number: usize,
     pub usage: yoagent::Usage,
     pub cost_usd: Option<f64>,
+    /// Priced at the model's long-context tier (see [`estimate_request_cost_with`]).
+    pub tiered: bool,
 }
 
 /// Extract per-turn costs from a conversation message list.
-/// Each Assistant message counts as one turn.
+/// Each Assistant message counts as one turn, priced per request, so a
+/// context tier applies to the turns whose own prompt cleared it.
 pub fn extract_turn_costs(messages: &[yoagent::AgentMessage], model: &str) -> Vec<TurnCost> {
+    extract_turn_costs_with(model_pricing_overrides(), messages, model)
+}
+
+/// [`extract_turn_costs`] with explicit overrides. Pure.
+pub fn extract_turn_costs_with(
+    overrides: &ModelPricingOverrides,
+    messages: &[yoagent::AgentMessage],
+    model: &str,
+) -> Vec<TurnCost> {
     let mut turns = Vec::new();
     let mut turn_number = 0;
     for msg in messages {
         if let yoagent::AgentMessage::Llm(yoagent::Message::Assistant { usage, .. }) = msg {
             turn_number += 1;
+            let priced = estimate_request_cost_with(overrides, usage, model);
             turns.push(TurnCost {
                 turn_number,
                 usage: usage.clone(),
-                cost_usd: estimate_cost(usage, model),
+                cost_usd: priced.map(|(cost, _)| cost),
+                tiered: priced.is_some_and(|(_, tiered)| tiered),
             });
         }
     }
     turns
 }
+
+/// Footnote for a per-turn table with at least one long-context turn.
+pub const TIERED_TURN_FOOTNOTE: &str =
+    "      * prompt (input + cache) over the model's long-context threshold: \
+priced at the tier rate. The session cost above uses base rates, so it reads lower.";
 
 /// Format per-turn costs as a compact table for display.
 pub fn format_turn_costs(costs: &[TurnCost]) -> String {
@@ -711,12 +779,16 @@ pub fn format_turn_costs(costs: &[TurnCost]) -> String {
             }
             None => "—".to_string(),
         };
+        // Untiered rows stay byte-identical; a tiered row gets a marker the
+        // footnote below explains.
+        let marker = if tc.tiered { " *" } else { "" };
         lines.push(format!(
-            "      {:>4}   {:>7}  {:>7}  {}",
+            "      {:>4}   {:>7}  {:>7}  {}{}",
             tc.turn_number,
             format_token_count(tc.usage.input),
             format_token_count(tc.usage.output),
             cost_str,
+            marker,
         ));
     }
 
@@ -732,6 +804,11 @@ pub fn format_turn_costs(costs: &[TurnCost]) -> String {
         format_token_count(total_output),
         total_cost_str,
     ));
+    if costs.iter().any(|tc| tc.tiered) {
+        // Say the disagreement out loud: this table's total and the session
+        // cost line (priced from session totals, which cannot be tiered) differ.
+        lines.push(TIERED_TURN_FOOTNOTE.to_string());
+    }
 
     lines.join("\n")
 }
@@ -934,6 +1011,11 @@ pub fn format_context_breakdown(breakdown: &crate::commands_info::ContextBreakdo
 /// entry, so the instrument gets room without moving the register.
 #[cfg(test)]
 mod price_audit_tests;
+
+/// Per-request context-tier pricing (Claude Haiku 5.5's >100K band). Own file
+/// for the same module-size reason as `price_audit_tests`.
+#[cfg(test)]
+mod context_tier_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2251,6 +2333,7 @@ mod tests {
                 total_tokens: 1700,
             },
             cost_usd: Some(0.0111),
+            tiered: false,
         }];
         let output = format_turn_costs(&costs);
         assert!(output.contains("Per-turn breakdown:"));
@@ -2273,6 +2356,7 @@ mod tests {
                     total_tokens: 1700,
                 },
                 cost_usd: Some(0.003),
+                tiered: false,
             },
             TurnCost {
                 turn_number: 2,
@@ -2284,6 +2368,7 @@ mod tests {
                     total_tokens: 2300,
                 },
                 cost_usd: Some(0.005),
+                tiered: false,
             },
         ];
         let output = format_turn_costs(&costs);
@@ -2307,6 +2392,7 @@ mod tests {
                 total_tokens: 1500,
             },
             cost_usd: None,
+            tiered: false,
         }];
         let output = format_turn_costs(&costs);
         // Should show dash for unknown cost

@@ -73,8 +73,17 @@ informational — the preset is the source of truth:
 Haiku 5.5 is not yet a yoagent preset, so yoyo carries its own (1M context,
 128K max output, prices from Anthropic's pricing page). Anthropic charges it
 more above 100,000 prompt tokens ($0.50 in, $0.625 cache write, $0.05 cache
-read, $2.50 out). `/cost` uses only the base rates above, so it **understates**
-a Haiku 5.5 session with very long prompts.
+read, $2.50 out). Since Day 222 the **per-turn breakdown** in `/cost` prices each
+turn whose own prompt (input + cache tokens) is over 100,000 at those tier
+rates, marks it with `*`, and adds a footnote; a prompt of exactly 100,000 stays
+at the base rate. The tier is per request, so it is applied only where yoyo has
+one request's usage. The **session cost** line, `/tokens`, the per-response
+`↳` line and the `--verbose` totals do not apply the tier and still use
+the base rates, so they **understate** a Haiku 5.5 session with very long
+prompts. When the two disagree, the per-turn total is the closer one (it covers
+only turns still in the conversation, so after `/compact` it can be lower). A
+`[model_pricing]` override for the model replaces its pricing wholesale and no
+tier applies. Haiku 5.5 is the only model yoyo currently prices with a tier.
 
 ### OpenAI
 

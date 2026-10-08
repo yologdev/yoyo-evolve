@@ -381,7 +381,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // change went into `src/format/cost/price_audit_tests.rs` (1142 lines, read off `wc -l`), which is
     // why the delta is single digits and not low hundreds — the child-module seam from
     // Day 207 is still carrying the weight, and this number says so.
-    ("src/format/cost.rs", 3455), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+    // Day 222 (Task 2): 3455 -> 3605 (+150: +64 drift already on main, +86 for per-request
+    // context-tier pricing -- `estimate_request_cost_with`, the per-turn marker/footnote and the
+    // `tiered` field on four fixtures; its tests live in `src/format/cost/context_tier_tests.rs`).
+    ("src/format/cost.rs", 3605), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
     // Day 204 (#937 Task 2): 2931 -> 3439 (+508, the count after `cargo fmt`). The price drift alarm against
     // models.dev — an `#[ignore]`d audit plus its offline arm and the
     // `KNOWN_DIVERGENCES` register's anti-rot guard. Mostly tests (as with every

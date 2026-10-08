@@ -795,10 +795,10 @@ pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
 ///
 /// `max_tokens` follows the fleet convention (64K of the 128K maximum) and
 /// stays under [`anthropic_output_maximum`]. The >100K tier is recorded in
-/// `context_tiers`, but yoyo's own `/cost` estimate reads only the base rates
-/// (see `builtin_model_pricing` in `format/cost.rs`), so a long-prompt Haiku
-/// 5.5 session is **under**stated there — a stated limitation, not a tier
-/// mechanism this arm pretends to have.
+/// `context_tiers`. Since Day 222 `/cost`'s per-turn breakdown reads it
+/// (`estimate_request_cost_with` in `format/cost.rs`, per request); the
+/// session-total estimates still use only the base rates, so a long-prompt
+/// Haiku 5.5 session is **under**stated there.
 ///
 /// The `cost` is assigned by hand, so `ModelConfig::reprice()` would replace it
 /// with yoagent's table entry (`None` today). yoyo never calls `reprice`; if it
