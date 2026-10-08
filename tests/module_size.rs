@@ -189,7 +189,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // the Claude Haiku 5.5 preset arm — measured limits and price with their
     // source URLs in its doc comment — and its table test. Number pasted from
     // the gate.
-    ("src/agent_builder.rs", 4787),
+    // Day 222 (#1003): +6 — two most-specific-first preset arms (Opus 5.5,
+    // Fable 5.1) plus their ordering comment; the tests went to a sibling file.
+    ("src/agent_builder.rs", 4793),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop

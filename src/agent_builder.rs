@@ -756,8 +756,14 @@ pub(crate) fn insert_client_headers(config: &mut ModelConfig) {
 /// Returns `None` for non-fleet models — callers fall back to
 /// `ModelConfig::anthropic` (yoagent's generic Anthropic defaults).
 pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
-    let mut config = if model.starts_with("claude-fable-5") {
+    // Most-specific first (#1003): `claude-opus-5-5` also starts with
+    // `claude-opus-5`, and `cost` is priced from the constructor's own id.
+    let mut config = if model.starts_with("claude-fable-5-1") {
+        ModelConfig::claude_fable_5_1()
+    } else if model.starts_with("claude-fable-5") {
         ModelConfig::claude_fable_5()
+    } else if model.starts_with("claude-opus-5-5") {
+        ModelConfig::claude_opus_5_5()
     } else if model.starts_with("claude-opus-5") {
         ModelConfig::claude_opus_5()
     } else if model.starts_with("claude-opus-4-8") {
@@ -803,7 +809,7 @@ pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
 /// The `cost` is assigned by hand, so `ModelConfig::reprice()` would replace it
 /// with yoagent's table entry (`None` today). yoyo never calls `reprice`; if it
 /// starts to, this arm needs its price re-checked.
-fn claude_haiku_5_5() -> ModelConfig {
+pub(crate) fn claude_haiku_5_5() -> ModelConfig {
     // `ModelConfig` is `#[non_exhaustive]`, so start from the generic Anthropic
     // config and overwrite the fields this model differs on.
     let mut config = ModelConfig::anthropic("claude-haiku-5-5", "Claude Haiku 5.5");

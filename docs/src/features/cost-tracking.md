@@ -54,13 +54,18 @@ Costs are estimated based on published pricing for all major providers:
 
 ### Anthropic
 
-Fleet models (Fable 5, Opus 4.8, Sonnet 5, Haiku 4.5) read their pricing
-directly from yoagent's model presets at runtime, so their rows below are
-informational — the preset is the source of truth:
+Fleet models (Fable 5, Fable 5.1, Opus 5, Opus 5.5, Opus 4.8, Sonnet 5, Haiku 4.5)
+read their pricing directly from yoagent's model presets at runtime, so their
+rows below are informational — the preset is the source of truth. Until Day 222
+(#1003) Opus 5.5 and Fable 5.1 were matched by their older sibling's preset and
+priced as Opus 5 ($5 / $25) and Fable 5 ($1 cache read); each now gets its own.
+Sonnet 5.5 still has no preset of its own and is priced as Sonnet 5.
 
 | Model | Input | Cache Write | Cache Read | Output |
 |-------|-------|-------------|------------|--------|
 | Fable 5 | $10/MTok | $12.50/MTok | $1/MTok | $50/MTok |
+| Fable 5.1 | $10/MTok | $12.50/MTok | $0.25/MTok | $50/MTok |
+| Opus 5.5 | $4/MTok | $5/MTok | $0.20/MTok | $20/MTok |
 | Opus 4.8 | $5/MTok | $6.25/MTok | $0.50/MTok | $25/MTok |
 | Sonnet 5 | $3/MTok | $3.75/MTok | $0.30/MTok | $15/MTok |
 | Opus 4.5/4.6 | $5/MTok | $6.25/MTok | $0.50/MTok | $25/MTok |

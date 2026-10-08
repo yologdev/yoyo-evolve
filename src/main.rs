@@ -38,6 +38,8 @@
 mod agent_builder;
 #[cfg(test)]
 mod agent_limits_tests;
+#[cfg(test)]
+mod anthropic_preset_tests;
 mod auto_check_scope;
 mod banner;
 mod cd_config_note;
