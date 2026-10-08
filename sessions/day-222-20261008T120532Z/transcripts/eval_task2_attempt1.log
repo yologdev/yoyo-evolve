@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; f=$(ls -d ~/.cargo/registry/src/*/… ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "yoagent" Cargo.lock | hea… ✓ (12ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 24.1s (3 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md. I couldn't try /cost in the running binary because that needs a live API session; the change is checked by tests on the per-turn table's output instead.
+
+• **Pricing:** Long Haiku 5.5 prompts are now priced at the higher rate, one turn at a time. The new code takes the rates from the Haiku 5.5 preset and lets yoagent do the maths (its CostConfig::cost_usd). I read yoagent 0.24.2's source: a turn counts as tiered only when input plus cache tokens is strictly over the threshold. That matches the code comment that a prompt of exactly 100,000 tokens stays at the base rate, and the test for that case.
+• **Where it shows:** Only the per-turn breakdown in `/cost` uses the new pricing. Tiered rows get a ` *` marker and a footnote. The session cost line, `/tokens`, the per-response line and the --verbose totals still use base rates. The code, the comments and the docs all say this rather than claiming more.
+• **Tests:** All five cases the task asked for are covered: under the threshold unchanged, over it at the tier rate, exactly at it, a model with no tier, and two turns priced separately. There are also tests that a user price override means no tier applies, and that rows with no tier print exactly as before. Expected values come from the preset's own fields, not typed-in prices.
+• **New code is all used:** Each new function and constant has a caller in this diff, the new `tiered` field is set on the four existing test fixtures, and the size cap for `src/format/cost.rs` was raised with a stated reason.
+• **Docs and product surface:** cost-tracking.md was updated to match. Nothing changed in config defaults, CLI flags or startup.
+
+I can't tell from the diff whether the positive-control run (temporarily disabling the tier code and watching the over-threshold test fail) was done. No NEUTERED marker is left in the code, so nothing was left disabled.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

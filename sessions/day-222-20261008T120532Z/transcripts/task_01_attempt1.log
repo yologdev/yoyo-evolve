@@ -1,0 +1,167 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; grep -n "model_… ✓ (8ms)
+  ▶ $ sed -n 715,880p src/commands_info.rs; sed -n 740,840p src/agent_builder.rs; sed …  ▶ $ ls ~/.cargo/registry/src/*/ | grep yoagent; f=$(ls -d ~/.cargo/registry/src/*/yo… ✓ (9ms)
+ ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3.2s (3 ✓)
+
+Now the preset match itself (truncated above):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 745,806p src/agent_builder.rs; grep -n "## src/commands_info.rs\|commands… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "model_context_window\|handle_model_info" ARCHITECTURE.md | cut -c1-300;… ✓ (173ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.8s (2 ✓)
+
+Reproduced: all five 1M-window Claude ids print 200k tokens. Writing the test first, then the fix.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 1,40p src/commands_info.rs | grep -n "^use\|crate::"; grep -n "#\[cfg(tes… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_info.rs (5 → 91 lines)
+        fn test_model_context_window_unknown() {
+            assert_eq!(model_context_window("totally-unknown-xyz"), None);
+            assert_eq!(model_context_window(""), None);
+  +     }
+  + 
+  +     /// Every id `anthropic_preset` matches (one per arm of its `starts_with`
+  +     /// chain, plus suffixed/dated forms that the same arms accept). Enumerated
+  +     /// from the preset match in `src/agent_builder.rs`, not from memory.
+  +     const PRESET_IDS: &[&str] = &[
+  +         "claude-fable-5",
+  +         "claude-fable-5-1",
+  +         "claude-opus-5",
+  +         "claude-opus-5-5",
+  +         "claude-opus-4-8",
+  +         "claude-sonnet-5",
+  +         "claude-sonnet-5-20260101",
+  +         "claude-haiku-4-5",
+  +         "claude-haiku-4-5-20251001",
+  +         "claude-haiku-5-5",
+  +     ];
+  ... (70 more lines)
+ ✓ (16.4s)
+        fn test_model_context_window_unknown() {
+            assert_eq!(model_context_window("totally-unknown-xyz"), None);
+            assert_eq!(model_context_window(""), None);
+  +     }
+  + 
+  +     /// Every id `anthropic_preset` matches (one per arm of its `starts_with`
+  +     /// chain, plus suffixed/dated forms that the same arms accept). Enumerated
+  +     /// from the preset match in `src/agent_builder.rs`, not from memory.
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 34.9s (2 ✓)
+
+Expected. Now the fix: split the table into a fallback and put the preset first.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (4 → 20 lines)
+    /// Return the context window size (in tokens) for well-known models.
+    /// Returns `None` when the model isn't in our registry.
+  + ///
+  + /// Claude ids with a fleet preset report `anthropic_preset(model).context_window`
+  + /// — the same value the agent is actually built with — so this display cannot
+  + /// drift from the authority. Until Day 222 this was a substring table only,
+  + /// and it printed `200k` for 1M-window models (opus-5, sonnet-5, haiku-5-5,
+  + /// opus-4-8, fable-5). The table remains as the fallback for ids with no
+  + /// preset (other providers, older Claude ids, local models).
+    pub fn model_context_window(model: &str) -> Option<u64> {
+  -     // Anthropic Claude family
+  +     if let Some(preset) = crate::agent_builder::anthropic_preset(model) {
+  +         return Some(u64::from(preset.context_window));
+  +     }
+  +     model_context_window_table(model)
+  + }
+  + 
+  + /// Hand-kept substring table: the fallback for ids `anthropic_preset` does
+  + /// not know. Do not add Claude ids here that have a preset — the preset wins.
+  + fn model_context_window_table(model: &str) -> Option<u64> {
+  ... (1 more lines)
+ ✓ (2m 19s)
+    /// Return the context window size (in tokens) for well-known models.
+    /// Returns `None` when the model isn't in our registry.
+  + ///
+  + /// Claude ids with a fleet preset report `anthropic_preset(model).context_window`
+  + /// — the same value the agent is actually built with — so this display cannot
+  + /// drift from the authority. Until Day 222 this was a substring table only,
+  + /// and it printed `200k` for 1M-window models (opus-5, sonnet-5, haiku-5-5,
+  + /// opus-4-8, fable-5). The table remains as the fallback for ids with no
+  ... (13 more lines)
+  ▶ $ cargo test 2>&1 | grep -E "FAILED|panicked|failed|test result" | head -20 ✓ (1m 32s)
+  ▶ $ cargo test 2>&1 | grep -E "^test .* FAILED|panicked at|^test result|error" | hea… ✓ (1m 17s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cargo test > /tmp/t.log 2>&1; echo exit=$?; grep -E "FAILED|panicked at|^test re… ✓ (1m 32s)
+  ▶ $ grep -A25 "src_modules_respect_the_size_gate' .*panicked" /tmp/t.log | head -40;… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 6m 53s (5 ✓)
+
+The size gate fires: commands_info.rs was already 56 lines into its 100-line grace band before this task, so +107 tips it over. Let me look at the register entry.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "commands_info.rs" tests/module_size.rs; git log -1 --format=%h -- tests… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Taking the gate's own printed remedy (acknowledge growth in the register, with the reason in the commit).
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -i 's|("src/commands_info.rs", 3379),|("src/commands_info.rs", 3542),|' test… ✓ (450ms)
+
+Now the positive control — one atomic mutate → test → restore command, with a NEUTERED marker on the sabotaged line:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/commands_info.rs /tmp/ci.bak && \ (10 lines) ✓ (54.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control reddened exactly the preset test, restored to green, zero markers left. Now the "after" reading and the docs check:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -1; B=$PWD/target/debug/yoyo; (cd /tmp && for m in claud… ✓ (9.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Fixed, and non-preset ids unchanged. models.md quotes no 200K figure. Full gate:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo fmt -- --check && cargo clippy --all-targets -- -D warnings 2… ✓ (2m 26s)
+  ▶ $ wc -l src/commands_info.rs; git add -A && git commit -q -F -… (44 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 42s (2 ✓)
+
+yoyo model info now shows the right context window for current Claude models: 1M tokens instead of 200k tokens. Build, all tests, clippy and fmt pass, and it's committed as 70093f6e.
+
+Before the fix: I built the binary and ran it from /tmp. It printed Context:   200k tokens for claude-opus-5, haiku-5-5, sonnet-5, opus-4-8 and fable-5.
+
+After: all five print Context:   1M tokens. claude-haiku-4-5 still prints 200k, which is correct because its preset says 200,000. gpt-4.1 still prints 1.0M tokens.
+
+What changed (src/commands_info.rs): model_context_window now asks anthropic_preset(model) first. That's the same value the agent is actually built with, so the display can't drift from it. The old substring table is now model_context_window_table and is only used for models with no preset (other providers, older Claude models, local models), so their output is unchanged. The function's only caller is handle_model_info, so this only changes what's displayed, not how the agent runs.
+
+Tests:
+• **Every preset model:** one per arm of the preset match, plus suffixed ids like `claude-opus-5-5`. Each checks both the number and the printed `Context:` text against values taken from the preset, not typed-in numbers.
+• **Fixture check:** a test that fails unless the list includes models where the old table and the preset disagree, so the main test can't pass with the bug still there.
+• **Unchanged models:** 13 models with no preset keep the values the old table gave before the change, and each is checked to really have no preset.
+• **Breaking it on purpose:** I made the preset branch return the old table value, marked `NEUTERED`, then ran the tests and restored the code in one command. The preset test failed by name, went green again after the restore, and no marker was left behind.
+
+Second file I had to touch: tests/module_size.rs. The file-size check failed, because commands_info.rs was already 56 lines into its 100-line allowance before I started. I followed the check's own suggested fix and raised its recorded size from 3379 to 3542, with the reason in the commit message. The other option is moving the new tests into a separate file, if you'd rather not let this file grow.
+
+Docs: docs/src/configuration/models.md doesn't mention a 200K figure, so no docs change was needed. The commit says so.
+
+Not done (also listed in the commit): pricing tiers (task 02) and the yoagent 0.25 upgrade. Model ids with a provider prefix, like anthropic/claude-opus-5, don't match the preset, so they still get their window from the old table and will still show 200k.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/commands_info.rs

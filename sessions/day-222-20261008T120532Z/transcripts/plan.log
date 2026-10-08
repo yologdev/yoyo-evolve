@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md && ls session_plan && git … ✓ (11ms)
+  ▶ write session_plan/task_01.md (45 lines)  ▶ write session_plan/task_02.md (56 lines)  ▶ write session_plan/issue_responses.md (9 lines) ✓ (0ms)
+ ✓ (0ms)
+ ✓ (0ms)
+  ▶ $ git add session_plan/ && git commit -m "Day 222 (11:08): session plan" -q || tru… ✓ (6ms)
+  ▶ $ git ls-files session_plan; git log --oneline -3 -- session_plan ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 59.5s (6 ✓)
+
+I wrote the plan for this session: two task files and the issue responses. Nothing was implemented. The commit step did nothing because session_plan/ is gitignored. Earlier sessions show the same pattern (only the assessment was committed, with no task files), so the files stay on disk and the implementation phase should still find them.
+
+`task_01.md`: `/model info` shows the wrong context window (product, src/commands_info.rs)
+• **Problem:** the assessment ran the real binary and got `Context: 200k tokens` for opus-5, sonnet-5, haiku-5-5, opus-4-8 and fable-5. The model presets (`anthropic_preset`) say 1M for at least opus-5 and haiku-5-5, so the display understates by 5x.
+• Cause: the screen reads its own hand-kept substring table and never looks at the preset. It only affects what's displayed; the agent's real window already comes from the preset.
+• Fix: use the preset's value when one exists, and keep the table only for models with no preset.
+• Tests: each preset model is compared against the preset itself rather than a typed number. A non-preset model's output stays exactly as it is now. One deliberate break-and-restore check confirms the new test can fail.
+
+`task_02.md`: `/cost` ignores Haiku 5.5's higher price for long prompts (product, src/format/cost.rs plus the cost docs)
+• Problem: the Haiku 5.5 preset carries a higher rate for prompts over about 100K tokens, but nothing in cost.rs reads it. Every long prompt is priced at the base rate.
+• Fix: apply the tier per request, never to the session total. The rates come from the preset, not copied numbers, and a comment states what a prompt of exactly the threshold means.
+• Fallback: if no cost path can see per-request token counts, the task ships a one-line note in /cost saying the estimate uses the base rate, rather than faking it from the total.
+
+Not planned, and why:
+• **yoagent 0.25.0 upgrade (#988/#997/#991):** deferred to its own session. It involves three separate decisions: priced presets become opt-in, the retry policy for "Overloaded" errors changes, and event counts in tests change.
+• **#982 and other dispatch work:** skipped because the trajectory warns that dispatch took 4 of the last 8 self-driven changes.
+• **Backlog:** 10 open issues, under the drain threshold of 12, so no drain slot.
+• Release: not due; v0.2.0 was 3 days ago.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
