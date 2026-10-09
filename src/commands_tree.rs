@@ -109,15 +109,16 @@ pub fn handle_tree(input: &str) {
 }
 
 /// `/tree` with an exit status for the shell door (`yoyo tree`, #982): 1 when
-/// the not-a-git-repository branch fires, 0 otherwise. The usage branch still
-/// returns 0 — a separate #982 item. Printed text is identical either way; the
+/// the not-a-git-repository branch fires or the argument is not a depth (the
+/// usage branch), 0 otherwise. Printed text is identical either way; the
 /// REPL calls `handle_tree`, which discards the code.
 pub fn handle_tree_status(input: &str) -> i32 {
     let max_depth = match parse_tree_arg(input) {
         TreeArg::Depth(d) => d,
         TreeArg::Usage => {
             println!("{DIM}  usage: /tree [depth]  (default depth: {DEFAULT_TREE_DEPTH}){RESET}\n");
-            return 0;
+            // #982: `yoyo tree zz` exited 0 after refusing; a refusal is a failure.
+            return 1;
         }
     };
     let (tree, code) = match build_project_tree(max_depth) {
@@ -132,6 +133,26 @@ pub fn handle_tree_status(input: &str) -> i32 {
 mod tests {
     use super::*;
     use crate::commands::is_unknown_command;
+
+    #[test]
+    fn tree_status_is_failure_for_unparseable_arg() {
+        // #982: `yoyo tree zz_bad` / `yoyo tree /nonexistent` printed usage and
+        // exited 0. The usage branch returns before any git call, so this is
+        // pure. The near-miss rows (bare, a valid depth) parse to Depth and
+        // are pinned by `parse_tree_arg`'s table; asserted here too so the
+        // status and the parse cannot drift apart.
+        for bad in [
+            "/tree zz_bad",
+            "/tree /nonexistent",
+            "/tree -1",
+            "/tree 2.5",
+        ] {
+            assert_eq!(parse_tree_arg(bad), TreeArg::Usage, "fixture {bad:?}");
+            assert_eq!(handle_tree_status(bad), 1, "status for {bad:?}");
+        }
+        assert_eq!(parse_tree_arg("/tree"), TreeArg::Depth(DEFAULT_TREE_DEPTH));
+        assert_eq!(parse_tree_arg("/tree 2"), TreeArg::Depth(2));
+    }
 
     #[test]
     fn format_tree_basic() {

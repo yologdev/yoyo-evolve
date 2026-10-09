@@ -1003,6 +1003,44 @@ fn build_undo_context(actions: &[String]) -> String {
     note
 }
 
+/// What `/undo …` was asked to do. One parse, read by both `handle_undo` and
+/// the shell door's status, so the two cannot disagree about what is a usage
+/// error (#982).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum UndoArg {
+    All,
+    LastCommit,
+    /// `/undo` (bare, = 1) or `/undo N`. `Count(0)` is a no-op, not an error.
+    Count(usize),
+    /// Anything else — an argument `/undo` cannot interpret.
+    Usage,
+}
+
+pub(crate) fn parse_undo_arg(input: &str) -> UndoArg {
+    let arg = input.strip_prefix("/undo").unwrap_or("").trim();
+    match arg {
+        "--all" => UndoArg::All,
+        "--last-commit" => UndoArg::LastCommit,
+        "" => UndoArg::Count(1),
+        _ => arg.parse::<usize>().map_or(UndoArg::Usage, UndoArg::Count),
+    }
+}
+
+/// `/undo` with an exit status for the shell door (`yoyo undo`, #982): 1 when
+/// the argument is unparseable (the usage line is printed, as before), 0 on
+/// every other path. Deliberately narrow: a `--last-commit` / `--all` that
+/// runs and fails still reports 0 here. The REPL calls `handle_undo`, which
+/// has no status.
+pub(crate) fn handle_undo_status(input: &str, history: &mut TurnHistory) -> i32 {
+    let code = if parse_undo_arg(input) == UndoArg::Usage {
+        1
+    } else {
+        0
+    };
+    let _ = handle_undo(input, history);
+    code
+}
+
 /// Handle `/undo` with per-turn granularity.
 ///
 /// - `/undo` — undo the last agent turn (restore files to pre-turn state)
@@ -1013,30 +1051,20 @@ fn build_undo_context(actions: &[String]) -> String {
 /// Returns `Some(context)` when files were actually reverted, so the REPL can
 /// inject the summary into the agent's next turn for causal consistency.
 pub fn handle_undo(input: &str, history: &mut TurnHistory) -> Option<String> {
-    let arg = input.strip_prefix("/undo").unwrap_or("").trim();
-
-    // Nuclear fallback: /undo --all
-    if arg == "--all" {
-        return handle_undo_all(history);
-    }
-
-    // Revert last git commit: /undo --last-commit
-    if arg == "--last-commit" {
-        return handle_undo_last_commit();
-    }
-
-    // Parse optional count: /undo N
-    let count: usize = if arg.is_empty() {
-        1
-    } else if let Ok(n) = arg.parse::<usize>() {
-        if n == 0 {
+    let count: usize = match parse_undo_arg(input) {
+        // Nuclear fallback: /undo --all
+        UndoArg::All => return handle_undo_all(history),
+        // Revert last git commit: /undo --last-commit
+        UndoArg::LastCommit => return handle_undo_last_commit(),
+        UndoArg::Count(0) => {
             println!("{DIM}  (nothing to undo — count is 0){RESET}\n");
             return None;
         }
-        n
-    } else {
-        println!("{DIM}  usage: /undo [N] | --all | --last-commit{RESET}\n");
-        return None;
+        UndoArg::Count(n) => n,
+        UndoArg::Usage => {
+            println!("{DIM}  usage: /undo [N] | --all | --last-commit{RESET}\n");
+            return None;
+        }
     };
 
     if history.is_empty() {
@@ -2736,6 +2764,33 @@ mod tests {
         let mut history = TurnHistory::new();
         let result = handle_undo("/undo 0", &mut history);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_undo_arg_table() {
+        let rows = [
+            ("/undo", UndoArg::Count(1)),
+            ("/undo 3", UndoArg::Count(3)),
+            ("/undo 0", UndoArg::Count(0)),
+            ("/undo --all", UndoArg::All),
+            ("/undo --last-commit", UndoArg::LastCommit),
+            ("/undo zz", UndoArg::Usage),
+            ("/undo -1", UndoArg::Usage),
+            ("/undo --last", UndoArg::Usage),
+        ];
+        for (input, want) in rows {
+            assert_eq!(parse_undo_arg(input), want, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn undo_status_is_failure_only_for_unparseable_arg() {
+        // #982: `yoyo undo zz` printed usage and exited 0. Both rows return
+        // before any git call (usage, and the count-0 no-op), so this is pure.
+        let mut history = TurnHistory::new();
+        assert_eq!(handle_undo_status("/undo zz", &mut history), 1);
+        // Near-miss: `undo 0` is a no-op, not a usage error — stays 0.
+        assert_eq!(handle_undo_status("/undo 0", &mut history), 0);
     }
 
     #[test]

@@ -502,7 +502,10 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // explain that turn-based undo requires a session.
                 let input = quote_args_as_command(args);
                 let mut history = crate::session::TurnHistory::new();
-                crate::commands_git::handle_undo(&input, &mut history);
+                exit_if_nonzero(crate::commands_git::handle_undo_status(
+                    &input,
+                    &mut history,
+                ));
                 return Some(None);
             }
             "changelog" => {
