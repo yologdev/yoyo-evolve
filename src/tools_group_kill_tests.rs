@@ -115,3 +115,32 @@ async fn test_streaming_bash_normal_exit_leaves_detached_job_running() {
         "a detached job of a command that exited normally must not be killed"
     );
 }
+
+/// In its own process group, `bash` must NOT inherit yoyo's terminal stdin:
+/// a background group reading the tty gets SIGTTIN and freezes until the
+/// timeout. So stdin is null — a reader sees EOF at once and the command
+/// finishes (yoagent 0.25.2 pairs `process_group(0)` with `Stdio::null()`).
+#[tokio::test]
+async fn test_streaming_bash_stdin_is_null_so_readers_get_eof() {
+    let tool = StreamingBashTool::default();
+    let params = serde_json::json!({
+        "command": "if read -r x; then echo got-input; else echo eof; fi",
+        "timeout": 5
+    });
+    let result = tool.execute(params, ctx()).await.unwrap();
+    match &result.content[0] {
+        yoagent::types::Content::Text { text } => assert_eq!(text, "Exit code: 0\neof"),
+        _ => panic!("Expected text content"),
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let params = serde_json::json!({ "command": "readlink /proc/$$/fd/0" });
+        let result = tool.execute(params, ctx()).await.unwrap();
+        match &result.content[0] {
+            yoagent::types::Content::Text { text } => {
+                assert_eq!(text, "Exit code: 0\n/dev/null")
+            }
+            _ => panic!("Expected text content"),
+        }
+    }
+}

@@ -427,6 +427,11 @@ impl AgentTool for StreamingBashTool {
         let mut std_cmd = std::process::Command::new("bash");
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut std_cmd, 0);
+        // ...and paired with null stdin, as yoagent 0.25.2 does: a background
+        // group reading the terminal gets SIGTTIN and freezes silently until
+        // the timeout (`read`, sudo, ssh prompts). EOF at once is the fix.
+        #[cfg(unix)]
+        std_cmd.stdin(std::process::Stdio::null());
         let mut cmd = tokio::process::Command::from(std_cmd);
         cmd.arg("-o")
             .arg("pipefail")
