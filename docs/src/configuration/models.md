@@ -108,6 +108,10 @@ Cost estimation is built in for many providers:
 | Haiku 3.5 | $0.80 | $4.00 |
 
 Cost estimates are also available for OpenAI, Google, DeepSeek, Mistral, xAI, Groq, ZAI and more.
+On `provider = "openai"`, the exact ids `gpt-6-astra`, `gpt-6-sol` and `gpt-6-luna` use yoagent's
+own preset: a 1,050,000-token window, 64K default `max_tokens` (128K maximum), and its price,
+including the higher whole-request rate above 272K prompt tokens. Other ids, `gpt-6.1-sol` included,
+keep the generic OpenAI defaults.
 
 ## Context window
 

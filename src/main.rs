@@ -121,6 +121,8 @@ mod format;
 #[cfg(feature = "gasp")]
 mod gasp;
 #[cfg(test)]
+mod openai_preset_tests;
+#[cfg(test)]
 mod tool_wrappers_cancel_tests;
 #[cfg(test)]
 mod tools_child_bash_tests;

@@ -160,7 +160,8 @@ pub fn model_is_known_for_provider(provider: &str, model: &str) -> bool {
     if !known.is_empty() && known.contains(&model) {
         return true;
     }
-    provider == "anthropic" && crate::agent_builder::anthropic_preset(model).is_some()
+    (provider == "anthropic" && crate::agent_builder::anthropic_preset(model).is_some())
+        || (provider == "openai" && crate::agent_builder::openai_preset(model).is_some())
 }
 
 /// Get the default model for a given provider.

@@ -96,7 +96,9 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // An unpriced preset therefore falls through to yoyo's own table below
     // rather than being priced at $0 — a silent zero would read as a
     // confident measurement of a bill that is really unknown.
-    if let Some(cost) = crate::agent_builder::anthropic_preset(model).and_then(|preset| preset.cost)
+    if let Some(cost) = crate::agent_builder::anthropic_preset(model)
+        .or_else(|| crate::agent_builder::openai_preset(model))
+        .and_then(|preset| preset.cost)
     {
         return Some((
             cost.input_per_million,
@@ -370,7 +372,9 @@ pub fn estimate_request_cost_with(
     if overrides.lookup(model).is_some() {
         return Some((base, false));
     }
-    let tiers = crate::agent_builder::anthropic_preset(strip_router_prefix(model))
+    let stripped = strip_router_prefix(model);
+    let tiers = crate::agent_builder::anthropic_preset(stripped)
+        .or_else(|| crate::agent_builder::openai_preset(stripped))
         .and_then(|preset| preset.cost)
         .filter(|cost| !cost.context_tiers.is_empty());
     let Some(cost) = tiers else {

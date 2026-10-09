@@ -829,6 +829,39 @@ pub(crate) fn claude_haiku_5_5() -> ModelConfig {
     config
 }
 
+/// Look up a yoagent preset for an OpenAI model id: GPT-6 Astra/Sol/Luna.
+///
+/// **Exact id match only, deliberately unlike `anthropic_preset`'s prefixes.**
+/// `gpt-6.1-sol` (Codex's default) has no yoagent preset and its own vendor
+/// price; prefix-matching it onto `gpt-6-sol` would bill one id as its
+/// sibling (the #1003 misbill class). Unknown ids stay `None` so the caller
+/// keeps the generic `ModelConfig::openai` defaults.
+pub fn openai_preset(model: &str) -> Option<ModelConfig> {
+    match model {
+        "gpt-6-astra" => Some(ModelConfig::gpt_6_astra()),
+        "gpt-6-sol" => Some(ModelConfig::gpt_6_sol()),
+        "gpt-6-luna" => Some(ModelConfig::gpt_6_luna()),
+        _ => None,
+    }
+}
+
+/// The real maximum output a GPT-6 preset model accepts. yoagent's preset
+/// `max_tokens` (64K) is the request DEFAULT — its doc reads "defaults to 64K
+/// of the model's 128K max output" — so comparing a configured `max_tokens`
+/// against it would warn on a correct 128000 (the #964 trap, OpenAI side).
+pub(crate) const GPT_6_OUTPUT_MAXIMUM: u32 = 128_000;
+
+/// Output ceiling for the OpenAI-compatible build path: the GPT-6 maximum on
+/// `provider = "openai"` with a preset id, else the config's `max_tokens`
+/// (the pre-existing behaviour, unchanged for every other id).
+pub(crate) fn openai_compat_output_ceiling(provider: &str, model: &str, max_tokens: u32) -> u32 {
+    if provider == "openai" && openai_preset(model).is_some() {
+        GPT_6_OUTPUT_MAXIMUM
+    } else {
+        max_tokens
+    }
+}
+
 /// Build the ModelConfig for the default Anthropic path: fleet preset when
 /// the model name matches one, generic Anthropic config otherwise.
 /// Callers still apply `insert_client_headers` afterwards.
@@ -885,6 +918,16 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
         }
         "openai" => {
             let mut config = ModelConfig::openai(model, model);
+            // GPT-6 presets: take window, max_tokens, cost and reasoning from
+            // yoagent; deliberately NOT its `api` (Responses), compat or
+            // base_url, because switching yoyo's wire protocol is a separate
+            // decision that cannot be verified without a key.
+            if let Some(preset) = openai_preset(model) {
+                config.context_window = preset.context_window;
+                config.max_tokens = preset.max_tokens;
+                config.cost = preset.cost;
+                config.reasoning = preset.reasoning;
+            }
             if let Some(url) = base_url {
                 config.base_url = url.to_string();
             }
@@ -1597,7 +1640,12 @@ impl AgentConfig {
             // All other providers use OpenAI-compatible API
             let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
-            let output_ceiling = Some(model_config.max_tokens);
+            // GPT-6: the preset's max_tokens is a default, not the maximum.
+            let output_ceiling = Some(openai_compat_output_ceiling(
+                &self.provider,
+                &self.model,
+                model_config.max_tokens,
+            ));
             let agent = Agent::from_provider(OpenAiCompatProvider, model_config);
             self.configure_agent(agent, context_window, output_ceiling)
         }
