@@ -413,7 +413,21 @@ impl AgentTool for StreamingBashTool {
         // The `yes | head` idiom (SIGPIPE → exit 141) is handled below by the
         // SIGPIPE-141 guard so pipefail doesn't turn a normal pipeline into a
         // reported failure.
-        let mut cmd = tokio::process::Command::new("bash");
+        //
+        // Own process group (Unix): a timeout or cancel must kill the whole
+        // command — pipeline stages, `&&` lists, background jobs — not just
+        // `bash`, whose death orphans them (same defect as yoagent#277, fixed
+        // in yoagent 0.25.2's `BashTool`; this streaming twin does not
+        // inherit that fix, so it mirrors the rule here). std's
+        // `process_group` is used, as yoagent does, rather than tokio's.
+        // Consequence: the group no longer receives the terminal's SIGINT;
+        // Ctrl+C reaches it through the agent's cancel token instead, which
+        // fires the `cancel.cancelled()` arm below and kills the group.
+        #[cfg_attr(not(unix), allow(unused_mut))]
+        let mut std_cmd = std::process::Command::new("bash");
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut std_cmd, 0);
+        let mut cmd = tokio::process::Command::from(std_cmd);
         cmd.arg("-o")
             .arg("pipefail")
             .arg("-c")
@@ -426,6 +440,8 @@ impl AgentTool for StreamingBashTool {
         // Pipe stdout/stderr for line-by-line reading
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+        // If this future is dropped mid-run, don't leave `bash` behind either.
+        cmd.kill_on_drop(true);
 
         let timeout = if let Some(t) = params.get("timeout").and_then(|v| v.as_u64()) {
             Duration::from_secs(t.clamp(1, 600))
@@ -439,6 +455,10 @@ impl AgentTool for StreamingBashTool {
         let mut child = cmd
             .spawn()
             .map_err(|e| ToolError::Failed(format!("Failed to spawn: {e}")))?;
+        // Declared after `child`, so on a dropped future it is dropped first:
+        // the group is killed while `bash` is not yet reaped, so its id
+        // cannot have been reused.
+        let mut group = GroupKill::new(child.id());
 
         // Take stdout/stderr handles
         let stdout = child.stdout.take();
@@ -547,12 +567,15 @@ impl AgentTool for StreamingBashTool {
         // Wait for the process with timeout and cancellation
         let exit_status = tokio::select! {
             _ = cancel.cancelled() => {
-                // Kill the child process on cancellation
+                // Kill the whole group, then reap `bash`. The group goes
+                // first, while `bash` is unreaped and its pid is still ours.
+                group.kill_now();
                 let _ = child.kill().await;
                 reader_handle.abort();
                 return Err(yoagent::types::ToolError::Cancelled);
             }
             _ = tokio::time::sleep(timeout) => {
+                group.kill_now();
                 let _ = child.kill().await;
                 reader_handle.abort();
                 return Err(ToolError::Failed(format!(
@@ -561,6 +584,10 @@ impl AgentTool for StreamingBashTool {
                 )));
             }
             status = child.wait() => {
+                // Finished on its own: whatever it deliberately left running
+                // (`server >log 2>&1 &`) is the command's business, so the
+                // group is NOT killed — yoagent's `GroupKill::disarm` rule.
+                group.disarm();
                 status.map_err(|e| ToolError::Failed(format!("Failed to wait: {e}")))?
             }
         };
@@ -595,6 +622,53 @@ impl AgentTool for StreamingBashTool {
 }
 
 // ── rename_symbol agent tool ─────────────────────────────────────────────
+
+/// Kills a command's process group (SIGKILL) on a timeout, a cancel, or the
+/// tool's future being dropped — unless the command finished first and the
+/// guard was disarmed. Mirrors yoagent 0.25.2's `GroupKill` (same signal, no
+/// TERM-then-KILL grace) so the parent's bash and a sub-agent's bash agree on
+/// what a timeout kills once yoyo is on that release. No-op off Unix, where
+/// `child.kill()` alone remains the behaviour.
+struct GroupKill {
+    #[cfg(unix)]
+    pgid: Option<libc::pid_t>,
+}
+
+impl GroupKill {
+    fn new(pid: Option<u32>) -> Self {
+        #[cfg(not(unix))]
+        let _ = pid;
+        Self {
+            #[cfg(unix)]
+            pgid: pid.and_then(|p| libc::pid_t::try_from(p).ok()),
+        }
+    }
+
+    /// Kill the group now and disarm, so the drop does not signal again.
+    fn kill_now(&mut self) {
+        #[cfg(unix)]
+        if let Some(pgid) = self.pgid.take() {
+            // SAFETY: `killpg` takes two integers and touches no memory of
+            // ours; a failure (the group already gone) is fine to ignore.
+            unsafe {
+                libc::killpg(pgid, libc::SIGKILL);
+            }
+        }
+    }
+
+    fn disarm(&mut self) {
+        #[cfg(unix)]
+        {
+            self.pgid = None;
+        }
+    }
+}
+
+impl Drop for GroupKill {
+    fn drop(&mut self) {
+        self.kill_now();
+    }
+}
 
 /// An agent-invocable tool for renaming symbols across a project.
 /// Wraps `commands_project::rename_in_project` so the LLM can do cross-file
