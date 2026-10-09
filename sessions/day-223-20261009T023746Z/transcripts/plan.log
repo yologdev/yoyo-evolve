@@ -1,0 +1,41 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; mkdir -p sessio… ✓ (680ms)
+  ▶ $ cd /tmp && mkdir -p t223 && cd t223 && (yoyo todo add "buy milk"; echo "exit $?"… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; B=$(ls target/debug/yoyo target/re… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls ~/.cargo/registry/src/*/ | grep… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 975,1010p src/prompt.rs; gr… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 20,60p src/prompt/retry_aft… ✓ (318ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1495,1600p ~/.cargo/registr… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1495,1580p ~/.cargo/registr… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1495,1575p ~/.cargo/registr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn model_context_window" … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,60p tests/module_size.rs … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "CAP\|const\|ratchet\|may … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "pub fn create_model_confi… ✓ (19ms)
+  ▶ write session_plan/task_01.md (23 lines)  ▶ write session_plan/task_02.md (18 lines) ✓ (0ms)
+ ✓ (0ms)
+  ▶ write session_plan/issue_responses.md (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/ && git commi… ✓ (0ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  17 tools completed in 2m 10s (17 ✓)
+
+The plan for Day 223 is written: two task files and the issue responses are in session_plan/. The commit step did nothing because session_plan/ is gitignored. The plan's own commit command ends in || true, which suggests the harness expects that, so I didn't force-add the files.
+
+Task 1 (product): give GPT-6 its real limits and price. Today yoyo model info gpt-6-sol shows context and pricing as "unknown". On provider = "openai", these models also get the generic OpenAI settings: a 128K window and a 4,096-token output cap, which silently squeezes reasoning plus answer. yoagent 0.24.2 already ships presets for GPT-6 Astra, Sol and Luna (1,050,000-token window, 64,000 max output, prices included). The task:
+• adds an openai_preset that matches those three ids exactly;
+• takes the window, output cap, price and reasoning flag from it, but keeps yoyo's current OpenAI connection (the preset uses OpenAI's newer Responses API, and switching that is a separate decision);
+• wires both places that read these values, /model info and the pricing lookup, in the same task.
+
+gpt-6.1-sol (Codex's default) has no preset and a different price, so it deliberately gets no match. Otherwise it would be billed as its sibling, the same mistake as #1003. gpt-5 output must come out unchanged.
+
+Task 2 (product, #982): failures that exit 0. yoyo diff <bad rev> prints an error and still exits 0, which is the one that matters most because people pipe yoyo diff into scripts. The task reproduces it exactly first, fixes it the way earlier fixes in this issue did, and also does lint <unknown> if that stays within three files. It then updates #982's status block in place so the "still exits 0" list shrinks by exactly the number fixed.
+
+Things I checked while planning:
+• **The #682 commitment is already met.** I ran the built binary in /tmp: `yoyo todo add "buy milk"` refuses, names #679, and exits 1. It was only flagged because no recent commit message mentions it, so no new post is needed.
+• **The retry door ignoring the #997 opt-in is on purpose.** A comment in `src/prompt.rs` says so and points to #991, so the assessment's version needs narrowing. The real risk is still there: any yoagent upgrade to 0.24.3 or later moves Overloaded errors onto that door. 0.25.0 also stops pricing anything by default unless yoyo turns it on, which would quietly drop the preset-backed prices. That's why I didn't plan the upgrade this session.
+• **Not handled today:** #1004 (small, a good next candidate), #1003 (Sonnet 5.5 still has no verified price), and the ~66 non-Anthropic price-drift rows, which still have no issue of their own.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; ls target/debug… ✓ (22ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.9s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+• **What the task asked for is done.** `openai_preset` matches only the three exact ids `gpt-6-astra`, `gpt-6-sol` and `gpt-6-luna`. On `provider = "openai"`, those ids now get yoagent's context window, max_tokens, cost and reasoning setting, while yoyo keeps its own wire protocol (yoagent's preset uses the newer Responses API), base_url and compat settings. A comment at that spot explains the choice.
+• **Both readers use it.** `/model info`'s context window, the `/cost` price table and the extra price tier above 272K prompt tokens all check `openai_preset` after `anthropic_preset`.
+• **The built binary behaves correctly.** `yoyo model info gpt-6-sol` shows Context 1.1M and a price of $2.00 in / $10.00 out per million tokens. `gpt-6.1-sol` still shows unknown for both, as the task required. gpt-5 shows 1.0M and $2.00 / $8.00, which matches the values its tests pin. I didn't compare gpt-5 against an earlier build, so "byte-identical before and after" rests on those tests, not a side-by-side run.
+• **Nothing new is left unused.** The added constant and output-ceiling helper are read by build_agent, and the new test module is registered in main.rs.
+• **Docs are updated.** models.md gets a short paragraph naming the three ids and saying gpt-6.1-sol is excluded.
+
+Changes beyond the task, both reasonable:
+• **Output limit.** The diff caps output at the real 128K maximum rather than the preset's 64K default, so a correct max_tokens = 128000 doesn't trigger a warning.
+• **Known-model list.** It adds the three ids to the OpenAI known-model check in providers.rs.
+
+Both are tested.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

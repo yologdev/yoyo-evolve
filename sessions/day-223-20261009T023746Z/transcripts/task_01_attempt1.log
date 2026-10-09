@@ -1,0 +1,248 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 740,960p src/agent_builder.… ✓ (607ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (149ms)
+  ▶ $ cd /tmp; B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; for m in… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn model_context_window" … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 60,135p src/format/cost.rs;… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1185,1240p src/agent_builde… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1495,1515p src/agent_builde… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "model_output_ceiling" src… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=1270 && NR<=1330' src/age… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "model_output_ceiling\|ant… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "model_output_ceiling\|ant… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1565,1600p src/agent_builde… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  16 tools completed in 44.6s (16 ✓)
+
+Before-readings are captured. Next I'm writing openai_preset and wiring it in.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (1 → 34 lines)
+  + /// Look up a yoagent preset for an OpenAI model id: GPT-6 Astra/Sol/Luna.
+  + ///
+  + /// **Exact id match only, deliberately unlike `anthropic_preset`'s prefixes.**
+  + /// `gpt-6.1-sol` (Codex's default) has no yoagent preset and its own vendor
+  + /// price; prefix-matching it onto `gpt-6-sol` would bill one id as its
+  + /// sibling (the #1003 misbill class). Unknown ids stay `None` so the caller
+  + /// keeps the generic `ModelConfig::openai` defaults.
+  + pub fn openai_preset(model: &str) -> Option<ModelConfig> {
+  +     match model {
+  +         "gpt-6-astra" => Some(ModelConfig::gpt_6_astra()),
+  +         "gpt-6-sol" => Some(ModelConfig::gpt_6_sol()),
+  +         "gpt-6-luna" => Some(ModelConfig::gpt_6_luna()),
+  +         _ => None,
+  +     }
+  + }
+  + 
+  + /// The real maximum output a GPT-6 preset model accepts. yoagent's preset
+  + /// `max_tokens` (64K) is the request DEFAULT — its doc reads "defaults to 64K
+  + /// of the model's 128K max output" — so comparing a configured `max_tokens`
+  + /// against it would warn on a correct 128000 (the #964 trap, OpenAI side).
+  ... (14 more lines)
+  ▶ edit src/agent_builder.rs (3 → 13 lines)
+            "openai" => {
+                let mut config = ModelConfig::openai(model, model);
+  +             // GPT-6 presets: take window, max_tokens, cost and reasoning from
+  +             // yoagent; deliberately NOT its `api` (Responses), compat or
+  +             // base_url, because switching yoyo's wire protocol is a separate
+  +             // decision that cannot be verified without a key.
+  +             if let Some(preset) = openai_preset(model) {
+  +                 config.context_window = preset.context_window;
+  +                 config.max_tokens = preset.max_tokens;
+  +                 config.cost = preset.cost;
+  +                 config.reasoning = preset.reasoning;
+  +             }
+                if let Some(url) = base_url {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "let output_ceiling = Some… ✓ (15.8s)
+  + /// Look up a yoagent preset for an OpenAI model id: GPT-6 Astra/Sol/Luna.
+  + ///
+  + /// **Exact id match only, deliberately unlike `anthropic_preset`'s prefixes.**
+  + /// `gpt-6.1-sol` (Codex's default) has no yoagent preset and its own vendor
+  + /// price; prefix-matching it onto `gpt-6-sol` would bill one id as its
+  + /// sibling (the #1003 misbill class). Unknown ids stay `None` so the caller
+  + /// keeps the generic `ModelConfig::openai` defaults.
+  + pub fn openai_preset(model: &str) -> Option<ModelConfig> {
+  ... (13 more lines)
+ ✓ (31.6s)
+            "openai" => {
+                let mut config = ModelConfig::openai(model, model);
+  +             // GPT-6 presets: take window, max_tokens, cost and reasoning from
+  +             // yoagent; deliberately NOT its `api` (Responses), compat or
+  +             // base_url, because switching yoyo's wire protocol is a separate
+  +             // decision that cannot be verified without a key.
+  +             if let Some(preset) = openai_preset(model) {
+  +                 config.context_window = preset.context_window;
+  ... (5 more lines)
+ ✓ (31.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn openai_preset\|Build t… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 35.4s (4 ✓)
+
+The two parallel edits raced, and the second one overwrote the first. I'm redoing the first one now.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (1 → 34 lines)
+  + /// Look up a yoagent preset for an OpenAI model id: GPT-6 Astra/Sol/Luna.
+  + ///
+  + /// **Exact id match only, deliberately unlike `anthropic_preset`'s prefixes.**
+  + /// `gpt-6.1-sol` (Codex's default) has no yoagent preset and its own vendor
+  + /// price; prefix-matching it onto `gpt-6-sol` would bill one id as its
+  + /// sibling (the #1003 misbill class). Unknown ids stay `None` so the caller
+  + /// keeps the generic `ModelConfig::openai` defaults.
+  + pub fn openai_preset(model: &str) -> Option<ModelConfig> {
+  +     match model {
+  +         "gpt-6-astra" => Some(ModelConfig::gpt_6_astra()),
+  +         "gpt-6-sol" => Some(ModelConfig::gpt_6_sol()),
+  +         "gpt-6-luna" => Some(ModelConfig::gpt_6_luna()),
+  +         _ => None,
+  +     }
+  + }
+  + 
+  + /// The real maximum output a GPT-6 preset model accepts. yoagent's preset
+  + /// `max_tokens` (64K) is the request DEFAULT — its doc reads "defaults to 64K
+  + /// of the model's 128K max output" — so comparing a configured `max_tokens`
+  + /// against it would warn on a correct 128000 (the #964 trap, OpenAI side).
+  ... (14 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1620,1645p src/agent_builde… ✓ (17.9s)
+  + /// Look up a yoagent preset for an OpenAI model id: GPT-6 Astra/Sol/Luna.
+  + ///
+  + /// **Exact id match only, deliberately unlike `anthropic_preset`'s prefixes.**
+  + /// `gpt-6.1-sol` (Codex's default) has no yoagent preset and its own vendor
+  + /// price; prefix-matching it onto `gpt-6-sol` would bill one id as its
+  + /// sibling (the #1003 misbill class). Unknown ids stay `None` so the caller
+  + /// keeps the generic `ModelConfig::openai` defaults.
+  + pub fn openai_preset(model: &str) -> Option<ModelConfig> {
+  ... (13 more lines)
+ ✓ (17.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (21 lines) ✓ (9.8s)
+  3 tools completed in 31.6s (3 ✓)
+
+Now the two readers.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (33 lines) ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me find every other reader of anthropic_preset, so I don't miss a door.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "anthropic_preset(" src -… ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 140,175p src/providers.rs; … ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn known_models_for_provi… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (11 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "anthropic_preset_tests\|… ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 16.1s (5 ✓)
+
+I'll put the tests in a sibling file, the same way anthropic_preset_tests.rs does, since agent_builder.rs is at its size gate.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 38,46p src/main.rs; grep -n… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 40,58p src/format/cost.rs; … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 35,56p src/format/cost/cont… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (9ms)
+  ▶ write src/openai_preset_tests.rs (212 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (33.6s)
+ ✓ (33.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/use crate::format::{esti… ✓ (28.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 51s (8 ✓)
+
+All 9 pass. Next, a positive control on the producer, run as one atomic mutate→test→restore command:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/agent_b… (11 lines) ✓ (1m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls go red by name, and both files are restored (the diffstat matches). Now the full gate and the after-readings:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo build 2>&1 | ta… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; (cargo clippy --all-targets -- -D … ✓ (2m 27s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -c "FAILED\|panicked" /tmp/fu… ✓ (1.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4m 38s (2 ✓, 1 ✗)
+
+gpt-5 and gpt-6.1-sol are byte-identical before and after. The full suite is green (0 FAILED), and so are fmt and clippy. Next I'll check the docs page.
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -i "openai\|gpt" docs/src/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 95,125p docs/src/configurat… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.6s (2 ✓)
+
+The page doesn't list OpenAI models one by one, so I'm not adding a section. One clause on the existing OpenAI cost line keeps it accurate:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/configuration/models.md (1 → 5 lines)
+    Cost estimates are also available for OpenAI, Google, DeepSeek, Mistral, xAI, Groq, ZAI and more.
+  + On `provider = "openai"`, the exact ids `gpt-6-astra`, `gpt-6-sol` and `gpt-6-luna` use yoagent's
+  + own preset: a 1,050,000-token window, 64K default `max_tokens` (128K maximum), and its price,
+  + including the higher whole-request rate above 272K prompt tokens. Other ids, `gpt-6.1-sol` included,
+  + keep the generic OpenAI defaults.
+ ✓ (0ms)
+    Cost estimates are also available for OpenAI, Google, DeepSeek, Mistral, xAI, Groq, ZAI and more.
+  + On `provider = "openai"`, the exact ids `gpt-6-astra`, `gpt-6-sol` and `gpt-6-luna` use yoagent's
+  + own preset: a 1,050,000-token window, 64K default `max_tokens` (128K maximum), and its price,
+  + including the higher whole-request rate above 272K prompt tokens. Other ids, `gpt-6.1-sol` included,
+  + keep the generic OpenAI defaults.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything is green. Committing:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (48 lines) ✓ (28ms)
+
+On provider = "openai", gpt-6-astra, gpt-6-sol and gpt-6-luna now use yoagent's own GPT-6 settings instead of the generic OpenAI defaults (128K window, 4,096 max_tokens, no price). They get a 1,050,000-token window, 64K max_tokens and yoagent's prices. All checks passed: build, the full cargo test suite (0 failures), clippy with -D warnings, and the fmt check. It's committed as 005b99ea. No issue for GPT-6 existed, so none is cited.
+
+Before and after (`yoyo model info <id>` from the built binary):
+| id | before | after |
+|---|---|---|
+| gpt-6-sol | Context unknown, Pricing unknown | 1.1M tokens, $2 in / $10 out |
+| gpt-6-astra | unknown, unknown | 1.1M tokens, $10 in / $50 out |
+| gpt-6-luna | unknown, unknown | 1.1M tokens, $0.10 in / $0.50 out |
+| gpt-6.1-sol, gpt-5 | — | byte-identical to before (diffed) |
+
+What changed:
+• **New `openai_preset** in src/agent_builder.rs matches only those three exact ids. Prefix matching would have charged gpt-6.1-sol at gpt-6-sol`'s price, so it stays on the generic defaults.
+• **The `"openai"` arm** now takes the window, max_tokens, price and reasoning flag from yoagent. It keeps yoyo's existing API protocol, settings and base URL. yoagent's preset uses a different OpenAI API, and switching to it can't be checked without an API key. A comment at the arm says this.
+• **Every place that reads these values was updated in the same commit:** the context window in `commands_info.rs`, the price table in `format/cost.rs`, and the higher price for requests over 272K prompt tokens (a one-line change).
+• **Outside the planned files:**
+  • `src/providers.rs (one line): the GPT-6 ids now count as known models. Otherwise gpt-6-sol` would print "Unknown model" next to a correct window and price.
+  • The output limit used for the max_tokens warning: yoagent's 64K is the default for a model whose maximum is 128K. Without this change, a valid `max_tokens = 128000` would trigger a false warning. I ran into this while working, so it wasn't in the plan.
+• **Tests:** 9 new ones in `src/openai_preset_tests.rs`. Expected values come from yoagent's own functions, not hand-typed numbers. They also check near-misses and that OpenRouter, Groq and custom providers don't pick up the GPT-6 values. To prove the tests catch real breakage, I broke the code twice, one at a time, and restored it each time:
+  • Removing the gpt-6-sol entry failed 7 of the 9 tests.
+  • Disconnecting the >272K price failed its test.
+• **Docs:** I added one sentence to the existing OpenAI cost line in `docs/src/configuration/models.md`, since that page doesn't list OpenAI models individually.
+
+Still open:
+• `gpt-6.1-sol` (Codex's default model) has no yoagent preset, so its window and price are still unknown.
+• `/model info` shows the 1.05M window as "1.1M" because of how it rounds context sizes. I didn't change that.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/2 changed files were in top-10 predictions (50.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 50.0%
+     Predicted correctly: src/agent_builder.rs
+     Surprises (not predicted): src/openai_preset_tests.rs

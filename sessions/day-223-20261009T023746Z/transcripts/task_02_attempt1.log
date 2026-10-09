@@ -1,0 +1,110 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '"diff"\|"lint"\|"tree"' s… ✓ (3ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 295,355p src/dispatch_sub.r… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 8.3s (3 ✓)
+
+Wiring exists; the ref-range branch returns 0 unconditionally. Let me build and reproduce.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -2; Y=$PWD… ✓ (193ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$PWD/target/debug/yoyo; cd /tmp/… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "handle_diff_ref_range\|fn… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 225,300p src/commands_lint.… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn handle_tree_status" -A… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 236,241p src/commands_lint.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1500,1520p src/dispatch_sub… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "unknown revision\|Unknown… ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1020,1060p src/commands_lin… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 41.2s (9 ✓)
+
+Write the failing tests first.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (47 lines) ✓ (27.4s)
+
+Red for the right reason. Now the fixes.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (46 lines) ✓ (26ms)
+
+Also update the lint doc comment (it may claim the unknown-sub case is a separate item). Let me check.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=236 && NR<=241' src/comma… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 -c " (3 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (39.0s)
+  3 tools completed in 50.5s (3 ✓)
+
+Re-run the exact recorded reproduction against the new binary, both in /tmp and in this repo:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$PWD/target/debug/yoyo; for d in… ✓ (17.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The 141s are SIGPIPE from my | head -3. I'll re-check those two without it:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$PWD/target/debug/yoyo; $Y diff … ✓ (44ms)
+
+Now the full gate.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (2m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -cE "FAILED… ✓ (2m 33s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4m 56s (2 ✓)
+
+Green. Quick check that no doc states these exit 0:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "982" docs/src README.md …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 982 --json body -q .… ✓ (9ms)
+ ✓ (310ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cat /tmp/b.md | head -8 | cut -c1-400 ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 5.0s (3 ✓)
+
+Next, commit, then edit the issue with the real SHA. First, the docs line needs these two failures in it:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (24 lines) ✓ (35ms)
+  ▶ $ cd /tmp; python3 - <<'EOF' (12 lines) ✓ (81ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue edit 982 --body-file /tmp… ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 15.1s (3 ✓)
+
+yoyo diff <bad rev> and yoyo lint <unknown sub> now both exit 1 instead of 0. tree <bad arg> still exits 0. Fixing it would have meant editing a third handler file, which was over the task's file limit. The change is committed as 39db2a44 with "Part of #982".
+
+Before and after, run on the built binary in a scratch repo under /tmp and in this repo:
+
+| command | before | after |
+|---|---|---|
+| yoyo diff nonexistent_rev_zz | exit 0 | exit 1 (error still on stderr) |
+| yoyo lint zz | exit 0 | exit 1 |
+| yoyo diff (no changes) | 0 | 0 |
+| yoyo diff HEAD, yoyo diff HEAD --stat | 0 | 0 |
+| yoyo lint (valid default) | 1 with no project / 0 in this repo | unchanged |
+
+What I changed:
+• **The wiring was already there.** In `src/dispatch_sub.rs` the `diff` and `lint` arms already exit with whatever status their handler returns, so that file needed no edit. The bugs were in the handlers themselves.
+• **`src/commands_git.rs`:** the bad-revision check worked, but the code always reported success afterwards. It now returns 1 when a revision doesn't exist and 0 on every other path.
+• **`src/commands_lint.rs`:** the "Unknown /lint subcommand" branch now returns 1. Its message stays on stdout, like the "no recognized project" message next to it, which also exits 1.
+• **Tests:** I wrote one for each fix first and watched both fail with `left: 0 right: 1`. They check that unknown revisions fail (including a bad ref inside a range) and that unknown lint subcommands fail. They also check that valid revisions, --stat and lint fix still succeed.
+• **Docs:** docs/src/usage/commands.md now lists these two exit codes in its exit-code paragraph.
+
+fmt, clippy with -D warnings, and the full cargo test all pass with no failures. No file grew enough to trip the module-size check.
+
+Issue #982: I edited the issue's status block in place, adding both commands to "Already fixed" with the commit hash. The "Known still exit 0" list didn't get shorter. These two commands were never on it; today's assessment found them by testing directly. So it still holds the same 3 entries: def/outline when nothing is found, bare run, and tree <bad arg>. I wrote that reason into the issue so it doesn't look like a count that should have gone down. Most of the other subcommands still haven't been tested.
+  watch: no files changed this turn — skipping
