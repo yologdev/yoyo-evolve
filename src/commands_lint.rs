@@ -236,7 +236,8 @@ pub fn handle_lint(input: &str) -> Option<String> {
 
 /// `/lint` with an exit status for the shell door (`yoyo lint`, #982): the
 /// summary `handle_lint` returns, plus 1 when no recognized project was found
-/// (via `commands_dev::no_project_status`) and 0 otherwise. Deliberately
+/// (via `commands_dev::no_project_status`) or the subcommand is unknown, and
+/// 0 otherwise. Deliberately
 /// narrow: a lint TOOL that ran and failed still reports 0 here — that is a
 /// separate #982 item. The REPL calls `handle_lint`, which discards the code.
 pub(crate) fn handle_lint_status(input: &str) -> (Option<String>, i32) {
@@ -280,7 +281,8 @@ pub(crate) fn handle_lint_status(input: &str) -> (Option<String>, i32) {
                     "Unknown /lint subcommand: {arg} (available: {})",
                     LINT_SUBCOMMANDS.join(" | ")
                 )),
-                0,
+                // #982: `yoyo lint zz` exited 0 after refusing; a refusal is a failure.
+                1,
             );
         }
     };
@@ -1047,6 +1049,24 @@ mod tests {
         // Documented subcommands are still routed, not refused: `fix` returns
         // early with its own message (None), never the unknown-subcommand text.
         assert_eq!(handle_lint("/lint fix"), None);
+    }
+
+    #[test]
+    fn unknown_lint_subcommand_exits_nonzero_and_known_ones_do_not() {
+        // #982 residue: `yoyo lint zz` printed "Unknown /lint subcommand" and
+        // exited 0. The shell door reads this code (dispatch_sub's `lint` arm
+        // -> exit_if_nonzero), so the unknown arm must carry a failure value.
+        let (summary, code) = handle_lint_status("/lint zz");
+        assert_eq!(code, 1, "unknown subcommand must be a failure");
+        assert!(
+            summary
+                .as_deref()
+                .unwrap_or("")
+                .contains("Unknown /lint subcommand: zz"),
+            "summary unchanged: {summary:?}"
+        );
+        // Near-miss: `fix` is documented, returns early, and stays a success.
+        assert_eq!(handle_lint_status("/lint fix"), (None, 0));
     }
 
     #[test]

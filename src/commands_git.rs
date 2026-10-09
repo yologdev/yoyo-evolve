@@ -262,8 +262,7 @@ pub fn handle_diff_status(input: &str) -> i32 {
 
     // When a ref range is specified, compare commits directly
     if let Some(ref range) = opts.ref_range {
-        handle_diff_ref_range(&opts, range);
-        return 0;
+        return handle_diff_ref_range(&opts, range);
     }
 
     // Check if we're in a git repo
@@ -498,7 +497,9 @@ pub fn handle_diff_status(input: &str) -> i32 {
 
 /// Handle `/diff` when a ref range is specified (e.g. `main..feature`, `HEAD~3`, `v1.0`).
 /// Runs `git diff <range>` directly — no staged/unstaged logic needed.
-fn handle_diff_ref_range(opts: &DiffOptions, range: &str) {
+/// Returns 1 when a named revision does not resolve (#982: a script piping
+/// `yoyo diff <bad rev>` must not read the refusal as "no changes"), else 0.
+fn handle_diff_ref_range(opts: &DiffOptions, range: &str) -> i32 {
     // Validate the ref(s) exist
     let refs_to_check: Vec<&str> = if range.contains("...") {
         range.splitn(2, "...").collect()
@@ -511,7 +512,7 @@ fn handle_diff_ref_range(opts: &DiffOptions, range: &str) {
         if !r.is_empty() {
             if let Err(_e) = run_git(&["rev-parse", "--verify", r]) {
                 eprintln!("{RED}  error: unknown revision '{r}'{RESET}\n");
-                return;
+                return 1;
             }
         }
     }
@@ -534,7 +535,7 @@ fn handle_diff_ref_range(opts: &DiffOptions, range: &str) {
             }
             println!();
         }
-        return;
+        return 0;
     }
 
     if opts.stat_only {
@@ -555,12 +556,12 @@ fn handle_diff_ref_range(opts: &DiffOptions, range: &str) {
                 print!("{formatted}");
             }
         }
-        return;
+        return 0;
     }
 
     if opts.functions {
         handle_diff_functions(opts);
-        return;
+        return 0;
     }
 
     // Default: full diff with stat header
@@ -595,6 +596,7 @@ fn handle_diff_ref_range(opts: &DiffOptions, range: &str) {
         print!("{}", colorize_diff(&full_diff));
         println!();
     }
+    0
 }
 
 /// Combine two stat/diff outputs, deduplicating if both are present.
@@ -1894,6 +1896,20 @@ mod tests {
     use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
 
     // ── parse_diff_stat tests ───────────────────────────────────────────
+
+    #[test]
+    fn diff_unknown_revision_returns_failure_and_valid_rev_succeeds() {
+        // #982 residue: `yoyo diff nonexistent_rev_zz` printed "unknown
+        // revision" and exited 0, which a script reads as "no changes".
+        // The ref-range branch only runs read-only `git rev-parse --verify`
+        // before refusing, so the crate-root cwd is safe here.
+        assert_eq!(handle_diff_status("/diff nonexistent_rev_zz"), 1);
+        // A bad ref on either side of a range is the same failure.
+        assert_eq!(handle_diff_status("/diff HEAD..nonexistent_rev_zz"), 1);
+        // Near-miss: a valid rev is still a success.
+        assert_eq!(handle_diff_status("/diff HEAD"), 0);
+        assert_eq!(handle_diff_status("/diff HEAD --stat"), 0);
+    }
 
     #[test]
     fn parse_diff_stat_single_file() {
