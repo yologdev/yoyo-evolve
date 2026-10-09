@@ -1,0 +1,55 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; mkdir -p sessio… ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^libc\|^nix\|^\[target" C… ✓ (12ms)
+  ▶ write session_plan/task_01.md (48 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rln "yoagent-version-claim" … ✓ (98ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "yoagent-version-claim" -… ✓ (63ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "minor\|stale\|fail\|match… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git log --oneline -200 --grep="#98… ✓ (758ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rln "yoagent-version-claim" … ✓ (57ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/upg… (23 lines) ✓ (1.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 20s (9 ✓)
+
+Now task 2: the #982 residue, scoped to "I couldn't look" read as "nothing here".
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_02.md (43 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > session_… (12 lines) ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls session_plan/ ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 15.1s (3 ✓)
+
+I've written the session plan: two task files plus the issue responses. The plan commit didn't happen because session_plan/ is gitignored, so git add refused. The plan command ends in || true, which suggests the harness expects that; the files are on disk.
+
+Task 1 (product, `src/tools.rs`): kill the whole process group when a bash command times out or is cancelled. Today yoyo's own bash tool kills only the bash process. The assessment showed a pipeline stage like sleep … | cat keeps running after its parent bash is killed, so a timed-out build or dev server is left behind. The steps are:
+1. Read the same fix in yoagent 0.25.2's BashTool first.
+2. Write a test that fails now: after a timeout, the unique sleep must be gone.
+3. Fix it using process_group(0) plus a group kill, with the existing libc dependency.
+4. Confirm the Ctrl+C path still reaches the tool's cancel branch, since the terminal's Ctrl+C will no longer reach the child directly.
+5. Pin two near-misses: normal completion and non-zero exit codes behave as before.
+6. Break the fix on purpose to check the test catches it, then restore it.
+
+This is in the tools subsystem, which follows the warning that format has had too many recent changes.
+
+Task 2 (product, part of #982): two shell commands that exit 0 on failure.
+• `yoyo map <missing path>` reports "no supported source files", which makes a typo look like a real, empty project. It will exit 1 with the error on stderr. A real directory that is empty stays at exit 0, pinned by a test.
+• yoyo def and yoyo outline with no argument will exit 2.
+• The task reproduces the exact commands before and after, and rewrites #982's body to list what is actually left.
+
+Not planned: the yoagent 0.24.2 → 0.25.2 upgrade. A grep showed it touches far more than the 3-file limit per task:
+• the enable_bundled() call for prices, placed where tests run too;
+• 5 `Extension → Custom` renames in 3 files;
+• 22 version markers across about 10 files, which tests/doc_version_claims.rs fails on until each paragraph is re-read;
+• a check of how Ctrl+C reaches the sub-agent's bash.
+
+A compile break means it can't be split across sessions, so rather than leave it as a line in the assessment I filed #1007 with that list, for a session that plans the upgrade as its only task. Until it lands, the main agent's bash will kill the whole group on timeout while the sub-agent's bash still kills only bash.
+
+No release this session; v0.2.0 was 4 days ago. No community issues need a reply.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

@@ -1,0 +1,19 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 cargo test --bin yoy… ✓ (1.2s)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.5s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+• **The fix:** on Unix, the bash tool now starts `bash` in its own process group. On a timeout or a cancel it kills that whole group before killing `bash` itself, so pipeline stages, && lists and background jobs no longer keep running after bash dies. When a command finishes on its own the group is left alone, so a job it deliberately detached (server >log 2>&1 &) keeps running. Off Unix nothing changes.
+• **Tests:** I ran the four new tests and they pass. They check that a timeout kills a pipeline stage, that a cancel kills a background job, that a detached job survives a normal exit, and that stdin is empty. The existing exit-code test still covers the non-zero-status case.
+• **Wiring:** every new function is called from the tool, the new test module is registered in `src/main.rs`, and the file-size limit for `src/tools.rs` was raised to 5207 lines with a dated reason. No new crate was added.
+• **One user-visible change beyond the task:** on Unix, a command that reads input now gets end-of-input straight away instead of the user's terminal. Without that, a process in its own group freezes when it tries to read the terminal, until the timeout hits. It matches what the sub-agent's bash tool (from the yoagent library) does in 0.25.2. ARCHITECTURE.md covers it, along with the Ctrl+C behaviour and the fact that the sub-agent's bash still only kills bash until yoyo upgrades to yoagent 0.25.2.
+
+I didn't re-run the tests against the old code. The "fails before the fix" result and the sabotage-then-restore check come from the ARCHITECTURE.md entry, not from my own run.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

@@ -1,0 +1,180 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; pwd; sed -n 30,45p Cargo.toml; sed… ✓ (8ms)
+  ▶ $ cd /tmp && (curl -sL https://crates.io/api/v1/crates/yoagent/0.25.2/download | t… ✓ (293ms)
+  ▶ $ sed -n 150,320p /tmp/yoagent-0.25.2/src/tools/bash.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "unsafe_code\|libc::" src… ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2440,2470p src/tools.rs; gr… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 337,350p src/tools.rs; grep… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 18.7s (7 ✓)
+
+Now write the failing tests (timeout + cancel + near-miss detached-job decision).
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (2 → 110 lines)
+  +     // --- process-group kill on timeout/cancel (same defect as yoagent#277) ---
+  + 
+  +     /// Is any process whose command line contains `needle` still alive?
+  +     /// Polls up to ~2s so a group that is dying is not reported as alive.
+  +     #[cfg(unix)]
+  +     async fn survivor_alive(needle: &str) -> bool {
+  +         for _ in 0..20 {
+  +             let out = std::process::Command::new("pgrep")
+  +                 .arg("-f")
+  +                 .arg(needle)
+  +                 .output()
+  +                 .expect("pgrep runs");
+  +             if out.stdout.is_empty() {
+  +                 return false;
+  +             }
+  +             tokio::time::sleep(Duration::from_millis(100)).await;
+  +         }
+  +         true
+  +     }
+  + 
+  ... (90 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo streaming_ba… ✓ (2m 22s)
+  +     // --- process-group kill on timeout/cancel (same defect as yoagent#277) ---
+  + 
+  +     /// Is any process whose command line contains `needle` still alive?
+  +     /// Polls up to ~2s so a group that is dying is not reported as alive.
+  +     #[cfg(unix)]
+  +     async fn survivor_alive(needle: &str) -> bool {
+  +         for _ in 0..20 {
+  +             let out = std::process::Command::new("pgrep")
+  ... (13 more lines)
+ ✓ (2m 22s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo test_streami… ✓ (3.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo test_streami… ✓ (124ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 31s (4 ✓)
+
+That's my typo in the expected value (output is line-joined), not the defect — fix it. Before-reading recorded: timeout and cancel tests fail, sleep 77.41xx alive.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's|assert_eq!(text, "Exit c… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the fix: mirror yoagent 0.25.2's GroupKill.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (134 lines) ✓ (30.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Step 4 — confirm Ctrl+C reaches the tool through the cancel token:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; pgrep -fa "sleep 77.41" ; grep -n … ✓ (10ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.24.2/src; grep -n "pub fn abort" -A8 agent.… ✓ (7ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.24.2/src; grep -n "ToolContext\|cancel.clon… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/tools.r… (8 lines) ✓ (1m 2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 16s (4 ✓)
+
+Control fails by name, restores green, marker gone. Now ARCHITECTURE.md:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^#.*tools.rs\|^### \`src/… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "tools.rs" ARCHITECTURE.md… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^### " ARCHITECTURE.md | … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1311,1316p ARCHITECTURE.md … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> ARCHITE… (15 lines) ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 17.9s (5 ✓)
+
+Residue sentence checks out (those spawn separately). Now the full gate:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo build 2>&1 | ta… ✓ (2m 36s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test module_size 2>&1… ✓ (169ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git show HEAD:src/tools.rs | wc -l… ✓ (29ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 43s (3 ✓)
+
+The repo's convention is sibling test files. Move my tests to src/tools_group_kill_tests.rs:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "tools_user_deny_tests\|to… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 125,134p src/main.rs; sed -… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (34 lines) ✓ (31.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 43.9s (3 ✓)
+
+Tests moved. Remove the now-redundant per-fn #[cfg(unix)], then update the size register (tools.rs was already 5128 at HEAD vs recorded 5053; the fix itself adds ~74 lines of code+comments):
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (12 lines) ✓ (3m 5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything green (no result line with failures). Final check for leftover processes, then commit:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; pgrep -f "slee… (35 lines) ✓ (61ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+pgrep printed a pid — let me check whether it's a real survivor:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ ps -o pid,ppid,pgid,etime,args -p 63960 2>&1; pgrep -af "sleep 77[.]41" || echo … ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for i in 1 2 3; do cargo test -q -… ✓ (32.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 45.9s (2 ✓)
+
+The bash tool now kills the command's whole process group when it times out or is cancelled, not just bash. Build, all tests, clippy with -D warnings and the fmt check pass, and it's committed as efaeb3b2.
+
+The bug: StreamingBashTool killed only bash on timeout or cancel. Anything else the command started (the other stages of a pipe, && lists, background jobs) kept running with no parent.
+
+Before and after: two new tests failed before the fix and pass after it:
+• `test_streaming_bash_timeout_kills_pipeline_stage runs sleep 77.4101 | cat; echo done` with a 1s timeout.
+• `test_streaming_bash_cancel_kills_background_job runs sleep 77.4102 & wait` and cancels it at 500ms.
+
+Before the fix, pgrep -f still found the sleep alive in both. After it, nothing is left.
+
+The fix copies yoagent 0.25.2's BashTool, which I read first:
+• The command starts in its own process group (process_group(0)).
+• A `GroupKill guard sends SIGKILL` to the whole group on timeout, on cancel, and if the tool is abandoned mid-run.
+• The guard is switched off when the command finishes on its own.
+
+One deliberate difference: on timeout and cancel, yoyo signals the group before waiting on bash to finish dying. At that point bash's process id can't have been reused by anything else; yoagent relies on cleanup order instead.
+
+Checks on the fix:
+• **Sabotage test:** I disabled the group kill, and exactly the two new tests failed by name. After restoring it everything was green, with no sabotage marker left in the code.
+• **Commands that finish normally:** a job the command deliberately backgrounds (`cmd >log 2>&1 &`) keeps running, with the output checked byte-for-byte. Non-zero exit codes are still reported. Both are pinned by tests.
+• **Ctrl+C:** because the command has its own group, it no longer gets the terminal's interrupt signal directly. I checked by reading the code that Ctrl+C in `prompt.rs` cancels the agent, which triggers the tool's cancel branch, which now kills the group. prompt.rs needed no change.
+
+Files outside the planned three:
+• The module-size test failed because src/tools.rs was too big. It was already over its recorded limit before this task: 5128 lines against 5053, inside the 100-line allowance. So I moved the new tests to a new file, src/tools_group_kill_tests.rs, registered in src/main.rs.
+• I raised the recorded size for src/tools.rs to 5202 in tests/module_size.rs, with the reason written next to it.
+• `ARCHITECTURE.md has a new dated entry for src/tools.rs`.
+
+Still not fixed:
+• Sub-agents use yoagent's own BashTool, which keeps the old behaviour (kill bash only) until yoyo upgrades to yoagent 0.25.2. Until then the main agent and its sub-agents differ on what a timeout kills.
+• /run, `! and /bg` start their own processes and weren't changed.
+
+One check I couldn't explain: right after the full test run, a pgrep for the test sleeps returned one process id. It had exited by the time I looked it up a moment later, so I couldn't tell which test it came from. Three more runs of the new tests each left no survivors.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
