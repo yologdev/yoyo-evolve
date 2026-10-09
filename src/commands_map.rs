@@ -443,7 +443,46 @@ pub(crate) fn parse_map_args(rest: &str) -> MapArgs {
     }
 }
 
+/// The honest-empty line `/map` prints (exit 0) when nothing has symbols.
+pub(crate) const MAP_EMPTY_MESSAGE: &str = "(no supported source files with symbols found)";
+
+/// Exit status for `yoyo map` when its path does not exist (#982): 1, the
+/// same code `yoyo blame <missing path>` uses.
+pub(crate) const MAP_MISSING_PATH_EXIT: i32 = 1;
+
+/// Exit status for a `/map` usage error (unknown flag, two paths): 2, the
+/// usage-error convention `def`/`outline` with no argument also use.
+pub(crate) const MAP_USAGE_EXIT: i32 = 2;
+
+/// Decide whether an empty `/map` result is an honest empty project or a
+/// path that is not there (#982). Consulted only when the map came back
+/// empty. The filter is a repo-relative prefix, so a path counts as missing
+/// only when it does not exist on disk AND no project file starts with it:
+/// `map src/com` (a prefix of real files) and an existing directory with no
+/// supported source files both stay the honest "nothing found" (`None`).
+pub(crate) fn map_missing_path_message(
+    path_filter: Option<&str>,
+    path_exists: bool,
+    files: &[String],
+) -> Option<String> {
+    let filter = path_filter?;
+    if path_exists || files.iter().any(|f| f.starts_with(filter)) {
+        return None;
+    }
+    Some(format!(
+        "no such path: '{filter}' (not a file or directory, and no project file starts with it)"
+    ))
+}
+
+/// REPL door for `/map`; the status is for the shell door.
 pub fn handle_map(input: &str) {
+    let _ = handle_map_status(input);
+}
+
+/// `/map` core returning an exit status (#982): 0 for a map or an honest empty
+/// result (unchanged), [`MAP_MISSING_PATH_EXIT`] when the given path does not
+/// exist, [`MAP_USAGE_EXIT`] for an argument error.
+pub fn handle_map_status(input: &str) -> i32 {
     let rest = input.strip_prefix("/map").unwrap_or("").trim();
 
     let (show_all, force_regex, path_filter) = match parse_map_args(rest) {
@@ -456,7 +495,7 @@ pub fn handle_map(input: &str) {
             // Stop before any work or progress output — an unrecognised flag
             // must not produce a confident "no symbols found".
             eprintln!("{RED}  ✗ {msg}{RESET}\n");
-            return;
+            return MAP_USAGE_EXIT;
         }
     };
     let path_filter = path_filter.as_deref();
@@ -466,8 +505,22 @@ pub fn handle_map(input: &str) {
     let (entries, backend) = build_repo_map_with_backend(path_filter, public_only, force_regex);
 
     if entries.is_empty() {
-        println!("{DIM}  (no supported source files with symbols found){RESET}\n");
-        return;
+        // Only the empty branch pays for the existence check: a missing path
+        // must not read as a real, empty project (#982).
+        if let Some(filter) = path_filter {
+            let toplevel = run_git(&["rev-parse", "--show-toplevel"]).ok();
+            let exists = std::path::Path::new(filter).exists()
+                || toplevel
+                    .as_deref()
+                    .is_some_and(|tl| std::path::Path::new(tl).join(filter).exists());
+            let files = list_project_files();
+            if let Some(msg) = map_missing_path_message(Some(filter), exists, &files) {
+                eprintln!("{RED}  ✗ {msg}{RESET}\n");
+                return MAP_MISSING_PATH_EXIT;
+            }
+        }
+        println!("{DIM}  {MAP_EMPTY_MESSAGE}{RESET}\n");
+        return 0;
     }
 
     let total_symbols: usize = entries.iter().map(|e| e.symbols.len()).sum();
@@ -488,6 +541,7 @@ pub fn handle_map(input: &str) {
         total_files,
         if total_files == 1 { "" } else { "s" },
     );
+    0
 }
 
 #[cfg(test)]
@@ -808,6 +862,49 @@ mod tests {
             }
             other => panic!("expected Error for two paths, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn map_missing_path_message_table() {
+        let files = vec!["src/main.rs".to_string(), "src/commands.rs".to_string()];
+        // A path that is neither on disk nor a prefix of any project file.
+        assert_eq!(
+            map_missing_path_message(Some("/nonexistent_zz"), false, &files),
+            Some(
+                "no such path: '/nonexistent_zz' (not a file or directory, and no project file starts with it)"
+                    .to_string()
+            )
+        );
+        // Near-miss: an existing directory with no supported source files is an
+        // honest empty result, not a failure.
+        assert_eq!(map_missing_path_message(Some("docs/"), true, &files), None);
+        // Near-miss: a prefix of real files that is not itself a path still maps.
+        assert_eq!(
+            map_missing_path_message(Some("src/com"), false, &files),
+            None
+        );
+        // Bare `map` (no filter) is never a missing path, even in an empty project.
+        assert_eq!(map_missing_path_message(None, false, &[]), None);
+    }
+
+    #[test]
+    fn handle_map_status_missing_path_is_1_and_existing_empty_dir_is_0() {
+        assert_eq!(
+            handle_map_status("/map /nonexistent_zz_982"),
+            MAP_MISSING_PATH_EXIT
+        );
+        assert_eq!(MAP_MISSING_PATH_EXIT, 1);
+        // Near-miss pinned at the status: a directory that exists in the repo
+        // and holds no supported source files (`.githooks/` has only a shell
+        // hook) keeps exit 0.
+        assert_eq!(handle_map_status("/map .githooks/"), 0);
+        assert_eq!(
+            MAP_EMPTY_MESSAGE,
+            "(no supported source files with symbols found)"
+        );
+        // An unknown flag is a usage error.
+        assert_eq!(handle_map_status("/map --bogus-flag"), MAP_USAGE_EXIT);
+        assert_eq!(MAP_USAGE_EXIT, 2);
     }
 
     #[test]

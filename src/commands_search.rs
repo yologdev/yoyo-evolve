@@ -717,8 +717,27 @@ fn collect_file_outline(entries: &[FileSymbols], path: &str) -> Vec<OutlineMatch
     matches
 }
 
-/// Handle the `/outline <query|filepath> [--all]` command.
+/// Exit status for `yoyo def` / `yoyo outline` with no argument (#982): 2,
+/// the usage-error convention. A not-found query stays 0 (an empty result).
+pub(crate) const SEARCH_USAGE_EXIT: i32 = 2;
+
+/// Handle the `/outline <query|filepath> [--all]` command (REPL door).
 pub fn handle_outline(input: &str) {
+    let _ = handle_outline_status(input);
+}
+
+/// `/outline` core returning an exit status (#982): [`SEARCH_USAGE_EXIT`]
+/// when no query was given, 0 otherwise (including no match).
+pub fn handle_outline_status(input: &str) -> i32 {
+    if outline_body(input) {
+        0
+    } else {
+        SEARCH_USAGE_EXIT
+    }
+}
+
+/// The `/outline` body; returns `false` when it printed usage (no query).
+fn outline_body(input: &str) -> bool {
     let rest = input.strip_prefix("/outline").unwrap_or(input).trim();
 
     // Parse --all flag
@@ -740,7 +759,7 @@ pub fn handle_outline(input: &str) {
              /outline src/main.rs       {DIM}# show all symbols in src/main.rs{RESET}\n    \
              /outline handle --all      {DIM}# show all matches (no limit){RESET}"
         );
-        return;
+        return false;
     }
 
     // Build symbol map (include all symbols, not just public)
@@ -760,7 +779,7 @@ pub fn handle_outline(input: &str) {
                 "{DIM}  {} symbol(s) in \"{query}\"{RESET}",
                 file_matches.len()
             );
-            return;
+            return true;
         }
         // If the file exists but had no symbols extracted, fall through to symbol search.
         // This handles e.g. non-code files like .md that have no parseable symbols.
@@ -771,7 +790,7 @@ pub fn handle_outline(input: &str) {
 
     if matches.is_empty() {
         println!("{DIM}  No symbols matching \"{query}\" found.{RESET}");
-        return;
+        return true;
     }
 
     let total = matches.len();
@@ -795,6 +814,7 @@ pub fn handle_outline(input: &str) {
         println!();
     }
     println!("{DIM}  {} symbol(s) matching \"{query}\"{RESET}", total);
+    true
 }
 
 /// Maximum definition matches to display before truncating.
@@ -995,13 +1015,24 @@ fn collect_def_matches(query: &str) -> Vec<DefMatch> {
 /// (no LSP/AST server). Prefers exact name matches; falls back to
 /// case-insensitive substring matches labeled "similar".
 pub fn handle_def(input: &str) {
+    let _ = handle_def_status(input);
+}
+
+/// `/def` core returning an exit status (#982): [`SEARCH_USAGE_EXIT`] when no
+/// symbol was given, 0 otherwise (a not-found symbol is an empty result).
+pub fn handle_def_status(input: &str) -> i32 {
     let query = parse_def_query(input);
     if query.is_empty() {
         println!("{DIM}  usage: /def <symbol-name>{RESET}");
-        return;
+        return SEARCH_USAGE_EXIT;
     }
+    print_def_matches(&query);
+    0
+}
 
-    let matches = collect_def_matches(&query);
+/// Print the `/def` matches (or the not-found line) for a non-empty query.
+fn print_def_matches(query: &str) {
+    let matches = collect_def_matches(query);
     if matches.is_empty() {
         println!("{DIM}  no definition found for '{query}'{RESET}");
         return;
@@ -2154,6 +2185,19 @@ pub fn handle_grep_status(input: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn def_and_outline_without_argument_exit_2_and_not_found_stays_0() {
+        // #982: a missing argument is a usage error a script can see.
+        assert_eq!(handle_def_status("/def"), SEARCH_USAGE_EXIT);
+        assert_eq!(handle_def_status("/def   "), SEARCH_USAGE_EXIT);
+        assert_eq!(handle_outline_status("/outline"), SEARCH_USAGE_EXIT);
+        assert_eq!(handle_outline_status("/outline --all"), SEARCH_USAGE_EXIT);
+        assert_eq!(SEARCH_USAGE_EXIT, 2);
+        // Near-miss: a query that finds nothing is an empty result, still 0.
+        assert_eq!(handle_def_status("/def zz_no_such_symbol_982"), 0);
+        assert_eq!(handle_outline_status("/outline zz_no_such_symbol_982"), 0);
+    }
     use crate::commands::KNOWN_COMMANDS;
     use crate::help::help_text;
     use std::fs;

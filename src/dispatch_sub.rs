@@ -330,12 +330,14 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "map" => {
                 let input = quote_args_as_command(args);
-                crate::commands_map::handle_map(&input);
+                // #982: 1 for a missing path, 2 for a usage error; empty stays 0.
+                exit_if_nonzero(crate::commands_map::handle_map_status(&input));
                 return Some(None);
             }
             "outline" => {
                 let input = quote_args_as_command(args);
-                crate::commands_search::handle_outline(&input);
+                // #982: 2 with no query (usage); no match stays 0.
+                exit_if_nonzero(crate::commands_search::handle_outline_status(&input));
                 return Some(None);
             }
             "run" => {
@@ -408,7 +410,8 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // Same join reasoning; `normalize_symbol_query`'s forgiveness of
                 // `foo()` / `&foo` / `mod::foo` comes along unchanged.
                 let input = join_args_as_command(args);
-                crate::commands_search::handle_def(&input);
+                // #982: 2 with no symbol (usage); not found stays 0.
+                exit_if_nonzero(crate::commands_search::handle_def_status(&input));
                 return Some(None);
             }
             "model" => {
