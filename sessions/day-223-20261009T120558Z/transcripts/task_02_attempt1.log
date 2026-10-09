@@ -1,0 +1,81 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (13ms)
+  ▶ $ sed -n 30,80p src/format/cost.rs; ls src/format/cost; grep -n "^mod\|#\[path\|mo…  ▶ $ wc -l src/format/cost.rs src/format/cost/*; grep -n "cost.rs\|format/cost" tests… ✓ (7ms)
+ ✓ (10ms)
+  ▶ $ sed -n 1,60p tests/module_size.rs | head -80; grep -n "price_audit\|context_tier… ✓ (5ms)
+  ▶ $ grep -n "fn is_test_file\|_tests.rs\|exempt\|skip" tests/module_size.rs | head -… ✓ (5ms)
+  ▶ $ cd src/format/cost; sed -n 1,40p price_audit_tests.rs; grep -n "fn \|preset" pri… ✓ (5ms)
+  ▶ $ cd src; grep -n "pub const KNOWN_MODELS" -A40 commands.rs | head -50; grep -n "g… ✓ (5ms)
+  ▶ $ cd src/format; grep -n "struct ModelPricingOverrides" -B3 -A10 cost.rs; grep -n … ✓ (6ms)
+  ▶ $ cd src/format; grep -n "ModelPricingOverrides" cost.rs | head -3; sed -n 41,52p … ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 23.4s (9 ✓)
+
+Now write the tripwire tests.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat >> src/format/cost/price_audit_tests.rs <<'EOF' (117 lines) ✓ (28.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both pass on 0.24. Now positive control A (resolver skips the preset branch), atomic mutate→run→restore:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; F=src/format/c… (3 lines) ✓ (2m 4s)
+  ▶ $ cat /tmp/ctlA.txt ✓ (50ms)
+  ▶ $ sed 's/^test //' /tmp/ctlA.txt | cut -c1-110 | tr '\n' ';' ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; F=src/agent_bu… (19 lines) ✓ (2m 4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn every_preset_id_is_pri… ✓ (8ms)
+  ▶ edit src/format/cost/price_audit_tests.rs (4 → 9 lines)
+  - // silently re-prices every preset model from the drifted table (#1003). These
+  - // two tests are that upgrade's tripwire: if they go red after a yoagent bump,
+  - // the fix is `enable_bundled()` (in startup AND before these tests read a
+  - // preset), not a weakened assertion.
+  + // silently re-prices every preset model from the drifted table (#1003).
+  + //
+  + // NOT the only guard, measured rather than assumed (Day 223 positive control:
+  + // setting `cost = None` in `anthropic_preset`/`openai_preset` reddened 22
+  + // pre-existing tests, e.g. `every_preset_id_is_priced_by_its_own_constructor`).
+  + // What these two add is the DIAGNOSIS: their red names `enable_bundled()`, so
+  + // whoever upgrades reads the remedy instead of 22 bare price mismatches that
+  + // invite weakening. If they go red after a yoagent bump, the fix is
+  + // `enable_bundled()` (at startup AND before tests read a preset).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo build 2>&1 | ta… ✓ (3m 34s)
+  - // silently re-prices every preset model from the drifted table (#1003). These
+  - // two tests are that upgrade's tripwire: if they go red after a yoagent bump,
+  - // the fix is `enable_bundled()` (in startup AND before these tests read a
+  - // preset), not a weakened assertion.
+  + // silently re-prices every preset model from the drifted table (#1003).
+  + //
+  + // NOT the only guard, measured rather than assumed (Day 223 positive control:
+  + // setting `cost = None` in `anthropic_preset`/`openai_preset` reddened 22
+  ... (5 more lines)
+ ✓ (3m 57s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&… (31 lines) ✓ (2m 3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 10m 49s (8 ✓)
+
+I added the two tests and committed them as b678d42a. Build, the full test suite, clippy with -D warnings and the format check all pass. There's one caveat: the task assumed this risk had only one loud guard, and that turned out to be wrong.
+
+The tests (in src/format/cost/price_audit_tests.rs, which was well under its size limit):
+• **every_preset_model_carries_a_price_yoagent_0_25_needs_enable_bundled** checks that every model with a yoagent preset still has a price. There isn't one complete list of those models, so it combines the known-model lists (kept only where they hit a preset) with a named list of 11 ids those lists leave out, including claude-opus-5-5, claude-fable-5-1 and the three GPT-6 models. Each of the 11 must still hit a preset, so a typo there can't quietly drop a model.
+• **`the_cost_resolver_returns_the_preset_price_for_opus_5_5** checks that the function /cost uses (model_pricing_with`) returns exactly the preset's price. It checks the preset has a price first, so two missing prices can't pass as equal. It does this for opus-5-5 and then for every model in the set above.
+• When either test fails, the message names yoagent::provider::prices::enable_bundled() as the fix.
+
+Deliberate breakages, each changed, run and restored in one command, one at a time, with no leftover changes afterwards:
+• **A — /cost skips the preset price: the second test failed by name. 10 existing tests** failed too.
+• **B — every preset loses its price (what 0.25 does if `enable_bundled()` is forgotten): both new tests failed by name. 22 existing tests** failed too, including every_preset_id_is_priced_by_its_own_constructor, which already checks that each preset has a price.
+
+So the upgrade could not have landed this regression with everything green; 22 tests already guard it. What the new tests add is the diagnosis: none of those 22 failure messages says what the fix is, and a wall of unexplained price mismatches makes it tempting to weaken the tests instead. I rewrote the test file's header comment so it says this, and the commit message records the 10 and 22.
+
+I didn't change any docs because no behaviour changed. The upgrade itself, #997, #1003 and #1004 are untouched.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/format/cost/price_audit_tests.rs
