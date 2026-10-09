@@ -1231,3 +1231,125 @@ fn the_audit_asks_the_pricing_resolver_not_the_shipped_list() {
     // Near miss: priceable id, provider outside the audit — still a coverage gap.
     assert_eq!(yoyo_id_for("openrouter", "claude-opus-5-5"), None);
 }
+
+// ── Pricing tripwire for the yoagent 0.25 upgrade ──────────────────────────
+//
+// yoagent 0.25.0 makes pricing OPT-IN: `ModelConfig::cost` is `None` from
+// every constructor and preset unless the process calls
+// `yoagent::provider::prices::enable_bundled()` at startup. `/cost` reads the
+// preset's `cost` FIRST and falls through to yoyo's own loose table when it is
+// `None` — so an upgrade that forgets `enable_bundled()` compiles cleanly and
+// silently re-prices every preset model from the drifted table (#1003).
+//
+// NOT the only guard, measured rather than assumed (Day 223 positive control:
+// setting `cost = None` in `anthropic_preset`/`openai_preset` reddened 22
+// pre-existing tests, e.g. `every_preset_id_is_priced_by_its_own_constructor`).
+// What these two add is the DIAGNOSIS: their red names `enable_bundled()`, so
+// whoever upgrades reads the remedy instead of 22 bare price mismatches that
+// invite weakening. If they go red after a yoagent bump, the fix is
+// `enable_bundled()` (at startup AND before tests read a preset).
+
+/// Every model id yoyo can route to a yoagent preset. There is NO single
+/// registry that lists them: `anthropic_preset` matches by `starts_with` and
+/// `openai_preset` by exact id, and the known-model lists
+/// (`providers::known_models_for_provider`, `commands::KNOWN_MODELS`) omit
+/// several preset ids (opus-5-5, fable-5-1, the GPT-6 family). So the set is
+/// the known lists filtered to ids that resolve to a preset, UNIONED with a
+/// named floor of ids the lists miss — and each floor id is asserted to hit a
+/// preset, so a typo there cannot silently drop a row.
+fn preset_priced_model_ids() -> Vec<&'static str> {
+    const FLOOR: &[&str] = &[
+        "claude-opus-5-5",
+        "claude-opus-5",
+        "claude-fable-5-1",
+        "claude-fable-5",
+        "claude-opus-4-8",
+        "claude-sonnet-5",
+        "claude-haiku-5-5",
+        "claude-haiku-4-5",
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+    ];
+    let has_preset = |id: &str| {
+        crate::agent_builder::anthropic_preset(id).is_some()
+            || crate::agent_builder::openai_preset(id).is_some()
+    };
+    for id in FLOOR {
+        assert!(
+            has_preset(id),
+            "floor id {id} no longer resolves to a preset"
+        );
+    }
+    let mut ids: Vec<&'static str> = FLOOR.to_vec();
+    let listed = crate::providers::known_models_for_provider("anthropic")
+        .iter()
+        .chain(crate::providers::known_models_for_provider("openai"))
+        .chain(crate::commands::KNOWN_MODELS);
+    for id in listed {
+        if has_preset(id) && !ids.contains(id) {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
+#[test]
+fn every_preset_model_carries_a_price_yoagent_0_25_needs_enable_bundled() {
+    let ids = preset_priced_model_ids();
+    // Anti-vacuous: the floor alone is 11 ids; a shrinking set is a finding.
+    assert!(ids.len() >= 11, "preset id set shrank to {}", ids.len());
+    let unpriced: Vec<&str> = ids
+        .iter()
+        .copied()
+        .filter(|id| {
+            crate::agent_builder::anthropic_preset(id)
+                .or_else(|| crate::agent_builder::openai_preset(id))
+                .and_then(|p| p.cost)
+                .is_none()
+        })
+        .collect();
+    assert!(
+        unpriced.is_empty(),
+        "preset(s) carry no price: {unpriced:?}. On yoagent >= 0.25 pricing is opt-in — \
+         call yoagent::provider::prices::enable_bundled() at startup, or /cost silently \
+         falls back to yoyo's loose table"
+    );
+}
+
+#[test]
+fn the_cost_resolver_returns_the_preset_price_for_opus_5_5() {
+    let model = "claude-opus-5-5";
+    let cost = crate::agent_builder::anthropic_preset(model)
+        .expect("claude-opus-5-5 resolves to a preset")
+        .cost
+        .expect(
+            "claude-opus-5-5 preset is unpriced — on yoagent >= 0.25 call \
+             yoagent::provider::prices::enable_bundled()",
+        );
+    let expected: Rates = (
+        cost.input_per_million,
+        cost.cache_write_per_million,
+        cost.cache_read_per_million,
+        cost.output_per_million,
+    );
+    let got = model_pricing_with(&super::ModelPricingOverrides::default(), model);
+    assert_eq!(got, Some(expected), "/cost did not read the preset's price");
+    // Every id in the set, not just one: the resolver agrees with its preset.
+    for id in preset_priced_model_ids() {
+        let preset_cost = crate::agent_builder::anthropic_preset(id)
+            .or_else(|| crate::agent_builder::openai_preset(id))
+            .and_then(|p| p.cost)
+            .unwrap_or_else(|| panic!("{id}: preset unpriced (enable_bundled?)"));
+        assert_eq!(
+            model_pricing_with(&super::ModelPricingOverrides::default(), id),
+            Some((
+                preset_cost.input_per_million,
+                preset_cost.cache_write_per_million,
+                preset_cost.cache_read_per_million,
+                preset_cost.output_per_million,
+            )),
+            "{id}: resolver disagrees with the preset's price"
+        );
+    }
+}
