@@ -113,6 +113,31 @@ own preset: a 1,050,000-token window, 64K default `max_tokens` (128K maximum), a
 including the higher whole-request rate above 272K prompt tokens. Other ids, `gpt-6.1-sol` included,
 keep the generic OpenAI defaults.
 
+### Models with no preset run on guessed limits
+
+On the OpenAI-compatible providers `openai`, `openrouter`, `xai`, `groq`, `mistral`, `cerebras`,
+`github` and `zai`, a model id yoyo has no preset for runs on a guessed 128,000-token context window
+and `max_tokens = 4096`. That cap covers reasoning plus answer on every turn, so a newer model
+(for example `gpt-6.1-sol`) can be cut short. yoyo now says so once per model on stderr, even in
+quiet or piped runs (stdout is unchanged):
+
+```text
+warning: no preset is known for openai model 'gpt-6.1-sol', so yoyo is using guessed limits: ...
+```
+
+If the model allows more, set the real limits yourself, which also silences the warning:
+
+```toml
+# .yoyo.toml
+max_tokens = 64000
+context_window = 400000
+```
+
+or pass `--max-tokens` / `--context-window`. Setting `max_tokens` is what silences it; setting only
+`context_window` keeps the warning about the output cap. `ollama` and `custom` endpoints use the same
+defaults but are not warned about, since you configure those servers yourself; `minimax` defaults to
+a 1M window with `max_tokens = 4096` and is not warned about either.
+
 ## Context window
 
 yoyo assumes a 200,000-token context window (the standard for Claude models). When usage exceeds 80% of this, auto-compaction kicks in. See [Context Management](../features/context.md).

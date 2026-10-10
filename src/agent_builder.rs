@@ -1666,6 +1666,30 @@ impl AgentConfig {
                 &self.model,
                 model_config.max_tokens,
             ));
+            // An id with no preset runs on the base config's guessed limits
+            // (128K / max_tokens 4096), which silently caps every reply.
+            // Volume chosen from that severity: stderr, once per
+            // (provider, model) per process, and deliberately NOT gated on
+            // quiet mode — piped/scripted runs are the ones nobody watches,
+            // and this one line is their only sign that output is capped.
+            // Stdout is untouched, so `-p` consumers parse the same bytes.
+            if let Some(note) = crate::model_limits_note::unknown_model_limits_note(
+                &self.provider,
+                &self.model,
+                model_config.context_window,
+                model_config.max_tokens,
+                self.max_tokens,
+                self.context_window,
+                crate::format::is_plain_output(),
+            ) {
+                if crate::model_limits_note::first_unknown_limits_warning(
+                    &crate::model_limits_note::WARNED_UNKNOWN_MODEL_LIMITS,
+                    &self.provider,
+                    &self.model,
+                ) {
+                    eprintln!("{note}");
+                }
+            }
             let agent = Agent::from_provider(OpenAiCompatProvider, model_config);
             self.configure_agent(agent, context_window, output_ceiling)
         }

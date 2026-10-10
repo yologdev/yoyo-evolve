@@ -120,6 +120,7 @@ mod docs;
 mod format;
 #[cfg(feature = "gasp")]
 mod gasp;
+mod model_limits_note;
 #[cfg(test)]
 mod openai_preset_tests;
 #[cfg(test)]
