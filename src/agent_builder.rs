@@ -768,6 +768,8 @@ pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
         ModelConfig::claude_opus_5()
     } else if model.starts_with("claude-opus-4-8") {
         ModelConfig::claude_opus_4_8()
+    } else if model.starts_with("claude-sonnet-5-5") {
+        claude_sonnet_5_5()
     } else if model.starts_with("claude-sonnet-5") {
         ModelConfig::claude_sonnet_5()
     } else if model.starts_with("claude-haiku-4-5") {
@@ -782,6 +784,24 @@ pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
         config.name = model.to_string();
     }
     Some(config)
+}
+
+/// Claude Sonnet 5.5 — yoagent 0.24.2 ships no constructor and no `prices.json`
+/// row, so it used to resolve through `claude_sonnet_5()` and bill cache reads
+/// at $0.20/M. Rates from models.dev's `claude-sonnet-5-5` row (Day 224: $2 in,
+/// $10 out, $0.10 cache read, $2.50 cache write; no long-context tier), the
+/// cache read corroborated by Claude Code 2.1.293–296's changelog. Everything
+/// but id, name and cost is Sonnet 5's (#1003).
+pub(crate) fn claude_sonnet_5_5() -> ModelConfig {
+    let mut config = ModelConfig::claude_sonnet_5();
+    config.id = "claude-sonnet-5-5".to_string();
+    config.name = "Claude Sonnet 5.5".to_string();
+    config.cost = Some(
+        CostConfig::new(2.0, 10.0)
+            .with_cache_read(0.10)
+            .with_cache_write(2.5),
+    );
+    config
 }
 
 /// Claude Haiku 5.5 — yoagent 0.24.2 ships no preset (and no price-table row)

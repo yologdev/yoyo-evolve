@@ -59,7 +59,9 @@ read their pricing directly from yoagent's model presets at runtime, so their
 rows below are informational — the preset is the source of truth. Until Day 222
 (#1003) Opus 5.5 and Fable 5.1 were matched by their older sibling's preset and
 priced as Opus 5 ($5 / $25) and Fable 5 ($1 cache read); each now gets its own.
-Sonnet 5.5 still has no preset of its own and is priced as Sonnet 5.
+Sonnet 5.5 has no yoagent preset either; until Day 224 it was priced as Sonnet 5
+($0.20 cache read). yoyo now carries its own arm (Sonnet 5's window and limits,
+$0.10 cache read, from the models.dev catalogue).
 
 | Model | Input | Cache Write | Cache Read | Output |
 |-------|-------|-------------|------------|--------|
@@ -67,7 +69,8 @@ Sonnet 5.5 still has no preset of its own and is priced as Sonnet 5.
 | Fable 5.1 | $10/MTok | $12.50/MTok | $0.25/MTok | $50/MTok |
 | Opus 5.5 | $4/MTok | $5/MTok | $0.20/MTok | $20/MTok |
 | Opus 4.8 | $5/MTok | $6.25/MTok | $0.50/MTok | $25/MTok |
-| Sonnet 5 | $3/MTok | $3.75/MTok | $0.30/MTok | $15/MTok |
+| Sonnet 5 | $2/MTok | $2.50/MTok | $0.20/MTok | $10/MTok |
+| Sonnet 5.5 | $2/MTok | $2.50/MTok | $0.10/MTok | $10/MTok |
 | Opus 4.5/4.6 | $5/MTok | $6.25/MTok | $0.50/MTok | $25/MTok |
 | Opus 4/4.1 | $15/MTok | $18.75/MTok | $1.50/MTok | $75/MTok |
 | Sonnet | $3/MTok | $3.75/MTok | $0.30/MTok | $15/MTok |

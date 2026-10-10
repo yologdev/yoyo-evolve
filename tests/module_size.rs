@@ -191,7 +191,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // the gate.
     // Day 222 (#1003): +6 — two most-specific-first preset arms (Opus 5.5,
     // Fable 5.1) plus their ordering comment; the tests went to a sibling file.
-    ("src/agent_builder.rs", 4793),
+    // Day 224 (#1003 residue): +20 — `claude_sonnet_5_5()` (Sonnet 5 plus its
+    // own $0.10 cache read) and its ordering arm; tests in anthropic_preset_tests.rs.
+    ("src/agent_builder.rs", 4861),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
