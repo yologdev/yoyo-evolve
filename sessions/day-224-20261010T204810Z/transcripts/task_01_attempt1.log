@@ -1,0 +1,214 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "quote_args_as_command" sr… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "quote_args_as_command\|ar… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 100,130p src/dispatch_sub.r… ✓ (8ms)
+  ▶ read src/dispatch_sub.rs:366..536 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1615,1635p src/dispatch_sub…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=1300 && NR<=1480' src/com… ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=1495 && NR<=1640' src/com… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "commit_that_succeeds_stil… ✓ (8ms)
+  ▶ read tests/integration.rs:2960..3000  ▶ read tests/integration.rs:3034..3042 ✓ (1ms)
+ ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 25.1s (11 ✓)
+
+Now the failing test first, as a sibling (the existing one-word test stays untouched).
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit tests/integration.rs (2 → 27 lines)
+  + #[test]
+  + fn commit_records_the_message_byte_identically() {
+  +     // #1008: `yoyo commit "add f"` committed `"add f"` WITH the quote characters,
+  +     // because the shell door re-quoted any argv element containing a space and the
+  +     // commit parser never unquotes. Property: the subject git records is
+  +     // byte-identical to the one argv element the user passed — including interior
+  +     // quotes (neither stripped nor doubled) and runs of whitespace.
+  +     let cases: [(&[&str], &str); 5] = [
+  +         (&["add f"], "add f\n"),
+  +         (&[r#"say "hi" now"#], "say \"hi\" now\n"),
+  +         (&["two  spaces"], "two  spaces\n"),
+  +         // Flags are recognised as whole argv elements, wherever they sit.
+  +         (&["-a", "add f"], "add f\n"),
+  +         // Near miss: several bare words still join with one space each.
+  +         (&["add", "f"], "add f\n"),
+  +     ];
+  +     for (args, want) in cases {
+  +         let repo = commit_scratch_repo(false);
+  +         let out = yoyo_commit_in(repo.path(), args, true);
+  +         let stderr = String::from_utf8_lossy(&out.stderr);
+  ... (7 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -2; cargo … ✓ (2m 10s)
+  + #[test]
+  + fn commit_records_the_message_byte_identically() {
+  +     // #1008: `yoyo commit "add f"` committed `"add f"` WITH the quote characters,
+  +     // because the shell door re-quoted any argv element containing a space and the
+  +     // commit parser never unquotes. Property: the subject git records is
+  +     // byte-identical to the one argv element the user passed — including interior
+  +     // quotes (neither stripped nor doubled) and runs of whitespace.
+  +     let cases: [(&[&str], &str); 5] = [
+  ... (13 more lines)
+ ✓ (2m 10s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for f in handle_lint_status handle… ✓ (110ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$PWD/target/… (2 lines) ✓ (126ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=180 && NR<=275' src/comma… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1918,1960p src/watch.rs; Y=… ✓ (826ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'no skills found for\|skil… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$PWD/target/debug/yoyo; T=$(mkte… ✓ (8ms)
+  ▶ read src/commands_git.rs:186..211 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=255 && NR<=420' src/comma… ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 3m 7s (10 ✓)
+
+Now implement. Commit first:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (75 lines) ✓ (10.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn parse_commit_args_mess… ✓ (3ms)
+  ▶ edit src/commands_git.rs (5 → 45 lines)
+            assert_eq!(args.message, "fix the bug");
+  +     }
+  + 
+  +     #[test]
+  +     fn commit_args_from_argv_keeps_each_element_verbatim() {
+  +         // #1008: the shell door's message is the argv element itself, so spaces,
+  +         // interior quotes, tabs and newlines survive byte-for-byte.
+  +         let argv = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+  +         let cases: [(&[&str], &str); 6] = [
+  +             (&["add f"], "add f"),
+  +             (&[r#"say "hi" now"#], r#"say "hi" now"#),
+  +             (&["subject\n\nbody line"], "subject\n\nbody line"),
+  +             (&["a\tb  c"], "a\tb  c"),
+  +             (&["add", "f"], "add f"),
+  +             (&["  ", "add f", ""], "add f"),
+  +         ];
+  +         for (xs, want) in cases {
+  +             assert_eq!(commit_args_from_argv(&argv(xs)).message, want, "{xs:?}");
+  +         }
+  +         // Flags are whole elements, in any position; a flag-looking word inside
+  ... (24 more lines)
+ ✓ (2m 38s)
+            assert_eq!(args.message, "fix the bug");
+  +     }
+  + 
+  +     #[test]
+  +     fn commit_args_from_argv_keeps_each_element_verbatim() {
+  +         // #1008: the shell door's message is the argv element itself, so spaces,
+  +         // interior quotes, tabs and newlines survive byte-for-byte.
+  +         let argv = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (55 lines) ✓ (9.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn test_try_dispatch_subc… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (20 lines) ✓ (24ms)
+  ▶ edit tests/integration.rs (2 → 34 lines)
+  + #[test]
+  + fn git_diff_of_a_path_with_a_space_names_that_file() {
+  +     // #1008 sibling: `yoyo diff "f sp.txt"` reached the parser as `"f` and
+  +     // `sp.txt"`, so git was asked for the revision `sp.txt"` and it exited 1.
+  +     let dir = tempfile::tempdir().expect("tempdir");
+  +     let git = |args: &[&str]| {
+  +         let ok = Command::new("git")
+  +             .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c"])
+  +             .args(["commit.gpgsign=false"])
+  +             .args(args)
+  +             .current_dir(dir.path())
+  +             .env("GIT_CEILING_DIRECTORIES", dir.path().parent().unwrap())
+  +             .status()
+  +             .expect("git");
+  +         assert!(ok.success(), "git {args:?}");
+  +     };
+  +     git(&["init", "-q"]);
+  +     std::fs::write(dir.path().join("f sp.txt"), "one\n").unwrap();
+  +     std::fs::write(dir.path().join("other.txt"), "one\n").unwrap();
+  +     git(&["add", "-A"]);
+  ... (14 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | grep -E "^(erro… ✓ (2m 46s)
+  + #[test]
+  + fn git_diff_of_a_path_with_a_space_names_that_file() {
+  +     // #1008 sibling: `yoyo diff "f sp.txt"` reached the parser as `"f` and
+  +     // `sp.txt"`, so git was asked for the revision `sp.txt"` and it exited 1.
+  +     let dir = tempfile::tempdir().expect("tempdir");
+  +     let git = |args: &[&str]| {
+  +         let ok = Command::new("git")
+  +             .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c"])
+  ... (13 more lines)
+ ✓ (2m 46s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/dispatc… (7 lines) ✓ (19.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo clippy --all-ta… ✓ (2m 38s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test module_size 2>&1… ✓ (175ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '"src/commands_git.rs"' -B… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 250,300p tests/module_size.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l < src/commands_git.rs; sed -… ✓ (4ms)
+  ▶ edit tests/module_size.rs (2 → 7 lines)
+        ("src/commands_file.rs", 2854),
+  -     ("src/commands_git.rs", 3484),
+  +     // Day 224 (#1008): 3484 -> 3679 (+195). ~100 was already sitting in the grace
+  +     // band unregistered; +95 is the argv doors for `yoyo commit` / `yoyo diff`
+  +     // (`commit_args_from_argv`, `diff_options_from_argv`, their shared token cores)
+  +     // and their unit tests. The argv seam had to sit beside the parsers it shares
+  +     // flag classification with. Acknowledged, not absorbed.
+  +     ("src/commands_git.rs", 3679),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (3m 21s)
+        ("src/commands_file.rs", 2854),
+  -     ("src/commands_git.rs", 3484),
+  +     // Day 224 (#1008): 3484 -> 3679 (+195). ~100 was already sitting in the grace
+  +     // band unregistered; +95 is the argv doors for `yoyo commit` / `yoyo diff`
+  +     // (`commit_args_from_argv`, `diff_options_from_argv`, their shared token cores)
+  +     // and their unit tests. The argv seam had to sit beside the parsers it shares
+  +     // flag classification with. Acknowledged, not absorbed.
+  +     ("src/commands_git.rs", 3679),
+ ✓ (3m 26s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^#\+ .*commands_git.rs\|^… ✓ (715ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "commands_git" ARCHITECTUR… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^### \|^## " ARCHITECTURE… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^### \|^## " ARCHITECTURE… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list --state open --limit… ✓ (370ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/iss… (34 lines) ✓ (751ms)
+  ▶ $ cd /tmp; NO_COLOR=1 /home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (34 lines) ✓ (33ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo buil… ✓ (2m 49s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --s… (48 lines) ✓ (57ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  26 tools completed in 17m 8s (26 ✓)
+
+I fixed #1008: yoyo commit "add f" now commits the subject add f, with no quote marks. I fixed yoyo diff the same way. Build, all 6,416 tests, clippy and fmt pass, and the work is committed as 88d00fe0. It hasn't been pushed yet; Fixes #1008 in the commit message will close the issue when it is.
+
+Cause. The shell entry point put "..." around any argument that contains a space. The commit parser splits the text on spaces and never strips those added quotes, so they ended up in the message git recorded.
+
+Fix. The shell commit path now passes each argument through unchanged instead of rebuilding a string. Flags count only when they are a whole argument, and message text is kept exactly as typed. Stripping the quotes back out afterwards wouldn't work, because it can't tell the added quotes from quotes the user typed, like say "hi" now. Typing /commit add f inside a session works as before.
+
+Check of other commands. I ran the built binary from a temp repo on every shell command that goes through the same quoting step, each with one argument containing a space:
+
+| command | quotes leak? | what happened |
+|---|---|---|
+| commit | yes, fixed | git recorded the subject "add f" |
+| diff | yes, fixed | yoyo diff "f sp.txt" → unknown revision 'sp.txt"', exit 1 |
+| run | yes | sh: echo a b: not found (exit 127) |
+| find | yes | No files matching '"a b"' |
+| map | yes | two paths given ('"dir' and 'sp"') |
+| blame | yes | File not found: "f sp.txt" |
+| grep | only with quotes inside the pattern | say "hi" finds nothing; fn main works |
+| watch | yes | will run \"echo a"\ |
+| outline, docs, skill, lint | yes, low harm | quotes show up in the search text or error message |
+| tree, undo, changelog, evolution | can't tell | they print usage or ignore the argument |
+
+I filed the unfixed ones as #1009, with this evidence. They need separate fixes because each command reads its arguments differently. One shared change wouldn't work: yoyo run echo "a  b" correctly prints a  b today because of the quoting.
+
+Tests.
+• **New integration test (real binary, real git, temp repo):** it checks what git recorded for `add f`, an inner-quote message (`say "hi" now`), a double space, `-a` with a spaced message, and two separate words. The existing one-word commit test is unchanged.
+• **Diff test:** yoyo diff "f sp.txt" shows that file's change and leaves out another changed file.
+• **Unit tests:** cover multi-line messages, flags in any position, and the in-session /commit add f form.
+• **Checking the tests catch the bug:** routing both commands back through the old quoting made exactly the commit and diff integration tests fail by name. Undoing that made them pass again.
+
+One change to a project check: src/commands_git.rs grew past its recorded size limit, so I raised its entry from 3484 to 3679 lines, with a comment explaining why. About 100 of those lines were already over the limit before this task, still within the check's allowance; the other ~95 are this fix and its tests. I also added an ARCHITECTURE.md entry with the table above.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     Predicted correctly: src/commands_git.rs

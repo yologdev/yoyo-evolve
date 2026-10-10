@@ -1,0 +1,49 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && B=$(pwd)/target/debug/yoyo; ls -… ✓ (45ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.6s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md.
+
+I ran the built binary from a temp directory holding top.rs and sub/a.rs, and every case behaved as the task asked:
+
+| Command | What happened | Exit |
+|---|---|---|
+| yoyo index /nonexistent | ✗ no such path: … on stderr | 1 |
+| yoyo index sub | lists only sub/a.rs | 0 |
+| bare yoyo index | whole project, unchanged | 0 |
+| yoyo index --x | unknown flag on stderr | 2 |
+| bare yoyo grep | usage text on stdout | 2 |
+| yoyo grep <no match> | No matches found. | 0 |
+
+• **Missing path:** the change reuses `/map`'s message helper and its exit code of 1, so there is still only one place that decides "this path doesn't exist".
+• **Removed function:** `build_project_index` was replaced by a version that takes the file list and an optional path. Searching `src/` turns up no remaining caller, only a comment.
+• **Loose ends:** every new definition has a caller in this diff, and both modules' line-count limits in tests/module_size.rs were raised.
+• **Tests:** the new integration tests run through the built binary and check the exact exit code and full stdout for each case, including the two that must keep exiting 0.
+• Docs: `docs/src/usage/commands.md and ARCHITECTURE.md` were updated in the same diff.
+
+I didn't check two things in the task's "Done means" list. The diff doesn't show the commit message, so I couldn't confirm it says "Part of #982" and names the remaining items (bare run, config <unknown>, the usage-exit inconsistency). I also didn't confirm that #982's body was edited on GitHub.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -3 --format='%h %s%n%b--… ✓ (355ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 20 gh issue view 982 --j… ✓ (401ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.1s (2 ✓)
+
+I've now checked the two things I couldn't confirm before, and the verdict stays PASS. I didn't change any code or the verdict file.
+
+• **Commit message:** commit `10a34b86` ends with `Part of #982`. It names the remaining items: bare `run`, `config <unknown>`, and the inconsistent usage-error exit codes (`tree/undo exit 1, while def/outline/grep/map/index` exit 2). It also says the path is honoured rather than refused, and why.
+• **#982's body:** it was edited in place. The "Already fixed" list now has `index <path>` and bare `grep`, citing `10a34b86`. `index` is gone from "Known still exit 0", and config <unknown> is still listed there as open.
+• **The list shrank by one, not two:** the body says why. Bare `grep` was never on the "Known still exit 0" list, so only `index` came off. The body states this, as the task required when the list doesn't shrink by the number of fixes.
+
+The older census section of the issue still lists index among arms "not yet probed". That section is marked as kept unedited from Day 217, so it isn't a defect.
+
+The evaluation is done; nothing is left from my side.
+  watch: no files changed this turn — skipping
