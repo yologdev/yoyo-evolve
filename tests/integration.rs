@@ -2905,6 +2905,166 @@ fn git_subcommands_exit_one_outside_a_git_repository() {
     }
 }
 
+/// Run `yoyo commit <args>` in `dir` with git's identity fully controlled:
+/// no system config, no `GIT_AUTHOR_*`/`GIT_COMMITTER_*` overrides, and
+/// `user.useConfigOnly=true` so git cannot auto-detect an identity from the
+/// host (whether it can depends on the machine's passwd entry, which would
+/// make the no-identity case flaky). With `identity`, the name/email come
+/// from env-injected config; without it, git has none and refuses.
+fn yoyo_commit_in(dir: &std::path::Path, args: &[&str], identity: bool) -> std::process::Output {
+    let ceiling = dir.parent().unwrap_or(dir);
+    let mut cmd = yoyo_cmd();
+    cmd.arg("commit")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CEILING_DIRECTORIES", ceiling)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null");
+    for var in [
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "EMAIL",
+    ] {
+        cmd.env_remove(var);
+    }
+    let mut kv: Vec<(&str, &str)> =
+        vec![("user.useConfigOnly", "true"), ("commit.gpgsign", "false")];
+    if identity {
+        kv.push(("user.name", "t"));
+        kv.push(("user.email", "t@t"));
+    }
+    cmd.env("GIT_CONFIG_COUNT", kv.len().to_string());
+    for (i, (k, v)) in kv.iter().enumerate() {
+        cmd.env(format!("GIT_CONFIG_KEY_{i}"), k);
+        cmd.env(format!("GIT_CONFIG_VALUE_{i}"), v);
+    }
+    cmd.stdin(Stdio::null()).output().expect("run yoyo")
+}
+
+/// A temp git repo with one file staged and, if `committed`, one commit
+/// already made (identity passed per-command, never written to any config).
+fn commit_scratch_repo(committed: bool) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let git = |args: &[&str]| {
+        let ok = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c"])
+            .args(["commit.gpgsign=false"])
+            .args(args)
+            .current_dir(dir.path())
+            .env("GIT_CEILING_DIRECTORIES", dir.path().parent().unwrap())
+            .status()
+            .expect("git");
+        assert!(ok.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(dir.path().join("f.txt"), "one\n").unwrap();
+    git(&["add", "f.txt"]);
+    if committed {
+        git(&["commit", "-q", "-m", "init"]);
+    }
+    dir
+}
+
+fn git_log_subjects(dir: &std::path::Path) -> String {
+    let out = Command::new("git")
+        .args(["log", "--format=%s"])
+        .current_dir(dir)
+        .output()
+        .expect("git log");
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+#[test]
+fn commit_that_git_refuses_exits_nonzero() {
+    // #982: `yoyo commit "msg"` printed git's refusal with a red ✗ and exited
+    // 0, so `yoyo commit -m … && git push` pushed believing a commit was made.
+    // Rule: yoyo mirrors git's own exit status for the commit it ran.
+    let no_identity = commit_scratch_repo(false);
+    let not_a_repo = tempfile::tempdir().expect("tempdir");
+    let nothing_staged = commit_scratch_repo(true);
+    let cases: [(&std::path::Path, &[&str], bool, &str); 5] = [
+        // git has no author identity
+        (
+            no_identity.path(),
+            &["msg"],
+            false,
+            "Author identity unknown",
+        ),
+        // not a repository, with a message (the git commit runs and fails)
+        (not_a_repo.path(), &["zz"], true, "not a git repository"),
+        // `-a` outside a repository: staging fails before any commit
+        (
+            not_a_repo.path(),
+            &["-a", "zz"],
+            true,
+            "error staging files",
+        ),
+        // nothing to commit: git itself exits 1, so yoyo does too
+        (nothing_staged.path(), &["msg"], true, "nothing"),
+        // `-a` with no tracked changes: same decision as above
+        (
+            nothing_staged.path(),
+            &["-a", "msg"],
+            true,
+            "nothing to commit",
+        ),
+    ];
+    for (dir, args, identity, needle) in cases {
+        let out = yoyo_commit_in(dir, args, identity);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "yoyo commit {args:?}: stdout={stdout} stderr={stderr}"
+        );
+        // Anti-vacuous: the failure really was the one this row names.
+        assert!(
+            stdout.contains(needle) || stderr.contains(needle),
+            "yoyo commit {args:?}: expected {needle:?}; stdout={stdout} stderr={stderr}"
+        );
+    }
+    // No commit appeared in either repo.
+    assert_eq!(git_log_subjects(no_identity.path()), "");
+    assert_eq!(git_log_subjects(nothing_staged.path()), "init\n");
+}
+
+#[test]
+fn commit_that_succeeds_still_exits_zero() {
+    // Near miss for the test above: identity configured, one staged file.
+    let repo = commit_scratch_repo(false);
+    let out = yoyo_commit_in(repo.path(), &["addf"], true);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stdout={stdout} stderr={stderr}"
+    );
+    assert!(stdout.contains('✓'), "stdout={stdout}");
+    assert_eq!(git_log_subjects(repo.path()), "addf\n");
+}
+
+#[test]
+fn commit_amend_exit_status_mirrors_git() {
+    // #982: `handle_commit_amend` returned `()`, so a failed amend could not
+    // report one. Failure: an empty repo has nothing to amend.
+    let empty = commit_scratch_repo(false);
+    let out = yoyo_commit_in(empty.path(), &["--amend", "newmsg"], true);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "stderr={stderr}");
+    assert!(stderr.contains("nothing to amend"), "stderr={stderr}");
+
+    // Near miss: a repo with a commit amends, exits 0, and the subject moved.
+    let repo = commit_scratch_repo(true);
+    let out = yoyo_commit_in(repo.path(), &["--amend", "newmsg"], true);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "stderr={stderr}");
+    assert_eq!(git_log_subjects(repo.path()), "newmsg\n");
+}
+
 #[test]
 fn git_diff_in_a_clean_repository_still_exits_zero() {
     // Near miss for #982 slice 2: an empty diff is not a failure.

@@ -1503,17 +1503,17 @@ pub fn handle_commit(input: &str) {
     let _ = handle_commit_status(input);
 }
 
-/// `/commit` with an exit status for the shell door (`yoyo commit`, #982):
-/// 1 when the not-a-git-repository branch fires, 0 otherwise. "Nothing
-/// staged" is deliberately 0 in this slice. The REPL calls `handle_commit`,
-/// which discards the code.
+/// `/commit` with an exit status for the shell door (`yoyo commit`, #982): mirrors git — 1 when
+/// no commit was made because git or `-a` staging failed (no repo, no identity, nothing to commit,
+/// a failed amend); 0 on success, a dry run, a declined prompt, or bare `/commit` with nothing
+/// staged (only a hint prints, no `git commit` runs). The REPL's `handle_commit` discards it.
 pub fn handle_commit_status(input: &str) -> i32 {
     let arg = input.strip_prefix("/commit").unwrap_or("").trim();
     let parsed = parse_commit_args(arg);
 
     // Auto-stage tracked files when `-a`/`--all` is present
     if parsed.auto_stage && !auto_stage_tracked() {
-        return 0;
+        return 1;
     }
 
     if parsed.dry_run {
@@ -1530,7 +1530,7 @@ pub fn handle_commit_status(input: &str) -> i32 {
     }
 
     if parsed.amend {
-        handle_commit_amend(&parsed);
+        return handle_commit_amend(&parsed);
     } else if !parsed.message.is_empty() {
         let (ok, output) = run_git_commit_with_trailer(&parsed.message);
         if ok {
@@ -1538,6 +1538,7 @@ pub fn handle_commit_status(input: &str) -> i32 {
             crate::commands_risk::auto_risk_snapshot();
         } else {
             eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+            return 1;
         }
     } else {
         match get_staged_diff() {
@@ -1568,6 +1569,7 @@ pub fn handle_commit_status(input: &str) -> i32 {
                                 crate::commands_risk::auto_risk_snapshot();
                             } else {
                                 eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+                                return 1;
                             }
                         }
                         "e" | "edit" => {
@@ -1586,6 +1588,7 @@ pub fn handle_commit_status(input: &str) -> i32 {
                                         crate::commands_risk::auto_risk_snapshot();
                                     } else {
                                         eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+                                        return 1;
                                     }
                                 }
                             }
@@ -1601,15 +1604,14 @@ pub fn handle_commit_status(input: &str) -> i32 {
     0
 }
 
-/// Handle `--amend` variant of `/commit`.
-///
+/// Handle `--amend` variant of `/commit`. Returns 1 when git's amend failed, else 0 (#982).
 /// Behaviour:
 /// - With a message: amend and replace the commit message.
 /// - Without a message but with staged changes: show current message, ask
 ///   whether to keep/edit it, then amend.
 /// - Without a message and no staged changes: amend with `--no-edit` (useful
 ///   after `git add` of a forgotten file).
-fn handle_commit_amend(parsed: &CommitArgs) {
+fn handle_commit_amend(parsed: &CommitArgs) -> i32 {
     if !parsed.message.is_empty() {
         // Amend with a new message
         let (ok, output) = run_git_amend_with_message(&parsed.message);
@@ -1618,8 +1620,9 @@ fn handle_commit_amend(parsed: &CommitArgs) {
             crate::commands_risk::auto_risk_snapshot();
         } else {
             eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+            return 1;
         }
-        return;
+        return 0;
     }
 
     // No explicit message — check for staged changes
@@ -1645,6 +1648,7 @@ fn handle_commit_amend(parsed: &CommitArgs) {
                         crate::commands_risk::auto_risk_snapshot();
                     } else {
                         eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+                        return 1;
                     }
                 }
                 "e" | "edit" => {
@@ -1663,6 +1667,7 @@ fn handle_commit_amend(parsed: &CommitArgs) {
                                 crate::commands_risk::auto_risk_snapshot();
                             } else {
                                 eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+                                return 1;
                             }
                         }
                     }
@@ -1680,8 +1685,10 @@ fn handle_commit_amend(parsed: &CommitArgs) {
             crate::commands_risk::auto_risk_snapshot();
         } else {
             eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+            return 1;
         }
     }
+    0
 }
 
 // ── /pr ──────────────────────────────────────────────────────────────────
