@@ -36,7 +36,7 @@ pub(crate) fn shell_todo_refusal(verb: &str) -> Option<String> {
          \x20 The todo list is session-only: it lives inside a running yoyo session, and each\n\
          \x20 shell call is a fresh process, so the change would be forgotten when it exits.\n\
          \x20 Start yoyo and use: /todo {verb}{args}\n\
-         \x20 Persistence across invocations is tracked in #679."
+         \x20 Persistence across invocations is tracked in #1005."
     ))
 }
 
@@ -755,7 +755,7 @@ mod tests {
     use serial_test::serial;
 
     #[test]
-    fn shell_todo_refusal_exact_text_names_679_and_slash_todo() {
+    fn shell_todo_refusal_exact_text_names_1005_and_slash_todo() {
         assert_eq!(
             shell_todo_refusal("add").as_deref(),
             Some(
@@ -763,12 +763,14 @@ mod tests {
                  \x20 The todo list is session-only: it lives inside a running yoyo session, and each\n\
                  \x20 shell call is a fresh process, so the change would be forgotten when it exits.\n\
                  \x20 Start yoyo and use: /todo add <description>\n\
-                 \x20 Persistence across invocations is tracked in #679."
+                 \x20 Persistence across invocations is tracked in #1005."
             )
         );
         for verb in SESSION_MUTATING_TODO_VERBS {
             let msg = shell_todo_refusal(verb).expect("mutating verb must refuse");
-            assert!(msg.contains("#679"), "{verb}: {msg}");
+            assert!(msg.contains("#1005"), "{verb}: {msg}");
+            // #679 is closed; a refusal naming it is a dead end (#682).
+            assert!(!msg.contains("#679"), "{verb}: {msg}");
             assert!(msg.contains(&format!("/todo {verb}")), "{verb}: {msg}");
             // Glyph-free: no ✓ (the lie this replaces) and nothing non-ASCII.
             assert!(msg.is_ascii(), "{verb} refusal must be glyph-free: {msg}");

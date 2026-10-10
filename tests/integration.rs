@@ -2850,7 +2850,7 @@ fn shell_todo_add_refuses_instead_of_printing_success_and_forgetting() {
     assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
     assert!(!stdout.contains("Added task"), "stdout: {stdout}");
     assert!(!stdout.contains('✓') && !stderr.contains('✓'));
-    assert!(stderr.contains("#679"), "stderr: {stderr}");
+    assert!(stderr.contains("#1005"), "stderr: {stderr}");
     assert!(stderr.contains("/todo add"), "stderr: {stderr}");
 
     // Near-miss: the read-only verb stays harmless and exits 0.
@@ -3019,4 +3019,27 @@ fn changelog_evolution_tree_inside_a_git_repository_still_exit_zero() {
             "yoyo {cmd} inside a repo printed the not-a-repo text: {stdout:?}"
         );
     }
+}
+
+#[test]
+fn risk_unknown_subcommand_exits_two_and_known_verb_exits_zero() {
+    // #982 residue: `yoyo risk zz` printed its refusal and exited 0, so a
+    // script could not tell a typo from a run. The printed bytes are unchanged.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = yoyo_in_dir(dir.path(), &["risk", "zz"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(2), "stdout={stdout:?}");
+    assert_eq!(
+        stdout,
+        "Unknown /risk subcommand: zz\nAvailable: snapshot | validate | history | predict | \
+         accuracy | effectiveness | epistemic | harvest | --all\n"
+    );
+    // Near miss: a known read-only verb in the same empty dir is success.
+    let ok = yoyo_in_dir(dir.path(), &["risk", "history"]);
+    assert_eq!(
+        ok.status.code(),
+        Some(0),
+        "stdout={:?}",
+        String::from_utf8_lossy(&ok.stdout)
+    );
 }

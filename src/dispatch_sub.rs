@@ -83,6 +83,13 @@ fn quote_args_as_command(args: &[String]) -> String {
     format!("/{}", parts.join(" "))
 }
 
+/// Exit status for `yoyo risk <sub>` (#982): 2 (usage) for a verb
+/// `handle_risk` refuses, using its own sub extraction and classifier.
+pub(crate) fn risk_status(input: &str) -> i32 {
+    let sub = input.strip_prefix("/risk").unwrap_or(input).trim();
+    2 * i32::from(crate::commands_risk::is_unknown_risk_subcommand(sub))
+}
+
 /// Exit nonzero when a shell subcommand's child failed or never ran; success
 /// returns so the arm's `Some(None)` path is unchanged. Flushes stdout first.
 fn exit_if_failed(outcome: crate::commands_run::ShellOutcome) {
@@ -379,6 +386,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // where the DREAM measurement data actually accumulates.
                 let input = build_risk_input(&args[2..]);
                 crate::commands_risk::handle_risk(&input);
+                exit_if_nonzero(risk_status(&input));
                 return Some(None);
             }
             "grep" => {

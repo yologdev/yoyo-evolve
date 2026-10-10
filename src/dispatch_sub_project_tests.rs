@@ -49,3 +49,16 @@ fn test_try_dispatch_subcommand_init_bare() {
         "init wrote YOYO.md into repo root"
     );
 }
+
+#[test]
+fn risk_status_refuses_only_verbs_handle_risk_refuses() {
+    // #982: unknown verb -> 2; every listed verb and bare `risk` -> 0.
+    use crate::dispatch_sub::risk_status;
+    assert_eq!(risk_status("/risk zz"), 2);
+    assert_eq!(risk_status("/risk snapshoot"), 2);
+    assert_eq!(risk_status("/risk snapshot extra"), 2);
+    assert_eq!(risk_status("/risk"), 0);
+    for verb in crate::commands_risk::RISK_SUBCOMMANDS {
+        assert_eq!(risk_status(&format!("/risk {verb}")), 0, "{verb}");
+    }
+}
