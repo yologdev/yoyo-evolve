@@ -1,0 +1,259 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 840,1060p src/agent_builder…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "openai_compat_output_ceil… ✓ (9ms)
+ ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "openai_compat_output_ceil… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 985,1005p src/agent_builder… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -A2 'name = "yoagent"' Cargo.… ✓ (1m 48s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep yoagent Cargo.toml; ls -d ~/.… ✓ (46ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.24.2/src; se… ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.24.2/src; gr… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1060,1110p src/agent_builde… ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.24.2/src; gr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "KNOWN_PROVIDERS" src/*.r… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "pub const KNOWN_PROVIDER… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1206,1232p src/agent_builde… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=1206 && NR<=1236' src/age… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  16 tools completed in 2m 42s (16 ✓)
+
+The output is being elided; let me read with read_file.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:1206..1236  ▶ read src/agent_builder.rs:1335..1360 ✓ (1ms)
+ ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn capped_failure_id" -B3… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "print-system-prompt" src/… ✓ (290ms)
+  ▶ $ cd /tmp && OPENAI_API_KEY=sk-dummy timeout 20 /home/runner/work/yoyo-evolve/yoyo… ✓ (20.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 41.1s (5 ✓)
+
+Baseline: the only stderr line is the known-models warning; nothing mentions the 4096 cap. Now the helper, its call site, and tests.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (1 → 94 lines)
+  + /// Provider arms of [`create_model_config`] built on `ModelConfig::openai`,
+  + /// i.e. arms where an id with no preset inherits yoagent's base guess: a
+  + /// 128K window and `max_tokens = 4096`. `ollama`, `custom` and unknown
+  + /// providers use `ModelConfig::local` instead; same numbers, but the user runs
+  + /// that server and sets its limits there, so they are deliberately NOT here
+  + /// (named residue, not an oversight). `deepseek`, `zai`, `minimax`, `google`,
+  + /// `bedrock` and `anthropic` have their own presets/defaults. A source-level
+  + /// test (`openai_base_fallback_providers_match_create_model_config`) fails if
+  + /// a new arm lands on the base guess without being listed here.
+  + pub(crate) const OPENAI_BASE_FALLBACK_PROVIDERS: &[&str] = &[
+  +     "openai",
+  +     "openrouter",
+  +     "xai",
+  +     "groq",
+  +     "mistral",
+  +     "cerebras",
+  +     "github",
+  + ];
+  + 
+  + /// Bytes of a model id shown in [`unknown_model_limits_note`] before the cut.
+  ... (74 more lines)
+ ✓ (17.6s)
+  + /// Provider arms of [`create_model_config`] built on `ModelConfig::openai`,
+  + /// i.e. arms where an id with no preset inherits yoagent's base guess: a
+  + /// 128K window and `max_tokens = 4096`. `ollama`, `custom` and unknown
+  + /// providers use `ModelConfig::local` instead; same numbers, but the user runs
+  + /// that server and sets its limits there, so they are deliberately NOT here
+  + /// (named residue, not an oversight). `deepseek`, `zai`, `minimax`, `google`,
+  + /// `bedrock` and `anthropic` have their own presets/defaults. A source-level
+  + /// test (`openai_base_fallback_providers_match_create_model_config`) fails if
+  ... (13 more lines)
+
+Expected — now the call site.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (5 → 29 lines)
+                    &self.model,
+                    model_config.max_tokens,
+                ));
+  +             // An id with no preset runs on the base config's guessed limits
+  +             // (128K / max_tokens 4096), which silently caps every reply.
+  +             // Volume chosen from that severity: stderr, once per
+  +             // (provider, model) per process, and deliberately NOT gated on
+  +             // `is_quiet()` — piped/scripted runs are the ones nobody watches,
+  +             // and this one line is their only sign that output is capped.
+  +             // Stdout is untouched, so `-p` consumers parse the same bytes.
+  +             if let Some(note) = unknown_model_limits_note(
+  +                 &self.provider,
+  +                 &self.model,
+  +                 model_config.context_window,
+  +                 model_config.max_tokens,
+  +                 self.max_tokens,
+  +                 self.context_window,
+  +                 crate::format::is_plain_output(),
+  +             ) {
+  +                 if first_unknown_limits_warning(
+  ... (7 more lines)
+ ✓ (2m 0s)
+                    &self.model,
+                    model_config.max_tokens,
+                ));
+  +             // An id with no preset runs on the base config's guessed limits
+  +             // (128K / max_tokens 4096), which silently caps every reply.
+  +             // Volume chosen from that severity: stderr, once per
+  +             // (provider, model) per process, and deliberately NOT gated on
+  +             // `is_quiet()` — piped/scripted runs are the ones nobody watches,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "agent_builder" tests/modu… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 150,200p tests/module_size.… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "agent_builder" -B12 tests… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 12s (4 ✓)
+
+Agent_builder.rs is a grandfathered module at its exact cap; I'll move the helper into its own module instead of growing it.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; s=$(grep -n "^/// Provider arms of… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; { cat <<'EOF' (15 lines) ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls src/lib.rs … (10 lines) ✓ (8.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 19.9s (3 ✓)
+
+Builds. Now the tests (in the new module).
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> src/mod… (165 lines) ✓ (23.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo model_limits… ✓ (106ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 28.9s (2 ✓)
+
+The population guard just caught a member my hand list missed: zai. Let me check what yoagent's zai constructor actually does.
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.24.2/src; gr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+zai lands on the identical 128K/4096 guess via ModelConfig::zai, so it belongs in the list. (minimax gets 1M/4096 — a different guess; I'll name it as residue rather than widen silently.)
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (28 lines) ✓ (24.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/    … (11 lines) ✓ (23.9s)
+  2 tools completed in 52.6s (2 ✓)
+
+Now the positive control — serially and atomically (neuter → test → restore in one command):
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/model_l… (8 lines) ✓ (46.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control fails the 6 warning-path tests by name, restored green, no marker left. Now the after-measurement on the real binary:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -1; cd /tm… ✓ (26.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp; OPENAI_API_KEY=sk-dummy timeout 6 /home/runner/work/yoyo-evolve/yoyo-ev… ✓ (6.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 35.9s (2 ✓)
+
+Once, on stderr, with stdout untouched. Now the doc paragraph.
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^#\|gpt-6\|4096\|128" doc… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 105,135p docs/src/configura… ✓ (2ms)
+  ▶ edit docs/src/configuration/models.md (1 → 26 lines)
+    keep the generic OpenAI defaults.
+  + 
+  + ### Models with no preset run on guessed limits
+  + 
+  + On the OpenAI-compatible providers `openai`, `openrouter`, `xai`, `groq`, `mistral`, `cerebras`,
+  + `github` and `zai`, a model id yoyo has no preset for runs on a guessed 128,000-token context window
+  + and `max_tokens = 4096`. That cap covers reasoning plus answer on every turn, so a newer model
+  + (for example `gpt-6.1-sol`) can be cut short. yoyo now says so once per model on stderr, even in
+  + quiet or piped runs (stdout is unchanged):
+  + 
+  + ```text
+  + warning: no preset is known for openai model 'gpt-6.1-sol', so yoyo is using guessed limits: ...
+  + ```
+  + 
+  + If the model allows more, set the real limits yourself, which also silences the warning:
+  + 
+  + ```toml
+  + # .yoyo.toml
+  + max_tokens = 64000
+  + context_window = 400000
+  ... (6 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo clippy --all-ta… ✓ (1ms)
+    keep the generic OpenAI defaults.
+  + 
+  + ### Models with no preset run on guessed limits
+  + 
+  + On the OpenAI-compatible providers `openai`, `openrouter`, `xai`, `groq`, `mistral`, `cerebras`,
+  + `github` and `zai`, a model id yoyo has no preset for runs on a guessed 128,000-token context window
+  + and `max_tokens = 4096`. That cap covers reasoning plus answer on every turn, so a newer model
+  + (for example `gpt-6.1-sol`) can be cut short. yoyo now says so once per model on stderr, even in
+  ... (13 more lines)
+ ✓ (1m 52s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test lock_recovery_ch… ✓ (243ms)
+  5 tools completed in 2m 3s (5 ✓)
+
+A gate I didn't know existed — routing through the chokepoint as it asks.
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/    let mut seen = store… ✓ (2m 34s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green: clippy, every test binary, and fmt. Let me check the size gate's headroom on agent_builder.rs, then commit.
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/agen… (12 lines) ✓ (145ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+If you run yoyo on an OpenAI-compatible provider with a model id it has no preset for, it now tells you that it's guessing the limits. Before this change, gpt-6.1-sol (Codex CLI's new default) ran with every reply capped at 4096 output tokens and nothing said so. Committed as 5f262b9c. Build, clippy with -D warnings, the full test suite and the format check all pass.
+
+Before and after (--provider openai -p hi, piped):
+• Before: stderr only had the usual "Unknown model" line. Nothing mentioned the 128K window or the 4096 cap.
+• After: `gpt-6.1-sol` prints one line on stderr: *"no preset is known for openai model 'gpt-6.1-sol', so yoyo is using guessed limits: a 128000-token context window and max_tokens = 4096. Every reply (reasoning included) is capped at 4096 output tokens. If the model allows more, set max_tokens and context_window in .yoyo.toml (or pass --max-tokens / --context-window)."* It printed exactly once and stdout stayed empty, so scripts reading stdout see the same bytes as before.
+• `gpt-6-sol`, which has a preset, prints nothing.
+• `gpt-6.1-sol --max-tokens 64000` prints nothing, because the user has chosen a value.
+
+What changed:
+• **New module `src/model_limits_note.rs.** agent_builder.rs` is already at its line cap, so the code went into its own file instead of growing it. The warning uses the window and token numbers yoyo actually resolved. The model id is cleaned of control characters and cut to 200 bytes. In plain mode the line is pure ASCII.
+• **When it fires:** on stderr, once per provider and model per run, even in quiet or piped mode. Those are the runs nobody watches, and this line is their only sign that output is capped. The reason is written in a comment at the call site.
+• **One call site** in build_agent, so nothing is defined without a use.
+• **Docs:** a new section in docs/src/configuration/models.md.
+
+`zai` was missing from my list. I added a test that builds a config for every known provider and checks which ones end up on the 128K/4096 guess. It found that zai gets the same guess from its own setup code, so it now warns too. It also flagged custom, which I had left out on purpose along with ollama. They use the same defaults, but you configure those servers yourself, so they are now excluded explicitly with a stated reason.
+
+Not covered: ollama/custom, and minimax, which guesses a 1M window with the same 4096 cap. None of these warn. This is written in the code comment and the docs. I didn't invent limits for gpt-6.1 because I had no source for them.
+
+Tests: 10 table tests, including:
+• `gpt-6-sol stays silent and gpt-6.1-sol` warns.
+• A user-set max_tokens silences it.
+• Setting only context_window drops the window claim but keeps the cap warning.
+• A model id containing an escape byte comes out with no 0x1b in it.
+• It warns only once.
+• A source check that the call site isn't hidden in quiet mode. It only shows the decision is in the code, not that it fires.
+
+I also forced the warning off to confirm the tests catch it: the 6 warning-path tests failed by name, and they passed again once it was restored. No marker was left in the code.
+
+Two checks the first run caught:
+• The lock-recovery test rejected my hand-written lock handling, so it now goes through sync_util::lock_or_recover.
+• My quiet-mode check first matched its own comment, so I reworded the comment.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/agent_builder.rs

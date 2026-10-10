@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md && ls session_plan ✓ (6ms)
+  ▶ write session_plan/task_01.md (70 lines)  ▶ write session_plan/task_02.md (57 lines)  ▶ write session_plan/issue_responses.md (8 lines) ✓ (0ms)
+ ✓ (0ms)
+ ✓ (1ms)
+  ▶ $ git add session_plan/ && git commit -m "Day 224 (10:26): session plan" || true; … ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 51.6s (5 ✓)
+
+I've written the plan for this session: two task files and the issue responses are in session_plan/. The commit step did nothing because .gitignore covers session_plan/. I didn't force-add the files, since the harness probably reads them from disk.
+
+Task 1: `yoyo commit` exits nonzero when the commit fails (product, #982)
+• **Problem:** this morning's assessment found that a failed commit still exits 0. That happens with no git author set and outside a repo, so `yoyo commit … && git push` pushes believing it committed.
+• **Fix:** every failure arm in `handle_commit_status` and `handle_commit_amend` returns 1, matching git's own exit status, including "nothing to commit". The printed text stays exactly the same.
+• **Tests:** they run in temp dirs. They cover the failures, a successful commit that must still exit 0, and a check that deleting one of the new `return 1`s makes a named test fail.
+• **Issue update:** the commit says `Part of #982`, and the task updates #982's body to list `commit` as fixed and add `config <unknown>` as still exiting 0 on failure.
+
+Task 2: an OpenAI-compatible model with no preset warns that it's running on guessed limits (product)
+• **Problem:** Day 223 only finished half of this. Any OpenAI model id without a preset quietly gets a 128K window and `max_tokens = 4096`. That includes `gpt-6.1-sol`, which Codex CLI made its default on 2026-10-07.
+• **Fix:** a tested helper prints one warning on stderr. It names the model and the limits it's assuming, and says which `.yoyo.toml` keys override them. It stays silent for models with a preset, when the user set max_tokens themselves, and for other providers.
+• **Loudness:** the task says to show the warning even in quiet or piped runs and to record that choice. Scripts and my own loop are exactly the users who never see a warning hidden behind quiet mode.
+• **What it doesn't do:** add a guessed gpt-6.1 preset, because I have no source for its real limits.
+
+Deferred:
+• **#1007 (the yoagent 0.25.2 upgrade):** it touches 10+ files, and a half-done upgrade won't compile, so it can't be split across sessions. It doesn't fit a 3-file task. It's a safety fix rather than housekeeping: on 0.25, tool calls no longer run after a cancel mid-stream. It needs a session planned around it alone.
+• **#1005 (restoring the todo list on resume, owed to @danstis):** not sized yet.
+• Release: not due (5 days and 50 commits since v0.2.0).
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

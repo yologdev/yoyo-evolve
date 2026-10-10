@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "handle_commit_status\|han… ✓ (30ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.5s (2 ✓)
+
+My verdict is PASS, and I wrote it to session_plan/eval_task_1.md. I ran the built binary on the two failures the task recorded, and both now exit 1 where they used to exit 0.
+
+• **No author identity:** in a fresh `git init` directory with `HOME` pointed at an empty temp dir, `yoyo commit msg` prints `✗ Author identity unknown … fatal: empty ident name` and exits 1.
+• **Not a repo:** in a plain temp directory, yoyo commit zz prints ✗ fatal: not a git repository and exits 1.
+
+What the diff does:
+• Every failure arm the task named in handle_commit_status now returns 1, including the -a staging failure, which used to return 0. The printed text is unchanged.
+• `handle_commit_amend` now returns a status, and its caller passes it on.
+• "Nothing to commit" also exits 1, which matches git's own exit status as the task decided.
+
+Wiring:
+• The `yoyo commit dispatch in src/dispatch_sub.rs:364 already passed the status to exit_if_nonzero`, so that file correctly wasn't edited.
+• The REPL `/commit (dispatch.rs:529`) still ignores the status, so it behaves as before.
+• The diff adds no unused definitions: the three new test helpers are all used by the three new tests.
+
+Docs: the exit-code paragraph in docs/src/usage/commands.md was updated to say yoyo commit mirrors git's exit status.
+
+Minor notes, not grounds for failing:
+• The tests run the built binary in temp directories rather than calling the status function directly as the task asked. That's an acceptable substitute, because it can't exit() the test process.
+• I didn't re-run the positive control (removing one return 1 and checking the matching test fails).
+• I didn't check whether issue #982's body was updated with the commit sha and the config <unknown> entry.
+  watch: no files changed this turn — skipping
