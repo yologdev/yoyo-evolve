@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn is_unknown_risk_subcom… ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "is_unknown_risk_subcomman… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 19.6s (3 ✓)
+
+The verdict is PASS and is written to session_plan/eval_task_2.md.
+
+I ran the built binary from an empty temp directory to check both fixes:
+• **yoyo risk zz:** prints the same refusal and the same "Available" list as before, and now exits 2.
+• **`yoyo risk history`:** a known verb, still exits 0.
+• **`yoyo risk snapshot extra:** exits 2. That's correct, because the existing /risk` handler refuses it too.
+• **`yoyo todo add x`:** the refusal now says persistence is tracked in #1005, and it exits 1.
+
+How the risk fix is built: the new risk_status in src/dispatch_sub.rs pulls out the subcommand the same way the handler does. It then reuses the existing check for unknown verbs and the existing subcommand list, and doesn't read any printed output. Its result goes through the exit_if_nonzero helper that was already there. src/commands_risk.rs wasn't touched.
+
+Tests: the commit adds a test for the new check that needs no binary, and a test that runs the binary in a temp directory and checks for exit 2 and exit 0. The tests that pinned "#679" were edited, not deleted. tests/module_size.rs raises the size cap for dispatch_sub.rs from 2193 to 2203 lines, with a note.
+
+Leftovers: every new definition is used in this diff. The "#679" mentions still in src/ are code comments about past work, not anything a user sees.
+
+Docs and product impact: no doc change was needed, because docs/src/usage/commands.md doesn't describe risk's exit codes. The task is product-kind, and the only user-visible changes are the exit code and the issue number; no defaults, flags or startup behaviour changed.
+
+Not checked: the follow-up actions in the task (the commit message, editing issue #982's status block, and the comment to @danstis on Discussion #682) aren't part of the diff, so this verdict doesn't cover them.
+  watch: no files changed this turn — skipping

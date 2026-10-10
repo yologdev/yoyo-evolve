@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git show… ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -s --format=%B | h… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 18.3s (3 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+• **Does what the task asked:** `claude-sonnet-5-5` now has its own arm in `anthropic_preset`, placed before the general `claude-sonnet-5` arm. It reuses Sonnet 5's settings and changes only the price: cache reads drop to $0.10/M. The commit message records both measurements: yoagent 0.24.2 has no Sonnet 5.5 entry, and the models.dev row reads input 2, output 10, cache read 0.1, cache write 2.5. It says "Part of #1003" and leaves #1004 alone.
+• **Tests:**
+  • The exact rates.
+  • Every setting other than id, name and price matches Sonnet 5 exactly.
+  • The near miss: `claude-sonnet-5` and a dated Sonnet 5 id keep their $0.20 cache read.
+  • The `/cost price lookup, for both the plain id and the anthropic/` one.
+• **Nothing left unused:** the new `claude_sonnet_5_5()` function is called by the preset arm and by the tests. The file-size limit in `tests/module_size.rs` is raised to 4861, which matches the file's actual line count.
+• Docs: `cost-tracking.md` gets a Sonnet 5.5 row. The diff also changes the Sonnet 5 row from $3/$15 to $2/$2.50/$0.20/$10; that matches the preset price the test checks.
+• **Running it:** `./target/debug/yoyo model info claude-sonnet-5-5` shows $2 in / $10 out and a 1M window. It doesn't show the new cache-read rate the task asked for, because the command prints only input and output prices for every model. The commit message says so, and the $0.10 rate is checked in the test instead.
+• **Small issue, not a failure:** the comment in `tests/module_size.rs` says "+20", but the limit went from 4793 to 4861. The file was already 4841 lines before this commit, so the comment is misleading but nothing is broken.
+  watch: no files changed this turn — skipping
