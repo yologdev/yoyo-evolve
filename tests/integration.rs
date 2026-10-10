@@ -3264,3 +3264,153 @@ fn risk_unknown_subcommand_exits_two_and_known_verb_exits_zero() {
         String::from_utf8_lossy(&ok.stdout)
     );
 }
+
+/// The index fixture: `top.rs` at the root, `sub/a.rs` below it, and an
+/// existing but empty `empty/` directory.
+fn index_fixture(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::create_dir_all(dir.join("empty")).unwrap();
+    std::fs::write(dir.join("top.rs"), "fn top() {}\n").unwrap();
+    std::fs::write(dir.join("sub/a.rs"), "// hello sub\n").unwrap();
+}
+
+#[test]
+fn index_honours_its_path_and_a_missing_path_exits_one() {
+    // #982 residue: `yoyo index <path>` ignored the path and indexed the cwd,
+    // so `index /nonexistent` printed the whole cwd (or "no indexable source
+    // files found") and exited 0, and `index sub` listed files outside `sub`.
+    // Non-git dir: the directory-walk listing, which is what was measured.
+    let dir = tempfile::tempdir().expect("tempdir");
+    index_fixture(dir.path());
+
+    let missing = yoyo_in_dir(dir.path(), &["index", "/nonexistent_zz982"]);
+    assert_eq!(
+        missing.status.code(),
+        Some(1),
+        "stderr={:?}",
+        String::from_utf8_lossy(&missing.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&missing.stdout),
+        "  Building project index...\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&missing.stderr),
+        "  ✗ no such path: '/nonexistent_zz982' (not a file or directory, and no \
+         project file starts with it)\n\n"
+    );
+
+    // An existing subdirectory is honoured: `top.rs` (in the cwd) is absent.
+    let sub = yoyo_in_dir(dir.path(), &["index", "sub"]);
+    assert_eq!(sub.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&sub.stdout),
+        "  Building project index...\n  Path      Lines  Summary\n  \
+         ────────  ─────  ────────────────────────────────────────\n  \
+         sub/a.rs      1  // hello sub\n\n  1 file, 1 total lines\n\n"
+    );
+
+    // Near miss: an existing directory with nothing indexable is an honest
+    // empty result, exit 0, not a missing path.
+    let empty = yoyo_in_dir(dir.path(), &["index", "empty"]);
+    assert_eq!(empty.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&empty.stdout),
+        "  Building project index...\n  (no indexable source files found)\n\n"
+    );
+    assert_eq!(String::from_utf8_lossy(&empty.stderr), "");
+
+    // Usage errors exit 2 and never fall back to indexing the cwd.
+    for args in [&["index", "sub", "empty"][..], &["index", "--all"][..]] {
+        let out = yoyo_in_dir(dir.path(), args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "", "{args:?}");
+    }
+}
+
+#[test]
+fn bare_index_still_indexes_the_whole_project_and_exits_zero() {
+    // Near miss for the test above: no argument means the whole project.
+    // A git repo so the listing (`git ls-files`) has a stable order.
+    let dir = tempfile::tempdir().expect("tempdir");
+    index_fixture(dir.path());
+    let git = |args: &[&str]| {
+        let ok = Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .env("GIT_CEILING_DIRECTORIES", dir.path().parent().unwrap())
+            .status()
+            .expect("git");
+        assert!(ok.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    git(&["add", "top.rs", "sub/a.rs"]);
+    let out = yoyo_in_dir(dir.path(), &["index"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr={:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "  Building project index...\n  Path      Lines  Summary\n  \
+         ────────  ─────  ────────────────────────────────────────\n  \
+         sub/a.rs      1  // hello sub\n  top.rs        1  fn top() {}\n\n  \
+         2 files, 2 total lines\n\n"
+    );
+}
+
+/// `yoyo grep`'s usage text, byte-for-byte as it printed before #982 made
+/// the bare form exit 2 (only the status changed).
+const GREP_USAGE_STDOUT: &str = r#"  usage: /grep [-s|--case] [-c|--count] [-C N] [-B N] [-A N] [--include <glob>] [--exclude <glob>] <pattern> [path]
+  Search file contents directly — no AI, no tokens, instant results.
+  Case-insensitive by default. Use -s or --case for case-sensitive.
+
+  Context lines:
+    -C N / --context N  Show N lines before and after each match
+    -B N / --before N   Show N lines before each match
+    -A N / --after N    Show N lines after each match
+
+  File filter:
+    --include <glob>    Only search files matching the glob (e.g. *.rs)
+    --exclude <glob>    Skip files matching the glob (e.g. *.md)
+
+  Count mode:
+    -c / --count        Show match counts per file instead of lines
+
+  Examples:
+    /grep TODO
+    /grep "fn main" src/
+    /grep -s MyStruct src/lib.rs
+    /grep -C 3 "fn main" src/
+    /grep -B 2 -A 1 TODO
+    /grep --include "*.rs" fn main
+    /grep --exclude "*.md" TODO
+    /grep -c fn src/
+    /grep -C 3 --include "*.toml" version
+
+"#;
+
+#[test]
+fn bare_grep_exits_two_with_usage_unchanged_and_no_match_exits_zero() {
+    // #982 residue: bare `yoyo grep` printed usage and exited 0, while bare
+    // `def`/`outline` exit 2 (73bc8b80). One usage-error policy.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("a.txt"), "hello\n").unwrap();
+    let bare = yoyo_in_dir(dir.path(), &["grep"]);
+    assert_eq!(bare.status.code(), Some(2));
+    assert_eq!(String::from_utf8_lossy(&bare.stdout), GREP_USAGE_STDOUT);
+    // Near miss: a search that finds nothing is an answer, not an error.
+    let none = yoyo_in_dir(dir.path(), &["grep", "zzqq_nomatch982"]);
+    assert_eq!(
+        none.status.code(),
+        Some(0),
+        "stderr={:?}",
+        String::from_utf8_lossy(&none.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&none.stdout),
+        "  No matches found.\n"
+    );
+}

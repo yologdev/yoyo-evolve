@@ -322,7 +322,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // `cargo test` reads the exit code, so nothing ever acted on it. Paid here
     // rather than absorbed: an absorbed entry is stale-high, which loosens the
     // ratchet — the file could shed those lines and nothing would fire.
-    ("src/commands_search.rs", 4460),
+    // Day 224 (#982 residue): 4460 -> 4573. 44 of those were drift already in
+    // the tree before this task (4504 at HEAD); +69 are `yoyo index [path]`
+    // (`parse_index_args`, `handle_index_argv_status`) and bare `grep`'s exit 2.
+    ("src/commands_search.rs", 4573),
     // Day 163 (#716): +99 lines — spawn_dir_restrictions confines a spawn
     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
     // three regression tests covering no-worktree passthrough, the confined
@@ -383,7 +386,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // and the model/skill arms routing through them, plus the exit-code rows in the
     // parse table. The skill status logic lives in commands_skill.rs to keep this small.
     // Day 224 (#982 residue): 2193 -> 2203 (+10, `risk_status` + its exit call), pasted.
-    ("src/dispatch_sub.rs", 2203),
+    // Day 224 (#982 residue, Task 2): 2203 -> 2213 (+3 the `index` arm's exit
+    // call and comment; +7 drift from #1008's argv arms already in the tree), pasted.
+    ("src/dispatch_sub.rs", 2213),
     // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
     // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
     // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769

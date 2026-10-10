@@ -404,7 +404,10 @@ pub(crate) fn try_dispatch_subcommand_in(
                 return Some(None);
             }
             "index" => {
-                crate::commands_search::handle_index();
+                // #982: the path used to be ignored (the cwd was indexed); argv
+                // verbatim (#1008 shape). 1 for a missing path, 2 for a usage
+                // error; bare `index` and an honest empty result stay 0.
+                exit_if_nonzero(crate::commands_search::handle_index_argv_status(&args[2..]));
                 return Some(None);
             }
             "ast" => {

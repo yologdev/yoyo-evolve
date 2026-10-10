@@ -446,14 +446,18 @@ pub fn extract_first_meaningful_line(content: &str) -> String {
     String::new()
 }
 
-/// Build a project index by listing files and extracting metadata.
-/// Uses `git ls-files` when available, falls back to directory walk.
-/// Only indexes text-like source files (skips binaries, images, etc.).
-pub fn build_project_index() -> Vec<IndexEntry> {
-    let files = list_project_files();
+/// Build a project index from an already-listed file set (`list_project_files`:
+/// `git ls-files` when available, else a directory walk), keeping only paths
+/// that start with `path_filter` when one is given — the same repo-relative
+/// prefix semantics as `/map [path]` (#982). Only indexes text-like source
+/// files (skips binaries, images, etc.).
+pub fn build_project_index_from(files: &[String], path_filter: Option<&str>) -> Vec<IndexEntry> {
     let mut entries = Vec::new();
 
-    for path in &files {
+    for path in files {
+        if path_filter.is_some_and(|f| !path.starts_with(f)) {
+            continue;
+        }
         // Skip binary/non-text files based on extension
         if is_binary_extension(path) {
             continue;
@@ -556,16 +560,80 @@ pub fn format_project_index(entries: &[IndexEntry]) -> String {
     output
 }
 
-/// Handle the /index command: build and display a project file index.
+/// The honest-empty line `/index` prints (exit 0) when nothing is indexable.
+pub(crate) const INDEX_EMPTY_MESSAGE: &str = "(no indexable source files found)";
+
+/// Parse `yoyo index`'s argv tail (#982): at most one path, no flags. The path
+/// is normalised like `/map`'s (`./src` → `src`) because the filter is a
+/// `starts_with` against repo-relative paths. An error is a usage error, never
+/// a silent fallback to indexing the cwd — that fallback is the defect.
+pub(crate) fn parse_index_args(argv: &[String]) -> Result<Option<String>, String> {
+    let mut path: Option<String> = None;
+    for part in argv {
+        if part.starts_with('-') {
+            return Err(format!(
+                "unknown flag: {part} — /index takes no flags\n  usage: /index [path]"
+            ));
+        }
+        if let Some(first) = &path {
+            return Err(format!(
+                "two paths given ('{first}' and '{part}') — /index takes at most one path\n  usage: /index [path]"
+            ));
+        }
+        path = Some(part.strip_prefix("./").unwrap_or(part).to_string());
+    }
+    Ok(path)
+}
+
+/// Handle the /index command (REPL door, no arguments; the status is for the
+/// shell door).
 pub fn handle_index() {
+    let _ = handle_index_argv_status(&[]);
+}
+
+/// `yoyo index [path]` core returning an exit status (#982): 0 for an index or
+/// an honest empty result (unchanged), `MAP_MISSING_PATH_EXIT` (1) when the
+/// path does not exist — `/map`'s policy and `/map`'s classifier, not a second
+/// one — and [`SEARCH_USAGE_EXIT`] (2) for a flag or a second path. Before
+/// #982 the path was ignored and the cwd was indexed, so a typo'd path read as
+/// a whole project and a real subdirectory answered a question nobody asked.
+/// Takes argv elements verbatim (the #1008 shape), so a path with a space is
+/// one path.
+pub fn handle_index_argv_status(argv: &[String]) -> i32 {
+    let path_filter = match parse_index_args(argv) {
+        Ok(p) => p,
+        Err(msg) => {
+            eprintln!("{RED}  ✗ {msg}{RESET}\n");
+            return SEARCH_USAGE_EXIT;
+        }
+    };
+    let path_filter = path_filter.as_deref();
+
     println!("{DIM}  Building project index...{RESET}");
-    let entries = build_project_index();
+    let files = list_project_files();
+    let entries = build_project_index_from(&files, path_filter);
     if entries.is_empty() {
-        println!("{DIM}  (no indexable source files found){RESET}\n");
+        // Same existence test as `/map` (cwd, then git toplevel), and only on
+        // the empty branch: a missing path must not read as an empty project.
+        if let Some(filter) = path_filter {
+            let toplevel = crate::git::run_git(&["rev-parse", "--show-toplevel"]).ok();
+            let exists = std::path::Path::new(filter).exists()
+                || toplevel
+                    .as_deref()
+                    .is_some_and(|tl| std::path::Path::new(tl).join(filter).exists());
+            if let Some(msg) =
+                crate::commands_map::map_missing_path_message(Some(filter), exists, &files)
+            {
+                eprintln!("{RED}  ✗ {msg}{RESET}\n");
+                return crate::commands_map::MAP_MISSING_PATH_EXIT;
+            }
+        }
+        println!("{DIM}  {INDEX_EMPTY_MESSAGE}{RESET}\n");
     } else {
         let formatted = format_project_index(&entries);
         println!("{DIM}{formatted}{RESET}");
     }
+    0
 }
 
 // ── /grep ────────────────────────────────────────────────────────────────
@@ -2091,7 +2159,8 @@ pub fn handle_grep(input: &str) {
 
 /// `/grep` core returning an exit status (#982): 0 for matches or a genuine
 /// no-match (unchanged), [`GREP_ERROR_EXIT`] when grep reported an error or
-/// could not be spawned. A usage line returns 0, as before.
+/// could not be spawned, [`SEARCH_USAGE_EXIT`] (2) when there is no pattern —
+/// the usage text stays on stdout byte-identical, the `def`/`outline` policy.
 pub fn handle_grep_status(input: &str) -> i32 {
     let args = match parse_grep_args(input) {
         Some(a) => a,
@@ -2122,7 +2191,7 @@ pub fn handle_grep_status(input: &str) -> i32 {
             println!("    /grep --exclude \"*.md\" TODO");
             println!("    /grep -c fn src/");
             println!("    /grep -C 3 --include \"*.toml\" version{RESET}\n");
-            return 0;
+            return SEARCH_USAGE_EXIT;
         }
     };
 
