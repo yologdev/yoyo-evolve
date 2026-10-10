@@ -3048,6 +3048,31 @@ fn commit_that_succeeds_still_exits_zero() {
 }
 
 #[test]
+fn commit_records_the_message_byte_identically() {
+    // #1008: `yoyo commit "add f"` committed `"add f"` WITH the quote characters,
+    // because the shell door re-quoted any argv element containing a space and the
+    // commit parser never unquotes. Property: the subject git records is
+    // byte-identical to the one argv element the user passed — including interior
+    // quotes (neither stripped nor doubled) and runs of whitespace.
+    let cases: [(&[&str], &str); 5] = [
+        (&["add f"], "add f\n"),
+        (&[r#"say "hi" now"#], "say \"hi\" now\n"),
+        (&["two  spaces"], "two  spaces\n"),
+        // Flags are recognised as whole argv elements, wherever they sit.
+        (&["-a", "add f"], "add f\n"),
+        // Near miss: several bare words still join with one space each.
+        (&["add", "f"], "add f\n"),
+    ];
+    for (args, want) in cases {
+        let repo = commit_scratch_repo(false);
+        let out = yoyo_commit_in(repo.path(), args, true);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{args:?}: stderr={stderr}");
+        assert_eq!(git_log_subjects(repo.path()), want, "yoyo commit {args:?}");
+    }
+}
+
+#[test]
 fn commit_amend_exit_status_mirrors_git() {
     // #982: `handle_commit_amend` returned `()`, so a failed amend could not
     // report one. Failure: an empty repo has nothing to amend.
@@ -3084,6 +3109,42 @@ fn git_diff_in_a_clean_repository_still_exits_zero() {
         String::from_utf8_lossy(&out.stdout)
     );
     assert!(!stderr.contains("not in a git repository"));
+}
+
+#[test]
+fn git_diff_of_a_path_with_a_space_names_that_file() {
+    // #1008 sibling: `yoyo diff "f sp.txt"` reached the parser as `"f` and
+    // `sp.txt"`, so git was asked for the revision `sp.txt"` and it exited 1.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let git = |args: &[&str]| {
+        let ok = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c"])
+            .args(["commit.gpgsign=false"])
+            .args(args)
+            .current_dir(dir.path())
+            .env("GIT_CEILING_DIRECTORIES", dir.path().parent().unwrap())
+            .status()
+            .expect("git");
+        assert!(ok.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(dir.path().join("f sp.txt"), "one\n").unwrap();
+    std::fs::write(dir.path().join("other.txt"), "one\n").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "init"]);
+    std::fs::write(dir.path().join("f sp.txt"), "one\nspaced_marker_1008\n").unwrap();
+    std::fs::write(dir.path().join("other.txt"), "one\nother_marker_1008\n").unwrap();
+    let out = yoyo_in_dir(dir.path(), &["diff", "f sp.txt"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stdout={stdout} stderr={stderr}"
+    );
+    assert!(stdout.contains("spaced_marker_1008"), "stdout={stdout}");
+    // Near miss: the file filter really applied — the other change is absent.
+    assert!(!stdout.contains("other_marker_1008"), "stdout={stdout}");
 }
 
 #[test]

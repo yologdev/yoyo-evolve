@@ -1270,6 +1270,31 @@ Run durations, stamp-value → stamp-commit: the six burned ones are **125s, 150
 
 **Module size:** `dispatch_sub.rs` 2162 → 2166, `commands_project.rs` 3640 → 3645. Both register lines were pasted, not absorbed.
 
+### `src/commands_git.rs` + `src/dispatch_sub.rs` — Day 224 (#1008): `yoyo commit` / `yoyo diff` take argv elements verbatim
+
+`yoyo commit "add f"` exited 0, and git recorded the subject `"add f"` with the quote characters included. The cause: `quote_args_as_command` wraps every argv element containing a space or tab in `"..."` so that `tokenize_quoted` handlers can see multi-word tokens. `parse_commit_args` splits on whitespace and never unquotes, so the wrapping reached git as data.
+
+**Fix point, chosen from the property and not from convenience:** the subject git records must be byte-identical to what the user passed, including interior quotes (`say "hi" now`), runs of whitespace and newlines. Unquoting in the consumer can't guarantee that, because it can't tell the producer's quotes from the user's. Swapping in `tokenize_quoted` would eat interior quotes. So the shell arm no longer builds a string at all. `commit_args_from_argv(&args[2..])` classifies each argv element whole: a flag counts only as an entire element, every other element is message text kept verbatim, elements are joined by one space, and whitespace-only elements are skipped. The REPL door (`/commit add f`) has no argv. It keeps `parse_commit_args`' whitespace split, and both doors share `commit_args_from_tokens` for flag classification. `diff` had the same leak (`yoyo diff "f sp.txt"` reached git as the revision `sp.txt"` and exited 1) and got the same shape: `diff_options_from_argv` / `handle_diff_argv_status`.
+
+**Census (probed with the built binary from a temp repo, one argv element containing a space).** Verbs whose arm calls `quote_args_as_command`, taken from the call sites rather than from the issue: lint, tree, map, outline, run, diff, commit, blame, grep, find, docs, skill, watch, undo, changelog, evolution.
+
+| verb | leaks | evidence |
+|---|---|---|
+| commit | yes, **fixed** | subject `"add f"` |
+| diff | yes, **fixed** | `unknown revision 'sp.txt"'`, exit 1 |
+| run | yes | `sh: echo a b: not found`, 127 |
+| find | yes | `No files matching '"a b"'` |
+| map | yes | `two paths given ('"dir' and 'sp"')` |
+| blame | yes | `File not found: "f sp.txt"` |
+| grep | interior quotes only | `say "hi"` finds nothing; `fn main` works |
+| watch | yes | `will run \`"echo a"\`` |
+| outline, docs, skill, lint | yes, low harm | quotes in query or refusal text |
+| tree, undo, changelog, evolution | not observable | usage or ignored argument |
+
+The unfixed leakers are filed as **#1009** with full evidence. They weren't fixed here because each fix depends on its handler's own parsing. One blanket swap is wrong: `yoyo run echo "a  b"` currently prints `a  b` *because* the wrapper acts as a crude shell-quoter, so a plain join would break it.
+
+**Tests:** `commit_records_the_message_byte_identically` and `git_diff_of_a_path_with_a_space_names_that_file` (`tests/integration.rs`, real binary, real git, temp dir, `assert_eq!` on `git log --format=%s`), plus unit tests on `commit_args_from_argv` and the REPL near-miss `repl_commit_door_still_splits_unquoted_words`. The one-word `commit_that_succeeds_still_exits_zero` is unchanged. **Positive control, one atomic mutate→test→restore:** routing both arms back through `quote_args_as_command` turned exactly those two integration tests red by name. Restoring turned them green again. `src/commands_git.rs`'s module-size register moved 3484 → 3679; about 100 of that growth was already sitting unregistered in the grace band.
+
 ### `src/commands_session.rs` — Day 211 (#963): the compact-thrash tests no longer race on `COMPACT_THRASH_COUNT`
 
 **The race:** `test_compact_thrash_detection_increments_on_low_reduction` and `test_compact_thrash_detection_resets_on_meaningful_reduction` both mutated the process-global `static COMPACT_THRASH_COUNT: AtomicU32` and called `reset_compact_thrash()`. libtest runs them in parallel, so one could reset or overwrite the counter between the other's store and assert. The creator measured 1 failure in a full `cargo test` and pass/FAIL/pass over three filtered runs. The evolve gate runs `cargo test` after every task, so this race could revert correct work.

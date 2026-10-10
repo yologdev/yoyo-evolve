@@ -247,7 +247,12 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // is the ratchet working: registering would have converted a paid debt into
     // a permanent ceiling. Restoring an entry here would be a regression.
     ("src/commands_file.rs", 2854),
-    ("src/commands_git.rs", 3484),
+    // Day 224 (#1008): 3484 -> 3679 (+195). ~100 was already sitting in the grace
+    // band unregistered; +95 is the argv doors for `yoyo commit` / `yoyo diff`
+    // (`commit_args_from_argv`, `diff_options_from_argv`, their shared token cores)
+    // and their unit tests. The argv seam had to sit beside the parsers it shares
+    // flag classification with. Acknowledged, not absorbed.
+    ("src/commands_git.rs", 3679),
     // Day 174: +25 absorbed since Day 166.
     // +103 (Day 179, #832): the `/evolution` cargo shell-out was split into a
     // thin wrapper + injected resolvers so no `#[test]` spawns `cargo`, plus a

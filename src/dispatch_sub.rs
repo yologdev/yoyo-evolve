@@ -355,13 +355,16 @@ pub(crate) fn try_dispatch_subcommand_in(
                 return Some(None);
             }
             "diff" => {
-                let input = quote_args_as_command(args);
-                exit_if_nonzero(crate::commands_git::handle_diff_status(&input));
+                // #1008: argv elements verbatim, as `commit` does — the quoting
+                // split a spaced path into `"f` and `sp.txt"`.
+                exit_if_nonzero(crate::commands_git::handle_diff_argv_status(&args[2..]));
                 return Some(None);
             }
             "commit" => {
-                let input = quote_args_as_command(args);
-                exit_if_nonzero(crate::commands_git::handle_commit_status(&input));
+                // #1008: argv elements straight to the parser, never through
+                // `quote_args_as_command` — its `"..."` wrapping reached git, so
+                // `yoyo commit "add f"` recorded the subject `"add f"`.
+                exit_if_nonzero(crate::commands_git::handle_commit_argv_status(&args[2..]));
                 return Some(None);
             }
             "review" => {
@@ -1524,6 +1527,8 @@ mod tests {
         // the test binary from a non-git cwd, so test the status core the arm
         // calls. `cargo test` runs from the crate root, a git checkout.
         assert_eq!(crate::commands_git::handle_diff_status("/diff"), 0);
+        // #1008: the arm now calls the argv core, so pin that one too.
+        assert_eq!(crate::commands_git::handle_diff_argv_status(&[]), 0);
     }
 
     #[test]
@@ -1531,6 +1536,8 @@ mod tests {
         // `yoyo commit` with no message should still dispatch (shows "nothing staged" or similar).
         // #982: test the status core the arm calls (see the `diff` test).
         assert_eq!(crate::commands_git::handle_commit_status("/commit"), 0);
+        // #1008: the arm now calls the argv core, so pin that one too.
+        assert_eq!(crate::commands_git::handle_commit_argv_status(&[]), 0);
     }
 
     #[test]

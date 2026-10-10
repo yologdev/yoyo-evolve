@@ -199,7 +199,19 @@ pub struct DiffOptions {
 /// - Combined: `/diff main..feature --stat`
 pub fn parse_diff_args(input: &str) -> DiffOptions {
     let rest = input.strip_prefix("/diff").unwrap_or("").trim();
-    let parts: Vec<&str> = rest.split_whitespace().collect();
+    diff_options_from_tokens(rest.split_whitespace())
+}
+
+/// Build [`DiffOptions`] from the shell door's argv elements (`yoyo diff …`, #1008).
+/// Each element is one token verbatim, so `yoyo diff "f sp.txt"` names the file
+/// `f sp.txt` rather than reaching git as `"f` and `sp.txt"` — the split the
+/// `quote_args_as_command` wrapping used to produce. Empty elements are skipped.
+pub(crate) fn diff_options_from_argv(args: &[String]) -> DiffOptions {
+    diff_options_from_tokens(args.iter().map(String::as_str).filter(|a| !a.is_empty()))
+}
+
+/// Shared token classification for both `/diff` doors.
+fn diff_options_from_tokens<'a>(parts: impl IntoIterator<Item = &'a str>) -> DiffOptions {
     let mut staged_only = false;
     let mut name_only = false;
     let mut stat_only = false;
@@ -258,8 +270,17 @@ pub fn handle_diff(input: &str) {
 /// ("no uncommitted changes") is deliberately 0 — nothing to show is not a
 /// failure. The REPL calls `handle_diff`, which discards the code.
 pub fn handle_diff_status(input: &str) -> i32 {
-    let opts = parse_diff_args(input);
+    handle_diff_opts_status(parse_diff_args(input))
+}
 
+/// The shell door (`yoyo diff …`): argv elements in (#1008; see
+/// [`diff_options_from_argv`]). `args` is everything after `diff`.
+pub(crate) fn handle_diff_argv_status(args: &[String]) -> i32 {
+    handle_diff_opts_status(diff_options_from_argv(args))
+}
+
+/// The diff itself, shared by both doors once their arguments are parsed.
+fn handle_diff_opts_status(opts: DiffOptions) -> i32 {
     // When a ref range is specified, compare commits directly
     if let Some(ref range) = opts.ref_range {
         return handle_diff_ref_range(&opts, range);
@@ -1322,13 +1343,38 @@ pub(crate) struct CommitArgs {
 ///
 /// Recognises `-a`, `--all`, `--ai`, and `--generate` in any position.
 pub(crate) fn parse_commit_args(arg: &str) -> CommitArgs {
+    commit_args_from_tokens(arg.split_whitespace())
+}
+
+/// Build [`CommitArgs`] from the shell door's argv elements (`yoyo commit …`, #1008).
+///
+/// The shell already split the user's words, so each argv element is taken
+/// **verbatim**: a flag is recognised only as a whole element, and every other
+/// element is a message part kept byte-for-byte — spaces, tabs, newlines and
+/// interior quotes included — joined to its neighbours by one space. This is why
+/// the shell door does not go through `quote_args_as_command` + `parse_commit_args`:
+/// that path wrapped `"add f"` in literal quotes the whitespace split never removed,
+/// so git recorded `"add f"`, and unquoting it afterwards would eat or double a
+/// message's own interior quotes (`say "hi" now`). Whitespace-only elements carry no
+/// message and are skipped, matching what the whitespace split did with them.
+pub(crate) fn commit_args_from_argv(args: &[String]) -> CommitArgs {
+    commit_args_from_tokens(
+        args.iter()
+            .map(String::as_str)
+            .filter(|a| !a.trim().is_empty()),
+    )
+}
+
+/// Shared flag classification for both doors: the REPL's whitespace tokens and the
+/// shell's argv elements.
+fn commit_args_from_tokens<'a>(tokens: impl IntoIterator<Item = &'a str>) -> CommitArgs {
     let mut auto_stage = false;
     let mut ai = false;
     let mut amend = false;
     let mut dry_run = false;
     let mut message_parts: Vec<&str> = Vec::new();
 
-    for token in arg.split_whitespace() {
+    for token in tokens {
         match token {
             "-a" | "--all" => auto_stage = true,
             "--ai" | "--generate" => ai = true,
@@ -1509,8 +1555,17 @@ pub fn handle_commit(input: &str) {
 /// staged (only a hint prints, no `git commit` runs). The REPL's `handle_commit` discards it.
 pub fn handle_commit_status(input: &str) -> i32 {
     let arg = input.strip_prefix("/commit").unwrap_or("").trim();
-    let parsed = parse_commit_args(arg);
+    handle_commit_parsed_status(parse_commit_args(arg))
+}
 
+/// The shell door (`yoyo commit …`): argv elements in, message kept verbatim (#1008;
+/// see [`commit_args_from_argv`]). `args` is everything after `commit`.
+pub(crate) fn handle_commit_argv_status(args: &[String]) -> i32 {
+    handle_commit_parsed_status(commit_args_from_argv(args))
+}
+
+/// The commit itself, shared by both doors once their arguments are parsed.
+fn handle_commit_parsed_status(parsed: CommitArgs) -> i32 {
     // Auto-stage tracked files when `-a`/`--all` is present
     if parsed.auto_stage && !auto_stage_tracked() {
         return 1;
@@ -3054,6 +3109,46 @@ mod tests {
         assert!(!args.auto_stage);
         assert!(!args.ai);
         assert_eq!(args.message, "fix the bug");
+    }
+
+    #[test]
+    fn commit_args_from_argv_keeps_each_element_verbatim() {
+        // #1008: the shell door's message is the argv element itself, so spaces,
+        // interior quotes, tabs and newlines survive byte-for-byte.
+        let argv = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let cases: [(&[&str], &str); 6] = [
+            (&["add f"], "add f"),
+            (&[r#"say "hi" now"#], r#"say "hi" now"#),
+            (&["subject\n\nbody line"], "subject\n\nbody line"),
+            (&["a\tb  c"], "a\tb  c"),
+            (&["add", "f"], "add f"),
+            (&["  ", "add f", ""], "add f"),
+        ];
+        for (xs, want) in cases {
+            assert_eq!(commit_args_from_argv(&argv(xs)).message, want, "{xs:?}");
+        }
+        // Flags are whole elements, in any position; a flag-looking word inside
+        // a message element is message text, not a flag.
+        let parsed = commit_args_from_argv(&argv(&["--amend", "fix -a thing", "-a"]));
+        assert_eq!(
+            parsed,
+            CommitArgs {
+                auto_stage: true,
+                ai: false,
+                amend: true,
+                dry_run: false,
+                message: "fix -a thing".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn repl_commit_door_still_splits_unquoted_words() {
+        // Near miss for #1008: the REPL door (`/commit add f`) has no argv, so it
+        // keeps the whitespace split and still commits `add f`.
+        assert_eq!(parse_commit_args("add f").message, "add f");
+        assert_eq!(parse_commit_args("-a add f").message, "add f");
+        assert!(parse_commit_args("-a add f").auto_stage);
     }
 
     #[test]
