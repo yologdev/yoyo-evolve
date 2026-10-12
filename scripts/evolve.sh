@@ -576,9 +576,10 @@ setup_external_skills
 # ── yoagent's own skill, matched to the version yoyo builds against ──
 # yoagent ships skills/yoagent/SKILL.md inside its crate (since 0.25.3):
 # which yoagent feature for which job, tips and pitfalls, and what changed
-# per version. Load the copy for the exact version in Cargo.lock, so the
-# skill never describes APIs this build does not have, and every yoagent
-# upgrade brings its "What changed" briefing with it. Order: the crate in
+# per version. Load the copy for the exact version in Cargo.lock (read once,
+# at session start), so the skill matches the yoagent this session builds
+# against, and every yoagent upgrade brings its "What changed" briefing with
+# it from the next session on. Order: the crate in
 # the cargo registry, else the version's tag on GitHub. A 0.25.2 lock uses
 # the 0.25.3 skill: 0.25.3 is 0.25.2 plus the skill, no code changes.
 setup_yoagent_skill() {
@@ -614,7 +615,9 @@ setup_yoagent_skill() {
     fi
     local base_dir="${YOYO_EXTERNAL_SKILLS_DIR:-.yoyo/external-skills}"
     local dir="$base_dir/yoagent-$tag"
-    if [ ! -d "$dir/.git" ] && command -v git &>/dev/null; then
+    if [ ! -f "$dir/skills/yoagent/SKILL.md" ] && command -v git &>/dev/null; then
+        # Also retries a clone that was interrupted before its checkout.
+        rm -rf "$dir"
         mkdir -p "$base_dir"
         git clone --depth 1 --branch "$tag" https://github.com/yologdev/yoagent.git "$dir" >/dev/null 2>&1 || true
     fi
