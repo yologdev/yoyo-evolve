@@ -18,6 +18,8 @@
 #   YOYO_EXTERNAL_SKILLS — Optional comma-separated external skill specs:
 #                        name|git-url|ref. Defaults to yoyo-operator-skill.
 #   YOYO_EXTERNAL_SKILLS_DISABLED — Set to "1" to skip external skill fetches.
+#   YOYO_YOAGENT_SKILL_DISABLED — Set to "1" to skip yoagent's own skill (loaded for the
+#                                  yoagent version in Cargo.lock; see setup_yoagent_skill).
 
 set -euo pipefail
 
@@ -570,6 +572,61 @@ setup_external_skills() {
 }
 
 setup_external_skills
+
+# ── yoagent's own skill, matched to the version yoyo builds against ──
+# yoagent ships skills/yoagent/SKILL.md inside its crate (since 0.25.3):
+# which yoagent feature for which job, tips and pitfalls, and what changed
+# per version. Load the copy for the exact version in Cargo.lock, so the
+# skill never describes APIs this build does not have, and every yoagent
+# upgrade brings its "What changed" briefing with it. Order: the crate in
+# the cargo registry, else the version's tag on GitHub. A 0.25.2 lock uses
+# the 0.25.3 skill: 0.25.3 is 0.25.2 plus the skill, no code changes.
+setup_yoagent_skill() {
+    if [ "${YOYO_YOAGENT_SKILL_DISABLED:-}" = "1" ]; then
+        echo "→ yoagent skill disabled by YOYO_YOAGENT_SKILL_DISABLED=1"
+        return 0
+    fi
+    local version
+    version=$(awk '$0 == "name = \"yoagent\"" { getline; if ($1 == "version") { gsub(/"/, "", $3); print $3; exit } }' Cargo.lock 2>/dev/null || true)
+    if [ -z "$version" ]; then
+        echo "  Warning: no yoagent in Cargo.lock; skipping the yoagent skill."
+        return 0
+    fi
+
+    # 1. The crate this build compiles against (cargo fetches it for the build anyway).
+    local cargo_home="${CARGO_HOME:-$HOME/.cargo}" crate_dir
+    crate_dir=$(ls -d "$cargo_home"/registry/src/*/yoagent-"$version" 2>/dev/null | head -1 || true)
+    if [ -z "$crate_dir" ]; then
+        cargo fetch --locked >/dev/null 2>&1 || true
+        crate_dir=$(ls -d "$cargo_home"/registry/src/*/yoagent-"$version" 2>/dev/null | head -1 || true)
+    fi
+    if [ -n "$crate_dir" ] && [ -f "$crate_dir/skills/yoagent/SKILL.md" ]; then
+        YOYO_SKILL_FLAGS+=(--skills "$crate_dir/skills")
+        echo "  yoagent skill $version loaded from $crate_dir/skills"
+        return 0
+    fi
+
+    # 2. The version's tag on GitHub (crates before 0.25.3 did not ship the skill).
+    local tag="v$version" note=""
+    if [ "$version" = "0.25.2" ]; then
+        tag="v0.25.3"
+        note=" (0.25.3 = 0.25.2 + this skill, same API)"
+    fi
+    local base_dir="${YOYO_EXTERNAL_SKILLS_DIR:-.yoyo/external-skills}"
+    local dir="$base_dir/yoagent-$tag"
+    if [ ! -d "$dir/.git" ] && command -v git &>/dev/null; then
+        mkdir -p "$base_dir"
+        git clone --depth 1 --branch "$tag" https://github.com/yologdev/yoagent.git "$dir" >/dev/null 2>&1 || true
+    fi
+    if [ -f "$dir/skills/yoagent/SKILL.md" ]; then
+        YOYO_SKILL_FLAGS+=(--skills "$dir/skills")
+        echo "  yoagent skill from $tag loaded from $dir/skills$note"
+    else
+        echo "  Warning: no yoagent skill for $version (it ships from 0.25.3); continuing without it."
+    fi
+}
+
+setup_yoagent_skill
 
 # ── Helper: run agent with automatic fallback on API error ──
 # Run yoyo with optional --fallback flag for provider failover.
