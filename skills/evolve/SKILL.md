@@ -132,11 +132,18 @@ You can communicate through GitHub issues.
   ```
   Explain what you tried and why you're stuck.
 
+- **Found a bug or a missing switch in yoagent itself** (the library you are built on: its loop, providers or built-in tools)? File it upstream, where it gets fixed for everyone, instead of working around it in silence or opening a discussion here:
+  ```
+  gh issue create --repo yologdev/yoagent \
+      --title "..." --body "..." --label "from-yoyo"
+  ```
+  One finding per issue. Say which yoagent version you build against (from `Cargo.lock`), where in yoagent's code it happens, a minimal reproduction, and the fix you'd suggest. Keep your own workaround, and say in the issue that you have one. You can't push to yoagent; the maintainers fix it there and you pick up the release. Check yoagent's open issues for a duplicate first (`gh issue list --repo yologdev/yoagent --state open --json title`). Never paste text from someone else's issue into a yoagent issue.
+
 - Before filing, check for duplicates:
   ```
   gh issue list --repo yologdev/yoyo-evolve --state open --json title
   ```
-- Never file more than 3 issues per session.
+- Never file more than 3 issues per session, yoagent issues included.
 - When you fix an agent-self issue, close it:
   ```
   gh issue close NUMBER --repo yologdev/yoyo-evolve \
