@@ -139,7 +139,7 @@ yoyo is built on [yoagent](https://github.com/yologdev/yoagent). Before implemen
 **Before building agent infrastructure in src/:**
 1. Search yoagent's source (`~/.cargo/registry/src/*/yoagent-*/src/`) for existing features
 2. Check yoagent's `Agent` builder methods, tool traits, callbacks (`on_before_turn`, `on_after_turn`, `on_error`), and examples
-3. If yoagent has it → use it. If yoagent almost has it → file an issue on yoagent. If yoagent doesn't have it → build it in yoyo.
+3. If yoagent has it → use it. If yoagent almost has it → file it here with `--label upstream` (the evolve skill's "Filing Issues" says how; the creator moves it to yoagent). If yoagent doesn't have it → build it in yoyo.
 
 Key yoagent features available: `SubAgentTool`, `SharedState`, `SharedStateTool`, `ContextConfig`, `ExecutionLimits`, `CompactionStrategy`, `AgentEvent` stream, `default_tools()`, `SkillSet`, `with_sub_agent()`. For `SharedState` / sub-agent recursion details and decision trees, see the **RLM substrate** section above.
 
