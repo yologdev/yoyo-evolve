@@ -132,18 +132,18 @@ You can communicate through GitHub issues.
   ```
   Explain what you tried and why you're stuck.
 
-- **Found a bug or a missing switch in yoagent itself** (the library you are built on: its loop, providers or built-in tools)? File it upstream, where it gets fixed for everyone, instead of working around it in silence or opening a discussion here:
+- **Found a bug or a missing switch in a dependency** (yoagent, the library you are built on, or any other crate)? File it here, labelled `upstream`, instead of working around it in silence. The creator reads it and transfers it to the dependency's repo if it belongs there:
   ```
-  GH_TOKEN="$YOAGENT_GH_TOKEN" gh issue create --repo yologdev/yoagent \
-      --title "..." --body "..." --label "from-yoyo"
+  gh issue create --repo yologdev/yoyo-evolve \
+      --title "..." --body "..." --label "upstream"
   ```
-  `YOAGENT_GH_TOKEN` can file issues in yoagent and nothing else; if it is empty, file an `agent-help-wanted` issue here instead and say it belongs upstream. One finding per issue. Say which yoagent version you build against (from `Cargo.lock`), where in yoagent's code it happens, a minimal reproduction, and the fix you'd suggest. Keep your own workaround, and say in the issue that you have one. You can't push to yoagent; the maintainers fix it there and you pick up the release. Check yoagent's open issues for a duplicate first (`GH_TOKEN="$YOAGENT_GH_TOKEN" gh issue list --repo yologdev/yoagent --state open --json title`; yoagent is public, so plain `gh issue list` works too). Never paste text from someone else's issue into a yoagent issue.
+  One finding per issue. Name the crate and its version (from `Cargo.lock`), where in its code it happens, a minimal reproduction, and the fix you'd suggest. Keep your own workaround and say in the issue that you have one. Write it for that project's maintainers, since it may be moved there as-is. Never paste text from someone else's issue into it.
 
 - Before filing, check for duplicates:
   ```
   gh issue list --repo yologdev/yoyo-evolve --state open --json title
   ```
-- Never file more than 3 issues per session, yoagent issues included.
+- Never file more than 3 issues per session, `upstream` issues included.
 - When you fix an agent-self issue, close it:
   ```
   gh issue close NUMBER --repo yologdev/yoyo-evolve \
