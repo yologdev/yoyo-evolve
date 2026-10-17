@@ -28,7 +28,7 @@ Don't use it for ordinary coding work. Most tasks don't care what the machine is
 
 Start with `uname -s`. Each command may be missing: skip what fails, and don't install anything to fill a gap.
 
-**Every OS: cores, memory, disk**
+**macOS and Linux: cores, disk** (Windows gets these from its own block)
 ```bash
 getconf _NPROCESSORS_ONLN 2>/dev/null; df -h . | tail -1
 ```
@@ -39,24 +39,36 @@ sysctl -n machdep.cpu.brand_string hw.memsize hw.ncpu
 hw=$(mktemp)   # private temp file; removed after the strip step below
 system_profiler -json SPDisplaysDataType SPCameraDataType SPAudioDataType SPUSBDataType 2>/dev/null > "$hw"
 ```
-Apple silicon has a Neural Engine: the chip model in `machdep.cpu.brand_string` (e.g. "Apple M3") tells you.
+Apple silicon has a Neural Engine: the chip model in `machdep.cpu.brand_string` (e.g. "Apple M3") tells you. Its GPU shares system memory, so there is no separate VRAM figure: say "unified, N GB" rather than "unknown".
 
-**Linux**
+**Linux** (x86 and ARM)
 ```bash
-grep -m1 'model name' /proc/cpuinfo; grep MemTotal /proc/meminfo
-lspci 2>/dev/null | grep -Ei 'vga|3d|display'      # GPUs
-nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null
+grep -m1 'model name' /proc/cpuinfo || { tr -d '\0' < /proc/device-tree/model; echo; } 2>/dev/null   # ARM boards (Raspberry Pi, Jetson) name themselves here
+grep MemTotal /proc/meminfo
+lspci 2>/dev/null | grep -Ei 'vga|3d|display'      # GPUs, any vendor (name only)
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null   # NVIDIA: memory
+rocm-smi --showproductname --showmeminfo vram 2>/dev/null                    # AMD: memory
+ls /dev/accel/ 2>/dev/null                           # NPUs (Intel, AMD; Linux 6.x accel driver)
 ls /dev/video* 2>/dev/null                           # cameras
 cat /proc/asound/cards 2>/dev/null                   # sound devices
 lsusb 2>/dev/null | sed -E "s/[[:alnum:]]+[’']s /(personal) /g"   # USB (vendor:product and names)
 ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null             # serial boards
 ```
 
-**Windows (PowerShell)**
-```powershell
-Get-CimInstance Win32_VideoController | Select Name, AdapterRAM
-Get-PnpDevice -PresentOnly -Class Camera,AudioEndpoint,USB | Select Class, @{n='FriendlyName'; e={$_.FriendlyName -replace "\w+['’]s ", '(personal) '}}
+**Windows** (the `bash` tool needs Git Bash or WSL here; it hands the script to PowerShell on stdin, so nothing needs escaping)
+```bash
+powershell.exe -NoProfile -Command - <<'PS'
+$cs = Get-CimInstance Win32_ComputerSystem
+$cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+"CPU: $($cpu.Name) ($($cs.NumberOfLogicalProcessors) logical cores)"
+"RAM: {0:N0} GB" -f ($cs.TotalPhysicalMemory / 1GB)
+Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'" | ForEach-Object { "C: free {0:N0} GB" -f ($_.FreeSpace / 1GB) }
+Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM
+Get-PnpDevice -PresentOnly -Class Camera,AudioEndpoint,USB,ComputeAccelerator | Select-Object Class, @{n='FriendlyName'; e={$_.FriendlyName -replace "\w+['’]s ", '(personal) '}}
+PS
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null   # NVIDIA: real memory
 ```
+`AdapterRAM` is a 32-bit field and stops at 4 GB, so a 16 GB card shows about 4 GB. Trust it only below 4 GB; for NVIDIA use `nvidia-smi`, otherwise say "4 GB or more". `ComputeAccelerator` is the class NPUs register under (e.g. Intel AI Boost).
 
 **Strip identifying fields from JSON** (macOS output) before reading it:
 ```bash
@@ -95,6 +107,8 @@ rm -f "$hw"
 - **CI runners are virtual machines.** In GitHub Actions you'll see no camera, no GPU and a few cores. That's the runner, not the user's machine. Never conclude "the user has no GPU" from a CI run.
 - **Absence isn't proof.** A missing command, a container, or a permission can hide a device. Say "not found" rather than "not present".
 - **Don't overreach.** A GPU doesn't mean CUDA (Apple and AMD GPUs don't have it). A camera listed doesn't mean it's free or allowed.
+- **WSL sees part of the machine.** A passed-through NVIDIA GPU shows in `nvidia-smi`, but USB devices and cameras usually don't appear. Say "inside WSL" when you report.
+- **Not covered:** BSDs, Android/Termux, and anything the commands above don't list. Report what you found and say the platform isn't covered, rather than guessing.
 - **Keep it short.** Raw `system_profiler` output is large. Summarize; never paste it whole into the conversation.
 
 ## Verification
