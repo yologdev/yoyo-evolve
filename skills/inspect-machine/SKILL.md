@@ -4,6 +4,7 @@ description: Before planning work that depends on hardware (GPU, camera, mic, US
 tools: [bash, ask_user]
 core: false
 origin: creator
+keywords: ["skills/inspect-machine", "system_profiler", "nvidia-smi", "lsusb", "Get-PnpDevice"]
 ---
 
 # Inspect the machine
@@ -19,8 +20,8 @@ Don't use it for ordinary coding work. Most tasks don't care what the machine is
 ## Rules
 
 1. **List, never use.** These commands only read the system's device lists. Never open a camera or microphone, capture anything, write to a device, or start a Bluetooth scan.
-2. **Ask before using a device.** Knowing a camera exists is not permission to use it. Ask the user (`ask_user`) before any step that opens a device, and say what for. The operating system may ask too.
-3. **Nothing identifying in what you keep.** Drop serial numbers, MAC and Bluetooth addresses, UUIDs and unique ids, device and host names (e.g. "Yuanhao's AirPods"), and user names. Keep class, model, vendor, capability and counts.
+2. **Ask before using a device.** Knowing a camera exists is not permission to use it. Ask the user (`ask_user`) before any step that opens a device, and say what for. The operating system may ask too. **When there is no one to ask** (CI, piped or `-p` mode, any run where `ask_user` is unavailable or unanswered), never use a device: report what you found and stop there.
+3. **Nothing identifying in what you keep.** Drop serial numbers, MAC and Bluetooth addresses, UUIDs and unique ids, device and host names (e.g. "Alex's AirPods"), and user names. Keep class, model, vendor, capability and counts.
 4. **Don't commit it.** The profile describes one machine at one moment. Keep it in this session's context. Never write it to `memory/`, the journal, an issue or a commit.
 
 ## Quick reference
@@ -35,7 +36,8 @@ getconf _NPROCESSORS_ONLN 2>/dev/null; df -h . | tail -1
 **macOS** (`system_profiler` takes a few seconds; one call for all types)
 ```bash
 sysctl -n machdep.cpu.brand_string hw.memsize hw.ncpu
-system_profiler -json SPDisplaysDataType SPCameraDataType SPAudioDataType SPUSBDataType 2>/dev/null > /tmp/hw.json
+hw=$(mktemp)   # private temp file; removed after the strip step below
+system_profiler -json SPDisplaysDataType SPCameraDataType SPAudioDataType SPUSBDataType 2>/dev/null > "$hw"
 ```
 Apple silicon has a Neural Engine: the chip model in `machdep.cpu.brand_string` (e.g. "Apple M3") tells you.
 
@@ -46,22 +48,22 @@ lspci 2>/dev/null | grep -Ei 'vga|3d|display'      # GPUs
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null
 ls /dev/video* 2>/dev/null                           # cameras
 cat /proc/asound/cards 2>/dev/null                   # sound devices
-lsusb 2>/dev/null                                    # USB (vendor:product and names)
+lsusb 2>/dev/null | sed -E "s/[[:alnum:]]+[’']s /(personal) /g"   # USB (vendor:product and names)
 ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null             # serial boards
 ```
 
 **Windows (PowerShell)**
 ```powershell
 Get-CimInstance Win32_VideoController | Select Name, AdapterRAM
-Get-PnpDevice -PresentOnly -Class Camera,AudioEndpoint,USB | Select Class, FriendlyName
+Get-PnpDevice -PresentOnly -Class Camera,AudioEndpoint,USB | Select Class, @{n='FriendlyName'; e={$_.FriendlyName -replace "\w+['’]s ", '(personal) '}}
 ```
 
 **Strip identifying fields from JSON** (macOS output) before reading it:
 ```bash
-python3 - /tmp/hw.json <<'EOF'
+python3 - "$hw" <<'EOF'
 import json, re, sys
 DROP = re.compile(r"serial|uuid|unique|location_id|address|mac_?addr|host_?name", re.I)
-PERSONAL = re.compile(r"[\u2019']s\b")  # "Yuanhao's AirPods"
+PERSONAL = re.compile(r"[\u2019']s\b")  # "Alex's AirPods"
 def clean(v, key=""):
     if isinstance(v, dict):
         return {k: clean(x, k) for k, x in v.items() if not DROP.search(k)}
@@ -70,11 +72,12 @@ def clean(v, key=""):
     if key == "_name" and isinstance(v, str) and PERSONAL.search(v):
         return "(personal device name)"
     return v
-print(json.dumps(clean(json.load(open(sys.argv[1]))), indent=1)[:6000])
+out = json.dumps(clean(json.load(open(sys.argv[1]))), indent=1)
+print(out[:6000] + (f"\n... [{len(out) - 6000} more characters not shown]" if len(out) > 6000 else ""))
 EOF
-rm -f /tmp/hw.json
+rm -f "$hw"
 ```
-`_name` holds each device's model ("FaceTime HD Camera"), so it is kept, unless it looks personal. USB vendor and product ids are kept too: they identify the kind of board, not the person. For text output (`lsusb`, PowerShell), drop serials and addresses by hand when you summarize.
+`_name` holds each device's model ("FaceTime HD Camera"), so it is kept, unless it looks personal. USB vendor and product ids are kept too: they identify the kind of board, not the person. The `lsusb` and PowerShell lines above replace "Name's " in device names; neither prints serials by default. Anything else identifying in text output (a serial, an address), drop when you summarize.
 
 ## Procedure
 
