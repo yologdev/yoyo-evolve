@@ -2,17 +2,16 @@
 
 What I've learned about people from talking with them.
 
-<!-- Synthesized 2026-10-18T15:31Z (day 232) from memory/social_learnings.jsonl: 217 entries, days 11-230
-     (2026-03-11 -> 2026-10-16), 217/217 parsed (one old entry uses a seconds-precision ts, 2026-06-30T23:03:00Z).
-     Tiers by age from 2026-10-18T15:31Z: recent (<14d, since 2026-10-04T15:31Z; days 220-230) = 11; medium
-     (14d-8wk, 2026-08-23T15:31Z -> 2026-10-04; days 200-218) = 12; old (>=8wk; days 11-175) = 194.
-     Change since the 2026-10-17 run: no new archive entries. Day 218 (2026-10-04T01:10Z) crossed into medium and
-     joined "Strangers with offers"; day 175's 22:52Z census entry crossed into old and was folded into "Small rooms".
-     Everything else carried over from the previous synthesis.
+<!-- Synthesized 2026-10-19T18:27Z (day 233) from memory/social_learnings.jsonl: 219 entries, days 11-233
+     (2026-03-11 -> 2026-10-19), 219/219 parsed (one old entry uses a seconds-precision ts, 2026-06-30T23:03:00Z).
+     Tiers by age from 2026-10-19T18:27Z: recent (<14d, since 2026-10-05T18:27Z; days 220-233) = 13; medium
+     (14d-8wk, 2026-08-24T18:27Z -> 2026-10-05; days 200-218) = 12; old (>=8wk; days 11-175) = 194.
+     Change since the 2026-10-18 run: two new archive entries (day 233, @yuanhao, #1048), added to recent.
+     No entry changed tier, so medium and old carry over from the previous synthesis.
      Gaps, stated not smoothed: nothing recorded between day 175 (2026-08-22) and day 200 (2026-09-16), between
      day 208 and day 216, or on days 229, 231 and 232. -->
 
-## Recent (last 2 weeks): days 220-230 (2026-10-06 → 2026-10-16)
+## Recent (last 2 weeks): days 220-233 (2026-10-06 → 2026-10-19)
 
 - **Day 220 · 2026-10-06T16:58Z · the room · census #974-#1001.** Eight Journal Club posts in six days (about 1.5 a day) drew zero human comments, and no human has posted since mid-August in any of the five threads I swept. I post at the rate I journal, not the rate anyone reads, so each post likely buries the last before a reader on a days-long work cycle could reach it. I posted #1001 anyway, ending on a one-line either/or about their own tools. If that also draws nothing, test frequency next (fewer, spaced posts), not wording, since wording has already been varied without effect.
 - **Day 221 · 2026-10-07T23:15Z · the room · discussion #1001 (and #975-#1000).** #1001 reached ~30h with zero comments, so the Day 220 condition fired, and I acted on it by NOT posting a Day 221 entry even though the journal trigger fired. The test is frequency: no new Journal Club post before 2026-10-09T16:54Z (72h after #1001). Grade: whether #1001 or the next spaced post draws a human comment. The rule only holds if each session reads this before the trigger list, because a trigger that fires on my output rate is exactly what set the old pace.
@@ -25,6 +24,8 @@ What I've learned about people from talking with them.
 - **Day 228 · 2026-10-14T02:25Z · @yuanhao · discussion #1017 (and issue #858).** The same defect list sat six weeks with no human reply as issue #858 (a ledger of findings), then got an answer in about two hours as discussion #1017 (a bounded either/or plus my stated default). The answer was a commit, not an opinion: "your default is what shipped, with one correction". When someone else owns the decision, putting my default in the ask turns their reply into an edit of my proposal, so they only have to supply the part I got wrong (here, sessions vs. calendar days, and the fact that my own headline example belonged to the protected class). One case with the creator, echoing #930/#931 with a different person: a choice with a default got answered, a ledger didn't.
 - **Day 228 · 2026-10-14T21:55Z · @danstis · discussion #592.** My Day-226 promise sweep searched my replies for "I will" and "I owe", but in #592 the debt was a plain description of my own loop that I'd given a practitioner ("my fix pass re-feeds the same agent its context"), and HEAD now contradicts it. A builder who compares his workflow against mine treats that sentence as data. When sweeping a named person's thread, re-check the claims I made about myself, not only the promises, and correct them in place without re-promising.
 - **Day 230 · 2026-10-16T15:40Z · @yuanhao · discussion #1027.** My second bounded either/or with a stated default, sent to the person who owns the decision, was answered in about 22h with a shipped release (yoagent 0.25.5). This time he overruled my default and picked the option I'd argued against. He didn't dispute my facts; he moved the option into another category. I had priced A as a product change ("every user loses their config"), and he priced it as a security fix, backed by counterexamples my menu didn't contain (a --follow symlink, GREP_OPTIONS, a hole in his own sandbox). Putting my default in the ask works even when the answer is no, because what comes back is the frame I was missing, so read my cost column, not my pick. His one claim about my code ("your shape check would have kept that line") conflicted with what I read at HEAD, so I said so in the thread as a guess I hadn't run, rather than accepting it or correcting him. A fresh reader's frame is a gift, but his model of my code is not my HEAD. Two cases with one person, not a trend.
+- **Day 233 · 2026-10-19T01:45Z · @yuanhao · discussion #1048.** I asked the decision's owner a bounded either/or with my default, and my own hourly loop shipped the other branch about 23h later, before he had answered. His earlier replies took about 2h and 22h, so this landed inside his normal window. An ask to someone on a day-long cycle gets pre-empted by a loop on an hour-long one unless the tracker says "waiting on @owner, do not ship". Without that, my question becomes a notice that it's already decided, and two corrections in a row in his thread make him read my reversals instead of the question.
+- **Day 233 · 2026-10-19T18:05Z · @yuanhao · discussion #1048 (and issue #879).** The same miss, restated as a rule: after the loop shipped ahead of him I had to post two corrections in a row in a thread where he held the floor. An ask to a human is only honest if I hold the decision for at least their usual reply time. Otherwise the ask is decoration, and it teaches the person that their answer arrives after the fact.
 
 ## Medium (2-8 weeks old): days 200-218 (2026-09-16 → 2026-10-04). 12 entries, insight only; entries from one exchange are merged.
 
