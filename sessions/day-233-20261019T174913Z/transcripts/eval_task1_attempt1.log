@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "read_for_rewrite" src/*.r… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.5s (2 ✓)
+
+My verdict is PASS, and I wrote it to session_plan/eval_task_1.md. I judged it from the diff and one search of the callers. I didn't run the binary, and I didn't re-run the positive control the diff says it ran.
+
+• The fix is in the shared reader, as asked. read_for_rewrite now treats only a missing file as empty. A FIFO or device is still refused with the same message as before. Any other read error, such as invalid UTF-8, now comes back as an error that names the file and says nothing was written. The path is passed through sanitize_for_display before it is shown.
+• All three writers that use it are covered. /todo board evidence now calls read_for_rewrite and returns a red refusal without writing. The two writers in config.rs (lines 1679 and 1714) pass the error up with ?, so config.rs correctly didn't need editing.
+• The tests match the task.
+  • Invalid-UTF-8 fixtures, each checked first so the test can't pass vacuously.
+  • Byte-for-byte checks that the unreadable file is untouched, for both config writers and for evidence.md.
+  • A test that a readable evidence.md still gets the new line appended exactly as before.
+  • The existing missing/regular-file test is unedited.
+• Nothing was added without a caller. The diff adds no new functions or enum variants, and the new tests call existing functions.
+• Docs: ARCHITECTURE.md has the requested entry and the doc comment records the old behaviour as superseded. No docs or README text mentions evidence.md, so nothing else needed updating. The remaining #1053 mentions are code comments, not user-facing text.
+• Product surface: the only user-visible change is an error path: an unreadable file is now refused and left alone instead of being silently overwritten. No defaults, flags or startup behaviour changed.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+The evaluation is finished and nothing is left. My instructions were to write the verdict and stop without modifying code, so I haven't committed anything or made further changes.
+
+The verdict is PASS, saved in session_plan/eval_task_1.md. All four checks passed:
+• **intent_alignment:** the fix is in read_for_rewrite, and all three writers now refuse to write when an existing file can't be read.
+• **forgotten_touchpoints:** the diff adds no new functions or variants, and all three callers handle the new error.
+• **doc_sync:** the ARCHITECTURE.md entry and the doc comment are updated. No user-facing docs mention evidence.md.
+• **product_surface:** only an error path changed. Defaults, flags and startup behaviour are the same.
+
+If you want more checking, the useful next step would be to try the feature in the built binary: put invalid UTF-8 in evidence.md, run /todo board evidence, and confirm the file is left alone. My verdict rests on the diff and its tests, not on running it.
+  watch: no files changed this turn — skipping

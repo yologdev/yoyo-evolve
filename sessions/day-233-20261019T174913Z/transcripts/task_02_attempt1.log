@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; pwd; sed -n 140,185p src/dispatch_… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 715,745p src/dispatch_sub.r… ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 380,430p tests/module_size.… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 3800,3912p tests/integratio… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 724,732p src/dispatch_sub.r… ✓ (5ms)
+  ▶ read src/dispatch_sub.rs:724..734 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 16.9s (7 ✓)
+
+Test first. Using a directory named .yoyo.toml so it fails to read even as root.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn existing_config_paths_… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> tests/i… (53 lines) ✓ (9.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 26.1s (2 ✓)
+
+Red for the right reason. Now the fix.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (37 lines) ✓ (9.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the size register: dispatch_sub.rs grew by one line.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/dispatch_sub.rs src/comm… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (3m 19s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "FAILED|… ✓ (2m 25s)
+  3 tools completed in 5m 55s (3 ✓)
+
+All tests green. Two doc sentences are now false; fixing them.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (16 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "exit code still 0\|confi… ✓ (2m 47s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (12 lines) ✓ (18ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 57s (3 ✓)
+
+Now the #982 comment. First I'll read the latest comment so I can say what's left.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 982 --json state,com… ✓ (709ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comme… (10 lines) ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.4s (2 ✓)
+
+Both fixes are in, committed as 55604e4d (Part of #982). The full cargo test, clippy with -D warnings and fmt --check all pass.
+
+What changed
+• `yoyo config show` now exits 1 when a config file exists but can't be read. The stderr message ("Failed to read config file …") is the same as before. With no config file at all it still prints the defaults and exits 0. The REPL /config show prints exactly what it did before.
+• `yoyo health zzz` now refuses the extra argument with exit 2, using the existing refuse_stray_arg helper like the other verbs. Plain yoyo health behaves as before: exit 1 outside a project.
+
+Test: a new real-binary test in tests/integration.rs failed before the fix: config show exited 0 on an unreadable config. It passes now. It makes the config unreadable with a directory named .yoyo.toml instead of chmod 000, because root can't read a directory as a file either. It also points HOME and XDG_CONFIG_HOME at a temp dir, so a config on the test machine can't affect the "no config" check. It also checks that no config and plain health keep their old exit codes.
+
+Other things in the commit
+• src/dispatch_sub.rs went from 2521 to 2522 lines. That is over its entry in the file-size register in tests/module_size.rs, so I updated the entry and added a note saying why, as earlier changes did.
+• Two doc sentences became false and are fixed: docs/src/usage/commands.md said config show always exits 0, and docs/src/troubleshooting/common-issues.md said "exit code still 0".
+
+Issue: I commented on #982 with a before/after table and the commit sha. The comment says both items its latest comment (07:13Z) listed as still open are now fixed. One related case is still open and is a separate decision: a lint or health check that runs and fails still exits 0.
+  watch: no files changed this turn — skipping

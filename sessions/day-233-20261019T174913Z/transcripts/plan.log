@@ -1,0 +1,50 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; gh issue view 9… ✓ (426ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 902 --json body --jq… ✓ (938ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '\.yoyo/commands' src/conf… ✓ (612ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git log --oneline -S'hints_disable… ✓ (339ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn 'read_for_rewrite' src --… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list … (25 lines) ✓ (2.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 29s (6 ✓)
+
+Now the plan files.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (118 lines) ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've written the plan for this session: two task files and an issue-responses file. The commit didn't happen because session_plan/ is in .gitignore, so the files are on disk but not in git. I assumed the harness picks them up from disk, since the commit step in the instructions ends in || true.
+
+Task 1: Fixes #1053 (data loss)
+• While checking #1053 I found the same bug in a shared helper. read_for_rewrite in src/non_regular_read.rs (built for #1047) only refuses non-regular files. Any other read error comes back as an empty string.
+• Its two callers are the /config set writers (src/config.rs:1679 and :1714). So a .yoyo.toml containing one invalid UTF-8 byte would probably be overwritten with just the new key. That comes from reading the code; I haven't tried it with a real file yet, and the task's first step is to try it.
+• The fix goes in that helper: a missing file starts empty, and any other error refuses and leaves the file untouched. /todo board evidence then switches to the same helper. That fixes all three writers, including the "a pipe would hang" part #1053 mentions.
+• Tests check that a file with invalid UTF-8 survives byte-for-byte. A second test checks that normal appends still produce exactly the same output.
+
+Task 2: Part of #982, from the oldest part of the backlog
+• yoyo config show will exit 1 when the config file can't be read. Today it prints the error and exits 0, which the assessment confirmed with a live run.
+• yoyo health zzz will refuse the stray argument with exit 2, using the existing refuse_stray_arg. Nobody chooses an unreadable config or a typo on purpose, so exit 0 protects no one here.
+• After the commit, the task posts a comment on #982 naming the two fixed cases and the commit.
+
+Things I did on GitHub this phase
+• Filed #1054. The yoagent 0.25.8 → 0.25.9 bump landed today with nobody reviewing it. According to yoagent's changelog, before 0.25.9 any tool result with several text blocks lost everything after the first block. Five yoyo wrappers build results like that: the sub-agent partial-output notice, the fallback note, [Hook feedback] and two smart_edit risk notes. Our tests check the result each wrapper returns, not the request sent to the provider, so they stayed green while the model never saw those blocks. The changelog is my only source for the old behaviour; I didn't reproduce it. #1054 lists what's owed: a test that captures the actual request body, version markers in the docs, and a check of what the docs promise.
+• #902 (40 days old): issue_responses.md closes it as not-planned and explains why. Everything it asked for that didn't need a blanket refusal has already shipped:
+  • the trust prompt now names .yoyo/commands/
+  • --safe-mode and --restricted drop the instruction files
+  • every instruction file is wrapped in a note telling the model it's repository-authored data, not operator instructions
+  • instruction files have to pass the directory fence
+
+  The only thing left is "refuse untrusted instruction files by default", and I decided against it. The trust check is false in our own CI, so that rule would quietly stop this loop reading its own CLAUDE.md while every test stays green.
+• Commitments:
+  • #420: already delivered. --no-hints and hints = false exist in src/cli.rs, so the scanner is reading old state.
+  • #1048: only applies if @yuanhao chooses "opt-in". The latest comments in that thread are mine; I see no reply from him there yet.
+
+Left for later: README.md:461 still lists the retired blindspot skill and says "14 skills". It's a one-line fix, noted in issue_responses.md but not given a task slot.
+  watch: no files changed this turn — skipping

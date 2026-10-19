@@ -1,0 +1,179 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; sed -n 1,140p src/non_regu… ✓ (14ms)
+  ▶ $ sed -n 78,86p src/non_regular_read.rs; sed -n 140,240p src/non_regular_read.rs; … ✓ (11ms)
+  ▶ $ grep -n "CAP\|const .*: usize" tests/module_size.rs | head; sed -n 1640,1665p sr…  ▶ $ sed -n 82,86p src/non_regular_read.rs; sed -n 1635,1660p src/config.rs; grep -n … ✓ (8ms)
+ ✓ (19ms)
+  ▶ $ awk 'NR>=81 && NR<=86 {print NR": "$0}' src/non_regular_read.rs; sed -n 740,760p… ✓ (6ms)
+  ▶ $ grep -n "pub.*fn sanitize_for_display" src/cli.rs; grep -n "^use\|^    use\|fn m… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 20.4s (6 ✓)
+
+Tests first, in non_regular_read.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/non_regular_read.rs (2 → 32 lines)
+  +     /// #1053: a file that exists but cannot be read (invalid UTF-8 is the
+  +     /// realistic case) is an `Err` naming it, never `""` — the caller writes
+  +     /// `existing + new` next, which would replace every byte of it.
+  +     #[test]
+  +     fn read_for_rewrite_refuses_an_unreadable_file_and_names_it() {
+  +         let dir = tempfile::tempdir().unwrap();
+  +         let bad = dir.path().join("binary.toml");
+  +         std::fs::write(&bad, [0xff, 0xfe, b'a']).unwrap();
+  +         // Anti-vacuous: the fixture really is unreadable as text.
+  +         assert!(std::fs::read_to_string(&bad).is_err());
+  +         let err = read_for_rewrite(&bad).expect_err("unreadable file must not read as empty");
+  +         assert!(err.contains("binary.toml"), "{err}");
+  +         assert!(err.contains("nothing written"), "{err}");
+  +     }
+  + 
+  +     /// #1053 at the `/config set` writers: a non-UTF-8 `.yoyo.toml` survives
+  +     /// both writers byte-for-byte, and each reports an error naming it.
+  +     #[test]
+  +     fn config_writers_leave_a_non_utf8_config_untouched() {
+  +         let dir = tempfile::tempdir().unwrap();
+  ... (12 more lines)
+  ▶ $ cargo test --bin yoyo non_regular_read 2>&1 | tail -25 ✓ (1m 46s)
+  +     /// #1053: a file that exists but cannot be read (invalid UTF-8 is the
+  +     /// realistic case) is an `Err` naming it, never `""` — the caller writes
+  +     /// `existing + new` next, which would replace every byte of it.
+  +     #[test]
+  +     fn read_for_rewrite_refuses_an_unreadable_file_and_names_it() {
+  +         let dir = tempfile::tempdir().unwrap();
+  +         let bad = dir.path().join("binary.toml");
+  +         std::fs::write(&bad, [0xff, 0xfe, b'a']).unwrap();
+  ... (13 more lines)
+ ✓ (1m 46s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 54s (2 ✓)
+
+Red by name — and the probe confirms the /config set exposure: write_config_value_to returned Ok on a non-UTF-8 .yoyo.toml. Now the fix in the authority:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (38 lines) ✓ (24.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now /todo board evidence — test first:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_todo.rs (4 → 40 lines)
+            let evidence = std::fs::read_to_string(tmp.path().join("evidence.md")).unwrap();
+            assert!(evidence.contains("- Tests pass"));
+            assert!(evidence.contains("- Lint clean"));
+  +     }
+  + 
+  +     /// #1053: an evidence.md that exists but cannot be read (invalid UTF-8)
+  +     /// survives the append byte-for-byte, and the reply is a refusal, not
+  +     /// "Added evidence".
+  +     #[test]
+  +     fn test_board_evidence_leaves_unreadable_file_untouched() {
+  +         let tmp = make_temp_dir();
+  +         let base = tmp.path().to_str().unwrap();
+  +         let path = tmp.path().join("evidence.md");
+  +         let bytes: &[u8] = b"- earlier entry\n- caf\xe9\n";
+  +         std::fs::write(&path, bytes).unwrap();
+  +         assert!(std::fs::read_to_string(&path).is_err()); // anti-vacuous
+  + 
+  +         let result = handle_todo_board_with_dir("evidence New line", base);
+  +         assert!(!result.contains("Added evidence"), "{result}");
+  +         assert!(result.contains("evidence.md"), "{result}");
+  ... (20 more lines)
+  ▶ $ cargo test --bin yoyo test_board_evidence 2>&1 | grep -E "test result|FAILED|pan… ✓ (1m 48s)
+            let evidence = std::fs::read_to_string(tmp.path().join("evidence.md")).unwrap();
+            assert!(evidence.contains("- Tests pass"));
+            assert!(evidence.contains("- Lint clean"));
+  +     }
+  + 
+  +     /// #1053: an evidence.md that exists but cannot be read (invalid UTF-8)
+  +     /// survives the append byte-for-byte, and the reply is a refusal, not
+  +     /// "Added evidence".
+  ... (13 more lines)
+ ✓ (1m 48s)
+  ▶ edit src/commands_todo.rs (1 → 5 lines)
+  -         let existing = std::fs::read_to_string(&evidence_path).unwrap_or_default();
+  +         let existing = match crate::non_regular_read::read_for_rewrite(&evidence_path) {
+  +             Ok(s) => s,
+  +             // Writing after a failed read would replace every earlier entry (#1053).
+  +             Err(e) => return format!("{RED}  Did not add evidence: {e}{RESET}"),
+  +         };
+  ▶ $ cargo test --bin yoyo test_board_evidence 2>&1 | grep -E "test result|FAILED|pan… ✓ (3m 35s)
+  -         let existing = std::fs::read_to_string(&evidence_path).unwrap_or_default();
+  +         let existing = match crate::non_regular_read::read_for_rewrite(&evidence_path) {
+  +             Ok(s) => s,
+  +             // Writing after a failed read would replace every earlier entry (#1053).
+  +             Err(e) => return format!("{RED}  Did not add evidence: {e}{RESET}"),
+  +         };
+ ✗ (3m 35s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cargo test --bin yoyo test_board_evidence 2>&1 | grep -E "test result|FAILED|pan… ✓ (123ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 5m 33s (4 ✓, 1 ✗)
+
+Green. Positive control — revert the NotFound arm to the old catch-all, atomically, and restore:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/non_regular_read.rs /tmp/nrr.bak && python3 - <<'EOF' (15 lines) ✓ (24.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the three #1053 tests went red; restored. Now pointer grep and ARCHITECTURE.md:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ git grep -n '#1053\b' src docs skills; grep -n "non_regular_read" ARCHITECTURE.m… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ awk 'NR>=1375 && NR<=1400 && /^###/ {print NR": "substr($0,1,120)}' ARCHITECTURE… ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (12 lines) ✓ (31ms)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 && cargo t… ✓ (3m 21s)
+  ▶ $ cargo test 2>&1 | grep -E "FAILED|panicked|failed;" | grep -v " 0 failed" | head… ✓ (5m 6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 8m 47s (5 ✓)
+
+All green: clippy clean, no failures across all 21 test binaries. Committing:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -q -m "Day 233 (16:49): Fixes #1053… (15 lines) ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#1053 is fixed and committed as b4bd5438. If evidence.md or .yoyo.toml exists but can't be read, yoyo now refuses and names the file. Before, it treated the file as empty and wrote over it. fmt, clippy (-D warnings) and the full cargo test run all pass.
+
+The second writer was real. Before changing anything, I tested /config set against a .yoyo.toml containing one invalid byte (\xe9). It returned Ok and rewrote the file. So the bug wasn't only in /todo board evidence: the shared reader built for #1047 had the same flaw.
+
+What changed:
+• `src/non_regular_read.rs`: read_for_rewrite now returns an empty string only when the file doesn't exist.
+  • A FIFO or device is still refused with the same message as before.
+  • Any other read error (bad UTF-8, permission denied) now returns an error saying could not read <path> (<error>); it was left untouched, nothing written, with the path cleaned for display.
+  • The doc comment records the old behaviour as superseded, and why.
+• `src/commands_todo.rs`: /todo board evidence uses read_for_rewrite now. When the read fails it prints a red "Did not add evidence: …" and writes nothing.
+• `src/config.rs`: not edited. Both config writers already pass the error up, and the code that calls them already prints it in red.
+
+I fixed it in the shared reader rather than adding a wrapper around it, so the evidence command and both config writers are all covered.
+
+Tests: I wrote these first and watched them fail before the fix.
+• read_for_rewrite returns an error on a non-UTF-8 file.
+• Both config writers leave a non-UTF-8 .yoyo.toml exactly as it was, checked byte for byte.
+• An unreadable evidence.md is left exactly as it was, and the reply is not "Added evidence".
+• Near miss: a readable evidence.md still gets the new line appended exactly as before.
+• The existing test for missing and regular files is unedited and still passes.
+
+Check that the tests catch the bug: I temporarily put the old catch-all back (every error became an empty string), ran the tests and restored the file in one command. Exactly the three tests on unreadable files failed by name. Nothing from that experiment is left in the tree.
+
+Other: git grep '#1053' only finds code comments and test docs, so no message a user sees points at the ticket that this push will close. I added an entry to ARCHITECTURE.md under src/non_regular_read.rs, noting the policy change and that /config set was a second affected writer.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/2 changed files were in top-10 predictions (50.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 1/2 (50.0%) — reactive was 50.0%
+     Predicted correctly: src/non_regular_read.rs
+     Surprises (not predicted): src/commands_todo.rs
