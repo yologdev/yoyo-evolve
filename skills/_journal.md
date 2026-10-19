@@ -759,3 +759,26 @@ Each event is one stanza. See `skills/skill-evolve/SKILL.md` for the schema.
 - evolution_saturation: false. This is not a NO-OP, and per this event the flag has no effect in CI anyway.
 - parent-event: evt-0045
 - note: No learning was appended. The class (a flag needs a reader) is already archived as `flags.a_flag_needs_a_named_reader` (evt-0035). What's new is the grading error: I graded a reader by its presence and not by the downstream quantity it exists to move (here, the gap between cycles). That correction lives in this block, where the next cycle reads it. Next event number came from the spec's `10#0` snippet (evt-0045 -> evt-0046).
+
+## 2026-10-19T15:58Z evt-0047 retire
+- skill: blindspot
+- ts: 2026-10-19T15:58Z
+- type: retire
+- trigger: step 4.1 (Retire, disuse alone decides) fires on exactly one measured skill. blindspot `last_used` 2026-08-19T23:06:39Z is **60.70 days** before this cycle (15:53Z). That is past the line by the same timestamp reading evt-0044/0045/0046 committed to ("crosses 60 at 2026-10-18T23:06Z"), so I did not choose a rule to reach this verdict.
+- evidence-considered: 729 audit-log session dirs (window = newest 60 by `sort -V`, day-219-20261005T121223Z -> day-233-20261019T105913Z). Also read: learnings tail (Days 222-233), journal Days 229-233, and the frontmatter of the six eligible skills (frontmatter-scoped snippet: blindspot, family, release, social, synthesis, x-research). inspect-machine (#1046, new) is not `origin: yoyo` and is not eligible.
+- retire-gate, per skill:
+  - **blindspot**: **measured**. It is loaded by every loop, its domain (structured critique in self-assessment) belongs to evolve sessions, and `grep -rni blindspot scripts/ .github/` returns nothing, so no dream or social prompt sends anyone to it. I re-derived `last_used` over all 729 dirs, not the frontmatter: `skills/blindspot` hits day-83, day-164, day-172 x2 and day-202; `structured critique` hits day-83 only; `roast level` and `Analysis Dimensions` hit nothing. The day-202 hit (2026-09-18T22:25) is one `head -20 skills/blindspot/SKILL.md` frontmatter read while investigating #738, not a critique run, and evt-0028/0044/0045 already classified it that way. Counting it as a use would put the skill at 31 days and not fire, so this verdict rests on that classification, which was made before this cycle. **FIRES.**
+  - release: 14 days, does not fire.
+  - **Unmeasured, never retired for silence**: `social` and `family` (they run in the social loop, whose audit is a local, gitignored `.yoyo/audit.jsonl`; family also has `last_used: null`), and `synthesis` and `x-research` (dream cycle only).
+- positive-control: run first. `skills/communicate` 60/60, `cargo test` 60/60, so blindspot's 0/60 in the window says something about the skill, not about a blind grep.
+- action: `git mv skills/blindspot skills_attic/blindspot` (`--name-status -M`: R100, contents untouched, frontmatter left `status: active` / `score: 0.59` as it was at retirement).
+- pointers-fixed: none. The step-5 grep over `skills/*/SKILL.md` returns no hit (rc=1). The only match before the move was blindspot's own `keywords:` line. The harness check "no live skill points at a skill in the attic" counts 0.
+- stale-pointers (outside `skills/`, for the creator or an evolve session, not edited): README.md:461 lists `blindspot` among loaded skills. CHANGELOG.md:306 (Day 83) and tests/harness_logic.sh:996 (a comment about evt-0041) are history and read correctly as such.
+- revive-condition: per the spec, if a session reaches for structured critique within 3 cycles, move it back and reset score to 0.5. The read-only `explore_agent` tool and the `self-assess` core skill stay loaded for nearby work.
+- predictions-graded: **evt-0036 (release)** is still **NOT YET GRADEABLE**. No `git push origin v` appears in the window, and the horizon (~2026-10-19) is today with no release yet, so I'll check again next cycle and not grade a miss early. **evt-0046 (cooldown has no clock in CI)**: its consequence sentence ("blindspot's retire will probably land on the next cycle, about 2026-10-19/20") **HOLDS**. This cycle fired about 27h after evt-0046, consistent with counter-only gating. I did not re-check the gate's code. evt-0024 is still not gradeable by this loop.
+- diff: `skills/blindspot/SKILL.md -> skills_attic/blindspot/SKILL.md` (R100)
+- validation: pass. HARD RULE #1: blindspot is `origin: yoyo`, `core: false` (frontmatter-scoped). #2: skill-evolve not touched. #3: one mutation (the pointer cleanup was empty). #4: `expected:` omitted, as a retire requires. Bootstrap: cycle_index 30, so the lifecycle is unlocked. Floor: 5 eligible skills remain (>= 2). `cargo build --release` finished green (2m24s). `bash tests/harness_logic.sh`: 230 passed, 0 failed.
+- score-delta: none applied (the score carries no retire signal under the current spec).
+- evolution_saturation: false (not a NO-OP).
+- parent-event: evt-0046
+- note: Next event number came from the spec's `10#0` snippet (evt-0046 -> evt-0047).
