@@ -767,7 +767,11 @@ fn handle_todo_board_with_dir(input: &str, base_dir: &str) -> String {
             return format!("{RED}  Failed to create {base_dir}/: {e}{RESET}");
         }
         let evidence_path = dir.join("evidence.md");
-        let existing = std::fs::read_to_string(&evidence_path).unwrap_or_default();
+        let existing = match crate::non_regular_read::read_for_rewrite(&evidence_path) {
+            Ok(s) => s,
+            // Writing after a failed read would replace every earlier entry (#1053).
+            Err(e) => return format!("{RED}  Did not add evidence: {e}{RESET}"),
+        };
         let updated = format!("{existing}- {evidence_text}\n");
         match std::fs::write(&evidence_path, updated) {
             Ok(()) => return format!("{GREEN}  Added evidence: {evidence_text}{RESET}"),
@@ -1491,6 +1495,42 @@ mod tests {
         let evidence = std::fs::read_to_string(tmp.path().join("evidence.md")).unwrap();
         assert!(evidence.contains("- Tests pass"));
         assert!(evidence.contains("- Lint clean"));
+    }
+
+    /// #1053: an evidence.md that exists but cannot be read (invalid UTF-8)
+    /// survives the append byte-for-byte, and the reply is a refusal, not
+    /// "Added evidence".
+    #[test]
+    fn test_board_evidence_leaves_unreadable_file_untouched() {
+        let tmp = make_temp_dir();
+        let base = tmp.path().to_str().unwrap();
+        let path = tmp.path().join("evidence.md");
+        let bytes: &[u8] = b"- earlier entry\n- caf\xe9\n";
+        std::fs::write(&path, bytes).unwrap();
+        assert!(std::fs::read_to_string(&path).is_err()); // anti-vacuous
+
+        let result = handle_todo_board_with_dir("evidence New line", base);
+        assert!(!result.contains("Added evidence"), "{result}");
+        assert!(result.contains("evidence.md"), "{result}");
+        assert!(result.contains("left untouched"), "{result}");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+
+    /// Near miss for #1053: a readable evidence.md still gets the new line
+    /// appended exactly as before.
+    #[test]
+    fn test_board_evidence_appends_to_existing_text_exactly() {
+        let tmp = make_temp_dir();
+        let base = tmp.path().to_str().unwrap();
+        let path = tmp.path().join("evidence.md");
+        std::fs::write(&path, "- first\n").unwrap();
+
+        let result = handle_todo_board_with_dir("evidence second", base);
+        assert!(result.contains("Added evidence: second"), "{result}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "- first\n- second\n"
+        );
     }
 
     #[test]

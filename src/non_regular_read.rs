@@ -79,14 +79,25 @@ pub(crate) fn read_config_or_warn(path: &Path) -> Option<String> {
     }
 }
 
-/// The `/config set` writers' reader (#1047): the file's text, `""` when it is
-/// missing or unreadable (the old `unwrap_or_default`), and `Err` naming the
-/// file when it is a FIFO or device. Refusing matters twice there: the read
-/// would block, and the write that follows would block on a FIFO too.
+/// The reader for every read-then-rewrite writer (`/config set`, the
+/// allow-persist writer, `/todo board evidence`): the file's text, `""` only
+/// when it does not exist, and `Err` naming the file for anything else — a
+/// FIFO or device (#1047: the read would block, and the write after it too),
+/// or a file that exists but cannot be read, e.g. invalid UTF-8 (#1053).
+///
+/// Superseded claim, recorded rather than erased (#1053): until Day 233 every
+/// error other than a non-regular file became `""` (the old
+/// `unwrap_or_default`). The caller then writes `existing + new`, so an
+/// unreadable file was replaced by just the new line, under a green success.
 pub(crate) fn read_for_rewrite(path: &Path) -> Result<String, String> {
     match read_regular_to_string(path) {
+        Ok(s) => Ok(s),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
         Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => Err(e.to_string()),
-        r => Ok(r.unwrap_or_default()),
+        Err(e) => Err(crate::cli::sanitize_for_display(&format!(
+            "could not read {} ({e}); it was left untouched, nothing written",
+            path.display()
+        ))),
     }
 }
 
@@ -193,6 +204,36 @@ pub(crate) mod tests {
             read_for_rewrite(&regular),
             Ok("model = \"m\"\n".to_string())
         );
+    }
+
+    /// #1053: a file that exists but cannot be read (invalid UTF-8 is the
+    /// realistic case) is an `Err` naming it, never `""` — the caller writes
+    /// `existing + new` next, which would replace every byte of it.
+    #[test]
+    fn read_for_rewrite_refuses_an_unreadable_file_and_names_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("binary.toml");
+        std::fs::write(&bad, [0xff, 0xfe, b'a']).unwrap();
+        // Anti-vacuous: the fixture really is unreadable as text.
+        assert!(std::fs::read_to_string(&bad).is_err());
+        let err = read_for_rewrite(&bad).expect_err("unreadable file must not read as empty");
+        assert!(err.contains("binary.toml"), "{err}");
+        assert!(err.contains("nothing written"), "{err}");
+    }
+
+    /// #1053 at the `/config set` writers: a non-UTF-8 `.yoyo.toml` survives
+    /// both writers byte-for-byte, and each reports an error naming it.
+    #[test]
+    fn config_writers_leave_a_non_utf8_config_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join(".yoyo.toml");
+        let bytes: &[u8] = b"model = \"m\"\n# caf\xe9\nprovider = \"p\"\n";
+        std::fs::write(&cfg, bytes).unwrap();
+        let set = crate::config::write_config_value_to("thinking", "high", &cfg).unwrap_err();
+        assert!(set.contains(".yoyo.toml"), "{set}");
+        let allow = crate::config::append_allow_pattern_to("ls *", &cfg).unwrap_err();
+        assert!(allow.contains(".yoyo.toml"), "{allow}");
+        assert_eq!(std::fs::read(&cfg).unwrap(), bytes);
     }
 
     #[test]
