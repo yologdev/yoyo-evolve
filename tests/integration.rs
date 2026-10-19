@@ -3976,3 +3976,53 @@ fn config_get_model_keeps_exit_zero() {
     assert_eq!(code, Some(0), "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("model"), "stdout={stdout}");
 }
+
+#[test]
+fn config_show_unreadable_config_exits_one_and_health_refuses_stray_arg() {
+    // #982: `yoyo config show` printed "Failed to read config file" and exited
+    // 0, and `yoyo health zzz` ignored `zzz`. A directory named `.yoyo.toml`
+    // fails to read even as root, unlike chmod 000.
+    let home = tempfile::tempdir().expect("home");
+    let run = |dir: &std::path::Path, args: &[&str]| {
+        let out = yoyo_cmd()
+            .args(args)
+            .current_dir(dir)
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join(".config"))
+            .env("GIT_CEILING_DIRECTORIES", dir.parent().unwrap_or(dir))
+            .env("NO_COLOR", "1")
+            .stdin(Stdio::null())
+            .output()
+            .expect("run yoyo");
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let bad = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(bad.path().join(".yoyo.toml")).unwrap();
+    let (code, stdout, stderr) = run(bad.path(), &["config", "show"]);
+    assert_eq!(code, Some(1), "stdout={stdout} stderr={stderr}");
+    assert!(
+        stderr.contains("Failed to read config file"),
+        "stderr={stderr}"
+    );
+    // Near miss: no config at all is "using defaults", not a failure.
+    let empty = tempfile::tempdir().expect("tempdir");
+    let (code, stdout, stderr) = run(empty.path(), &["config", "show"]);
+    assert_eq!(code, Some(0), "stdout={stdout} stderr={stderr}");
+    assert!(!stdout.is_empty(), "config show printed nothing");
+
+    let (code, stdout, stderr) = run(empty.path(), &["health", "zzz"]);
+    assert_eq!(code, Some(2), "stdout={stdout} stderr={stderr}");
+    assert!(stdout.is_empty(), "health zzz printed to stdout: {stdout}");
+    assert!(
+        stderr.contains("health") && stderr.contains("'zzz'"),
+        "stderr must name the verb and the stray arg: {stderr}"
+    );
+    // Near miss: bare `health` still reaches its own no-project exit (1).
+    let (code, _, stderr) = run(empty.path(), &["health"]);
+    assert_eq!(code, Some(1), "bare health: stderr={stderr}");
+    assert!(!stderr.contains("'zzz'"), "bare health: {stderr}");
+}

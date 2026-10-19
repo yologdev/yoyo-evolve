@@ -819,7 +819,7 @@ async fn dispatch_config_command(
             Some(CommandResult::Continue)
         }
         CommandRoute::ConfigShow => {
-            commands::handle_config_show();
+            let _ = commands::handle_config_show();
             Some(CommandResult::Continue)
         }
         CommandRoute::ConfigEdit => {

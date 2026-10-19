@@ -500,7 +500,9 @@ pub fn config_show_output(
 /// (2) read+parse the file via the existing `cli::parse_config_file`
 /// helper, and (3) println the result inside the dim block the rest
 /// of the `/config` family uses.
-pub fn handle_config_show() {
+/// Returns `false` when the config file exists but cannot be read (#982), so
+/// the shell `config show` can exit 1; the REPL ignores the value.
+pub fn handle_config_show() -> bool {
     // One filesystem scan, one statement of the ladder: the loaded file is the
     // head of the chain by definition (`detect_loaded_config_path` is exactly
     // `existing_config_paths().into_iter().next()`), so taking the head here
@@ -518,7 +520,7 @@ pub fn handle_config_show() {
                     "{RED}  Failed to read config file {}: {e}{RESET}",
                     p.display()
                 );
-                return;
+                return false;
             }
         },
         None => std::collections::HashMap::new(),
@@ -530,6 +532,7 @@ pub fn handle_config_show() {
         crate::format::is_plain_output(),
     );
     print!("{DIM}{output}{RESET}");
+    true
 }
 
 // ── /config edit ─────────────────────────────────────────────────────────

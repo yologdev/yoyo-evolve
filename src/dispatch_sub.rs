@@ -389,6 +389,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // handle_health takes no arguments — it auto-detects project type
                 // from the current directory and runs the appropriate checks.
                 // #982: exits 1 when no recognized project was found.
+                refuse_stray_arg("health", positional_after_verb(&args[2..]).first().copied());
                 exit_if_nonzero(crate::commands_dev::handle_health_status());
                 return Some(None);
             }
@@ -723,7 +724,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 let sub2 = args.get(2).map(|s| s.as_str());
                 match sub2 {
                     None | Some("show") => {
-                        crate::commands_config::handle_config_show();
+                        exit_if_nonzero(i32::from(!crate::commands_config::handle_config_show()));
                     }
                     Some("get") => {
                         // Reconstruct as /config get <key>
