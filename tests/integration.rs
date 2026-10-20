@@ -3633,7 +3633,7 @@ const GREP_USAGE_STDOUT: &str = r#"  usage: /grep [-s|--case] [-c|--count] [-C N
 "#;
 
 #[test]
-fn bare_grep_exits_two_with_usage_unchanged_and_no_match_exits_zero() {
+fn bare_grep_exits_two_with_usage_unchanged_and_no_match_exits_one() {
     // #982 residue: bare `yoyo grep` printed usage and exited 0, while bare
     // `def`/`outline` exit 2 (73bc8b80). One usage-error policy.
     let dir = tempfile::tempdir().expect("tempdir");
@@ -3641,11 +3641,12 @@ fn bare_grep_exits_two_with_usage_unchanged_and_no_match_exits_zero() {
     let bare = yoyo_in_dir(dir.path(), &["grep"]);
     assert_eq!(bare.status.code(), Some(2));
     assert_eq!(String::from_utf8_lossy(&bare.stdout), GREP_USAGE_STDOUT);
-    // Near miss: a search that finds nothing is an answer, not an error.
+    // A search that finds nothing exits 1, as grep(1), git grep and rg do
+    // (0 match / 1 no match / 2 error); the text is unchanged.
     let none = yoyo_in_dir(dir.path(), &["grep", "zzqq_nomatch982"]);
     assert_eq!(
         none.status.code(),
-        Some(0),
+        Some(1),
         "stderr={:?}",
         String::from_utf8_lossy(&none.stderr)
     );
@@ -3653,6 +3654,85 @@ fn bare_grep_exits_two_with_usage_unchanged_and_no_match_exits_zero() {
         String::from_utf8_lossy(&none.stdout),
         "  No matches found.\n"
     );
+}
+
+#[test]
+fn grep_with_a_match_still_exits_zero() {
+    // Near miss for the no-match exit 1: a search that finds something is 0.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("a.txt"), "hello\n").unwrap();
+    let hit = yoyo_in_dir(dir.path(), &["grep", "hello"]);
+    assert_eq!(hit.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&hit.stdout),
+        "  ./a.txt:1: hello\n\n  1 match\n"
+    );
+}
+
+#[test]
+fn run_tree_and_undo_usage_errors_exit_two_with_text_unchanged() {
+    // #982's last body rows: bare `run` printed usage and exited 0, and
+    // `tree <bad>` / `undo <bad>` exited 1 while every other usage error
+    // (def, outline, grep, map, index, blame, watch, docs) exits 2.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let rows: [(&[&str], &str); 3] = [
+        (&["run"], "  usage: /run <command>  or  !<command>\n\n"),
+        (
+            &["tree", "zzz"],
+            "  usage: /tree [depth]  (default depth: 3)\n\n",
+        ),
+        (
+            &["undo", "zzz"],
+            "  usage: /undo [N] | --all | --last-commit\n\n",
+        ),
+    ];
+    for (argv, stdout) in rows {
+        let out = yoyo_in_dir(dir.path(), argv);
+        assert_eq!(out.status.code(), Some(2), "exit for {argv:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            stdout,
+            "stdout for {argv:?}"
+        );
+    }
+    // Near misses: no-ops that are not usage errors stay 0.
+    let undo_rows: [(&[&str], &str); 2] = [
+        (
+            &["undo"],
+            "  (nothing to undo \u{2014} no turn history)\n\n",
+        ),
+        (
+            &["undo", "0"],
+            "  (nothing to undo \u{2014} count is 0)\n\n",
+        ),
+    ];
+    for (argv, stdout) in undo_rows {
+        let out = yoyo_in_dir(dir.path(), argv);
+        assert_eq!(out.status.code(), Some(0), "exit for {argv:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            stdout,
+            "stdout for {argv:?}"
+        );
+    }
+    // Bare `tree` in a git repo lists files and exits 0.
+    let repo = tempfile::tempdir().expect("tempdir");
+    std::fs::write(repo.path().join("a.txt"), "hello\n").unwrap();
+    let git = |a: &[&str]| {
+        let ok = std::process::Command::new("git")
+            .args(a)
+            .current_dir(repo.path())
+            .output()
+            .expect("git")
+            .status
+            .success();
+        assert!(ok, "git {a:?}");
+    };
+    git(&["init", "-q"]);
+    git(&["add", "a.txt"]);
+    let tree = yoyo_in_dir(repo.path(), &["tree"]);
+    assert_eq!(tree.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&tree.stdout), "a.txt\n\n");
 }
 
 #[test]

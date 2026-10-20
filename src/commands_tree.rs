@@ -109,16 +109,17 @@ pub fn handle_tree(input: &str) {
 }
 
 /// `/tree` with an exit status for the shell door (`yoyo tree`, #982): 1 when
-/// the not-a-git-repository branch fires or the argument is not a depth (the
-/// usage branch), 0 otherwise. Printed text is identical either way; the
+/// the not-a-git-repository branch fires, 2 when the argument is not a depth
+/// (the usage branch), 0 otherwise. Printed text is identical either way; the
 /// REPL calls `handle_tree`, which discards the code.
 pub fn handle_tree_status(input: &str) -> i32 {
     let max_depth = match parse_tree_arg(input) {
         TreeArg::Depth(d) => d,
         TreeArg::Usage => {
             println!("{DIM}  usage: /tree [depth]  (default depth: {DEFAULT_TREE_DEPTH}){RESET}\n");
-            // #982: `yoyo tree zz` exited 0 after refusing; a refusal is a failure.
-            return 1;
+            // #982: `yoyo tree zz` exited 0 after refusing; a refusal is a
+            // usage error, so 2, like def/outline/grep/map/blame.
+            return 2;
         }
     };
     let (tree, code) = match build_project_tree(max_depth) {
@@ -148,7 +149,7 @@ mod tests {
             "/tree 2.5",
         ] {
             assert_eq!(parse_tree_arg(bad), TreeArg::Usage, "fixture {bad:?}");
-            assert_eq!(handle_tree_status(bad), 1, "status for {bad:?}");
+            assert_eq!(handle_tree_status(bad), 2, "status for {bad:?}");
         }
         assert_eq!(parse_tree_arg("/tree"), TreeArg::Depth(DEFAULT_TREE_DEPTH));
         assert_eq!(parse_tree_arg("/tree 2"), TreeArg::Depth(2));

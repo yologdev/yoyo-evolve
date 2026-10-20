@@ -2153,6 +2153,9 @@ fn highlight_grep_match(text: &str, pattern: &str, case_sensitive: bool) -> Stri
 /// Exit status for `yoyo grep` when grep could not search (#982). 2 is grep's
 /// own error status; 1 would read as grep's "no match" to a script.
 pub(crate) const GREP_ERROR_EXIT: i32 = 2;
+/// Exit status for `yoyo grep` when the search ran and found nothing: 1, as
+/// grep(1), git grep and rg all exit (find(1) exits 0, so `yoyo find` does).
+pub(crate) const GREP_NO_MATCH_EXIT: i32 = 1;
 
 /// Handle the `/grep` command (REPL door; the status is for the shell door).
 pub fn handle_grep(input: &str) {
@@ -2204,7 +2207,11 @@ pub fn handle_grep_status(input: &str) -> i32 {
         match error {
             None => {
                 print!("{formatted}");
-                0
+                if empty {
+                    GREP_NO_MATCH_EXIT
+                } else {
+                    0
+                }
             }
             Some(e) => {
                 if !empty {

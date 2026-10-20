@@ -510,8 +510,10 @@ pub(crate) fn try_dispatch_subcommand_in(
                     [one] => format!("/run {one}"),
                     _ => quote_args_as_command(args),
                 };
-                if let Some(outcome) = crate::commands_run::handle_run_with_status(&input) {
-                    exit_if_failed(outcome);
+                match crate::commands_run::handle_run_with_status(&input) {
+                    Some(outcome) => exit_if_failed(outcome),
+                    // Bare `run`: usage line printed, nothing ran; 2 (usage error).
+                    None => exit_if_nonzero(2),
                 }
                 return Some(None);
             }
@@ -1686,13 +1688,12 @@ mod tests {
 
     #[test]
     fn test_try_dispatch_subcommand_run_no_args() {
-        // `yoyo run` with no command should still dispatch (shows usage).
-        let args = vec!["yoyo".into(), "run".into()];
-        let result = try_dispatch_subcommand(&args);
-        assert!(
-            matches!(result, Some(None)),
-            "expected Some(None) for bare `run` subcommand"
-        );
+        // Bare `yoyo run` now exits 2 via `process::exit`, which would kill the
+        // test binary, so pin the core the arm calls: its input, and `None`
+        // (usage, nothing ran) — the branch the arm maps to 2.
+        let args: Vec<String> = vec!["yoyo".into(), "run".into()];
+        assert_eq!(quote_args_as_command(&args), "/run");
+        assert!(crate::commands_run::handle_run_with_status("/run").is_none());
     }
 
     #[test]
