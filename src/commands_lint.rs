@@ -236,10 +236,12 @@ pub fn handle_lint(input: &str) -> Option<String> {
 
 /// `/lint` with an exit status for the shell door (`yoyo lint`, #982): the
 /// summary `handle_lint` returns, plus 1 when no recognized project was found
-/// (via `commands_dev::no_project_status`) or the subcommand is unknown, and
-/// 0 otherwise. Deliberately
-/// narrow: a lint TOOL that ran and failed still reports 0 here — that is a
-/// separate #982 item. The REPL calls `handle_lint`, which discards the code.
+/// (via `commands_dev::no_project_status`) or the subcommand is unknown. A
+/// linter that ran and failed exits with the linter's own code (1 if it was
+/// killed by a signal), and a linter that could not be spawned exits 1 — the
+/// same mapping `yoyo test` uses (`commands_run::shell_exit_code`). A lint that
+/// passed, `lint unsafe`, and a project type with no lint command exit 0.
+/// The REPL calls `handle_lint`, which discards the code.
 pub(crate) fn handle_lint_status(input: &str) -> (Option<String>, i32) {
     // Parse strictness from subcommand
     let arg = input.strip_prefix("/lint").unwrap_or("").trim();
@@ -314,7 +316,7 @@ pub(crate) fn handle_lint_status(input: &str) -> (Option<String>, i32) {
         .output();
     let elapsed = format_duration(start.elapsed());
 
-    let summary = match output {
+    let (summary, outcome) = match output {
         Ok(o) => {
             let stdout = String::from_utf8_lossy(&o.stdout);
             let stderr = String::from_utf8_lossy(&o.stderr);
@@ -328,7 +330,10 @@ pub(crate) fn handle_lint_status(input: &str) -> (Option<String>, i32) {
 
             if o.status.success() {
                 println!("\n{GREEN}  ✓ Lint passed ({elapsed}){RESET}\n");
-                Some(format!("Lint passed ({elapsed}): {label}"))
+                (
+                    Some(format!("Lint passed ({elapsed}): {label}")),
+                    ShellOutcome::Passed,
+                )
             } else {
                 let code = o.status.code().unwrap_or(-1);
                 println!("\n{RED}  ✗ Lint failed (exit {code}, {elapsed}){RESET}\n");
@@ -339,15 +344,19 @@ pub(crate) fn handle_lint_status(input: &str) -> (Option<String>, i32) {
                     stdout.to_string()
                 };
                 append_tail_preview(&mut summary, &error_text, 20);
-                Some(summary)
+                // #982: the linter's own code, or None when a signal killed it.
+                (Some(summary), ShellOutcome::Failed(o.status.code()))
             }
         }
         Err(e) => {
             eprintln!("{RED}  ✗ Failed to run {label}: {e}{RESET}\n");
-            Some(format!("Failed to run {label}: {e}"))
+            (
+                Some(format!("Failed to run {label}: {e}")),
+                ShellOutcome::CouldNotRun,
+            )
         }
     };
-    (summary, 0)
+    (summary, crate::commands_run::shell_exit_code(outcome))
 }
 
 /// Build a prompt asking the AI to fix lint errors.

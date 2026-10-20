@@ -4026,3 +4026,105 @@ fn config_show_unreadable_config_exits_one_and_health_refuses_stray_arg() {
     assert_eq!(code, Some(1), "bare health: stderr={stderr}");
     assert!(!stderr.contains("'zzz'"), "bare health: {stderr}");
 }
+
+/// Run `yoyo <args>` in `dir` with `bin` prepended to PATH, so a fake linter or
+/// `make` stands in for the real one: no network, no build, deterministic code.
+#[cfg(unix)]
+fn run_with_fake_bin(
+    dir: &std::path::Path,
+    bin: &std::path::Path,
+    args: &[&str],
+) -> (Option<i32>, String, String) {
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = yoyo_cmd()
+        .args(args)
+        .current_dir(dir)
+        .env("PATH", path)
+        .env("GIT_CEILING_DIRECTORIES", dir.parent().unwrap_or(dir))
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run yoyo");
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// Write an executable `#!/bin/sh` script named `name` into `bin` that exits `code`.
+#[cfg(unix)]
+fn fake_tool(bin: &std::path::Path, name: &str, code: i32) {
+    use std::os::unix::fs::PermissionsExt;
+    let p = bin.join(name);
+    std::fs::write(
+        &p,
+        format!("#!/bin/sh\necho fake-{name}-output\nexit {code}\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn lint_exits_with_the_linters_code_when_it_ran_and_failed() {
+    // #982: `yoyo lint` printed "✗ Lint failed" and exited 0. A Python project
+    // lints with `ruff check .`; a fake `ruff` on PATH exits 3, and yoyo must
+    // pass that code through, as `yoyo test` does with its runner's.
+    let proj = tempfile::tempdir().expect("proj");
+    std::fs::write(proj.path().join("pyproject.toml"), "[project]\nname='x'\n").unwrap();
+    let bin = tempfile::tempdir().expect("bin");
+    fake_tool(bin.path(), "ruff", 3);
+    let (code, stdout, stderr) = run_with_fake_bin(proj.path(), bin.path(), &["lint"]);
+    assert_eq!(code, Some(3), "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("fake-ruff-output"),
+        "linter did not run: {stdout}"
+    );
+    assert!(stdout.contains("Lint failed (exit 3"), "stdout={stdout}");
+
+    // Near miss: the same project with a passing linter still exits 0.
+    let ok_bin = tempfile::tempdir().expect("bin");
+    fake_tool(ok_bin.path(), "ruff", 0);
+    let (code, stdout, stderr) = run_with_fake_bin(proj.path(), ok_bin.path(), &["lint"]);
+    assert_eq!(code, Some(0), "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("Lint passed"), "stdout={stdout}");
+
+    // No project: still 1, and nothing ran.
+    let empty = tempfile::tempdir().expect("empty");
+    let (code, stdout, stderr) = run_with_fake_bin(empty.path(), bin.path(), &["lint"]);
+    assert_eq!(code, Some(1), "stdout={stdout} stderr={stderr}");
+    assert!(!stdout.contains("fake-ruff-output"), "stdout={stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn health_exits_one_when_a_check_ran_and_failed() {
+    // #982: `yoyo health` printed "Some checks failed ✗" and exited 0. A
+    // Makefile project's health check is `make test`; a fake `make` on PATH
+    // decides the outcome without building anything.
+    let proj = tempfile::tempdir().expect("proj");
+    std::fs::write(proj.path().join("Makefile"), "test:\n\ttrue\n").unwrap();
+    let bin = tempfile::tempdir().expect("bin");
+    fake_tool(bin.path(), "make", 2);
+    let (code, stdout, stderr) = run_with_fake_bin(proj.path(), bin.path(), &["health"]);
+    assert_eq!(code, Some(1), "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("Some checks failed"), "stdout={stdout}");
+
+    // Near miss: every check passing still exits 0.
+    let ok_bin = tempfile::tempdir().expect("bin");
+    fake_tool(ok_bin.path(), "make", 0);
+    let (code, stdout, stderr) = run_with_fake_bin(proj.path(), ok_bin.path(), &["health"]);
+    assert_eq!(code, Some(0), "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("All checks passed"), "stdout={stdout}");
+
+    // No project: still 1.
+    let empty = tempfile::tempdir().expect("empty");
+    let (code, stdout, stderr) = run_with_fake_bin(empty.path(), bin.path(), &["health"]);
+    assert_eq!(code, Some(1), "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("No recognized project"), "stdout={stdout}");
+}

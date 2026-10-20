@@ -865,9 +865,12 @@ pub fn handle_health() {
 }
 
 /// `/health` with an exit status for the shell door (`yoyo health`, #982):
-/// 1 when no recognized project was found, 0 otherwise. Deliberately narrow —
-/// failing checks still report 0 here. The REPL calls `handle_health`, which
-/// discards the code.
+/// 1 when no recognized project was found, 1 when any check that ran failed
+/// (including a check whose command could not be spawned), and 0 when every
+/// check passed or none is configured for the project type (nothing ran,
+/// nothing failed). The code is 1 rather than a child's own code because
+/// several checks run and no single child's code speaks for all of them.
+/// The REPL calls `handle_health`, which discards the code.
 pub fn handle_health_status() -> i32 {
     let project_type = detect_project_type(&std::env::current_dir().unwrap_or_default());
     println!("{DIM}  Detected project: {project_type}{RESET}");
@@ -898,7 +901,18 @@ pub fn handle_health_status() -> i32 {
     } else {
         println!("\n{RED}  Some checks failed ✗{RESET}\n");
     }
-    0
+    health_exit_code(all_passed)
+}
+
+/// Exit status for a health run whose checks all executed: 0 when every
+/// check passed, 1 when any failed (#982 — stdout already said "Some checks
+/// failed ✗", so a script reading `$?` must not hear success).
+pub(crate) fn health_exit_code(all_passed: bool) -> i32 {
+    if all_passed {
+        0
+    } else {
+        1
+    }
 }
 
 /// Handle the /fix command. Returns Some(fix_prompt) if failures were sent to AI, None otherwise.
