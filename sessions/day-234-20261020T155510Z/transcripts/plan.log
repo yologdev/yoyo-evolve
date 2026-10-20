@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; gh issue view 902 --json … ✓ (1.1s)
+  ▶ $ gh issue view 902 --json body --jq '.body[2500:6000]'; echo ----; gh issue view … ✓ (1.0s)
+  ▶ $ grep -rn "PROJECT-INSTRUCTIONS\|Provenance: the text between" src | head -5; gh … ✓ (614ms)
+  ▶ $ gh issue view 902 --json comments --jq '.comments[] | select(.createdAt|startswi… ✓ (694ms)
+  ▶ $ grep -rln '\.yoyo/commands' src | head; grep -rn 'fn wrap_project_instruction\|f… ✓ (26ms)
+  ▶ $ grep -n '\.yoyo/commands' src/cli.rs src/dispatch.rs src/config_paths.rs src/com… ✓ (4ms)
+  ▶ $ gh issue view 944 --json body,comments --jq '.body[0:3000], (.comments|length), … ✓ (673ms)
+  ▶ $ grep -ln 'report_.*_spend\|YOYO_AUDIT' scripts/*.sh; grep -c 'yoyo\b' scripts/da… ✓ (585ms)
+  ▶ $ cd session_plan && cat > task_01.md <<'EOF' (49 lines) ✓ (12ms)
+  ▶ $ ls -la session_plan ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 2m 8s (10 ✓)
+
+I've written the plan for this session: two task files and the issue responses are in session_plan/. Nothing was committed, because .gitignore covers session_plan/, so the commit step was refused. The files are on disk, and I'm assuming the harness reads them from there.
+
+Task 1 (product, my own pick): cap image reads at 20 MB. The assessment measured that --image has no size limit: a 300 MB file pushed the process to 4.7 GB of memory, and the provider rejects images over about 5 MB anyway. All four ways a user attaches an image (--image at two call sites, /add, @path) go through one function, read_image_for_add, so one check there covers them all. The 20 MB limit and the exact-size behaviour copy yoagent's own read_file tool, which already refuses large images on the model's side. The check reads the file's size before loading it. The tests use a sparse file just over the limit plus a small real image that must still load.
+
+Task 2 (product): Fixes #1058, `yoyo undo` exits 0 when git fails. The two undo functions will report whether git refused, yoyo undo will exit 1 in that case, and the interactive /undo output stays the same. The test makes git revert fail reliably by reverting a merge commit without -m, inside a temp repo. The plain-commit case must still revert and exit 0. Before pushing, the task greps for any #1058 pointers in code and docs.
+
+Clearing the backlog: 20 of my own issues are open, so the second slot is supposed to go to the oldest. I didn't follow that rule exactly, for these reasons:
+• #902 (41 days old) has nothing left that fits in 30 minutes. What remains is a decision, so I decide it: close it as not-planned. A trust check on CLAUDE.md/AGENTS.md would ask on almost every repo, which trains people to press yes. It would also quietly stop my own loop reading its CLAUDE.md, with tests still passing. I confirmed these protections exist in the code:
+  • the "authored by the repository" note around each instruction file
+  • the directory fence on those files
+  • the .yoyo/commands/ trust gate
+  The other protections the closing note lists I took from earlier issue comments and didn't re-check: --safe-mode (including spawned workers) and the startup message naming each loaded file. The note also says plainly that the label doesn't stop a model from obeying a hostile file anyway.
+• #944 has two parts left. One is in a workflow file I'm not allowed to edit; the other is a storage design. Neither fits a slot.
+• #988 is an open-ended investigation, so it doesn't fit either.
+
+I'm not touching the read-fence default (#1055); it waits on @yuanhao's answer in #1048.
+  watch: no files changed this turn — skipping

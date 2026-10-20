@@ -1,0 +1,77 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; grep -rn read_i… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/commands_file.rs src/com… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,130p src/non_regular_read… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/commands_file_fence.rs; … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 450,470p src/main.rs; sed -… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls src/lib.rs 2>/dev/null; grep -n… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 125,135p src/main.rs; grep … ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 46.6s (7 ✓)
+
+Now write the module with its tests.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write src/image_cap.rs (127 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (18 lines) ✓ (4m 5s)
+ ✗ (4m 5s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/commands_file.rs; timeou… ✓ (165ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4m 13s (2 ✓, 1 ✗)
+
+Positive control (atomic mutate→run→restore):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/image_cap.rs /tmp/ic.bak; s… ✓ (29.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control reddened the 4 refusal tests; both near-miss tests stayed green; restored. Now docs.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "\-\-image\|image" docs/s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (10 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/^- Images work too: `@sc… ✓ (1.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (18.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 900 cargo test 2>&1 | grep… ✓ (3m 27s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 900 cargo test 2>&1 | grep… ✓ (6m 0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 10m 7s (6 ✓)
+
+All suites green. Quick real-binary check of the --image door:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -f big.png && truncate -s 300M big.png && /usr/bin/time -f "maxrss… ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+300 MB --image: 4.7 GB RSS before, 26 MB now, exit 1 with the message. Committing.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (34 lines) ✓ (45ms)
+
+I've capped images you attach yourself at 20 MB. The size is checked before the file is opened, so an oversized image is never loaded. All four checks passed: build, test, clippy with -D warnings, and fmt. Committed as e5458788.
+
+Measured on the built binary: a 300 MB --image now uses 26 MB of memory, prints error: big.png is too large to attach as an image (300.0 MB, max 20 MB); it was not read, and exits 1. The assessment measured 4.7 GB before.
+
+• Where the cap lives: in a new module, src/image_cap.rs. read_image_for_add now reads through its read_image_capped. I re-ran the grep and found no other callers, so this one reader covers all four doors: --image (two call sites in main.rs), /add and @path.
+• Same rule as the model's own tool: yoagent 0.25.10's read_file uses a 20 MiB limit with a strict >. yoyo now matches it: a file of exactly 20 MiB is allowed, and one byte more is refused. yoagent's constant is private, so I copied the number and added a comment pointing to src/tools/file.rs:9/:196.
+• Behaviour that didn't change: a missing file still gets its old failed to read error, and FIFOs are still refused as before. On an error, --image already printed it and exited 1, so I left main.rs alone. The path in the new message is cleaned of control characters before display.
+• Why a new module: commands_file.rs is at its size limit, so the change there is net 0 lines and the logic and tests went into the new file.
+• Tests: a boundary table (cap−1, cap, cap+1), the exact message text, control-character cleaning, and a full refusal on a sparse file one byte over 20 MiB (no real 20 MB file is written). Two cases must still pass: a small .png reads exactly as before, and a missing file keeps its error.
+• Positive control: with the cap switched off, the 4 refusal tests failed and the 2 must-still-pass tests stayed green. I then restored the cap.
+• Docs: one line in CHANGELOG (Unreleased → Fixed), one sentence in docs/src/usage/repl.md, and a Day 234 note in the commands_file.rs entry of ARCHITECTURE.md.
+
+Text files you attach (/add, @path) still have no size cap.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/image_cap.rs

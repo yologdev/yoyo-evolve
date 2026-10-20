@@ -1,0 +1,25 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "handl… (2 lines) ✓ (70ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (8 lines) ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.3s (2 ✓)
+
+Verdict: PASS, written to session_plan/eval_task_2.md.
+
+I ran the built binary in a temp repo:
+• Merge commit at HEAD: yoyo undo --last-commit printed the same "✗ Revert failed: … is a merge but no -m option was given" message as before and exited 1.
+• Plain commit: it exited 0, and the latest commit was then Revert "c", so the revert really happened.
+
+What I checked in the diff:
+• Intent: the shell yoyo undo now exits 1 when git refuses, 2 for a bad argument as before, and 0 otherwise. The new code marks the failure on the refused revert, on a failed git checkout -- . (which stops early), and on a failed git clean -fd (which carries on).
+• REPL output: the interactive /undo uses only the context note from the new result, so its output is byte-identical. The existing test caller and the shell undo path both use the new status.
+• New code is all used: the new result type and its helpers all have callers in the same diff, and the file-size limit was raised for commands_git.rs.
+• Docs: docs/src/usage/commands.md now describes the new exit codes, replacing the line that said a failed revert still exits 0. ARCHITECTURE.md has a matching entry.
+• Not tested: no test runs the two --all failure paths, because the test-time git guard blocks destructive git commands from the project root and there is no way to point that function at a temp directory. The ARCHITECTURE.md entry says so.
+
+Cleanup note: an unrelated log line in .yoyo/risk_validations.jsonl got swept into the diff.
+  watch: no files changed this turn — skipping

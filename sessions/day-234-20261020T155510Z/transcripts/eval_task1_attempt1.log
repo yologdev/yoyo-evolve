@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "MAX_IMAGE_SIZE_BYTES" ~/.… ✓ (819ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (8 lines) ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.0s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+• It works when run: I built a 30 MB sparse big.png and ran the binary with --image. It printed …big.png is too large to attach as an image (30.0 MB, max 20 MB); it was not read and exited with status 1, without loading the file.
+• Same limit as yoagent: the limit is 20 MiB with a strict >, matching yoagent 0.25.10's MAX_IMAGE_SIZE_BYTES at file.rs:9 and its check at :196. A file of exactly 20 MiB is still allowed. yoagent's constant is private, so copying the number with a file:line comment is the right call.
+• Checked before any read: the size comes from metadata().len() and is only checked for regular files. Named pipes (FIFOs) still reach the existing refusal in read_regular, and a missing file keeps its old error message.
+• All four entry points covered: --image (two places in main.rs), /add and @path all go through read_image_for_add. The grep found no other way in that skips it.
+• Nothing added without a use: the new image_cap module is registered in main.rs, everything it defines is called from production code, and no new error variants were added.
+• Tests: they cover sizes just under, at and just over the limit, an oversized sparse file read end to end, a small image that must still come back byte-for-byte unchanged, and a path with control characters that must be cleaned before display.
+• Docs: CHANGELOG.md, docs/src/usage/repl.md and the ARCHITECTURE.md entry for commands_file.rs are all updated.
+• No unintended product change: defaults and flags are unchanged, and images under the limit behave exactly as before.
+  watch: no files changed this turn — skipping
