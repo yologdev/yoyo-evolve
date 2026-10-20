@@ -1,0 +1,34 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn exit_if_nonzero\|fn … ✓ (75ms)
+  ▶ $ cd $(mktemp -d) && B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo… ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 21.3s (3 ✓)
+
+Verdict: PASS. All three changes the task asked for landed. I wrote the verdict to session_plan/eval_task_2.md.
+
+I ran the built binary in an empty temp directory:
+
+| Command | Exit code |
+|---|---|
+| bare yoyo run | 2 |
+| yoyo tree zzz | 2 |
+| yoyo undo zzz | 2 |
+| yoyo grep zzqq_nomatch . (no match) | 1 |
+| yoyo grep -c zzqq . (no match, count mode) | 1 |
+| yoyo grep zzqq /nonexistent (missing path) | 2 |
+| yoyo grep hi . (has a match) | 0 |
+| yoyo find zzqq_nomatch (no match) | 0 |
+| bare yoyo undo, yoyo undo 0 | 0 |
+
+• The grep decision holds: on this machine, grep and git grep both exit 1 when nothing matches. rg isn't installed, so I couldn't check that row.
+• How it's built: each exit code comes from a function that returns a status, not from parsing printed text. The unit test that used to dispatch bare run inside the test binary now checks the underlying call instead, so it never reaches process::exit. The new integration tests compare stdout byte-for-byte and cover the cases that should still exit 0.
+• Nothing left half-done: the one new constant, GREP_NO_MATCH_EXIT, is used in the same diff. The existing unit tests for tree and undo were updated to expect 2.
+• Docs: the exit-codes paragraph in docs/src/usage/commands.md covers all three changes. The closing "(#982)" pointer is now plain behaviour text, and git grep '#982' -- docs skills finds nothing.
+
+The docs paragraph now says a failing yoyo undo --last-commit still exits 0 and cites #1058. That fits the task's "unconfirmed, not reproduced" handling, but I didn't check the commit body or whether #1058 is a real issue.
+  watch: no files changed this turn — skipping

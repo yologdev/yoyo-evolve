@@ -1,0 +1,22 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cleanup_spawn_worktree\… ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cleanup_spawn_worktree\… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 20.1s (3 ✓)
+
+I gave this task a PASS: /spawn now keeps a worker's worktree when it still holds work, instead of force-removing it. The verdict is in session_plan/eval_task_1.md.
+
+I didn't run /spawn itself, because that needs a live model. The evidence is the diff, a grep of the call sites, and the tests in the diff, which run in temporary git repos. Build and tests had already passed in the harness.
+
+• Where the check lives: it sits in the one function that runs git worktree remove --force, now in a new file, src/spawn_worktree.rs. Everything that removes a worktree goes through it: the four cleanup_spawn_worktree callers (normal and --bg finish, normal and --bg output-file failure) and the hourly stale-worktree sweep.
+• What it keeps: a worktree with uncommitted files, one with commits that no branch points to, and one it couldn't check. It also refuses a folder that isn't its own worktree, because git would otherwise report the main repo's status for it. In every kept case it prints the path and how to inspect or discard it, to stderr, even in quiet mode. A clean worktree is removed exactly as before.
+• Wiring: the new module is declared in src/main.rs, and the new return value (Removed or Kept) is handled where a worktree finishes. The size limit for commands_spawn.rs in tests/module_size.rs was lowered to 4576 to match the moved code.
+• Remaining deletions: the one left in commands_spawn.rs only removes a folder that a failed git worktree add just created, so it can't lose work. Nothing in /spawn deletes branches.
+• Docs: the /spawn section of docs/src/usage/commands.md and ARCHITECTURE.md are both updated.
+• Not covered: a clean --bg worker that runs longer than an hour can still have its worktree swept from under it. The diff records this as #1057, but I didn't check that the issue exists.
+  watch: no files changed this turn — skipping
