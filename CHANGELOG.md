@@ -6,6 +6,10 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [Unreleased]
 
+### Fixed
+
+- Images you attach yourself (`--image`, `/add`, `@path`) are now refused before reading if they are over 20 MB, the same limit (and the same "exactly 20 MB is allowed") as the agent's own `read_file`. Before, the whole file was loaded and base64-encoded: a 300 MB `--image` used 4.7 GB of memory, then the provider rejected the request anyway.
+
 ## [0.3.0] - 2026-10-20
 
 Days 219–234. **Two defaults changed, and you should know both before upgrading.** With no config, yoyo now runs `claude-opus-5-5` (was `claude-opus-4-6`), and in an interactive terminal `read_file`, `search` and `list_files` now **ask** before reading outside the directory you launched in. Those are why this is a minor bump. The rest of the span is fences that actually hold (`--deny-dir` at symlink targets, in startup loaders and in recursive search results; `/cd` honouring the new directory's deny lists), named pipes that no longer hang a session, and ~25 more shell subcommands that stop exiting 0 when they failed.

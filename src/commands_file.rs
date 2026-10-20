@@ -170,14 +170,14 @@ pub enum AddResult {
 
 /// Read an image file from disk and return base64-encoded data and MIME type.
 /// Refuses, before reading, any path the session's directory fence forbids (#1002).
+/// Refuses, also before reading, an image over 20 MB (`image_cap.rs`, yoagent's cap).
 pub fn read_image_for_add(
     path: &str,
     restrictions: &crate::config::DirectoryRestrictions,
 ) -> Result<(String, String), AddReadError> {
     use base64::Engine;
     admit_for_add(path, restrictions)?;
-    let bytes = crate::non_regular_read::read_regular(std::path::Path::new(path))
-        .map_err(|e| AddReadError::Failed(format!("failed to read {path}: {e}")))?;
+    let bytes = crate::image_cap::read_image_capped(path)?;
     let ext = path.rsplit('.').next().unwrap_or("");
     let mime = mime_type_for_extension(ext).to_string();
     let data = base64::engine::general_purpose::STANDARD.encode(&bytes);

@@ -256,4 +256,4 @@ You can reference files directly in your prompts using `@path` syntax. The file 
 - `@path:start-end` — injects a specific line range
 - If the path doesn't exist, the `@mention` is left as-is (it might be a username)
 - Email-like patterns (`user@example.com`) are not treated as file mentions
-- Images work too: `@screenshot.png` inlines the image into the conversation
+- Images work too: `@screenshot.png` inlines the image into the conversation. Images over 20 MB are refused before reading (the same cap applies to `/add` and `--image`, and to the agent's own `read_file`)

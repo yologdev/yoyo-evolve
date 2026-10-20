@@ -125,6 +125,7 @@ mod fence_result_filter;
 mod format;
 #[cfg(feature = "gasp")]
 mod gasp;
+mod image_cap;
 mod mcp_prefix;
 mod model_limits_note;
 mod non_regular_read;
