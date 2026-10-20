@@ -2129,16 +2129,18 @@ fn sub_agent_tool_for(
     shared_state: &SharedState,
     flavor: &DispatchFlavor,
 ) -> SubAgentTool {
-    // Select the right provider
+    let model_config =
+        crate::agent_builder::create_model_config(provider_name, model, config.base_url.as_deref());
+    // Select the right provider; GPT-6 presets run on the Responses API.
     let provider: Arc<dyn StreamProvider> = match provider_name {
         "anthropic" => Arc::new(AnthropicProvider),
         "google" => Arc::new(GoogleProvider),
         "bedrock" => Arc::new(BedrockProvider),
+        _ if model_config.api == yoagent::provider::ApiProtocol::OpenAiResponses => {
+            Arc::new(yoagent::provider::OpenAiResponsesProvider)
+        }
         _ => Arc::new(OpenAiCompatProvider),
     };
-
-    let model_config =
-        crate::agent_builder::create_model_config(provider_name, model, config.base_url.as_deref());
     SubAgentTool::from_provider(flavor.name, provider, model_config)
         .with_description(flavor.description)
         .with_system_prompt(sub_agent_system_prompt(provider_name, model))

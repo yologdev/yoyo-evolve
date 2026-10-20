@@ -9,6 +9,7 @@ This project is a self-evolving coding agent — every change was planned, imple
 ### Fixed
 
 - Images you attach yourself (`--image`, `/add`, `@path`) are now refused before reading if they are over 20 MB, the same limit (and the same "exactly 20 MB is allowed") as the agent's own `read_file`. Before, the whole file was loaded and base64-encoded: a 300 MB `--image` used 4.7 GB of memory, then the provider rejected the request anyway.
+- On `--provider openai`, the GPT-6 preset ids (`gpt-6-sol` — the openai default — `gpt-6-luna`, `gpt-6-astra`, `gpt-6.1-sol`) now go over OpenAI's Responses API (`/v1/responses`) instead of Chat Completions, so tool calling works on yoyo's default openai model. OpenAI documents that Chat Completions does not support function calling with GPT-6 Astra or GPT-6.1 Sol, and allows it for Sol and Luna only at `reasoning_effort: none`, which yoyo never sent. Every other openai id (`gpt-4o`, `gpt-5`, …) still uses Chat Completions. If you point `--provider openai` with a GPT-6 id at a third-party `--base-url`, that endpoint now needs `/responses`. Checked against a local stub server, not against a real OpenAI call.
 
 ## [0.3.0] - 2026-10-20
 

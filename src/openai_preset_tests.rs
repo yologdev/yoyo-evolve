@@ -58,7 +58,7 @@ fn openai_preset_is_the_yoagent_constructor_for_each_gpt6_id() {
 }
 
 #[test]
-fn openai_arm_takes_window_max_tokens_cost_reasoning_and_keeps_the_wire() {
+fn openai_arm_takes_window_max_tokens_cost_reasoning_and_the_responses_wire() {
     for (id, ctor) in presets() {
         let bare = ModelConfig::openai(id, id);
         let got = create_model_config("openai", id, None);
@@ -69,9 +69,14 @@ fn openai_arm_takes_window_max_tokens_cost_reasoning_and_keeps_the_wire() {
         );
         assert_eq!(got.cost, ctor.cost, "{id}");
         assert!(got.reasoning, "{id}");
-        // Deliberately NOT taken: Responses API, compat, base_url.
-        assert_eq!(got.api, ApiProtocol::OpenAiCompletions, "{id}");
-        assert_ne!(ctor.api, got.api, "{id}: preset really is a different wire");
+        // Taken: the Responses API (OpenAI: Chat Completions does not
+        // support function calling with GPT-6 Astra / GPT-6.1 Sol, and allows
+        // it for Sol/Luna only at effort `none`). Anti-vacuous: the bare
+        // config really is the other wire.
+        assert_eq!(got.api, ApiProtocol::OpenAiResponses, "{id}");
+        assert_eq!(got.api, ctor.api, "{id}");
+        assert_eq!(bare.api, ApiProtocol::OpenAiCompletions, "{id}");
+        // Still NOT taken: compat and base_url stay the arm's own.
         assert_eq!(got.base_url, bare.base_url, "{id}");
         assert_eq!(
             format!("{:?}", got.compat),
@@ -97,6 +102,16 @@ fn near_misses_keep_the_bare_openai_config() {
             "{id}"
         );
         assert_eq!(got.cost, bare.cost, "{id}");
+        // The wire, compat and base_url are today's Chat Completions config.
+        assert_eq!(
+            (got.api, got.base_url.as_str(), format!("{:?}", got.compat)),
+            (
+                ApiProtocol::OpenAiCompletions,
+                bare.base_url.as_str(),
+                format!("{:?}", bare.compat)
+            ),
+            "{id}"
+        );
     }
     // The full pair for the provider's default model, written out.
     let gpt5 = create_model_config("openai", "gpt-5", None);

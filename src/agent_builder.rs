@@ -979,6 +979,16 @@ pub fn normalize_anthropic_base_url(url: &str) -> String {
     }
 }
 
+/// Agent for an OpenAI-family config: a Responses-API config (the GPT-6
+/// presets) resolves to yoagent's Responses provider, all else Chat Completions.
+fn openai_family_agent(config: ModelConfig) -> Agent {
+    if config.api == ApiProtocol::OpenAiResponses {
+        Agent::from_config(config)
+    } else {
+        Agent::from_provider(OpenAiCompatProvider, config)
+    }
+}
+
 /// Create a ModelConfig for a provider, honoring an optional custom base URL.
 pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) -> ModelConfig {
     ensure_bundled_prices();
@@ -996,15 +1006,18 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
         }
         "openai" => {
             let mut config = ModelConfig::openai(model, model);
-            // GPT-6 presets: take window, max_tokens, cost and reasoning from
-            // yoagent; deliberately NOT its `api` (Responses), compat or
-            // base_url, because switching yoyo's wire protocol is a separate
-            // decision that cannot be verified without a key.
+            // GPT-6 presets: take window, max_tokens, cost, reasoning AND the
+            // preset's Responses API wire. OpenAI: "Chat Completions does not
+            // support function calling with GPT-6 Astra or GPT-6.1 Sol" (Sol and
+            // Luna only at effort `none`). Pinned on the wire against a stub
+            // (tests/openai_responses_wire.rs), not against real OpenAI; compat
+            // and base_url stay the arm's own. Other ids stay on Chat Completions.
             if let Some(preset) = openai_preset(model) {
                 config.context_window = preset.context_window;
                 config.max_tokens = preset.max_tokens;
                 config.cost = preset.cost;
                 config.reasoning = preset.reasoning;
+                config.api = preset.api;
             }
             if let Some(url) = base_url {
                 config.base_url = url.to_string();
@@ -1754,7 +1767,7 @@ impl AgentConfig {
                     eprintln!("{note}");
                 }
             }
-            let agent = Agent::from_provider(OpenAiCompatProvider, model_config);
+            let agent = openai_family_agent(model_config);
             self.configure_agent(agent, context_window, output_ceiling)
         }
     }
@@ -1811,7 +1824,7 @@ impl AgentConfig {
             Agent::from_provider(BedrockProvider, model_config)
         } else {
             let model_config = create_model_config(&self.provider, &self.model, base_url);
-            Agent::from_provider(OpenAiCompatProvider, model_config)
+            openai_family_agent(model_config)
         };
 
         let mut agent = agent
@@ -1853,7 +1866,7 @@ impl AgentConfig {
             Agent::from_provider(BedrockProvider, model_config)
         } else {
             let model_config = create_model_config(&self.provider, architect_model, base_url);
-            Agent::from_provider(OpenAiCompatProvider, model_config)
+            openai_family_agent(model_config)
         };
 
         // The architect runs on `architect_model`, which is usually NOT
