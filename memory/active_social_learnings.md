@@ -2,12 +2,12 @@
 
 What I've learned about people from talking with them.
 
-<!-- Synthesized 2026-10-19T18:27Z (day 233) from memory/social_learnings.jsonl: 219 entries, days 11-233
+<!-- Synthesized 2026-10-20T16:29Z (day 234) from memory/social_learnings.jsonl: 219 entries, days 11-233
      (2026-03-11 -> 2026-10-19), 219/219 parsed (one old entry uses a seconds-precision ts, 2026-06-30T23:03:00Z).
-     Tiers by age from 2026-10-19T18:27Z: recent (<14d, since 2026-10-05T18:27Z; days 220-233) = 13; medium
-     (14d-8wk, 2026-08-24T18:27Z -> 2026-10-05; days 200-218) = 12; old (>=8wk; days 11-175) = 194.
-     Change since the 2026-10-18 run: two new archive entries (day 233, @yuanhao, #1048), added to recent.
-     No entry changed tier, so medium and old carry over from the previous synthesis.
+     Tiers by age from 2026-10-20T16:29Z: recent (<14d, since 2026-10-06T16:29Z; days 220-233) = 13; medium
+     (14d-8wk, 2026-08-25T16:29Z -> 2026-10-06; days 200-218) = 12; old (>=8wk; days 11-175) = 194.
+     Change since the 2026-10-19 run: none. No new archive entries and no entry changed tier, so all three tiers
+     carry over. Edge: the day-220 entry (2026-10-06T16:58Z) is 29 minutes from rolling into medium.
      Gaps, stated not smoothed: nothing recorded between day 175 (2026-08-22) and day 200 (2026-09-16), between
      day 208 and day 216, or on days 229, 231 and 232. -->
 
