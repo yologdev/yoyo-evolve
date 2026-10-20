@@ -358,3 +358,120 @@ async fn positive_control_an_unpaired_tool_use_is_seen_by_both_checks() {
         describe(&after)
     );
 }
+
+/// A provider that never sends a token: it holds the stream open until the
+/// run is cancelled, like a server stalled before its first byte.
+struct StallsUntilCancelled;
+
+#[async_trait::async_trait]
+impl yoagent::provider::traits::StreamProvider for StallsUntilCancelled {
+    async fn stream(
+        &self,
+        _config: yoagent::provider::traits::StreamConfig,
+        _tx: tokio::sync::mpsc::UnboundedSender<yoagent::provider::traits::StreamEvent>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<Message, yoagent::provider::traits::ProviderError> {
+        cancel.cancelled().await;
+        Err(yoagent::provider::traits::ProviderError::Cancelled)
+    }
+}
+
+/// Ctrl-C while waiting for the model's first token, DRAINED to the end the
+/// way the provider-retry and loop-guard aborts drain: returns the messages
+/// `AgentEvent::AgentEnd` carries, which is exactly what `handle_agent_end`
+/// receives. (A cancel mid-TOOL leaves no `Aborted` message at all, only the
+/// `[Agent stopped: cancelled]` marker, measured with `describe` on Day 234.)
+async fn cancel_while_waiting_for_the_model() -> Vec<AgentMessage> {
+    let mut agent = Agent::from_provider(StallsUntilCancelled, ModelConfig::mock())
+        .with_api_key("not-a-real-key");
+    let mut rx = agent.prompt("hello").await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    agent.abort();
+    let end = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut end = None;
+        while let Some(ev) = rx.recv().await {
+            if let AgentEvent::AgentEnd { messages, .. } = ev {
+                end = Some(messages);
+            }
+        }
+        end
+    })
+    .await
+    .expect("the drain hung after abort");
+    agent.finish().await;
+    end.expect("an aborted run must still send AgentEnd")
+}
+
+/// Hand a REAL aborted run's history (not a hand-typed message) to the same
+/// `handle_agent_end` the drained event loops call, and name the verdict.
+fn verdict_for(msgs: Vec<AgentMessage>) -> (&'static str, Option<String>) {
+    let mut state = super::PromptEventState::new();
+    if let Some(s) = state.spinner.take() {
+        s.stop();
+    }
+    state.handle_agent_end(msgs, "mock");
+    let fatal = state.fatal_error.clone();
+    let label = match state.into_result() {
+        super::PromptResult::Done { .. } => "Done",
+        super::PromptResult::FatalError { .. } => "FatalError",
+        super::PromptResult::RetriableError { .. } => "RetriableError",
+        super::PromptResult::ContextOverflow { .. } => "ContextOverflow",
+    };
+    (label, fatal)
+}
+
+/// #988 Q1, pinned at the lowest seam. yoagent ≥0.23 ends a cancelled run as
+/// `StopReason::Aborted`, not `Error("Cancelled")`. The REPL's Ctrl-C arm
+/// returns without draining (so it never reads this stop), but the drained
+/// paths do: the provider-retry abort (`handle_provider_retry` → `abort()`),
+/// the loop guard, SIGTERM racing a drain. On every one of them an `Aborted`
+/// stop must read as a finished turn — never an error, a retry or an
+/// "incomplete" turn, which would print `error:` over a cancel the user asked
+/// for. Probed on the built binary in a pty on Day 234 (transcripts on #988):
+/// both Ctrl-C while waiting for the first token and Ctrl-C mid-`bash sleep`
+/// printed the interrupt note and the next prompt was answered.
+#[tokio::test]
+async fn aborted_stop_from_a_real_cancel_reads_as_done_not_as_an_error() {
+    let msgs = cancel_while_waiting_for_the_model().await;
+    let reading = describe(&msgs);
+    // Anti-vacuous: the fixture really carries the stop this test is about.
+    let aborted = msgs
+        .iter()
+        .filter(|m| {
+            matches!(
+                m,
+                AgentMessage::Llm(Message::Assistant {
+                    stop_reason: StopReason::Aborted,
+                    ..
+                })
+            )
+        })
+        .count();
+    assert!(
+        aborted >= 1,
+        "a real cancel must leave an Aborted assistant message:\n{reading}"
+    );
+
+    assert_eq!(
+        verdict_for(msgs.clone()),
+        ("Done", None),
+        "an Aborted stop must read as a finished turn:\n{reading}"
+    );
+
+    // Near-miss: the SAME history with Aborted relabelled Error must NOT read
+    // as Done, so the verdict above is decided by the stop reason's arm and
+    // not by something else in the history.
+    let mut relabelled = msgs;
+    for m in relabelled.iter_mut() {
+        if let AgentMessage::Llm(Message::Assistant { stop_reason, .. }) = m {
+            if *stop_reason == StopReason::Aborted {
+                *stop_reason = StopReason::Error;
+            }
+        }
+    }
+    let (label, _) = verdict_for(relabelled);
+    assert_ne!(
+        label, "Done",
+        "the same stop spelled Error must not be a clean Done"
+    );
+}
