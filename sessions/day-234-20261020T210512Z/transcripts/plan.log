@@ -1,0 +1,46 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; gh issue view 902 --json s… ✓ (990ms)
+  ▶ $ gh issue view 902 --json body,comments --jq '.body[2500:6000], "=====", (.commen… ✓ (340ms)
+  ▶ $ gh issue view 944 --json body,comments --jq '.body[0:3000], "=====", (.comments[… ✓ (505ms)
+  ▶ $ gh issue view 944 --json comments --jq '.comments[-2:][] | .createdAt + " " + .b… ✓ (560ms)
+  ▶ $ gh issue view 988 --json body,comments --jq '.body[0:2500], "=====", (.comments[… ✓ (359ms)
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; ls tests/ | head -30; ls … ✓ (18ms)
+  ▶ $ grep -rn "\bon_error\b" src --include=*.rs | head; grep -rln "Aborted" src | hea… ✓ (22ms)
+  ▶ $ git rev-parse --short HEAD; gh issue comment 988 --body "🐙 *… (5 lines) ✓ (863ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 48s (8 ✓)
+
+Now the task files.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (59 lines)  ▶ write session_plan/task_02.md (43 lines)  ▶ write session_plan/issue_responses.md (12 lines)  ▶ $ git add session_plan/ && git commit -q -m "Day 234 (19:50): session plan" && git… ✓ (0ms)
+ ✓ (1ms)
+ ✓ (1ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 10.0s (4 ✓)
+
+I've written two task files and an issue-responses file in session_plan/. The commit step did nothing because session_plan/ is in .gitignore. The plan's || true covers that, and the files are on disk for the next phase to read.
+
+Task 1 (product): send the default openai model's requests through OpenAI's Responses API. yoyo's v0.3.0 default openai model is gpt-6-sol. It sends tool calls over the Chat Completions endpoint without setting reasoning_effort, and OpenAI's docs say tool calling there only works at effort none. That makes it a broken default. The code kept the old endpoint because the change "cannot be verified without a key", but the vendor docs settle that, and a stub server can check what yoyo sends without a key. The task:
+• switches only the GPT-6 ids yoyo has presets for; every other openai id keeps today's behaviour exactly;
+• rewrites the existing test that pinned the old behaviour (renamed so its name is true, not deleted) and keeps a check that a non-GPT-6 id is unchanged;
+• adds a stub-server test of the request path and the tools field, which has to pass without API keys, as CI has none;
+• fixes any doc sentence the change makes false;
+• files a new issue for what's left before pushing: other openai reasoning models still go to Chat Completions, and third-party servers without a /responses endpoint will now fail for GPT-6 ids.
+
+It will not have been tested against real OpenAI, because there's no key here.
+
+Task 2 (product, backlog drain): close out #988. I skipped the two older backlog issues. On #902, what's left is a security design decision the issue itself says is blocked. On #944, one remaining part is in a protected workflow file and the other is a larger design. During planning I answered one of #988's three questions myself and posted it on the issue: yoyo never registers an on_error callback, so nothing could have stopped firing. Another was already fixed. The task probes the last one on the built binary: whether Ctrl-C, both while waiting on the model and while a tool runs, still prints the interrupt note and gets you back to a working prompt. If both cases pass, it adds a test for that behaviour and closes #988. If either fails, it fixes it or files a new issue.
+
+Not acted on:
+• #1055 / Discussion #1048: still waiting on @yuanhao about the outside-read fence default, so nothing should harden it.
+• Next session: #1059, #1057, #1054, and routing the five yoagent model presets yoyo doesn't handle yet.
+• Release: not due, since v0.3.0 shipped today, though Task 1 is a good reason to ship v0.3.1 soon after it lands.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
