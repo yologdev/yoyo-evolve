@@ -1616,3 +1616,15 @@ It covers evolve sessions only.
 **Positive controls:**
 - dropping the filter fails both label checks;
 - labelling `agent-input` fails the edit check.
+
+### `src/spawn_worktree.rs` — Day 234 (09:07): `/spawn` no longer force-removes a worktree that still holds work
+
+**The defect, measured before the fix:** in a scratch repo, `git worktree add --detach .yoyo/worktrees/spawn-1-1`, write an untracked file into it, then the first command the old `cleanup_spawn_worktree` issued — `git worktree remove --force <path>` — exited 0 and the file was gone. Callers reached it after a failed handoff commit (`try_worktree_handoff` prints `handoff commit failed` and returns `None`; a rejecting pre-commit hook, `commit.gpgsign` with no agent, no `user.email`), after an `-o` output-file write failure (before any handoff ran), and from `cleanup_stale_worktrees` on every `/spawn`, which judged staleness by the worktree's **root-dir** mtime (nested edits don't touch it). Same class as Claude Code 2.1.304's "removing the worktree ... without asking could lose commits".
+
+**Placement: in the authority, not beside it.** Removal moved out of `commands_spawn.rs` into this module, and the only function that issues `git worktree remove --force` (`remove_spawn_worktree_dir`) checks first, so every caller is fail-closed: `cleanup_spawn_worktree`'s 4 production callers (foreground + `--bg` completion, foreground + `--bg` output-write failure) and the stale sweep. `commands_spawn.rs` re-exports both entry points, so test call sites are unchanged.
+
+**What is checked, in the worktree:** `rev-parse --show-toplevel` must be the worktree itself (otherwise `git -C` walks up and reports the *parent* repo — a non-worktree dir under a clean main repo would read as clean); `status --porcelain` non-empty → keep; `rev-list --count HEAD --not --branches --tags --remotes <start>` non-zero → keep (commits on no branch: the worker committed on the detached HEAD, or the handoff commit landed and naming it failed). Any of those failing → keep, reported as "could not check", never as clean. Clean → removed exactly as before. The kept note (`kept_worktree_note`, pure, table-tested, glyph-free under `is_plain_output()`) goes to stderr unconditionally — a safety fact — naming the path, the counts, `git -C <path> status` and `git worktree remove --force <path>`. `cleanup_spawn_worktree` now returns `Ok(WorktreeCleanup::{Removed, Kept})` so the completion paths stop printing "worktree cleaned up" over a kept worktree.
+
+**Not counted:** ignored files (the handoff's `git add -A` never carried them). **Branches:** nothing deletes one (no `branch -d/-D` anywhere in spawn). **Residue, filed:** a *clean*, still-running `--bg` worker older than 1h can still be swept from under itself — nothing records live workers' worktree paths (#1057).
+
+**Positive control:** dropping `uncommitted == 0` from the clean test (atomic mutate→test→restore, marker on the line) reddened `dirty_worktree_is_kept_with_its_uncommitted_file` and `stale_sweep_keeps_dirty_and_removes_clean` by name; restored, 10/10 green.

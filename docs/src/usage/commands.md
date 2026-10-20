@@ -392,7 +392,7 @@ ready to review: branch spawn/3-1712345678 — 3 files changed (+42/-7)
 review with: git diff main...spawn/3-1712345678
 ```
 
-The same line appears in `/spawn status` output for completed tasks. If the worker made no file changes, you'll see `no file changes to hand off`; if the commit itself fails, the failure is reported honestly and the worker's text result is still delivered without a handoff. By default nothing is pushed and no PR is opened — the branch stays local for you to review and merge.
+The same line appears in `/spawn status` output for completed tasks. If the worker made no file changes, you'll see `no file changes to hand off`; if the commit itself fails, the failure is reported honestly and the worker's text result is still delivered without a handoff. By default nothing is pushed and no PR is opened — the branch stays local for you to review and merge. A worker's worktree is only removed when it is clean: if it still holds uncommitted work (the handoff commit failed — a rejecting pre-commit hook, `commit.gpgsign` with no agent, no `user.email` — or the hourly stale-worktree sweep finds changes) or commits on no branch, it is kept, and yoyo prints its path with `git -C <path> status` to inspect it and `git worktree remove --force <path>` to discard it when you're done.
 
 **`--pr` — opt-in draft PR on completion**: pass `--pr` to have a finished handoff pushed and opened as a draft pull request:
 

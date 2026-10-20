@@ -355,7 +355,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // never reaches it; the new test drives `parse_args("--safe-mode"/"--restricted")
     // → Config.safe_mode → apply_config_flags → the global → the seam`. Number
     // pasted from what the gate printed after `cargo fmt`, never hand-typed.
-    ("src/commands_spawn.rs", 4639),
+    // Day 234: down to 4576 — worktree removal (and its held-work guard) moved
+    // to src/spawn_worktree.rs. Pasted from what the gate printed.
+    ("src/commands_spawn.rs", 4576),
     // Day 162 (#692): +108 lines — extract_last_assistant_text now stops at the
     // newest turn's boundary (no stale-turn fallback) plus the regression tests
     // pinning that a text-less newest turn yields None, not an older turn's text.

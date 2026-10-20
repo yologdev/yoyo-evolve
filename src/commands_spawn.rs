@@ -7,6 +7,7 @@
 use crate::format::*;
 use crate::prompt::run_prompt;
 use crate::prompt_utils::summarize_message;
+pub use crate::spawn_worktree::{cleanup_spawn_worktree, cleanup_stale_worktrees, WorktreeCleanup};
 use crate::sync_util::lock_or_recover;
 
 use std::path::{Path, PathBuf};
@@ -922,10 +923,12 @@ pub async fn handle_spawn(
     // Clean up the worktree
     if let Some(ref wt) = worktree {
         let elapsed = wt.created_at.elapsed();
-        if let Err(e) = cleanup_spawn_worktree(&cwd, wt) {
-            eprintln!("{YELLOW}  ⚠ worktree cleanup failed: {e}{RESET}");
-        } else {
-            eprintln!("{DIM}  worktree cleaned up ({elapsed:.1?}){RESET}");
+        match cleanup_spawn_worktree(&cwd, wt) {
+            Err(e) => eprintln!("{YELLOW}  ⚠ worktree cleanup failed: {e}{RESET}"),
+            Ok(WorktreeCleanup::Removed) => {
+                eprintln!("{DIM}  worktree cleaned up ({elapsed:.1?}){RESET}")
+            }
+            Ok(WorktreeCleanup::Kept) => {} // the guard already named the path
         }
     }
 
@@ -1076,12 +1079,14 @@ fn handle_spawn_bg(
         // Clean up worktree after completion
         if let Some(ref wt) = worktree {
             let elapsed = wt.created_at.elapsed();
-            if let Err(e) = cleanup_spawn_worktree(&cwd, wt) {
-                eprintln!("{YELLOW}  ⚠ bg spawn #{spawn_id}: worktree cleanup failed: {e}{RESET}");
-            } else {
-                eprintln!(
+            match cleanup_spawn_worktree(&cwd, wt) {
+                Err(e) => eprintln!(
+                    "{YELLOW}  ⚠ bg spawn #{spawn_id}: worktree cleanup failed: {e}{RESET}"
+                ),
+                Ok(WorktreeCleanup::Removed) => eprintln!(
                     "{DIM}  bg spawn #{spawn_id}: worktree cleaned up ({elapsed:.1?}){RESET}"
-                );
+                ),
+                Ok(WorktreeCleanup::Kept) => {} // the guard already named the path
             }
         }
     });
@@ -2175,40 +2180,6 @@ fn push_and_open_pr(repo_dir: &Path, task: &str, handoff: &SpawnHandoff) {
     }
 }
 
-/// Remove a spawn worktree, cleaning up both the directory and the git metadata.
-///
-/// This is idempotent — calling it on an already-removed worktree is a no-op.
-pub fn cleanup_spawn_worktree(repo_dir: &Path, info: &WorktreeInfo) -> Result<(), String> {
-    let root = repo_root(repo_dir);
-    let wt_str = info.path.to_string_lossy().to_string();
-
-    // If the worktree directory doesn't exist any more, just prune stale metadata.
-    if !info.path.exists() {
-        let _ = run_git_in(&root, &["worktree", "prune"]);
-        return Ok(());
-    }
-
-    // Try force-remove first, then plain remove, then manual cleanup.
-    if run_git_in(&root, &["worktree", "remove", "--force", &wt_str]).is_ok() {
-        return Ok(());
-    }
-    if run_git_in(&root, &["worktree", "remove", &wt_str]).is_ok() {
-        return Ok(());
-    }
-
-    // Manual fallback: remove directory and prune.
-    let _ = std::fs::remove_dir_all(&info.path);
-    let _ = run_git_in(&root, &["worktree", "prune"]);
-    if info.path.exists() {
-        Err(format!(
-            "failed to remove worktree directory: {}",
-            info.path.display()
-        ))
-    } else {
-        Ok(())
-    }
-}
-
 /// List spawn worktrees under `<repo>/.yoyo/worktrees/spawn-*`.
 pub fn list_spawn_worktrees(repo_dir: &Path) -> Vec<PathBuf> {
     let root = repo_root(repo_dir);
@@ -2228,49 +2199,6 @@ pub fn list_spawn_worktrees(repo_dir: &Path) -> Vec<PathBuf> {
     }
     result
 }
-
-/// Clean up worktrees older than `max_age`.
-///
-/// Scans `<repo>/.yoyo/worktrees/spawn-*` and removes any whose directory
-/// modified-time is older than `max_age` ago.
-pub fn cleanup_stale_worktrees(repo_dir: &Path, max_age: std::time::Duration) {
-    let root = repo_root(repo_dir);
-    let wt_dir = root.join(".yoyo").join("worktrees");
-    if !wt_dir.is_dir() {
-        return;
-    }
-    let now = std::time::SystemTime::now();
-    if let Ok(entries) = std::fs::read_dir(&wt_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            if !name.to_string_lossy().starts_with("spawn-") {
-                continue;
-            }
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            // Check modification time.
-            let stale = entry
-                .metadata()
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .and_then(|mt| now.duration_since(mt).ok())
-                .is_some_and(|age| age > max_age);
-            if stale {
-                let wt_str = path.to_string_lossy().to_string();
-                let _ = run_git_in(&root, &["worktree", "remove", "--force", &wt_str]);
-                if path.exists() {
-                    let _ = std::fs::remove_dir_all(&path);
-                }
-            }
-        }
-        // Prune any dangling worktree metadata.
-        let _ = run_git_in(&root, &["worktree", "prune"]);
-    }
-}
-
-// ─── Parallelizable-prompt detection ────────────────────────────────────────
 
 /// Phrases that indicate sequential dependency between steps. If any appears
 /// (as a whole word/phrase) anywhere in the prompt, the listed tasks are

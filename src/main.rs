@@ -135,6 +135,7 @@ mod output_ceiling_tests;
 mod outside_read;
 #[cfg(test)]
 mod provider_presets_tests;
+mod spawn_worktree;
 #[cfg(test)]
 mod tool_wrappers_cancel_tests;
 #[cfg(test)]
