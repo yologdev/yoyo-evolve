@@ -1049,18 +1049,53 @@ pub(crate) fn parse_undo_arg(input: &str) -> UndoArg {
 
 /// `/undo` with an exit status for the shell door (`yoyo undo`, #982): 2 when
 /// the argument is unparseable (the usage error, matching every other
-/// subcommand's usage code), 0 on every other path. Deliberately narrow: a
-/// `--last-commit` / `--all` that runs and fails still reports 0 here. Printed
-/// text is unchanged; the REPL calls `handle_undo`, which has no status.
+/// subcommand's usage code), 1 when a `--last-commit` / `--all` ran a git
+/// command that refused (#1058: the `git revert`, the `git checkout -- .` or
+/// the `git clean -fd`, matching `yoyo commit` mirroring git's refusal), and 0
+/// otherwise. Printed text is unchanged; the REPL calls `handle_undo`, which
+/// has no status.
 pub(crate) fn handle_undo_status(input: &str, history: &mut TurnHistory) -> i32 {
-    // Usage error: 2, the code every other subcommand's usage error uses.
-    let code = if parse_undo_arg(input) == UndoArg::Usage {
-        2
-    } else {
-        0
-    };
-    let _ = handle_undo(input, history);
-    code
+    match parse_undo_arg(input) {
+        UndoArg::All => undo_status_code(&handle_undo_all(history)),
+        UndoArg::LastCommit => undo_status_code(&handle_undo_last_commit()),
+        arg => {
+            let _ = handle_undo(input, history);
+            // Usage error: 2, the code every other subcommand's usage error uses.
+            if arg == UndoArg::Usage {
+                2
+            } else {
+                0
+            }
+        }
+    }
+}
+
+/// What a git-running undo (`--last-commit` / `--all`) produced: the agent
+/// context note the REPL injects, and whether a git command it ran refused
+/// (read only by the shell door's exit status, #1058).
+pub(crate) struct UndoOutcome {
+    context: Option<String>,
+    git_failed: bool,
+}
+
+impl UndoOutcome {
+    fn ran(context: Option<String>) -> Self {
+        Self {
+            context,
+            git_failed: false,
+        }
+    }
+    fn git_refused() -> Self {
+        Self {
+            context: None,
+            git_failed: true,
+        }
+    }
+}
+
+/// The shell door's exit code for a git-running undo: 1 when git refused.
+fn undo_status_code(outcome: &UndoOutcome) -> i32 {
+    i32::from(outcome.git_failed)
 }
 
 /// Handle `/undo` with per-turn granularity.
@@ -1075,9 +1110,9 @@ pub(crate) fn handle_undo_status(input: &str, history: &mut TurnHistory) -> i32 
 pub fn handle_undo(input: &str, history: &mut TurnHistory) -> Option<String> {
     let count: usize = match parse_undo_arg(input) {
         // Nuclear fallback: /undo --all
-        UndoArg::All => return handle_undo_all(history),
+        UndoArg::All => return handle_undo_all(history).context,
         // Revert last git commit: /undo --last-commit
-        UndoArg::LastCommit => return handle_undo_last_commit(),
+        UndoArg::LastCommit => return handle_undo_last_commit().context,
         UndoArg::Count(0) => {
             println!("{DIM}  (nothing to undo — count is 0){RESET}\n");
             return None;
@@ -1150,7 +1185,7 @@ pub fn handle_undo(input: &str, history: &mut TurnHistory) -> Option<String> {
 ///
 /// Returns `Some(context)` with causality information so the agent knows
 /// that earlier conversation may reference code that no longer exists.
-fn handle_undo_last_commit() -> Option<String> {
+fn handle_undo_last_commit() -> UndoOutcome {
     handle_undo_last_commit_in(std::path::Path::new("."))
 }
 
@@ -1197,14 +1232,14 @@ fn run_git_undo_in(dir: &str, args: &[&str]) -> Result<String, String> {
 /// test needs to move the **process-global** working directory; see
 /// `list_project_files_in` / `get_recent_git_files_in` /
 /// `run_git_amend_with_message_in` for the same shape).
-fn handle_undo_last_commit_in(root: &std::path::Path) -> Option<String> {
+fn handle_undo_last_commit_in(root: &std::path::Path) -> UndoOutcome {
     let dir = root.to_string_lossy();
 
     // 1. Get the last commit info
     let log = run_git_undo_in(&dir, &["log", "--oneline", "-1"]).unwrap_or_default();
     if log.trim().is_empty() {
         println!("{DIM}  (no commits to undo){RESET}\n");
-        return None;
+        return UndoOutcome::ran(None);
     }
 
     // 2. Get the files changed in that commit
@@ -1246,12 +1281,12 @@ fn handle_undo_last_commit_in(root: &std::path::Path) -> Option<String> {
                 "Any journal entries about this commit describe work that has been undone.]",
             );
 
-            Some(note)
+            UndoOutcome::ran(Some(note))
         }
         Err(e) => {
             eprintln!("{RED}  ✗ Revert failed: {e}{RESET}");
             eprintln!("{DIM}  (the commit may have conflicts — try manual git revert){RESET}\n");
-            None
+            UndoOutcome::git_refused()
         }
     }
 }
@@ -1260,7 +1295,7 @@ fn handle_undo_last_commit_in(root: &std::path::Path) -> Option<String> {
 /// Clears turn history as well.
 ///
 /// Returns `Some(context)` when changes were actually reverted.
-fn handle_undo_all(history: &mut TurnHistory) -> Option<String> {
+fn handle_undo_all(history: &mut TurnHistory) -> UndoOutcome {
     let diff_stat = run_git(&["diff", "--stat"]).unwrap_or_default();
     let untracked_text =
         run_git(&["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
@@ -1276,7 +1311,7 @@ fn handle_undo_all(history: &mut TurnHistory) -> Option<String> {
     if !has_diff && !has_untracked {
         println!("{DIM}  (nothing to undo — no uncommitted changes){RESET}\n");
         history.clear();
-        return None;
+        return UndoOutcome::ran(None);
     }
 
     // Collect action descriptions for the context note
@@ -1302,13 +1337,16 @@ fn handle_undo_all(history: &mut TurnHistory) -> Option<String> {
     if has_diff {
         if let Err(e) = run_git(&["checkout", "--", "."]) {
             eprintln!("{RED}  ✗ failed to revert tracked changes: {e}{RESET}\n");
-            return None;
+            return UndoOutcome::git_refused();
         }
     }
+    let mut git_failed = false;
     if has_untracked {
         if let Err(e) = run_git(&["clean", "-fd"]) {
             eprintln!("{RED}  ✗ failed to clean untracked files: {e}{RESET}\n");
-            // Tracked changes were already reverted, so continue
+            // Tracked changes were already reverted, so continue — but the
+            // shell door still reports the refusal (#1058).
+            git_failed = true;
         }
     }
     println!("{GREEN}  ✓ reverted all uncommitted changes{RESET}\n");
@@ -1316,10 +1354,10 @@ fn handle_undo_all(history: &mut TurnHistory) -> Option<String> {
     // Clear turn history since everything is now reverted
     history.clear();
 
-    if !actions.is_empty() {
-        Some(build_undo_context(&actions))
-    } else {
-        None
+    let context = (!actions.is_empty()).then(|| build_undo_context(&actions));
+    UndoOutcome {
+        context,
+        git_failed,
     }
 }
 
@@ -1981,6 +2019,10 @@ pub fn handle_git(input: &str) {
     let subcmd = parse_git_args(arg);
     run_git_subcommand(&subcmd);
 }
+#[cfg(test)]
+#[path = "commands_git_undo_tests.rs"]
+mod commands_git_undo_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2975,7 +3017,7 @@ mod tests {
             .trim()
             .to_string();
 
-        let result = handle_undo_last_commit_in(repo);
+        let result = handle_undo_last_commit_in(repo).context;
 
         // The revert should succeed
         assert!(

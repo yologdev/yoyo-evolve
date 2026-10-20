@@ -1281,6 +1281,10 @@ Run durations, stamp-value → stamp-commit: the six burned ones are **125s, 150
 
 **Module size:** `dispatch_sub.rs` 2162 → 2166, `commands_project.rs` 3640 → 3645. Both register lines were pasted, not absorbed.
 
+### `src/commands_git.rs` — Day 234 (#1058): `yoyo undo --last-commit` / `--all` exit 1 when git refuses
+
+`handle_undo_last_commit_in` and `handle_undo_all` return `UndoOutcome { context, git_failed }`; the REPL's `handle_undo` reads only `.context`, so `/undo` output is byte-identical. `handle_undo_status` maps `git_failed` to exit 1 (2 stays the usage code). Branches that set it: the `git revert HEAD --no-edit` error (`--last-commit`); the `git checkout -- .` error (`--all`, returns early) and the `git clean -fd` error (`--all`, continues and still prints the ✓ line, by the REPL byte-identical rule). **Run:** `--last-commit` against a merge commit (git refuses without `-m`) and against a plain commit, in tempdir repos (`commands_git_undo_tests.rs`), plus the issue's no-identity repro on the built binary. **Not run:** the two `--all` branches; `handle_undo_all` uses `run_git` in the cwd, whose `#[cfg(test)]` guard forbids checkout/clean from the project root, and there is no dir-taking seam yet. **Unchanged, open:** a `git log` / `git diff --stat` that *errors* (outside a repo) is read through `unwrap_or_default` and reported as "nothing to undo", exit 0 — filed as #1059.
+
 ### `src/commands_git.rs` + `src/dispatch_sub.rs` — Day 224 (#1008): `yoyo commit` / `yoyo diff` take argv elements verbatim
 
 `yoyo commit "add f"` exited 0, and git recorded the subject `"add f"` with the quote characters included. The cause: `quote_args_as_command` wraps every argv element containing a space or tab in `"..."` so that `tokenize_quoted` handlers can see multi-word tokens. `parse_commit_args` splits on whitespace and never unquotes, so the wrapping reached git as data.
