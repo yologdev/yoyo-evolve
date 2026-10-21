@@ -730,9 +730,16 @@ pub fn handle_docs_status(input: &str) -> i32 {
         return DOCS_USAGE_EXIT;
     }
     let parts: Vec<&str> = args.splitn(2, char::is_whitespace).collect();
-    let crate_name = parts[0].trim();
-    let item_name = parts.get(1).map(|s| s.trim()).unwrap_or("");
+    docs_lookup_status(
+        parts[0].trim(),
+        parts.get(1).map(|s| s.trim()).unwrap_or(""),
+    )
+}
 
+/// The lookup half of [`handle_docs_status`], taking the crate as one token.
+/// `yoyo docs` calls it with argv[2] as-is (#1009), so `yoyo docs "a b"` is
+/// refused whole (`Invalid crate name: 'a b'`), as `cargo info "a b"` does.
+pub(crate) fn docs_lookup_status(crate_name: &str, item_name: &str) -> i32 {
     let (found, summary) = if item_name.is_empty() {
         docs::fetch_docs_summary(crate_name)
     } else {

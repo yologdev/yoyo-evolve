@@ -4285,3 +4285,73 @@ fn watch_takes_one_spaced_argv_element_as_one_command_line() {
     let (_, stdout, _) = yoyo_plain_in(dir.path(), &["watch", "off"]);
     assert_eq!(stdout, "  👀 Watch mode OFF\n\n");
 }
+
+#[test]
+fn docs_lint_skill_take_one_spaced_argv_element_whole() {
+    // #1009: `quote_args_as_command` wrapped `a b` as `"a b"`, and none of
+    // `/docs`, `/lint`, `/skill` tokenizes quotes, so the quotes were data:
+    // `docs` said `Invalid crate name: '"a'` (quote kept AND split on the
+    // space), `lint`/`skill` named `"a b"`. `cargo info "a b"` and
+    // `git "a b"` read one argv element as one spec and reject it whole.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let line = |s: &str, needle: &str| -> String {
+        s.lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("no {needle:?} line in {s:?}"))
+            .to_string()
+    };
+
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["docs", "a b"]);
+    assert_eq!(code, Some(1), "stdout={stdout:?} stderr={stderr:?}");
+    assert_eq!(
+        line(&stdout, "Invalid crate name"),
+        "  ✗ Invalid crate name: 'a b'"
+    );
+    assert!(!stdout.contains('"'), "{stdout:?}");
+
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["lint", "a b"]);
+    assert_eq!(code, Some(2), "stdout={stdout:?} stderr={stderr:?}");
+    assert_eq!(
+        line(&stdout, "Unknown /lint subcommand"),
+        "  Unknown /lint subcommand: a b"
+    );
+    assert!(!stdout.contains('"'), "{stdout:?}");
+
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["skill", "a b"]);
+    assert_eq!(code, Some(2), "stdout={stdout:?} stderr={stderr:?}");
+    let all = format!("{stdout}{stderr}");
+    assert_eq!(
+        line(&all, "unknown subcommand").trim(),
+        "unknown subcommand: a b"
+    );
+    assert!(!all.contains('"'), "{all:?}");
+
+    // An unknown `lint` subcommand is a usage error: 2, like skill, risk,
+    // goal, todo, config, tree, undo (was 1).
+    let (code, stdout, _) = yoyo_plain_in(dir.path(), &["lint", "zzzq"]);
+    assert_eq!(code, Some(2), "{stdout:?}");
+    assert_eq!(
+        line(&stdout, "Unknown /lint subcommand"),
+        "  Unknown /lint subcommand: zzzq"
+    );
+
+    // Near misses. `yoyo lint` with no project still exits 1 (nothing ran);
+    // a known subcommand's real run needs a toolchain, so it is not run here.
+    let (code, stdout, _) = yoyo_plain_in(dir.path(), &["lint"]);
+    assert_eq!(code, Some(1), "{stdout:?}");
+    assert!(stdout.contains("No recognized project"), "{stdout:?}");
+    let (code, _, _) = yoyo_plain_in(dir.path(), &["lint", "fix"]);
+    assert_eq!(code, Some(2));
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["skill", "list"]);
+    assert_eq!(code, Some(0), "stdout={stdout:?} stderr={stderr:?}");
+    // Unspaced docs: an invalid name is refused offline, exit 1 as before
+    // (a valid-but-missing name would need docs.rs, so it is not used here).
+    let (code, stdout, _) = yoyo_plain_in(dir.path(), &["docs", "zz@bad"]);
+    assert_eq!(code, Some(1), "{stdout:?}");
+    assert_eq!(
+        line(&stdout, "Invalid crate name"),
+        "  ✗ Invalid crate name: 'zz@bad'"
+    );
+    let (code, _, _) = yoyo_plain_in(dir.path(), &["docs"]);
+    assert_eq!(code, Some(2));
+}

@@ -459,7 +459,9 @@ pub(crate) fn try_dispatch_subcommand_in(
                 return Some(None);
             }
             "lint" => {
-                let input = quote_args_as_command(args);
+                // #1009: plain join; `/lint` never tokenizes quotes, so the
+                // wrapper's `"a b"` was echoed back (`git "a b"` names it bare).
+                let input = join_args_as_command(args);
                 // #982: exits 1 when no recognized project was found.
                 let (_, code) = crate::commands_lint::handle_lint_status(&input);
                 exit_if_nonzero(code);
@@ -659,14 +661,22 @@ pub(crate) fn try_dispatch_subcommand_in(
                 return Some(None);
             }
             "docs" => {
-                let input = quote_args_as_command(args);
-                exit_if_nonzero(crate::commands_project::handle_docs_status(&input));
+                // #1009: `/docs` splits on whitespace, so argv[2] goes in as the
+                // crate token whole (`cargo info "a b"` rejects it whole too).
+                exit_if_nonzero(match &args[2..] {
+                    [] => crate::commands_project::handle_docs_status("/docs"),
+                    [krate, item @ ..] => {
+                        crate::commands_project::docs_lookup_status(krate, &item.join(" "))
+                    }
+                });
                 return Some(None);
             }
             "skill" => {
                 let skill_dirs = collect_repeatable_flag(args, "--skills");
                 let filtered = strip_flag_with_value(args, "--skills");
-                let input = quote_args_as_command(&filtered);
+                // #1009: plain join; `/skill` strips prefixes, never quotes, so
+                // `skill show "my skill"` / `install "dir sp"` reach it whole.
+                let input = join_args_as_command(&filtered);
                 let skills = if skill_dirs.is_empty() {
                     SkillSet::empty()
                 } else {

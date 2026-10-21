@@ -285,8 +285,9 @@ pub(crate) fn handle_lint_status(input: &str) -> (Option<String>, i32) {
                     "Unknown /lint subcommand: {arg} (available: {})",
                     LINT_SUBCOMMANDS.join(" | ")
                 )),
-                // #982: `yoyo lint zz` exited 0 after refusing; a refusal is a failure.
-                1,
+                // #982: `yoyo lint zz` exited 0 after refusing. #1009: 2, not 1 — a
+                // usage error, the code skill/risk/goal/todo/config/tree/undo use.
+                2,
             );
         }
     };
@@ -1067,8 +1068,10 @@ mod tests {
         // #982 residue: `yoyo lint zz` printed "Unknown /lint subcommand" and
         // exited 0. The shell door reads this code (dispatch_sub's `lint` arm
         // -> exit_if_nonzero), so the unknown arm must carry a failure value.
+        // Day 235 (#1009): the expected code moved 1 -> 2 on purpose, a
+        // convention change: an unknown verb is a usage error everywhere else.
         let (summary, code) = handle_lint_status("/lint zz");
-        assert_eq!(code, 1, "unknown subcommand must be a failure");
+        assert_eq!(code, 2, "unknown subcommand must be a usage error");
         assert!(
             summary
                 .as_deref()
@@ -1077,7 +1080,7 @@ mod tests {
             "summary unchanged: {summary:?}"
         );
         // Near-miss: `fix` is documented, so it is NOT the unknown-subcommand
-        // failure (code 1, a summary). It is a session refusal that ran nothing,
+        // failure (code 2, a summary). It is a session refusal that ran nothing,
         // so since Day 229 it carries the shell-refusal code, not success (#982).
         assert_eq!(
             handle_lint_status("/lint fix"),
