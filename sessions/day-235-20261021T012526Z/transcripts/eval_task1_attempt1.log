@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -2 && ls targe… ✓ (2.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.2s (2 ✓)
+
+Verdict: PASS. It's written to session_plan/eval_task_1.md.
+
+The fix: /run used to read all output before checking whether the shell had exited. Now run_shell_command reads stdout and stderr on separate threads and waits for the shell itself. Once the shell exits, it gives those threads up to 2 seconds to finish (the new RUN_READER_GRACE constant). The doc comment on that constant points at the same 2-second wait in the model's bash tool in src/tools.rs.
+
+Run against the built binary:
+• yoyo run 'sleep 6 & echo hi' printed hi, then a dim note that a background process still holds the output, then ✓ exit 0 (2.0s). Total time was 2.0s; before the fix it was 6.0s.
+• echo a; sleep 0.3; echo b; exit 3 still showed both lines and reported exit 3 in 302ms, so commands that don't start a background job behave as before.
+
+Checklist:
+• Tests: all the requested ones are there, plus two more: a background job holding only stderr, and CRLF / unfinished-last-line handling matching the old BufRead::lines() reader.
+• Forgotten touchpoints: every new definition (the constant, the StreamTap struct and its methods, the ReaderHandle type, spawn_stream_reader) is used in this diff. There are no new enum variants.
+• Docs: docs/src/usage/commands.md gained a sentence about backgrounded jobs that matches what the binary actually prints.
+• Product surface: no defaults, CLI flags or startup behaviour changed.
+
+git log shows two consecutive commits with the identical Task 1 title (68611996 and e33a79d6). That looks like a duplicate commit from the harness rather than a problem with the code, and I didn't look into it.
+  watch: no files changed this turn — skipping

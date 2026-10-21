@@ -1,0 +1,160 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1 && wc -l sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 560,640p src/tools.rs ✓ (4ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 480,566p src/tools.rs; se… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=420 && NR<=482' src/too… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p src/commands_run.rs… ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 11.9s (5 ✓)
+
+Plenty of headroom (982/2000). Tests first.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 765,790p src/commands_run… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 30,60p src/commands_run.r… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 38.5s (2 ✓)
+
+Writing the tests first.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_run.rs (2 → 67 lines)
+  +     /// The bug: `sh` exits at once, but the backgrounded `sleep` inherited
+  +     /// stdout, so reading to EOF before `wait()` blocked for the full sleep.
+  +     #[test]
+  +     fn test_run_shell_command_returns_when_shell_exits_despite_background_child() {
+  +         let start = std::time::Instant::now();
+  +         let result = run_shell_command("sleep 5 & echo hi");
+  +         let waited = start.elapsed();
+  +         assert!(
+  +             waited < Duration::from_millis(3500),
+  +             "/run waited {waited:?} for a backgrounded child; the shell exited at once"
+  +         );
+  +         assert_eq!(result.exit_code, 0);
+  +         assert!(result.success);
+  +         assert_eq!(result.stdout, "hi");
+  +     }
+  + 
+  +     /// Near-miss: a command that backgrounds nothing captures exactly what it
+  +     /// did before — both lines, in order, joined by `\n`, no trailing newline.
+  +     #[test]
+  +     fn test_run_shell_command_sequential_lines_byte_identical() {
+  ... (47 more lines)
+ ✓ (2m 37s)
+  +     /// The bug: `sh` exits at once, but the backgrounded `sleep` inherited
+  +     /// stdout, so reading to EOF before `wait()` blocked for the full sleep.
+  +     #[test]
+  +     fn test_run_shell_command_returns_when_shell_exits_despite_background_child() {
+  +         let start = std::time::Instant::now();
+  +         let result = run_shell_command("sleep 5 & echo hi");
+  +         let waited = start.elapsed();
+  +         assert!(
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use std::time\|Duratio… ✓ (5.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 5s (2 ✓)
+
+Red by name on the three background cases; the near-misses pass on the old code. Now the implementation.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (169 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I left a placeholder is_stderr_hint that's wrong for stderr. I'll fix it by storing the stream kind in the tap.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (36 lines) ✓ (37.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 41 green. Now the real binary, before and after:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && cd… ✓ (14.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+6.0s → 2.0s, and a properly redirected & returns at once, same as before. Now the pre-commit checks: callers, the /bg//watch siblings, and docs.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'yoyo run\|yoyo -p.*!' … ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 205,300p src/commands_bg.… ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.0s (2 ✓)
+
+/bg has the shape (readers awaited to EOF at commands_bg.rs:283-284, `child.wait()` only at 290). Checking `/watch`:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1429,1470p src/watch.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Same shape in src/watch.rs too. I'll file one issue covering both, after checking for an existing one.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "child.wait()" src/watch… ✓ (603ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (8 lines) ✓ (843ms)
+  2 tools completed in 13.1s (2 ✓)
+
+Now the docs sentence, then the full gate.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (24.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (22.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (22.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '268{/use std::io::{BufRe… ✓ (4m 26s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "FAIL… ✓ (3m 15s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 9m 18s (5 ✓)
+
+All green: 6398 passed, clippy and fmt clean. Committing with the ledger.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (53 lines) ✓ (17ms)
+
+/run and ! no longer wait for a backgrounded child to die. Committed as e33a79d6; build, all 6398 tests, clippy with -D warnings and the fmt check pass.
+
+The bug: yoyo run 'sleep 6 & echo hi' took 6.0s even though sh exited at once. run_shell_command in src/commands_run.rs read stdout to the end before waiting on the shell, and the backgrounded sleep was still holding the pipe open.
+
+The fix: stdout and stderr are now read on their own threads while the main path waits on the shell. After the shell exits, the readers get 2s (RUN_READER_GRACE, the same grace the model's bash tool in src/tools.rs uses) to drain. Then /run returns what they read with the real exit code, and prints a dim note that a background process still holds the output.
+
+On the built binary:
+
+| Command | Wall time | Exit |
+|---|---|---|
+| sleep 6 & echo hi | 2.00s (was 6.0s) | 0 |
+| sleep 6 >/dev/null 2>&1 & echo quiet | 0.00s | 0 |
+| echo a; sleep 0.3; echo b | 0.30s | 0 |
+| exit 3 | 0.00s | 3 |
+
+The redirected job never held the pipe, so it returns at once, as before.
+
+Tests, written first: the three background-child cases failed by name on the old code. The near-miss tests passed on both versions: sequential lines in order, exit 3, and line splitting with \r\n, blank lines and a final line with no newline. One test writes 5000 bytes with no newline before the shell exits and checks all 5000 are kept.
+
+Ways it differs from the model's bash tool (full list in the commit body):
+• The leftover reader stops differently. The bash tool can abort its reader instantly. A plain thread can't be aborted, so mine is told to stop under a lock: nothing more is printed or stored after /run returns. The thread only closes its end of the pipe when the background job next writes or exits.
+• Two small behaviour changes. Output that isn't valid UTF-8 is now decoded with replacement characters; the old loop stopped reading at the first bad line, which could stall a child that kept writing. And the dim note is new; the bash tool has none.
+• Deliberately not copied: no process-group kill or timeout, and stdin is still inherited. /run runs in the foreground at your terminal, so Ctrl+C already reaches the child and interactive commands keep working.
+
+Other checks before committing:
+• Callers: no script or workflow in this repo runs yoyo run. The grep's one hit is prose in scripts/scan_commitments.py.
+• Same bug elsewhere: /bg (src/commands_bg.rs:283-290) and the watch runner (src/watch.rs:1461-1499) also read to the end before waiting on the shell. I only read the code and didn't run either one. I filed both as #1063 and didn't fix them here.
+• Docs: docs/src/usage/commands.md now says a backgrounded job keeps running, /run returns about 2s after the shell exits, and redirecting the job's output makes it return at once.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/commands_run.rs
