@@ -798,3 +798,20 @@ Each event is one stanza. See `skills/skill-evolve/SKILL.md` for the schema.
 - evolution_saturation: false. Tail is evt-0046 (meta), evt-0047 (retire), and this is the first NO-OP after them.
 - parent-event: evt-0047
 - note: evt-0036 was the only open prediction this loop could grade, and it is now closed. Its fallback (a mechanical carrier for the drift owner) is not needed. Next event number came from the spec's `10#0` snippet (evt-0047 -> evt-0048).
+
+## 2026-10-21T23:40Z evt-0049 NO-OP
+- skill: -
+- ts: 2026-10-21T23:40Z
+- type: NO-OP
+- evidence-considered: 739 audit-log session dirs (window = newest 60 by `sort -V`, day-222-20261008T022731Z -> day-235-20261021T224656Z), the 723-line learnings archive (0 unparseable; 4 new since evt-0048, all Day 235 `source: evolution`: 09:07 normaliser near-misses, 14:52 loop-as-opt-out, 19:56 nameable cost as carve-out, 21:41 owner hand-back), journal Day 235, and the frontmatter of the five eligible skills (frontmatter-scoped snippet: family, release, social, synthesis, x-research). The only commit touching `skills/` since evt-0048 is evt-0048 itself. All gates measured; none fires.
+- gates-measured: (1) **Retire**: the only measured eligible skill is `release`, `last_used` 2026-10-20T01:59:38Z (v0.3.0), ~2 days; does not fire. Unmeasured, never retired for silence: `social` and `family` (social loop; its audit is a local, gitignored `.yoyo/audit.jsonl`; family has `last_used: null`), `synthesis` and `x-research` (dream cycle only). (2) **Refine**: strict matcher (`skills/<name>` or backticked name in pattern_key/title/takeaway, plus negative language) finds **0** complaints for all five across 723 learnings. (3) **Create**: 560 distinct `pattern_key`s, max recurrence **2**, **0 at >= 3**; barred.
+- use-signals (fixed-string): `git tag v` 1/60 and `git push origin v` 1/60 (v0.3.0, day-234), `cargo publish` 0/60, yoyobook / `Address Book` / `addDiscussionComment` 0/60 (`gh api graphql` 21/60, read-dominated per evt-0028), skills/synthesis 0/60, xurl 0/60. Revive check for blindspot (cycle 2 of 3 after evt-0047): `skills/blindspot`, `structured critique`, `roast level` all 0/60, so no revive. `explore-codebase` 1/60 is day-233-20261019T174913Z, a `git grep` pointer census for the evt-0047 retire, not a use; its revive window closed at evt-0044 anyway.
+- positive-control: run first. `skills/communicate` 60/60, `cargo test` 60/60. Base pass rate 60/60.
+- predictions-graded: **evt-0046 (meta-suggestion) ADOPTED**, option (a): f6fe3d3 (creator, 2026-10-19) makes `scripts/skill_evolve.sh` fall back to the newest `## <ISO8601> evt-` header in `skills/_journal.md` when `.skill_evolve_last_run` is missing (lines ~176-218). Graded this time on the quantity it exists to move, not only on the reader's presence (evt-0046's own correction): this cycle's run started 2026-10-21T23:28:34Z, 24.1h after evt-0048's 23:24Z header, versus the 15.2h evt-0044 -> evt-0045 gap under the old counter-only gating. n=1 gap, consistent with a working 24h cooldown, not proof; the run log was not readable while this run was in progress, so I did not see the "last cycle ... from skills/_journal.md" line. No open prediction remains for this loop; evt-0024 is still not gradeable by it.
+- stale-pointers (outside `skills/`, for the creator, carried from evt-0047, still present): README.md:461 lists `blindspot` among loaded skills.
+- diff: none (no skill file modified, no learning appended)
+- validation: pass. HARD RULES #1, #2 and #3 honored. #4: `expected:` omitted, as a NO-OP requires. No `cargo build` run and none claimed: nothing under the build surface changed.
+- score-delta: none applied (the score carries no retire/refine signal under the current spec; evt-0026/0027/0028 reasons stand).
+- evolution_saturation: false. Tail is evt-0047 (retire), evt-0048 (NO-OP), and this is the 2nd consecutive NO-OP, below the 3 the spec requires.
+- parent-event: evt-0048
+- note: Nothing moved that a gate can read. Next event number came from the spec's `10#0` snippet (evt-0048 -> evt-0049).
