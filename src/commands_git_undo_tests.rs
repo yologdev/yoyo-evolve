@@ -210,3 +210,152 @@ fn all_reverts_changes_in_the_given_dir() {
     assert_eq!(fs::read_to_string(repo.join("a.txt")).unwrap(), "initial");
     assert!(!repo.join("new.txt").exists());
 }
+
+// ── #1065: a partial `--all` names what survived, with no ✓, and the model's
+// note matches the disk ────────────────────────────────────────────────────
+
+#[cfg(unix)]
+fn set_mode(p: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(p, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// Anti-vacuous guard: true when a 555 dir really refuses a new entry here
+/// (false as root, where the fixture cannot fail and must not be asserted on).
+#[cfg(unix)]
+fn locked_dir_refuses_writes(dir: &Path) -> bool {
+    let probe = dir.join("probe");
+    if fs::write(&probe, "x").is_ok() {
+        let _ = fs::remove_file(&probe);
+        return false;
+    }
+    true
+}
+
+#[cfg(unix)]
+#[test]
+fn all_with_a_clean_failure_names_survivors_and_tells_the_model_the_truth() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    fs::write(repo.join("new.txt"), "untracked").unwrap();
+    fs::create_dir(repo.join("locked")).unwrap();
+    fs::write(repo.join("locked/f"), "untracked").unwrap();
+    set_mode(&repo.join("locked"), 0o555);
+    if !locked_dir_refuses_writes(&repo.join("locked")) {
+        set_mode(&repo.join("locked"), 0o755);
+        eprintln!("skip: a 555 dir accepts writes here (root?), so git clean cannot fail");
+        return;
+    }
+    let mut history = TurnHistory::new();
+    let outcome = handle_undo_all_in(repo, &mut history);
+    let survived = repo.join("locked/f").exists();
+    set_mode(&repo.join("locked"), 0o755);
+
+    assert!(survived, "fixture: locked/f must survive git clean");
+    assert!(!repo.join("new.txt").exists());
+    assert_eq!(
+        undo_status_code(&outcome),
+        1,
+        "#1058: a refused clean exits 1"
+    );
+    let ctx = outcome.context.expect("the model still gets a note");
+    assert!(ctx.contains("- deleted new.txt (was untracked)\n"), "{ctx}");
+    assert!(!ctx.contains("deleted locked/f"), "{ctx}");
+    assert!(ctx.contains("NOT removed: locked/f"), "{ctx}");
+}
+
+#[test]
+fn all_summary_has_a_check_only_when_nothing_survived() {
+    assert_eq!(
+        undo_all_summary(true, &[]),
+        "✓ reverted all uncommitted changes"
+    );
+    let survivors = vec!["locked/f".to_string()];
+    let partial = undo_all_summary(true, &survivors);
+    assert_eq!(
+        partial,
+        "⚠ partially reverted: tracked changes reverted; \
+         1 untracked file could not be removed: locked/f"
+    );
+    assert!(!partial.contains('✓'));
+    let two = vec!["d/a".to_string(), "d/b".to_string()];
+    assert_eq!(
+        undo_all_summary(false, &two),
+        "⚠ partially reverted: no tracked changes; \
+         2 untracked files could not be removed: d/a, d/b"
+    );
+}
+
+#[test]
+fn all_context_appends_survivors_without_counting_them_as_reverted() {
+    let actions = vec!["deleted new.txt (was untracked)".to_string()];
+    // Near-miss: nothing survived, so the note is byte-identical to before.
+    assert_eq!(
+        undo_all_context(&actions, &[]),
+        Some(build_undo_context(&actions))
+    );
+    assert_eq!(undo_all_context(&[], &[]), None);
+    let survivors = vec!["locked/f".to_string()];
+    assert_eq!(
+        undo_all_context(&actions, &survivors).unwrap(),
+        format!(
+            "{}\n[System note: /undo --all could NOT remove 1 untracked file; it is still on disk:\n\
+             - NOT removed: locked/f (git clean failed or left it)\n]",
+            build_undo_context(&actions)
+        )
+    );
+    // Every untracked file survived: the model still hears about them.
+    assert_eq!(
+        undo_all_context(&[], &survivors).unwrap(),
+        "[System note: /undo --all could NOT remove 1 untracked file; it is still on disk:\n\
+         - NOT removed: locked/f (git clean failed or left it)\n]"
+    );
+}
+
+#[test]
+fn all_on_an_unlocked_repo_still_says_reverted_all_and_deleted() {
+    // Near-miss / regression surface: nothing locked, so the actions are
+    // exactly the old ones and the summary is the old ✓ line.
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    fs::write(repo.join("new.txt"), "untracked").unwrap();
+    let mut history = TurnHistory::new();
+    let outcome = handle_undo_all_in(repo, &mut history);
+    assert_eq!(undo_status_code(&outcome), 0);
+    let expected = build_undo_context(&["deleted new.txt (was untracked)".to_string()]);
+    assert_eq!(outcome.context.as_deref(), Some(expected.as_str()));
+}
+
+#[cfg(unix)]
+#[test]
+fn all_with_a_checkout_failure_claims_no_revert() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    fs::create_dir(repo.join("d")).unwrap();
+    fs::write(repo.join("d/x"), "committed").unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-q", "-m", "d"]);
+    fs::write(repo.join("d/x"), "edited").unwrap();
+    set_mode(&repo.join("d"), 0o555);
+    if !locked_dir_refuses_writes(&repo.join("d")) {
+        set_mode(&repo.join("d"), 0o755);
+        eprintln!("skip: a 555 dir accepts writes here (root?), so checkout cannot fail");
+        return;
+    }
+    let mut history = TurnHistory::new();
+    let outcome = handle_undo_all_in(repo, &mut history);
+    let after = fs::read_to_string(repo.join("d/x")).unwrap();
+    set_mode(&repo.join("d"), 0o755);
+    if after == "committed" {
+        eprintln!("skip: this git rewrote d/x in place, so checkout did not fail");
+        return;
+    }
+    assert_eq!(undo_status_code(&outcome), 1);
+    assert!(
+        outcome.context.is_none(),
+        "no revert happened, so the model must not be told one did"
+    );
+}

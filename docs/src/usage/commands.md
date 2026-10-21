@@ -480,7 +480,7 @@ The `/commit` command helps you commit staged changes quickly:
 - `/commit -a --amend`: auto-stage tracked files and amend the last commit
 - If nothing is staged, it reminds you to `git add` first
 
-The `/undo` command shows you what will be reverted before doing it.
+The `/undo` command shows you what will be reverted before doing it. If `/undo --all` cannot remove some untracked files (a read-only directory, say), it ends with `⚠ partially reverted: …` naming each file that is still on disk, instead of `✓ reverted all uncommitted changes`, and the note the model receives lists those files as not removed.
 
 The `/pr` command is a quick wrapper around the [GitHub CLI](https://cli.github.com):
 

@@ -1024,6 +1024,48 @@ fn build_undo_context(actions: &[String]) -> String {
     note
 }
 
+/// The last line of `/undo --all`: ✓ only when no untracked file survived (#1065).
+fn undo_all_summary(has_diff: bool, survivors: &[String]) -> String {
+    if survivors.is_empty() {
+        return "✓ reverted all uncommitted changes".to_string();
+    }
+    let tracked = if has_diff {
+        "tracked changes reverted"
+    } else {
+        "no tracked changes"
+    };
+    let n = survivors.len();
+    let word = crate::format::pluralize(n, "file", "files");
+    format!(
+        "⚠ partially reverted: {tracked}; {n} untracked {word} could not be removed: {}",
+        survivors.join(", ")
+    )
+}
+
+/// The model's note for `/undo --all`: survivors are appended, never counted as reverted (#1065).
+fn undo_all_context(actions: &[String], survivors: &[String]) -> Option<String> {
+    let base = (!actions.is_empty()).then(|| build_undo_context(actions));
+    if survivors.is_empty() {
+        return base;
+    }
+    let n = survivors.len();
+    let (word, pron) = if n == 1 {
+        ("file", "it is")
+    } else {
+        ("files", "they are")
+    };
+    let mut note = format!(
+        "[System note: /undo --all could NOT remove {n} untracked {word}; {pron} still on disk:\n"
+    );
+    for f in survivors {
+        note.push_str(&format!(
+            "- NOT removed: {f} (git clean failed or left it)\n"
+        ));
+    }
+    note.push(']');
+    Some(base.map_or(note.clone(), |b| format!("{b}\n{note}")))
+}
+
 /// What `/undo …` was asked to do. One parse, read by both `handle_undo` and
 /// the shell door's status, so the two cannot disagree about what is a usage
 /// error (#982).
@@ -1360,7 +1402,6 @@ fn handle_undo_all_in(root: &std::path::Path, history: &mut TurnHistory) -> Undo
         println!("{DIM}  untracked files:");
         for f in &untracked_files {
             println!("    {f}");
-            actions.push(format!("deleted {f} (was untracked)"));
         }
         println!("{RESET}");
     }
@@ -1380,12 +1421,27 @@ fn handle_undo_all_in(root: &std::path::Path, history: &mut TurnHistory) -> Undo
             git_failed = true;
         }
     }
-    println!("{GREEN}  ✓ reverted all uncommitted changes{RESET}\n");
+    // Keyed on the disk, not on git's exit: only a file that is really gone is
+    // reported deleted, to the user and to the model (#1065).
+    let (gone, survivors): (Vec<_>, Vec<_>) = untracked_files
+        .into_iter()
+        .partition(|f| root.join(f).symlink_metadata().is_err());
+    actions.extend(gone.iter().map(|f| format!("deleted {f} (was untracked)")));
+    let color = if survivors.is_empty() {
+        &GREEN
+    } else {
+        &YELLOW
+    };
+    println!(
+        "{color}  {}{RESET}\n",
+        undo_all_summary(has_diff, &survivors)
+    );
 
-    // Clear turn history since everything is now reverted
+    // Cleared even on a partial: tracked files were reset, so the per-turn
+    // snapshots no longer describe your working tree.
     history.clear();
 
-    let context = (!actions.is_empty()).then(|| build_undo_context(&actions));
+    let context = undo_all_context(&actions, &survivors);
     UndoOutcome {
         context,
         git_failed,
