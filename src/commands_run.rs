@@ -154,9 +154,117 @@ fn clear_last_failed_run() {
     *lock_or_recover(&LAST_FAILED_RUN) = None;
 }
 
+/// How long `/run` and `!` keep reading output after the shell exits.
+///
+/// A backgrounded child (`server &`) inherits the pipes, so EOF only comes
+/// when it dies. Same 2s grace, same reason, as the model's bash tool
+/// (`StreamingBashTool` in `src/tools.rs`, the #1049 fix); the child is left
+/// running, it is the command's business.
+const RUN_READER_GRACE: Duration = Duration::from_secs(2);
+
+/// What one reader thread has seen of a stream, shared with the caller so
+/// the caller can take it without waiting for EOF.
+#[derive(Default)]
+struct StreamTap {
+    capture: CappedCapture,
+    /// Bytes after the last newline, not yet a line.
+    partial: Vec<u8>,
+    /// Set by the caller when it stops waiting: nothing more is echoed or kept.
+    stopped: bool,
+    /// Echo to stderr (in red) rather than stdout.
+    is_stderr: bool,
+}
+
+impl StreamTap {
+    /// Echo and keep one complete line (the `BufRead::lines` rule: drop the
+    /// `\n`, then one `\r` before it).
+    fn emit(&mut self, mut bytes: Vec<u8>) {
+        if bytes.last() == Some(&b'\r') {
+            bytes.pop();
+        }
+        let line = String::from_utf8_lossy(&bytes);
+        if self.is_stderr {
+            eprintln!("{RED}{line}{RESET}");
+        } else {
+            println!("{line}");
+        }
+        self.capture.push_line(&line);
+    }
+
+    /// Split every complete line out of `partial`.
+    fn drain_lines(&mut self) {
+        while let Some(pos) = self.partial.iter().position(|&b| b == b'\n') {
+            let rest = self.partial.split_off(pos + 1);
+            let mut line = std::mem::replace(&mut self.partial, rest);
+            line.pop();
+            self.emit(line);
+        }
+    }
+
+    /// A trailing partial line counts as a line, as `lines()` yields it at EOF.
+    fn flush_partial(&mut self) {
+        if !self.partial.is_empty() {
+            let line = std::mem::take(&mut self.partial);
+            self.emit(line);
+        }
+    }
+
+    fn stop_and_finish(&mut self) -> String {
+        if !self.stopped {
+            self.stopped = true;
+            self.flush_partial();
+        }
+        std::mem::take(&mut self.capture).finish()
+    }
+}
+
+type ReaderHandle = (
+    std::sync::Arc<Mutex<StreamTap>>,
+    std::thread::JoinHandle<()>,
+    bool,
+);
+
+/// Read `pipe` in chunks on a thread, echoing whole lines as they arrive and
+/// keeping them in a shared [`StreamTap`]; signals `done` at EOF.
+fn spawn_stream_reader<R: std::io::Read + Send + 'static>(
+    mut pipe: R,
+    is_stderr: bool,
+    done: std::sync::mpsc::Sender<()>,
+) -> ReaderHandle {
+    let tap = std::sync::Arc::new(Mutex::new(StreamTap {
+        is_stderr,
+        ..StreamTap::default()
+    }));
+    let shared = std::sync::Arc::clone(&tap);
+    let handle = std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = match pipe.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            };
+            let mut t = lock_or_recover(&shared);
+            if t.stopped {
+                // The caller has returned; dropping `pipe` here closes our end.
+                return;
+            }
+            t.partial.extend_from_slice(&buf[..n]);
+            t.drain_lines();
+        }
+        let mut t = lock_or_recover(&shared);
+        if !t.stopped {
+            t.flush_partial();
+        }
+        drop(t);
+        let _ = done.send(());
+    });
+    (tap, handle, is_stderr)
+}
+
 /// Run a shell command, streaming output in real-time and returning a [`RunResult`].
 pub fn run_shell_command(cmd: &str) -> RunResult {
-    use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
 
     let start = std::time::Instant::now();
@@ -180,47 +288,54 @@ pub fn run_shell_command(cmd: &str) -> RunResult {
         }
     };
 
-    // Read stderr in a background thread so we don't block on either pipe.
-    // Collect lines into a buffer alongside printing.
-    let stderr_pipe = child.stderr.take().expect("stderr was piped");
-    let stderr_handle = std::thread::spawn(move || {
-        let reader = BufReader::new(stderr_pipe);
-        let mut capture = CappedCapture::default();
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    eprintln!("{RED}{l}{RESET}");
-                    capture.push_line(&l);
-                }
-                Err(_) => break,
-            }
-        }
-        capture.finish()
-    });
+    // Both pipes are read on their own threads and the shell is waited on
+    // here, so a backgrounded grandchild that inherited a pipe (`server &`)
+    // cannot hold `/run` open until it dies: once `sh` exits, the readers get
+    // [`RUN_READER_GRACE`] to drain, then we return what they had.
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let mut readers = Vec::new();
+    if let Some(pipe) = child.stdout.take() {
+        readers.push(spawn_stream_reader(pipe, false, done_tx.clone()));
+    }
+    if let Some(pipe) = child.stderr.take() {
+        readers.push(spawn_stream_reader(pipe, true, done_tx.clone()));
+    }
+    drop(done_tx);
 
-    // Stream stdout line-by-line on the main thread, collecting into a
-    // *bounded* buffer — every line is still echoed, only the stored copy caps.
-    let mut stdout_capture = CappedCapture::default();
-    if let Some(stdout_pipe) = child.stdout.take() {
-        let reader = BufReader::new(stdout_pipe);
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    println!("{l}");
-                    stdout_capture.push_line(&l);
-                }
-                Err(_) => break,
-            }
+    let wait_result = child.wait();
+
+    let deadline = Instant::now() + RUN_READER_GRACE;
+    let mut finished = 0;
+    while finished < readers.len() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match done_rx.recv_timeout(left) {
+            Ok(()) => finished += 1,
+            Err(_) => break,
         }
     }
-    let stdout_text = stdout_capture.finish();
-
-    // Wait for stderr thread to finish
-    let stderr_text: String = stderr_handle.join().unwrap_or_default();
+    let held_open = finished < readers.len();
+    let mut stdout_text = String::new();
+    let mut stderr_text = String::new();
+    for (tap, handle, is_stderr) in readers {
+        let text = lock_or_recover(&tap).stop_and_finish();
+        if !held_open {
+            let _ = handle.join();
+        }
+        if is_stderr {
+            stderr_text = text;
+        } else {
+            stdout_text = text;
+        }
+    }
+    if held_open {
+        eprintln!(
+            "{DIM}  (a background process still holds the output; it keeps running, further output is not shown){RESET}"
+        );
+    }
     let elapsed = start.elapsed();
 
     // Collect exit status
-    match child.wait() {
+    match wait_result {
         Ok(status) => {
             // Was `status.code().unwrap_or(-1)` — a signal death and "could not
             // determine" were the same number, and `-1` is literally SIGHUP (#878).
@@ -772,6 +887,71 @@ mod tests {
         let result = run_shell_command("seq 1 100");
         assert!(result.success);
         assert!(result.stdout.contains("100"));
+    }
+
+    /// The bug: `sh` exits at once, but the backgrounded `sleep` inherited
+    /// stdout, so reading to EOF before `wait()` blocked for the full sleep.
+    #[test]
+    fn test_run_shell_command_returns_when_shell_exits_despite_background_child() {
+        let start = std::time::Instant::now();
+        let result = run_shell_command("sleep 5 & echo hi");
+        let waited = start.elapsed();
+        assert!(
+            waited < Duration::from_millis(3500),
+            "/run waited {waited:?} for a backgrounded child; the shell exited at once"
+        );
+        assert_eq!(result.exit_code, 0);
+        assert!(result.success);
+        assert_eq!(result.stdout, "hi");
+    }
+
+    /// Near-miss: a command that backgrounds nothing captures exactly what it
+    /// did before — both lines, in order, joined by `\n`, no trailing newline.
+    #[test]
+    fn test_run_shell_command_sequential_lines_byte_identical() {
+        let result = run_shell_command("echo a; sleep 0.3; echo b");
+        assert_eq!(result.stdout, "a\nb");
+        assert_eq!(result.stderr, "");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[test]
+    fn test_run_shell_command_exit_code_preserved() {
+        let result = run_shell_command("exit 3");
+        assert_eq!(result.exit_code, 3);
+        assert!(!result.success);
+    }
+
+    /// Output written before the shell exits is kept even when it ends in a
+    /// partial line (no newline) and a background child pins the pipe open,
+    /// so EOF never arrives inside the grace window.
+    #[test]
+    fn test_run_shell_command_keeps_partial_line_written_before_exit() {
+        let start = std::time::Instant::now();
+        let result = run_shell_command("printf 'x%.0s' $(seq 1 5000); sleep 4 &");
+        assert!(start.elapsed() < Duration::from_millis(3500));
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.len(), 5000, "bytes before exit were lost");
+        assert!(result.stdout.bytes().all(|b| b == b'x'));
+    }
+
+    /// stderr gets the same grace: a background child holding only stderr
+    /// does not pin /run either, and stderr lines before exit are kept.
+    #[test]
+    fn test_run_shell_command_background_child_holding_stderr() {
+        let start = std::time::Instant::now();
+        let result = run_shell_command("echo oops >&2; sleep 5 >/dev/null &");
+        assert!(start.elapsed() < Duration::from_millis(3500));
+        assert_eq!(result.stderr, "oops");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// CRLF and trailing-partial handling match `BufRead::lines()`, which is
+    /// what the reader used before (the regression surface of the rewrite).
+    #[test]
+    fn test_run_shell_command_line_splitting_matches_bufread_lines() {
+        let result = run_shell_command("printf 'a\\r\\nb\\n\\nc'");
+        assert_eq!(result.stdout, "a\nb\n\nc");
     }
 
     #[test]

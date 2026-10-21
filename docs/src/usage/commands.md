@@ -213,6 +213,8 @@ Whether a crate or item exists is decided by docs.rs's HTTP status, not by its p
 
 The `/run` command (or `!` shortcut) lets you execute shell commands without going through the AI model. Useful for quick checks (e.g., `!git log --oneline -5`) without burning API tokens. If the command fails, yoyo shows a brief error preview and suggests asking the AI to analyze the failure or using `/fix` to auto-fix.
 
+A command that backgrounds a job (`!python3 -m http.server &`) does not hold `/run` open: the job keeps running, and `/run` returns about 2 seconds after the shell exits, with a dim note that the job's further output is not shown. Redirect its output (`server >log 2>&1 &`) and `/run` returns at once.
+
 Output is streamed to your terminal in full — you always see every line. The copy yoyo *keeps* (the one `/fix` and the agent read) is bounded at the first 4 KB plus the last 4 KB of each stream, so a `cargo test` that prints hundreds of kilobytes can't be pasted wholesale into a prompt. When output is trimmed, the stored copy says so on its own line between the two halves — e.g. `/run seq 1 200000` scrolls all 200,000 lines and stores 8,284 bytes:
 
 ```
