@@ -308,7 +308,8 @@ pub(super) fn check_indirect_command_word(cmd: &str, _cmd_lower: &str) -> Option
             // `test_analyze_eval_fetch` already pins `eval $(cat local_script.sh)`
             // as unflagged. Residue, stated: the substitution's OUTPUT is
             // still unread, so `eval "$(printf …)"` assembling a command
-            // passes (#1010).
+            // passes this analyser. With a user deny list set it is refused
+            // instead, by `eval_of_substitution` (#1011).
             let whole_substitution = |s: &&str| {
                 let s = strip_outer_quotes(s);
                 (s.starts_with("$(") && s.ends_with(')'))
@@ -392,6 +393,46 @@ fn deny_segments(cmd: &str) -> Vec<String> {
     out
 }
 
+/// #1011: the first deny segment that runs `eval` with a command substitution
+/// (`$(...)` or backticks) anywhere in its arguments, or `None`. Segments come
+/// from [`deny_segments`], so `VAR=` / `export` prefixes are already stripped;
+/// `builtin` / `command` in front of `eval` are skipped, and `bash -c '…'`
+/// strings are searched too. Unlike the analyser's `whole_substitution`
+/// exemption, this is only consulted when the user has a deny list.
+fn eval_of_substitution(cmd: &str) -> Option<String> {
+    for seg in deny_segments(cmd) {
+        let words: Vec<String> = lex_shell_words(&seg)
+            .into_iter()
+            .filter_map(|t| match t {
+                ShellToken::Word(w) => Some(w),
+                ShellToken::Boundary => None,
+            })
+            .collect();
+        let start = words
+            .iter()
+            .position(|w| w != "builtin" && w != "command")
+            .unwrap_or(words.len());
+        let Some(program) = words.get(start) else {
+            continue;
+        };
+        let base = strip_outer_quotes(program).rsplit('/').next().unwrap_or("");
+        let args = &words[start + 1..];
+        if base == "eval" && args.iter().any(|a| a.contains("$(") || a.contains('`')) {
+            return Some(seg);
+        }
+        if INLINE_SHELLS.contains(&base) {
+            let inner = args
+                .iter()
+                .position(|s| s.starts_with('-') && !s.starts_with("--") && s.contains('c'))
+                .and_then(|p| args.get(p + 1));
+            if let Some(found) = inner.and_then(|s| eval_of_substitution(strip_outer_quotes(s))) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
 /// #1010: the part of the user deny check that the whole-string glob cannot
 /// do. Called only after that glob found nothing and only with a non-empty
 /// deny list. (1) Each segment from [`deny_segments`] is matched against each
@@ -416,6 +457,18 @@ pub(crate) fn user_deny_spelling_refusal(
                 "Command blocked by your permission rules: the part `{shown}` matches deny pattern '{p}'."
             ));
         }
+    }
+    if let Some(seg) = eval_of_substitution(command) {
+        let shown: String = crate::cli::sanitize_for_display(&seg)
+            .chars()
+            .take(80)
+            .collect();
+        return Some(format!(
+            "Command blocked by your permission rules: `{shown}` runs eval on a command \
+             substitution, so the text that actually runs only exists at runtime and a deny \
+             list cannot check it. Write the command plainly; for setup like \
+             eval \"$(ssh-agent)\", run it outside yoyo, or start this session without a deny list."
+        ));
     }
     let reason = check_indirect_command_word(command, "")?;
     Some(format!(

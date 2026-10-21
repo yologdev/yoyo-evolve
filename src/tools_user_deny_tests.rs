@@ -305,14 +305,63 @@ fn indirect_command_word_refused_only_when_a_deny_list_exists() {
     assert!(user_deny_refusal(&list, "\"$CARGO\" build").is_some());
 }
 
-/// Stated limit, pinned so it cannot be mistaken for coverage: a command
-/// string assembled at runtime and run as `eval "$(...)"` is NOT refused,
-/// because the analyser's `eval "$(tool)"` exemption is kept. Tracked in #1011 (the
-/// #1010 residue); whoever closes it flips this assertion.
+/// #1011 (flipped from the Day-225 stated-limit pin, as that test asked its
+/// closer to do): with a deny list set, `eval` of a command string assembled
+/// at runtime is refused, because no spelling check can judge text that only
+/// exists when the substitution runs. The refusal names eval and the way out.
 #[test]
-fn eval_of_an_assembled_command_string_is_a_stated_limit() {
+fn eval_of_an_assembled_command_string_is_refused_with_a_deny_list() {
     use crate::tools::user_deny_refusal;
     let list = vec!["rm -rf *".to_string()];
-    let assembled = "eval \"$(printf '%s %s %s' rm -rf ~)\"";
-    assert_eq!(user_deny_refusal(&list, assembled), None);
+    // Anti-vacuous: the plain twin is refused by the ordinary segment match.
+    assert!(user_deny_refusal(&list, "rm -rf x").is_some());
+    for cmd in [
+        "eval \"$(printf '%s %s %s' rm -rf ~)\"",
+        "eval \"$(printf '%s %s' rm -rf x)\"",
+        "eval `printf hi`",
+        "FOO=1 eval \"$(ssh-agent)\"",
+        "export A=1; eval \"$(ssh-agent)\"",
+        "cd x && eval $(ssh-agent -s)",
+        "builtin eval \"$(x)\"",
+        "eval \"echo $(id)\"",
+        "bash -c 'eval \"$(x)\"'",
+    ] {
+        let r = user_deny_refusal(&list, cmd).unwrap_or_else(|| panic!("{cmd:?} passed"));
+        assert!(r.contains("eval"), "{cmd:?}: {r}");
+        assert!(r.contains("outside yoyo"), "{cmd:?}: {r}");
+    }
+}
+
+/// #1011 near-misses: only `eval` with a substitution in its arguments is
+/// refused. A literal eval, a substitution under another program, and a
+/// program whose name merely starts with "eval" all pass.
+#[test]
+fn eval_refusal_near_misses_pass_with_a_deny_list() {
+    use crate::tools::user_deny_refusal;
+    let list = vec!["rm -rf *".to_string()];
+    for cmd in [
+        "eval \"echo hi\"",
+        "eval echo hi",
+        "echo \"$(date)\"",
+        "evaluate \"$(x)\"",
+        "echo eval \"$(x)\"",
+    ] {
+        assert_eq!(user_deny_refusal(&list, cmd), None, "{cmd:?}");
+    }
+}
+
+/// #1011: with no deny list, nothing changes: `eval "$(ssh-agent)"` and the
+/// assembled form both pass the user-deny check (the analyser's own
+/// `whole_substitution` exemption is untouched).
+#[test]
+fn eval_of_a_substitution_passes_without_a_deny_list() {
+    use crate::tools::user_deny_refusal;
+    let empty: Vec<String> = vec![];
+    for cmd in [
+        "eval \"$(ssh-agent)\"",
+        "eval \"$(printf '%s %s' rm -rf x)\"",
+        "eval `printf hi`",
+    ] {
+        assert_eq!(user_deny_refusal(&empty, cmd), None, "{cmd:?}");
+    }
 }
