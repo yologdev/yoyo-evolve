@@ -262,7 +262,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 234 (#1058): 3679 -> 3722 (+43): UndoOutcome (context note + git
     // refusal) so `yoyo undo --last-commit/--all` exit 1 when git refuses; the
     // tests went to the sibling commands_git_undo_tests.rs. Pasted from the gate.
-    ("src/commands_git.rs", 3722),
+    // Day 235 (#1059): 3722 -> 3753 (+31, all production): the rev-parse
+    // not-a-repo refusal and `handle_undo_all_in`'s dir seam; tests went to
+    // the sibling commands_git_undo_tests.rs.
+    ("src/commands_git.rs", 3753),
     // Day 174: +25 absorbed since Day 166.
     // +103 (Day 179, #832): the `/evolution` cargo shell-out was split into a
     // thin wrapper + injected resolvers so no `#[test]` spawns `cargo`, plus a

@@ -122,3 +122,91 @@ fn last_commit_with_no_commits_still_exits_0() {
     assert_eq!(undo_status_code(&outcome), 0);
     assert!(outcome.context.is_none());
 }
+
+// ── #1059: outside a git repository, "git couldn't look" is not "nothing there" ──
+
+/// A temp dir that is NOT a git repo. Anti-vacuous: assert git agrees it is not
+/// one, so a tempdir that happens to sit inside a repo cannot make the
+/// not-a-repo tests pass by testing the repo branch instead.
+fn non_repo_dir() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = git_out(tmp.path(), &["rev-parse", "--git-dir"]);
+    assert!(
+        !out.status.success(),
+        "fixture must not be inside a git repository"
+    );
+    tmp
+}
+
+#[test]
+fn last_commit_exits_1_outside_a_git_repository() {
+    let tmp = non_repo_dir();
+    let outcome = handle_undo_last_commit_in(tmp.path());
+    assert_eq!(
+        undo_status_code(&outcome),
+        1,
+        "git could not look: not success"
+    );
+    assert!(outcome.context.is_none());
+}
+
+#[test]
+fn all_exits_1_outside_a_git_repository_and_touches_nothing() {
+    let tmp = non_repo_dir();
+    fs::write(tmp.path().join("keep.txt"), "mine").unwrap();
+    let mut history = TurnHistory::new();
+    let outcome = handle_undo_all_in(tmp.path(), &mut history);
+    assert_eq!(
+        undo_status_code(&outcome),
+        1,
+        "git could not look: not success"
+    );
+    assert!(outcome.context.is_none());
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("keep.txt")).unwrap(),
+        "mine"
+    );
+}
+
+#[test]
+fn not_a_repo_message_names_the_cause_without_a_success_glyph() {
+    let msg = undo_not_a_repo_message(
+        "fatal: not a git repository (or any of the parent directories): .git",
+    );
+    assert_eq!(msg, "error: not in a git repository");
+    assert!(!msg.contains('✓'));
+    // Near-miss: a different failure (git missing) is reported as itself, not
+    // dressed as "not a repository".
+    let other = undo_not_a_repo_message("git not found: No such file or directory");
+    assert_eq!(
+        other,
+        "error: git could not run: git not found: No such file or directory"
+    );
+}
+
+#[test]
+fn all_on_a_clean_repo_still_exits_0() {
+    // Near-miss for #1059: git did look, and the true answer is "nothing to undo".
+    let tmp = tempfile::tempdir().unwrap();
+    init_repo(tmp.path());
+    let mut history = TurnHistory::new();
+    let outcome = handle_undo_all_in(tmp.path(), &mut history);
+    assert_eq!(undo_status_code(&outcome), 0);
+    assert!(outcome.context.is_none());
+}
+
+#[test]
+fn all_reverts_changes_in_the_given_dir() {
+    // The dir seam really targets `root`, not the process cwd.
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    fs::write(repo.join("a.txt"), "edited").unwrap();
+    fs::write(repo.join("new.txt"), "untracked").unwrap();
+    let mut history = TurnHistory::new();
+    let outcome = handle_undo_all_in(repo, &mut history);
+    assert_eq!(undo_status_code(&outcome), 0);
+    assert!(outcome.context.is_some());
+    assert_eq!(fs::read_to_string(repo.join("a.txt")).unwrap(), "initial");
+    assert!(!repo.join("new.txt").exists());
+}

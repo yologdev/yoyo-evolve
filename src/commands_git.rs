@@ -1234,6 +1234,9 @@ fn run_git_undo_in(dir: &str, args: &[&str]) -> Result<String, String> {
 /// `run_git_amend_with_message_in` for the same shape).
 fn handle_undo_last_commit_in(root: &std::path::Path) -> UndoOutcome {
     let dir = root.to_string_lossy();
+    if let Some(refused) = undo_refuse_outside_repo(&dir) {
+        return refused;
+    }
 
     // 1. Get the last commit info
     let log = run_git_undo_in(&dir, &["log", "--oneline", "-1"]).unwrap_or_default();
@@ -1296,9 +1299,37 @@ fn handle_undo_last_commit_in(root: &std::path::Path) -> UndoOutcome {
 ///
 /// Returns `Some(context)` when changes were actually reverted.
 fn handle_undo_all(history: &mut TurnHistory) -> UndoOutcome {
-    let diff_stat = run_git(&["diff", "--stat"]).unwrap_or_default();
+    handle_undo_all_in(std::path::Path::new("."), history)
+}
+
+/// #1059: the reads below go through `unwrap_or_default()`, so outside a repo
+/// "git could not look" would read as "nothing to undo" and exit 0. Ask git
+/// first; a repo with nothing to undo still gets its exit-0 answer.
+fn undo_refuse_outside_repo(dir: &str) -> Option<UndoOutcome> {
+    let e = run_git_undo_in(dir, &["rev-parse", "--git-dir"]).err()?;
+    eprintln!("{RED}  {}{RESET}\n", undo_not_a_repo_message(&e));
+    Some(UndoOutcome::git_refused())
+}
+
+/// The refusal line: git's "not a git repository" in the sibling doors' words,
+/// any other failure (git missing) reported as itself.
+fn undo_not_a_repo_message(err: &str) -> String {
+    if err.contains("not a git repository") {
+        "error: not in a git repository".to_string()
+    } else {
+        format!("error: git could not run: {err}")
+    }
+}
+
+/// `--all` against `root` (the dir seam, as `handle_undo_last_commit_in`).
+fn handle_undo_all_in(root: &std::path::Path, history: &mut TurnHistory) -> UndoOutcome {
+    let dir = root.to_string_lossy();
+    if let Some(refused) = undo_refuse_outside_repo(&dir) {
+        return refused;
+    }
+    let diff_stat = run_git_undo_in(&dir, &["diff", "--stat"]).unwrap_or_default();
     let untracked_text =
-        run_git(&["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
+        run_git_undo_in(&dir, &["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
 
     let has_diff = !diff_stat.is_empty();
     let untracked_files: Vec<String> = untracked_text
@@ -1335,14 +1366,14 @@ fn handle_undo_all(history: &mut TurnHistory) -> UndoOutcome {
     }
 
     if has_diff {
-        if let Err(e) = run_git(&["checkout", "--", "."]) {
+        if let Err(e) = run_git_undo_in(&dir, &["checkout", "--", "."]) {
             eprintln!("{RED}  ✗ failed to revert tracked changes: {e}{RESET}\n");
             return UndoOutcome::git_refused();
         }
     }
     let mut git_failed = false;
     if has_untracked {
-        if let Err(e) = run_git(&["clean", "-fd"]) {
+        if let Err(e) = run_git_undo_in(&dir, &["clean", "-fd"]) {
             eprintln!("{RED}  ✗ failed to clean untracked files: {e}{RESET}\n");
             // Tracked changes were already reverted, so continue — but the
             // shell door still reports the refusal (#1058).
