@@ -498,7 +498,10 @@ pub(crate) fn try_dispatch_subcommand_in(
                 return Some(None);
             }
             "outline" => {
-                let input = quote_args_as_command(args);
+                // #1009: plain join, not `quote_args_as_command` — `/outline`
+                // never tokenizes quotes, so `"dir sp/a b.rs"` was searched
+                // for with its quotes. Unspaced args join identically.
+                let input = join_args_as_command(args);
                 // #982: 2 with no query (usage); no match stays 0.
                 exit_if_nonzero(crate::commands_search::handle_outline_status(&input));
                 return Some(None);
@@ -676,7 +679,12 @@ pub(crate) fn try_dispatch_subcommand_in(
                 return Some(None);
             }
             "watch" => {
-                let input = quote_args_as_command(args);
+                // #1009: same rule as `run` — ONE element is a verbatim shell
+                // line (procps `watch "echo a b"`); 2+ keep the wrapper.
+                let input = match &args[2..] {
+                    [one] => format!("/watch {one}"),
+                    _ => quote_args_as_command(args),
+                };
                 exit_if_nonzero(crate::watch::handle_watch_status(&input));
                 return Some(None);
             }

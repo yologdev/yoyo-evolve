@@ -4208,3 +4208,80 @@ fn health_exits_one_when_a_check_ran_and_failed() {
     assert_eq!(code, Some(1), "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("No recognized project"), "stdout={stdout}");
 }
+
+#[test]
+fn outline_takes_one_spaced_argv_element_as_one_query() {
+    // #1009: `quote_args_as_command` wrapped `dir sp/a b.rs` as
+    // `"dir sp/a b.rs"`, and `/outline` (which never tokenizes quotes)
+    // searched for the quotes too: `No symbols matching ""dir sp/a b.rs""`,
+    // exit 0. `ctags "dir sp/a b.rs"` and `grep -n fn "dir sp/a b.rs"` both
+    // read one argv element as one path.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(dir.path().join("dir sp")).unwrap();
+    std::fs::write(
+        dir.path().join("dir sp").join("a b.rs"),
+        "fn spaced_marker_1009() {}\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("plain.rs"), "fn plain_marker_1009() {}\n").unwrap();
+
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["outline", "dir sp/a b.rs"]);
+    assert_eq!(code, Some(0), "stdout={stdout:?} stderr={stderr:?}");
+    assert!(stdout.contains("spaced_marker_1009"), "{stdout:?}");
+    // The handler quotes the name itself (`in "dir sp/a b.rs"`); the bug was
+    // a second, literal pair inside it.
+    assert!(!stdout.contains("\"\"dir sp"), "{stdout:?}");
+
+    // `--all` beside the spaced element still parses as the flag.
+    let (code, stdout, _) = yoyo_plain_in(dir.path(), &["outline", "dir sp/a b.rs", "--all"]);
+    assert_eq!(code, Some(0));
+    assert!(stdout.contains("spaced_marker_1009"), "{stdout:?}");
+
+    // Near misses: a plain query and a plain path behave as before; bare
+    // `outline` is still usage (2); no match is still 0.
+    let (code, stdout, _) = yoyo_plain_in(dir.path(), &["outline", "plain_marker"]);
+    assert_eq!(code, Some(0));
+    assert!(stdout.contains("plain_marker_1009"), "{stdout:?}");
+    let (code, stdout, _) = yoyo_plain_in(dir.path(), &["outline", "plain.rs"]);
+    assert_eq!(code, Some(0));
+    assert!(stdout.contains("plain_marker_1009"), "{stdout:?}");
+    let (code, _, _) = yoyo_plain_in(dir.path(), &["outline"]);
+    assert_eq!(code, Some(2));
+    let (code, stdout, _) = yoyo_plain_in(dir.path(), &["outline", "zzqq_nomatch1009"]);
+    assert_eq!(code, Some(0));
+    assert!(stdout.contains("zzqq_nomatch1009"), "{stdout:?}");
+    assert!(!stdout.contains("\"\"zzqq"), "{stdout:?}");
+}
+
+#[test]
+fn watch_takes_one_spaced_argv_element_as_one_command_line() {
+    // #1009: `yoyo watch "echo a b"` stored `"echo a b"` (one quoted word),
+    // so `sh -c` would look for a program named `echo a b`. Same rule as
+    // `run` (b3a2ed90): ONE argv element is a verbatim shell command line,
+    // as procps `watch "echo a b"` runs `sh -c "echo a b"`; two or more
+    // elements keep the quoting wrapper.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["watch", "echo a b"]);
+    assert_eq!(code, Some(0), "stdout={stdout:?} stderr={stderr:?}");
+    assert_eq!(
+        stdout,
+        "  👀 Watch mode ON — will run `echo a b` after agent edits\n\n"
+    );
+
+    // Near misses, byte-identical to before: plain elements join as-is, and
+    // a spaced element among several keeps its quotes for `sh -c`.
+    let (code, stdout, _) = yoyo_plain_in(dir.path(), &["watch", "cargo", "test"]);
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        stdout,
+        "  👀 Watch mode ON — will run `cargo test` after agent edits\n\n"
+    );
+    let (code, stdout, _) = yoyo_plain_in(dir.path(), &["watch", "echo", "a  b"]);
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        stdout,
+        "  👀 Watch mode ON — will run `echo \"a  b\"` after agent edits\n\n"
+    );
+    let (_, stdout, _) = yoyo_plain_in(dir.path(), &["watch", "off"]);
+    assert_eq!(stdout, "  👀 Watch mode OFF\n\n");
+}
