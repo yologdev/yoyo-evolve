@@ -1093,10 +1093,9 @@ fn parse_model_config(
     let api_key = match api_key_from_flag {
         Some(key) if !key.is_empty() => key,
         _ => {
-            // Try provider-specific env var first
-            let from_provider_env = provider_env_var
-                .and_then(|var| std::env::var(var).ok())
-                .filter(|k| !k.is_empty());
+            // Provider's own variables first, in yoagent's order (#1064)
+            let from_provider_env =
+                crate::providers::find_provider_key(&provider, |v| std::env::var(v).ok());
             match from_provider_env {
                 Some(key) => key,
                 None => {

@@ -1020,13 +1020,9 @@ fn resolve_api_key(args: &[String], provider: &str) -> Option<String> {
         }
     }
 
-    // Provider-specific env var
-    if let Some(env_var) = crate::providers::provider_api_key_env(provider) {
-        if let Ok(key) = std::env::var(env_var) {
-            if !key.is_empty() {
-                return Some(key);
-            }
-        }
+    // Provider's own variables, in yoagent's order (#1064)
+    if let Some(key) = crate::providers::find_provider_key(provider, |v| std::env::var(v).ok()) {
+        return Some(key);
     }
 
     // Fallback env vars

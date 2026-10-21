@@ -39,6 +39,46 @@ pub fn provider_api_key_env(provider: &str) -> Option<&'static str> {
     }
 }
 
+/// Every variable yoyo reads a provider's own key from, first match wins
+/// (#1064). The names are yoagent's `resolve_api_key` table for that provider,
+/// in its order: that table is private in yoagent 0.25, so it is mirrored here
+/// and `providers_key_tests.rs` checks the mirror against the real resolver in
+/// a child process <!-- yoagent-version-claim: 0.25 -->. `provider_api_key_env`
+/// still returns one name (the pre-#1064 one) for hints and the wizard.
+pub fn provider_api_key_vars(provider: &str) -> &'static [&'static str] {
+    match provider {
+        "anthropic" => &["ANTHROPIC_API_KEY"],
+        "openai" => &["OPENAI_API_KEY"],
+        "google" => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "xai" => &["XAI_API_KEY"],
+        "groq" => &["GROQ_API_KEY"],
+        "deepseek" => &["DEEPSEEK_API_KEY"],
+        "mistral" => &["MISTRAL_API_KEY"],
+        "zai" => &["ZAI_API_KEY"],
+        "minimax" => &["MINIMAX_API_KEY"],
+        "openrouter" => &["OPENROUTER_API_KEY"],
+        "cerebras" => &["CEREBRAS_API_KEY"],
+        // yoyo-own: yoagent has no github provider; GitHub Models takes a GitHub token.
+        "github" => &["GITHUB_TOKEN"],
+        // yoyo-own: main.rs `apply_bedrock_credentials` joins this access key with
+        // AWS_SECRET_ACCESS_KEY; yoagent's bearer-token name would be misjoined there.
+        "bedrock" => &["AWS_ACCESS_KEY_ID"],
+        _ => &[],
+    }
+}
+
+/// The provider's own key from `lookup`, trying `provider_api_key_vars` in
+/// order; empty values count as unset. `None` sends the caller to its
+/// `ANTHROPIC_API_KEY` > `API_KEY` fallback.
+pub fn find_provider_key(
+    provider: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    provider_api_key_vars(provider)
+        .iter()
+        .find_map(|var| lookup(var).filter(|k| !k.is_empty()))
+}
+
 /// Get well-known model names for a provider (for diagnostic suggestions).
 /// Returns a slice of commonly-used model identifiers.
 pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
@@ -550,3 +590,7 @@ mod tests {
         assert!(models.contains(&"anthropic/claude-sonnet-4-6"));
     }
 }
+
+#[cfg(test)]
+#[path = "providers_key_tests.rs"]
+mod providers_key_tests;
