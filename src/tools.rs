@@ -94,6 +94,8 @@ pub struct StreamingBashTool {
     /// when stderr is a terminal (interactive mode). Set to false in tests to
     /// allow progress emission regardless of TTY state.
     pub progress_requires_tty: bool,
+    /// Credential env vars stripped from the child (#1064, opt-in; `subprocess_env.rs`).
+    pub scrub_vars: Vec<&'static str>,
 }
 
 impl Default for StreamingBashTool {
@@ -109,6 +111,7 @@ impl Default for StreamingBashTool {
             update_interval: Duration::from_millis(500),
             lines_per_update: 20,
             progress_requires_tty: true,
+            scrub_vars: Vec::new(),
         }
     }
 }
@@ -441,6 +444,7 @@ impl AgentTool for StreamingBashTool {
         if let Some(ref cwd) = self.cwd {
             cmd.current_dir(cwd);
         }
+        crate::subprocess_env::apply_scrub(&mut cmd, &self.scrub_vars);
 
         // Pipe stdout/stderr for line-by-line reading
         cmd.stdout(std::process::Stdio::piped());
@@ -1231,6 +1235,7 @@ pub(crate) fn build_bash_tool(
         None => StreamingBashTool::default(),
     };
     base_bash.user_deny = permissions.deny.clone();
+    base_bash.scrub_vars = crate::subprocess_env::scrub_vars_for_session();
     if auto_approve {
         return base_bash;
     }

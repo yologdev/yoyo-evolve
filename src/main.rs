@@ -137,6 +137,7 @@ mod outside_read;
 #[cfg(test)]
 mod provider_presets_tests;
 mod spawn_worktree;
+mod subprocess_env;
 #[cfg(test)]
 mod tool_wrappers_cancel_tests;
 #[cfg(test)]
