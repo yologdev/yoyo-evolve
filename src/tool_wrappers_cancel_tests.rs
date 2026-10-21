@@ -325,3 +325,104 @@ async fn marker_spelled_cancel_reads_as_cancelled_through_the_full_stack() {
     );
     assert_eq!(text, sub_agent_cancelled_report(LABEL, msg));
 }
+
+// ---------------------------------------------------------------------------
+// #1061: RecoveryHintTool and a Ctrl-C'd tool call
+// ---------------------------------------------------------------------------
+//
+// Before #1061 a cancelled `bash` reached the model as
+// `Failed("Tool call was cancelled.\n\n💡 Recovery hint: The shell command
+// failed. ...")` and bumped the failure counter, so the next real failure on
+// the same command escalated as if it were the second. The user stopped the
+// call; nothing failed, so there is nothing to recover from and nothing to count.
+
+use crate::tool_wrappers::{with_recovery_hints, ToolFailureTracker};
+
+/// A `bash`-named stub whose outcome is chosen per call by the `reply` param, so
+/// one wrapper (one tracker) can see a cancel and then a failure on the SAME
+/// target (`extract_target` keys bash on `command`).
+struct ScriptedBash;
+
+#[async_trait::async_trait]
+impl AgentTool for ScriptedBash {
+    fn name(&self) -> &str {
+        "bash"
+    }
+    fn label(&self) -> &str {
+        "bash"
+    }
+    fn description(&self) -> &str {
+        "scripted bash stub"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({})
+    }
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        _ctx: ToolContext,
+    ) -> Result<ToolResult, ToolError> {
+        match params.get("reply").and_then(|v| v.as_str()) {
+            Some("cancel") => Err(ToolError::Cancelled),
+            _ => Err(ToolError::Failed("exit code 1".into())),
+        }
+    }
+}
+
+const CMD: &str = "sleep 30; echo SLEPT";
+
+fn bash_params(reply: &str) -> serde_json::Value {
+    serde_json::json!({ "command": CMD, "reply": reply })
+}
+
+fn hinted_bash() -> Box<dyn AgentTool> {
+    with_recovery_hints(Box::new(ScriptedBash), &ToolFailureTracker::new())
+}
+
+#[tokio::test]
+async fn cancelled_tool_call_reaches_the_model_verbatim_without_a_failure_hint() {
+    let tool = hinted_bash();
+    let err = tool
+        .execute(bash_params("cancel"), live_ctx())
+        .await
+        .expect_err("a cancel stays an Err");
+    assert!(
+        matches!(err, ToolError::Cancelled),
+        "a cancel must reach the model as Cancelled, got {err:?}"
+    );
+    // Full string, not a `contains`: no hint, no "failed" diagnosis.
+    assert_eq!(err.to_string(), "Cancelled");
+}
+
+#[tokio::test]
+async fn cancelled_tool_call_does_not_bump_the_failure_counter() {
+    // Expected value computed from a FRESH wrapper, never copied from output.
+    let fresh_first_failure =
+        err_text(hinted_bash().execute(bash_params("fail"), live_ctx()).await);
+    // Anti-vacuous: the first-failure text really does carry a hint, and no
+    // escalation prefix, so equality below discriminates attempt 1 from 2.
+    assert!(fresh_first_failure.contains("Recovery hint"));
+    assert!(!fresh_first_failure.contains("times."));
+
+    let tool = hinted_bash();
+    let _ = tool.execute(bash_params("cancel"), live_ctx()).await;
+    let after_cancel = err_text(tool.execute(bash_params("fail"), live_ctx()).await);
+    assert_eq!(
+        after_cancel, fresh_first_failure,
+        "a cancel must not count as the first failure of this command"
+    );
+}
+
+#[tokio::test]
+async fn near_miss_a_real_failure_still_gets_the_hint_and_still_escalates() {
+    let tool = hinted_bash();
+    let first = err_text(tool.execute(bash_params("fail"), live_ctx()).await);
+    let second = err_text(tool.execute(bash_params("fail"), live_ctx()).await);
+    assert!(first.starts_with("exit code 1\n\n💡 Recovery hint: "));
+    assert!(second.starts_with("exit code 1\n\n💡 Recovery hint: "));
+    assert_ne!(first, second, "the second failure must escalate");
+    assert!(
+        second.contains("2 times."),
+        "escalation names the count: {second}"
+    );
+}

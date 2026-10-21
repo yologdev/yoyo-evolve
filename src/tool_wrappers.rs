@@ -905,11 +905,15 @@ impl AgentTool for RecoveryHintTool {
                 // path) is the system working as designed, not a flaky tool:
                 // hand it back verbatim — no failure-counter bump, and no hint
                 // coaching the model around yoyo's own guard (#710).
-                if is_deterministic_refusal(&other.to_string()) {
+                // A Cancelled call was stopped by the user (Ctrl-C): nothing failed,
+                // so there is nothing to recover from and nothing to count (#1061).
+                if matches!(other, yoagent::types::ToolError::Cancelled)
+                    || is_deterministic_refusal(&other.to_string())
+                {
                     return Err(other);
                 }
-                // Every other error — Failed, NotFound, InvalidArgs, Cancelled —
-                // gets the same escalating advice off the same counter.
+                // Every other error — Failed, NotFound, InvalidArgs — gets the
+                // same escalating advice off the same counter.
                 let attempt = self.tracker.record_failure(&tool_name, &target);
                 let hint = crate::prompt_retry::tool_recovery_hint(&tool_name, attempt);
                 let file_prefix = if attempt >= 2 && target != "_" {
@@ -931,10 +935,10 @@ impl AgentTool for RecoveryHintTool {
                     yoagent::types::ToolError::InvalidArgs(msg) => Err(
                         yoagent::types::ToolError::InvalidArgs(format!("{msg}{suffix}")),
                     ),
-                    // Cancelled carries no message — convert to Failed to attach the hint
-                    yoagent::types::ToolError::Cancelled => Err(yoagent::types::ToolError::Failed(
-                        format!("Tool call was cancelled.{suffix}"),
-                    )),
+                    // Returned above, before the counter; kept only for exhaustiveness.
+                    yoagent::types::ToolError::Cancelled => {
+                        Err(yoagent::types::ToolError::Cancelled)
+                    }
                 }
             }
         }
