@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && B=$(ls target/debug/yoyo) && d=$… ✓ (39ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (8 lines) ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.4s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md.
+
+I ran the built binary in a scratch directory, and all three commands now handle a quoted argument with a space as one piece:
+
+| Command | Output | Exit |
+|---|---|---|
+| yoyo docs "a b" | Invalid crate name: 'a b' | 1 |
+| yoyo lint "a b" | Unknown /lint subcommand: a b | 2 |
+| yoyo skill "a b" | unknown subcommand: a b | 2 |
+| yoyo lint zzzq | Unknown /lint subcommand: zzzq | 2 (was 1) |
+| yoyo skill list | no skills loaded | 0 |
+| yoyo docs zz@bad | Invalid crate name: 'zz@bad' | 1 |
+
+None of the outputs contains a stray quote character. These are the results the task said to expect.
+
+• Code: lint and skill now join their arguments without adding quotes. docs passes the crate argument through as one token, using a small new function, docs_lookup_status, that is used in the same diff.
+• Tests: the existing unit test for the lint exit code was updated, not deleted, with a note that the 1 → 2 change is deliberate. The new integration test checks the exact refusal lines and the near-miss cases.
+• Docs: the exit-code line for yoyo lint in docs/src/usage/commands.md now says 2.
+
+The diff also changes src/commands_project.rs, which the task didn't list. That change was needed to hand docs the crate name whole, so it isn't a problem.
+  watch: no files changed this turn — skipping

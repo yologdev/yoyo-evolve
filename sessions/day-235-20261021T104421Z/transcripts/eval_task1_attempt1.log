@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || true; grep -n 'Cance… ✓ (11ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.3s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+I didn't run the binary to reproduce a Ctrl-C. My evidence is the diff and the three new unit tests, which check what the wrapper returns for the error the model receives. The harness already showed build and tests passing.
+
+• The fix: in src/tool_wrappers.rs (lines 908–941), a cancelled tool call now comes back as Cancelled, unchanged. It no longer gets the "the shell command failed" hint, and it no longer bumps the failure counter. The check sits next to the existing refusal check (#710), and the old comment no longer lists Cancelled.
+• Tests: they're in src/tool_wrappers_cancel_tests.rs, as asked. One checks the cancel's exact text. One checks that a real failure after a cancel gets the same first-failure hint a fresh wrapper gives. The third confirms a second real failure still escalates.
+• Unused definitions: none. Every new test helper is called, and the two existing helpers they use (live_ctx, err_text) are already in the file.
+• Size register: updated from 5692 to 5696 lines, with a Day 235 (#1061) note.
+• Docs: ARCHITECTURE.md has the dated Day 235 (#1061) line. The only #1061 references in src are code comments, not text shown to users.
+• Product surface: nothing changes in config defaults, CLI flags, the setup wizard or startup.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

@@ -1,0 +1,177 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --since… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git show --stat f9d96bc9 | head -2… ✓ (8ms)
+  ▶ read src/tool_wrappers.rs:902..950  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'Cancelled' ~/.cargo/regis… ✓ (2ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat src/tool_wrappers_cancel_tests… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 787,830p src/tool_wrappers.… ✓ (17ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 24.9s (6 ✓)
+
+Pre-check is clean: f9d96bc9 is the commit that filed #1061, not a fix. Writing the tests first.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; tail -40 src/tool_wrappers_cancel_… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> src/too… (103 lines) ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 990,1006p ~/.cargo/registry… ✓ (34.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 2s (3 ✓)
+
+Both new tests red for the right reasons, near-miss green. Now the fix:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (5 → 9 lines)
+  -                 if is_deterministic_refusal(&other.to_string()) {
+  +                 // A Cancelled call was stopped by the user (Ctrl-C): nothing failed,
+  +                 // so there is nothing to recover from and nothing to count (#1061).
+  +                 if matches!(other, yoagent::types::ToolError::Cancelled)
+  +                     || is_deterministic_refusal(&other.to_string())
+  +                 {
+                        return Err(other);
+                    }
+  -                 // Every other error — Failed, NotFound, InvalidArgs, Cancelled —
+  -                 // gets the same escalating advice off the same counter.
+  +                 // Every other error — Failed, NotFound, InvalidArgs — gets the
+  +                 // same escalating advice off the same counter.
+  ▶ edit src/tool_wrappers.rs (4 → 2 lines)
+  -                     // Cancelled carries no message — convert to Failed to attach the hint
+  -                     yoagent::types::ToolError::Cancelled => Err(yoagent::types::ToolError::Failed(
+  -                         format!("Tool call was cancelled.{suffix}"),
+  -                     )),
+  +                     // Returned above, before the counter; kept only for exhaustiveness.
+  +                     yoagent::types::ToolError::Cancelled => Err(yoagent::types::ToolError::Cancelled),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && wc -l src/tool_wrappe… ✓ (2m 56s)
+  -                 if is_deterministic_refusal(&other.to_string()) {
+  +                 // A Cancelled call was stopped by the user (Ctrl-C): nothing failed,
+  +                 // so there is nothing to recover from and nothing to count (#1061).
+  +                 if matches!(other, yoagent::types::ToolError::Cancelled)
+  +                     || is_deterministic_refusal(&other.to_string())
+  +                 {
+                        return Err(other);
+                    }
+  ... (4 more lines)
+ ✓ (5m 17s)
+  -                     // Cancelled carries no message — convert to Failed to attach the hint
+  -                     yoagent::types::ToolError::Cancelled => Err(yoagent::types::ToolError::Failed(
+  -                         format!("Tool call was cancelled.{suffix}"),
+  -                     )),
+  +                     // Returned above, before the counter; kept only for exhaustiveness.
+  +                     yoagent::types::ToolError::Cancelled => Err(yoagent::types::ToolError::Cancelled),
+ ✗ (5m 17s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 5m 24s (2 ✓, 1 ✗)
+
+(That timeout hint is this same wrapper family talking to me — a timeout, not a cancel, so it stays in scope of the hint.) Rerunning with a longer timeout:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/tool_wrappers.rs; cargo … ✓ (266ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test cancelled_tool_call_doe… ✓ (173ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git diff src/tool_wrappers.rs ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 14.5s (3 ✓)
+
+The first edit didn't survive (only the second hunk is in the diff). Checking the file state:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:903..915 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The two edits ran in parallel on the same file and the second clobbered the first — my own "serially" rule, applied to edits. Re-applying alone:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (5 → 9 lines)
+  -                 if is_deterministic_refusal(&other.to_string()) {
+  +                 // A Cancelled call was stopped by the user (Ctrl-C): nothing failed,
+  +                 // so there is nothing to recover from and nothing to count (#1061).
+  +                 if matches!(other, yoagent::types::ToolError::Cancelled)
+  +                     || is_deterministic_refusal(&other.to_string())
+  +                 {
+                        return Err(other);
+                    }
+  -                 // Every other error — Failed, NotFound, InvalidArgs, Cancelled —
+  -                 // gets the same escalating advice off the same counter.
+  +                 // Every other error — Failed, NotFound, InvalidArgs — gets the
+  +                 // same escalating advice off the same counter.
+ ✓ (4m 57s)
+  -                 if is_deterministic_refusal(&other.to_string()) {
+  +                 // A Cancelled call was stopped by the user (Ctrl-C): nothing failed,
+  +                 // so there is nothing to recover from and nothing to count (#1061).
+  +                 if matches!(other, yoagent::types::ToolError::Cancelled)
+  +                     || is_deterministic_refusal(&other.to_string())
+  +                 {
+                        return Err(other);
+                    }
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt; git diff --stat; wc -l … ✓ (1.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5m 12s (2 ✓)
+
+Green, 5696 lines (+4). Positive control A, atomically: neuter the short-circuit, run, restore.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/tool_wrappers.rs /tmp/tw.ba… ✓ (1m 9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; perl -pi -e 's|\("src/tool_wrapper… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '^- `tool_wrappers.rs`' AR… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; perl -i -pe 'if ($. == 270) { chom… ✓ (36ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 43s (4 ✓)
+
+Now the step-3 census of other doors, then the full gate:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1822,1842p src/tool_wrapper… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (4m 8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E 'FAILED|… ✓ (3m 29s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 8m 27s (3 ✓)
+
+All green, no failures; the #1061 hits are code comments describing history, not user-facing pointers. Committing:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/msg… (28 lines) ✓ (74ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git show --stat HEAD | tail -6; gi… ✓ (37ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 19.2s (2 ✓)
+
+#1061 is fixed and committed as 2fb7c78d. When you Ctrl-C a tool call, the model now just gets Cancelled. It no longer gets "The shell command failed. Check if the command exists…", and the cancel no longer counts as a failure. Build, all tests, clippy with -D warnings and the fmt check pass.
+
+Pre-check: no earlier commit had fixed this. The only commit that mentions #1061 is f9d96bc9, the one that filed it.
+
+The fix (src/tool_wrappers.rs, +4 lines): RecoveryHintTool now returns a cancel unchanged, in the same check that already does this for yoyo's own deliberate refusals (#710). So no hint is added and the failure counter isn't bumped. I fixed the comment that listed Cancelled among the errors that get advice, and added a line saying why: the user stopped the call, so nothing failed. The old Cancelled branch below can no longer be reached; it stays only because the compiler requires every error type to be handled, and it returns Cancelled too.
+
+Tests (in src/tool_wrappers_cancel_tests.rs, using a stub tool named bash):
+• A cancel comes back as Cancelled, and its full text is exactly "Cancelled".
+• A cancel followed by a real failure on the same command gets the first-failure hint. The expected text comes from a fresh wrapper, and a check confirms that text really is the un-escalated version.
+• Near-miss: two real failures still get hints, and the second still escalates ("2 times.").
+
+Sabotage check: before the fix, both cancel tests failed by name. Removing the new check (one command, marked NEUTERED, then restored) fails only the counter test. That's because the leftover Cancelled branch on its own still returns the cancel unchanged.
+
+Other places that could report a cancel as a failure: none needed changing. The sub-agent error wrapper in the same file already passes a cancel through without advice, and hooks.rs already returns it unchanged. The other Cancelled in hooks.rs is a test stub, and smart_edit.rs doesn't handle cancels.
+
+Bookkeeping: tool_wrappers.rs went from 5692 to 5696 lines; I updated the size register in tests/module_size.rs with a Day 235 note and added a dated line to the ARCHITECTURE.md entry for the file. The commit touches 4 files, including those two. git grep '#1061' finds only code comments, so no user-facing message points at the ticket.
+
+One slip on the way: I ran two edits to the same file in parallel, and the second overwrote the first. A test run showed it, and I re-applied the lost edit on its own.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/tool_wrappers.rs
