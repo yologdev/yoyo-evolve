@@ -665,6 +665,10 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // crate token whole (`cargo info "a b"` rejects it whole too).
                 exit_if_nonzero(match &args[2..] {
                     [] => crate::commands_project::handle_docs_status("/docs"),
+                    // An empty/blank crate is still usage (exit 2), as before.
+                    [krate, ..] if krate.trim().is_empty() => {
+                        crate::commands_project::handle_docs_status(&join_args_as_command(args))
+                    }
                     [krate, item @ ..] => {
                         crate::commands_project::docs_lookup_status(krate, &item.join(" "))
                     }

@@ -4354,4 +4354,8 @@ fn docs_lint_skill_take_one_spaced_argv_element_whole() {
     );
     let (code, _, _) = yoyo_plain_in(dir.path(), &["docs"]);
     assert_eq!(code, Some(2));
+    // An empty crate argument is usage too (2), not an invalid name (1).
+    let (code, stdout, _) = yoyo_plain_in(dir.path(), &["docs", ""]);
+    assert_eq!(code, Some(2), "{stdout:?}");
+    assert!(stdout.contains("usage: /docs"), "{stdout:?}");
 }
