@@ -1,0 +1,58 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 65,140p src/tools.rs; sed -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "_API_KEY\"" src/*.rs | g… ✓ (10ms)
+ ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,70p src/providers.rs; sed… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 150,227p ~/.cargo/registry/… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "StreamingBashTool {\|bui… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2927,2940p src/tools.rs; gr… ✓ (7ms)
+  ▶ write src/subprocess_env.rs (208 lines) ✓ (1m 13s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (33 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 136,142p src/main.rs; cargo… ✓ (1m 1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/tools.rs /tmp/tools.bak && … ✓ (31.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 4m 14s (11 ✓)
+
+Positive control reddened exactly the tool-level test, then restored. Now the register entry and real-binary probe.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (7 lines) ✓ (23.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^#" docs/src/troubleshoot… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1524,1545p ARCHITECTURE.md;… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (34 lines) ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git diff --stat; (cargo fmt -- --c… ✓ (2m 44s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -i "ENV_SCRUB\|subprocess … ✓ (396ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (29 lines) ✓ (47ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comme… (11 lines) ✓ (1.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 5m 57s (7 ✓, 1 ✗)
+
+Committed as 2a7b9bf4. With YOYO_SUBPROCESS_ENV_SCRUB=1 set, the model's bash tool no longer receives the provider API key. Without it, nothing changes. Format, clippy and the full test suite all pass (6406 tests).
+
+Real-binary probe: I ran the task's command against the built binary. With the variable set it printed len=0; without it, len=108. Both lines are in the commit body.
+
+What changed:
+• New `src/subprocess_env.rs` holds all the logic:
+  • The switch turns on only for 1 or true (any case).
+  • The list of variables to remove is yoagent's provider::api_key_variables() combined with yoyo's own provider table and the API_KEY fallback, with duplicates removed. GITHUB_TOKEN and GH_TOKEN are always kept so gh still works.
+  • The removal happens only in the child process, so yoyo keeps its own key.
+  • The module doc gives the reason it's opt-in: anyone who runs yoyo or another provider-calling tool from inside yoyo's bash needs the key, and my own evolve assessment does exactly that.
+• `src/tools.rs`, +5 lines: a new scrub_vars field on the bash tool, empty by default. build_bash_tool fills it once per session, and it is applied just before the spawn.
+• Docs: new section in docs/src/troubleshooting/safety.md, new entry in ARCHITECTURE.md, and the tools.rs size-gate entry raised from 5207 to 5247. Only 5 of those 40 lines are mine; the file had already grown to 5242 within the allowed margin.
+
+Tests (none set process-wide env vars):
+• A canary command prints unset ghcanary with the scrub and canary ghcanary without it. A separate check confirms the canary really is in the unscrubbed output, so the test can't pass on an empty environment.
+• A tool-level test scrubs HOME, which the test process already has, through the bash tool itself.
+• Positive control: I disabled the apply_scrub call in tools.rs and restored it in the same command. Only the tool-level test failed, by name, and it went green again after the restore.
+
+Not covered yet: sub-agent and explore-agent bash use yoagent's own bash tool, not build_bash_tool, so they still get the key. Hooks, /run, /bg, /watch and MCP stdio servers also still inherit it. EXA_API_KEY (web search, not a provider) isn't on the list. I posted all of these on #1064 with the commit sha, so the ticket's latest comment reflects the fix.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/subprocess_env.rs

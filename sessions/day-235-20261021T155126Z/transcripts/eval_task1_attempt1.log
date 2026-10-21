@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || true; ls target/debu… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; YOYO_SUBPROCESS_ENV_SCRUB=1 timeou… ✓ (6.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 24.7s (3 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+Live check: I ran the real binary with YOYO_SUBPROCESS_ENV_SCRUB=1, and the model's bash printed len=0 for ANTHROPIC_API_KEY, so the key was removed. I didn't run the matching probe with the variable unset. That the default is unchanged comes from the code: the list of variables to strip is empty unless the switch is on, so nothing is removed.
+
+What I checked in the diff:
+• Matches the task:
+  • The on/off check accepts only 1 or true (any case), and its table test covers unset, empty, 0 and false.
+  • The list of keys to strip combines yoagent's list with yoyo's own provider table, plus the generic API_KEY fallback. It leaves out GITHUB_TOKEN and GH_TOKEN, and the test builds its expected names from those two tables rather than listing them by hand.
+  • There is a self-contained before/after test using fake key values, and a test that goes through the bash tool itself.
+• Nothing left dangling: every new function and the new field have callers in this diff. src/tools.rs gained only the field, one call before the command starts, and one line where the tool is built. The size limit for src/tools.rs in tests/module_size.rs was raised to 5247, with a note.
+• Docs: docs/src/troubleshooting/safety.md covers what the setting does and what it still doesn't cover, and ARCHITECTURE.md has the new entry.
+• Product safety: the change is strictly opt-in through the environment variable.
+
+The diff also changes .yoyo/risk_validations.jsonl (one appended line), which is unrelated to this task. It's harmless; I noted it as cleanup feedback rather than a reason to fail.
+
+The commit says sub-agent bash is not covered yet: it is built from yoagent's own bash tool, so it still gets the key. It is listed as remaining work on #1064, along with hooks, /run, /bg, /watch and MCP servers.
+  watch: no files changed this turn — skipping
