@@ -1,0 +1,59 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneline -12; ls … ✓ (11ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "^## " journals/JOURNAL.md | head -6;… ✓ (8ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh run list --repo yologdev/yoyo-evolve --wor… ✓ (1.6s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; ls -la target/debug/yoyo 2>&1 | head -2; git … ✓ (2.8s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; for n in 1063 1062 1066 1045 1057; do echo "=… ✓ (1.9s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh issue view 1062 --repo yologdev/yoyo-evolv… ✓ (1.4s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh issue view 1064 --repo yologdev/yoyo-evolv… ✓ (835ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.25.12/src; grep -n "pub fn resolve_api_key\… ✓ (15ms)
+  ▶ $ cd /tmp; H=$(mktemp -d); env -u ANTHROPIC_API_KEY -u API_KEY HOME=$H GEMINI_API_… ✓ (15ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git grep -n -i "provisional" -- src docs CHAN… ✓ (13ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 15,25p CHANGELOG.md | cut -c1-900; git… ✓ (27ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh release view v0.3.0 --repo yologdev/yoyo-e… ✓ (379ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/assessment.md (40 lines) ✓ (0ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git log --oneline --grep '#1041' | head -3; g… ✓ (15ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.25.12/src; grep -rn "env_clear\|env_remove\… ✓ (4ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1,60p skills/yopedia/SKILL.md | grep -… ✓ (3ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 17,30p skills/yopedia/SKILL.md;  ✓ (2ms)
+  ▶ $ [ -n "$YOPEDIA_AGENT_TOKEN" ] && echo set || echo unset; BASE=https://yopedia.yo… ✓ (14.3s)
+  ▶ $ BASE=https://yopedia.yolog.dev; curl -sS -m 15 "$BASE/api/wiki/subprocess-enviro… ✓ (2.1s)
+  ▶ web search 'Claude Code changelog October 2026 MCP server environment va…' ✓ (1.6s)
+  ▶ web search 'Codex CLI shell_environment_policy inherit exclude default K…' ✓ (1.7s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n -A14 "## Ingest\|api/ingest" skills/y… ✓ (3ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (4 lines) ✓ (1.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  23 tools completed in 2m 48s (23 ✓)
+
+Now update the assessment with research and planner notes.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (20 lines) ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The assessment is written to session_plan/assessment.md. The commit step did nothing: session_plan/ is gitignored, and the instruction's || true allows for that, so I didn't force-add it. The file is on disk for the planner.
+
+What matters most this session: @yuanhao answered two of my open questions at 21:35Z, six minutes before this session started.
+
+• #1055: he decided the outside-read fence stays on at a terminal. He asked me to drop "provisional" from the docs and release notes, then close the issue. The word is still in two places: CHANGELOG.md:20 and line 6 of the GitHub v0.3.0 release notes. docs/src has none. This is small and safe, and closing the issue and replying on Discussion #1048 should be named steps in the plan.
+• #1064 (with #1067 merged in):
+  • Key lookup: he wants yoyo to find API keys the way yoagent does (resolve_api_key / api_key_variables) instead of using its own one-variable-per-provider table.
+  • Scrub default: he asked me to weigh removing keys by default for MCP servers and hooks, while the shell stays unchanged.
+• The table problem is a real bug, and I reproduced it. With only GEMINI_API_KEY set and --provider google, yoyo says "No API key found" and exits 1. yoagent reads GEMINI_API_KEY before GOOGLE_API_KEY, but yoyo's table at src/providers.rs:23 only knows GOOGLE_API_KEY. The table has 27 callers outside tests, listed in the assessment but not yet sorted by what they do with it. #1062 (a key passed with --api-key is invisible to the setup wizard and the 401 hint) is the same problem.
+
+Build and runs: a quick -p run of the binary worked. The last 4 evolve runs and the last 5 CI runs all succeeded, with no reverts in the window.
+
+Research (saved to yopedia):
+• Rivals: Claude Code and Codex both leave keys in child processes unless the user opts in. Claude Code's opt-in switch covers the shell, hooks and MCP servers; ours covers only the shell.
+• MCP mechanism: yoagent's MCP launcher only adds environment variables and never removes any, so a default scrub for MCP servers needs another way in. One option is launching the server through env -u; the other is asking yoagent for an option. Hooks are easy because yoyo starts them itself (src/hooks.rs:741).
+
+Also in the assessment:
+• Three bugs I found by reading code, not by running it: #1063, #1045, #1057.
+• #1041 is still open, but the code for it exists (src/mcp_prefix.rs). It should be checked and closed.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

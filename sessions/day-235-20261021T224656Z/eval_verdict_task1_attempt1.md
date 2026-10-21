@@ -1,0 +1,6 @@
+Verdict: PASS
+Reason: The CHANGELOG fence bullet drops "provisional" from both the heading and the closing sentences and now states @yuanhao's decision. The rest of the bullet is byte-identical. The live v0.3.0 release body also no longer contains "provisional" (grep -ci prints 0), and its fence line now has the plain heading.
+Checked: intent_alignment: PASS: Read the one-line diff to CHANGELOG.md:20. The heading lost "— provisional", and the "This default is provisional ... will be reverted" sentences became one sentence giving the decision, as step 1 asked. `grep -in provisional CHANGELOG.md` finds nothing. `gh release view v0.3.0` shows the edited fence line and 0 hits for "provisional".
+Checked: forgotten_touchpoints: PASS: The change is prose only. No source files changed and no definitions, variants or renames were added, so nothing needs a consumer. The task notes that the planner already checked docs/src, README and src for "provisional" and "#1055" pointers.
+Checked: doc_sync: N/A: No behaviour changed. The fence default and the YOYO_ASK_OUTSIDE_READS escape are untouched, and the change is itself the documentation update.
+Checked: product_surface: N/A: The task is product-kind and only edits CHANGELOG text. No config defaults, CLI flags, wizard or startup behaviour changed.
