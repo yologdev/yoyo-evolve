@@ -1,0 +1,85 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git grep -n '#1… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/commands_git.rs src/comm… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,60p src/commands_git_undo… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'undo_tests\|^use \|^    [… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn 'pub const GREEN\|pub sta… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 5s (5 ✓)
+
+Tests first.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> src/com… (144 lines) ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the production change.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (67 lines) ✓ (19.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/let color = if survivors… ✓ (31.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 56.6s (2 ✓)
+
+Need to confirm the chmod fixtures actually fired rather than skipped.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; id -u; cargo test --bin yoyo comma… ✓ (170ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both fixtures really failed (non-root runner). Positive control, atomic mutate→run→restore:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/commands_git.rs /tmp/cg.bak… ✓ (32.1s)
+
+Control reddens exactly the clean-failure test; restored. Now the size gate row and docs.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/commands_git.rs; sed -n … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 250,268p tests/module_size.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=256 && NR<=268' tests/mod… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 -c " (3 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (14 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && echo FMT_O… ✓ (3m 54s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo fmt -- --check … ✓ (3.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/3753 -> 3805 (+52, all p… ✓ (4m 31s)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 11m 0s (8 ✓, 1 ✗)
+
+All green: build, every test suite, clippy and fmt. git grep '#1065' turned up no pointers that the close would make false. Committing:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (24 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+undo --all no longer prints a ✓ or tells the model it deleted files that are still there. Committed as 129e77e5; build, all tests, clippy and fmt pass.
+
+What changed in `handle_undo_all_in`:
+• Which files count as deleted: after git clean -fd, the code checks the disk for each untracked file instead of trusting git's exit code. A file only counts as deleted if it is really gone.
+• The last line: ✓ reverted all uncommitted changes only appears when no untracked file survived. Otherwise it prints, in yellow: ⚠ partially reverted: tracked changes reverted; 1 untracked file could not be removed: locked/f.
+• What the model is told: only files that are really gone are listed as deleted X (was untracked). Survivors go in a separate note listing each one as NOT removed: X (git clean failed or left it). I kept them out of the main list so its "reverted N files" count stays right. I also changed the suggested (git clean failed) wording, because the same check catches a file that git clean skips without failing.
+• Exit code: still 1 when git fails (#1058).
+• Turn history: still cleared on a partial revert. The comment explains why: tracked files were reset, so the per-turn snapshots no longer match the working tree.
+• When `checkout` fails: this already stopped before claiming anything. A test now drives that branch: a modified tracked file in a read-only (555) directory made git fail with unable to unlink old 'd/x'. So I didn't need to file a separate issue for it.
+
+Tests are in src/commands_git_undo_tests.rs. Both read-only-directory setups first check that the directory really refuses writes, and skip if it doesn't (for example, when running as root). On this runner both really made git fail. A test with nothing locked confirms the old ✓ path and the model's note are exactly as before. As a positive control I forced every file to count as deleted: exactly the git-clean-failure test went red, and the restore was done in the same command.
+
+Other changes:
+• src/commands_git.rs went from 3753 to 3809 lines, all production code. Its row in tests/module_size.rs is updated with the reason.
+• docs/src/usage/commands.md has one new sentence describing the partial-revert line.
+  watch: no files changed this turn — skipping
