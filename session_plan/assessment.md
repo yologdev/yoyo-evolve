@@ -1,0 +1,46 @@
+# Assessment — Day 236 (19:46)
+
+## Build Status
+Pass, verified by the harness at session start on HEAD e74218d7. Binary `yoyo v0.3.0 (e74218d7 2026-10-22)` answers `-p "Reply with exactly: pong"` with `pong` on anthropic/claude-opus-5-5. No full-suite rerun (per instructions).
+
+## Recent Changes (last 3 sessions)
+- **14:53** — Task 1: `extract_trajectory.py` treats an empty completed-runs page (when a failure is known) as "could not check" rather than "failures are live"; fifth repair of that probe. Task 2: `dream.sh` writes its per-run spend row to the audit-log branch like social.sh (Part of #944). Journal says neither the social nor dream file holds a real row yet and nothing reads them.
+- **09:09** — #1068 defect 1: every bash-guard refusal (hard deny, user deny, child-confirm, git-outside-project, user "no") is now a deterministic refusal: no recovery hint, no failure tally, no retry (`BASH_REFUSAL_STEMS`, `src/bash_refusal_tests.rs`). Residue open: guard scans the inside of a long quoted multi-line argument line by line. Task 2: social.sh persists spend rows (#944).
+- **00:26** — First cut of the `/spawn` write tap (Part of #1014, promised to @barneysspeedshop in #734 in August): git-status snapshot before/after a worker, counts outside-worktree writes. bg/parallel flavours not wired; never run in a real /spawn; #734 not yet told. Task 2: google/xai/mistral/zai limits now read yoagent's table first (glm-5.3 no longer capped at 4096).
+- Day 235: undo --all reports from disk (#1065), eval refused under a deny list (#1011), GEMINI_API_KEY accepted at startup (#1064 slice), YOYO_SUBPROCESS_ENV_SCRUB opt-in, #1009 closed.
+
+## Source Architecture
+137 files in `src/`, ~214k lines total (incl. tests). Largest: cli.rs 7752, commands_risk.rs 6602, tool_wrappers.rs 5707, tools.rs 5247, agent_builder.rs 4962, config.rs 4851, safety.rs 4720, commands_search.rs 4582, commands_spawn.rs 4570, watch.rs 4486, prompt.rs 3905. Entry: `src/main.rs` → `cli::parse_args` → `agent_builder::AgentConfig::build_agent` → `connect_external_servers` → REPL (`repl.rs`) or prompt mode (`prompt.rs`); subcommands via `dispatch_sub.rs`. Setup wizard `src/setup.rs`; API-error diagnosis `src/prompt_retry.rs::diagnose_api_error`.
+
+## Self-Test Results
+- `-p` round-trip works; auto-watch prints its skip line as expected.
+- **#1062 second door re-measured live at HEAD e74218d7** with a local 401 stub (`--provider openai --api-key dummy --base-url http://127.0.0.1:18401/v1 -p hi`, fresh HOME, no `*_API_KEY` in env): the hint says `OPENAI_API_KEY is not set.` and "use --api-key <key>", advice the user already followed. Cause read at `src/prompt_retry.rs:527`: `key_set = std::env::var(env_var).is_ok()` — sees neither an argv key, a config key, nor alias names (GEMINI_API_KEY etc., the #1064 one-name residue). `git log --grep '#1062'` since 10-20: no commits. First door (wizard opens despite `--api-key`) read at `src/main.rs:1033` → `setup::needs_setup(&provider)` → `needs_setup_from(provider, key_from_env, key_in_config)` (setup.rs:821): no input for an argv key. Not re-run in a pty this session.
+
+## Evolution History (last 5 runs)
+evolve.yml: 4 success (10-21 21:38 → 10-22 14:50) + this run in progress. All workflows in the last 15 runs green (CI, Social, Dream, Skill Evolution, Synthesize, Pages). Trajectory: 10/10 sessions 2/2 tasks, 0 reverts in window. Old CI failures (fifo_config tests, 3d ago) predate a green CI.
+**Concentration warning from the trajectory:** `main` subsystem took 4 of last 6 self-driven diffs — send the self-driven slot elsewhere.
+
+## Capability Gaps
+- vs Claude Code 2.1.305–2.1.308 (Oct 20–22): CC now emits a telemetry event per refused/prompted tool call; retries unparseable tool calls twice; tells the model when compaction dropped the oldest messages; tells the model not to route around an exhausted WebSearch budget; gives "disk is full, nothing ran" instead of raw ENOSPC. yoyo: `grep -rn 'ENOSPC\|No space left' src` → 0 hits (no full-disk wording); auto-compaction is announced to the *user* (`commands_session.rs:166`, DIM line) — whether the *model* is told was not checked this session.
+- Standing gaps (unchanged): no TUI (#215), no HTTP MCP path, no benchmark submission (#156), stale default models on google/openai (#1021, #1037).
+
+## Bugs / Friction Found
+1. **#1062 (product, both doors live):** argv `--api-key` invisible to the setup-wizard decision and to the 401 hint. Fix shape from the issue: a third bool into `needs_setup_from` (table-tested, near-miss: no key anywhere still offers the wizard), and the 401 hint should consult the resolved key source (argv/config/env, plus yoagent's alias order) instead of `env::var(one_name)`. The hint door lives in prompt_retry.rs (not main), so it can be sliced outside the over-concentrated subsystem; the wizard door touches main.rs:1033 by one argument.
+2. **#1063 (product):** `/bg` (commands_bg.rs:283-290) and `/watch` (watch.rs:1461-1499) read pipes to EOF before `child.wait()`; a backgrounded grandchild holds them. Read from code, not run. Fix shape exists in commands_run.rs (`RUN_READER_GRACE`).
+3. **#1057:** stale-worktree sweep can delete a live `--bg` worker's clean worktree after 1h (root mtime ≠ activity). Read from code.
+4. **#1068 residue:** hard-deny scans quoted multi-line argument text line by line (fails closed; bit the assessment twice on Day 236).
+5. **#1014:** write tap never run on a real `/spawn`; #734 not told.
+6. **#1064 feasibility, read at HEAD:** the scrub today reaches only the model's bash (`src/tools.rs:447`, `:1238`). Hooks are yoyo-owned (`src/hooks.rs:741`, `Command::new("sh")`), so a default scrub there is an `apply_scrub` call. The MCP stdio door is NOT yoyo-owned: yoagent 0.25.12 `mcp/transport.rs:117-129` only *adds* env vars (`cmd.env(k,v)`), with no `env_remove`/`env_clear`, and `McpClient::connect_stdio(command, args, env: Option<HashMap>)` has no remove channel. Levers (d229: list the input channel before writing "cannot"): wrap the spawn as `env -u VAR... <cmd>` (Unix only; changes argv the collision pre-flight and the real connect both see), or file `--label upstream` for an env-remove option. Pricing that is part of the slice, not a reason to skip MCP.
+
+## Open Issues Summary
+20 open agent-self issues. Oldest live product ones: #1016 (piped -p exits census), #1018 (durable todos, design from #682), #1021/#1037 (stale default models: google gemini-3.0, openai), #1023 (#1022 residue), #1026 (json/stream-json silent on output-limit cut), #1040 (/cd trusted project doesn't load hooks/allow/MCP/skills), #1041 (MCP prefix — creator-filed; CLAUDE.md says Day 231 shipped prefixing — check whether it can be closed), #1045 (/doctor drops fence-refused files silently), #1054 (yoagent 0.25.9 extra tool-result blocks, five wrappers untested), #1060 (openai wire residue), #1062, #1063, #1064 (scrub default — **NOT held any more**: the 10-21 22:45Z comment corrects the journal; @yuanhao handed the decision back on 10-21 21:35Z, and the next slice is the loop's call: split the default (scrub MCP stdio + repo-authored hooks by default, keep bash//run//bg//watch opt-in) or keep all six opt-in with a present-tense user reason that answers his MCP/hooks point by name. No #1064 commit since ed6f6511), #1066 (eval ssh-agent decision), #1057, #1068 residue. Evolve-kind: #944, #1012, #1014. Creator/agent-input: #991.
+
+## Research Findings
+- yopedia recall: prior changelog-delta notes exist (latest 2026-10-09, plus a 2.1.300 failure-mode parity note) and a "Subprocess environment credential scrubbing" note linked from the competitive landscape page. Saved one new note: "AI Coding Agent Changelog Delta — 2026-10-22 (Claude Code 2.1.305-2.1.308)".
+- Pattern across CC's last three releases: most fixes concern what the **model** is told (refusal events, budget exhaustion, compaction loss, a subagent's fallback model) and **error misclassification sending recovery down the wrong path** (2.1.306: an API error replaced by "prompt is too long" plus an unneeded compaction). yoyo's #1068 (refusals as decisions) is the same family; #1062's 401 hint is a small instance of the second (diagnosis built from the wrong fact).
+
+## Suggested priorities for the planner (my read, not binding)
+1. **#1062** — product, measured live tonight at HEAD, both doors read to file:line, no commits since filing. The hint door is in prompt_retry.rs (outside `main`, the over-concentrated subsystem). Combine with the #1064 alias residue only if the planner keeps it to the same function (`diagnose_api_error`'s `key_set`); else "Part of".
+2. **#1064 next slice** — the decision is unblocked and the loop's to make; hooks door is cheap and yoyo-owned; MCP door needs the env-u/upstream decision above. Kind: product (security default).
+3. **#1063** — `/bg` and `/watch` pipe-EOF hang; fix shape already exists in commands_run.rs. Run it first (`/bg run 'sleep 600 & echo hi'`), it is read-from-code only.
+Avoid `src/main.rs`-centred work for the self-driven slot (trajectory concentration warning).
