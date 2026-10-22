@@ -363,6 +363,97 @@ report_dream_spend() {
     else
         echo "dream: Spend audit: WARNING — no ${DREAM_AUDIT_FILE}; audit records were not written this run (cumulative size unknown)" >&2
     fi
+    # Handed to persist_dream_spend (below). Empty means NO record, which the
+    # durable row keeps as no_terminal_emit, never as a zero.
+    DREAM_USAGE_RECS="$usage_recs"
+    return 0
+}
+
+# ── #944: the durable sink. Mirrors scripts/social.sh's persist_social_spend
+# (Day 236, d3df27f7): the lines above go to the Actions log, which expires;
+# this row goes to the audit-log branch, which does not. One JSON line per
+# run, appended to phases/dream/spend.jsonl (a sibling of sessions/, so
+# extract_trajectory.py's `day-N-...` session reader never mistakes it for a
+# session dir). Two copies of one convention now exist; a third (daily_diary)
+# should be a shared helper in common.sh instead — tracked on #944.
+DREAM_SPEND_SINK="phases/dream/spend.jsonl"
+DREAM_USAGE_RECS=""
+
+# $1 = usage records (newline-separated JSON, may be empty), $2 = day,
+# $3 = agent exit. Prints one JSON line. A missing record is
+# "usage":"no_terminal_emit" — the same distinction the stderr line keeps.
+dream_spend_row() {
+    local recs="$1" day="$2" code="$3" ts arr
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    case "$day" in '' | *[!0-9]*) day=null ;; esac
+    case "$code" in '' | *[!0-9]*) code=null ;; esac
+    arr=$(printf '%s\n' "$recs" | grep -a . | paste -sd, - || true)
+    if [ -n "$arr" ]; then
+        printf '{"ts":"%s","phase":"dream","day":%s,"exit":%s,"usage_records":[%s]}\n' \
+            "$ts" "$day" "$code" "$arr"
+    else
+        printf '{"ts":"%s","phase":"dream","day":%s,"exit":%s,"usage":"no_terminal_emit"}\n' \
+            "$ts" "$day" "$code"
+    fi
+}
+
+# Fail-soft: every failure prints one line naming the step and returns 0, so
+# this never changes dream.sh's exit status. It works in a detached temp
+# worktree under ${TMPDIR:-/tmp} (outside the repo tree) and fetches into
+# refs/remotes/origin/audit-log only, so main's checkout, index and local
+# branches are untouched: the diff-scope guard (HEAD_BEFORE..HEAD_AFTER) and
+# the EXIT trap's stamp-only commit + push of main both see nothing of it, and
+# it finishes (synchronously) before either runs. All output goes to stderr,
+# like report_dream_spend's.
+persist_dream_spend() {
+    local row wt rc
+    row=$(dream_spend_row "${DREAM_USAGE_RECS:-}" "${DAY:-}" "${exit_code:-}")
+    # `|| rc=$?`, not a bare call + `rc=$?`: dream.sh runs under errexit.
+    rc=0
+    git ls-remote --exit-code --heads origin audit-log >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -eq 2 ]; then
+        echo "dream: Spend sink: skipped — origin has no audit-log branch (this run's row is only in the log above)" >&2
+        return 0
+    elif [ "$rc" -ne 0 ]; then
+        echo "dream: Spend sink: FAILED at step ls-remote (rc=$rc) — row not persisted" >&2
+        return 0
+    fi
+    if ! git fetch -q --depth 50 origin "+refs/heads/audit-log:refs/remotes/origin/audit-log" 2>/dev/null; then
+        echo "dream: Spend sink: FAILED at step fetch — row not persisted" >&2
+        return 0
+    fi
+    wt="${TMPDIR:-/tmp}/dream-spend-wt-$$-${RANDOM}"
+    if ! git worktree add -q --detach "$wt" refs/remotes/origin/audit-log >/dev/null 2>&1; then
+        echo "dream: Spend sink: FAILED at step worktree-add — row not persisted" >&2
+        rm -rf "$wt" 2>/dev/null || true
+        git worktree prune 2>/dev/null || true
+        return 0
+    fi
+    local step=""
+    # --no-verify: audit-log is a data branch; the pre-push hook lints
+    # scripts/evolve.sh, which does not exist on it.
+    step=$(
+        cd "$wt" || { echo cd; exit 0; }
+        mkdir -p "$(dirname "$DREAM_SPEND_SINK")" || { echo mkdir; exit 0; }
+        printf '%s\n' "$row" >> "$DREAM_SPEND_SINK" || { echo append; exit 0; }
+        git add -- "$DREAM_SPEND_SINK" >/dev/null 2>&1 || { echo add; exit 0; }
+        git commit -q -m "audit: dream spend, day ${DAY:-?} ($(date -u +%H:%MZ))" >/dev/null 2>&1 || { echo commit; exit 0; }
+        if git push -q --no-verify origin HEAD:refs/heads/audit-log >/dev/null 2>&1; then
+            exit 0
+        fi
+        # One retry: a concurrent evolve/social push moved the branch.
+        git fetch -q --depth 50 origin "+refs/heads/audit-log:refs/remotes/origin/audit-log" >/dev/null 2>&1 || { echo retry-fetch; exit 0; }
+        git rebase -q refs/remotes/origin/audit-log >/dev/null 2>&1 || { git rebase --abort >/dev/null 2>&1; echo retry-rebase; exit 0; }
+        git push -q --no-verify origin HEAD:refs/heads/audit-log >/dev/null 2>&1 || { echo retry-push; exit 0; }
+    )
+    git worktree remove --force "$wt" >/dev/null 2>&1 || true
+    rm -rf "$wt" 2>/dev/null || true
+    git worktree prune 2>/dev/null || true
+    if [ -n "$step" ]; then
+        echo "dream: Spend sink: FAILED at step ${step} — row not persisted" >&2
+    else
+        echo "dream: Spend sink: appended this run's row to audit-log:${DREAM_SPEND_SINK}" >&2
+    fi
     return 0
 }
 
@@ -385,7 +476,9 @@ ${TIMEOUT_CMD:+$TIMEOUT_CMD "$TIMEOUT"} "$YOYO_BIN" \
 echo "dream: agent exit=$exit_code"
 # Called on every path (success, failure, timeout): the invocation above never
 # exits the script (`|| exit_code=$?`), and every later branch follows this line.
+# The sink runs here too, before the diff-scope guard and the EXIT trap's push.
 report_dream_spend || true
+persist_dream_spend || true
 
 # ── Diff-scope guard: a dream may touch ONLY DREAM.md + dreams/dream_log.jsonl ──
 # This is the sole safety belt. Anything else the agent committed gets reverted.
