@@ -499,6 +499,74 @@ pub fn is_benign_stream_end(error: &str) -> bool {
     error.to_lowercase().contains(BENIGN_STREAM_END_SUBSTR)
 }
 
+/// Where this session's API key came from, recorded by `cli::parse_model_config`
+/// as it resolves the key (#1062). Before this the 401 hint guessed from
+/// `std::env::var(<provider var>)`, which cannot see `--api-key`, a config-file
+/// key or an alias name, and told a user who had passed `--api-key` that
+/// `OPENAI_API_KEY is not set`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeySource {
+    Argv,
+    ConfigFile,
+    /// The environment variable actually read (a provider alias such as
+    /// `GEMINI_API_KEY`, or the `ANTHROPIC_API_KEY`/`API_KEY` fallback).
+    Env(String),
+    Missing,
+}
+
+static KEY_SOURCE: std::sync::OnceLock<KeySource> = std::sync::OnceLock::new();
+
+/// Record the key's source. First write wins, like `cli::set_configured_provider`.
+pub fn set_key_source(source: KeySource) {
+    let _ = KEY_SOURCE.set(source);
+}
+
+/// The auth-failure hint for `provider`, given where its key came from. Pure:
+/// the source is a parameter so tests never touch `KEY_SOURCE`. `Missing` and
+/// `Env(env_var)` are byte-identical to the hint before #1062.
+pub fn auth_failure_message(provider: &str, env_var: &str, source: &KeySource) -> String {
+    let head = format!("Authentication failed for provider '{provider}'.");
+    let config_hint = "Or add api_key to .yoyo.toml, or use --api-key <key>.";
+    match source {
+        KeySource::Argv => format!(
+            "{head}\n  The key passed with --api-key was rejected by the API — check the key value.\n\
+             --api-key takes precedence over {env_var} and api_key in a config file, so the value you pass is the one to fix."
+        ),
+        KeySource::ConfigFile => format!(
+            "{head}\n  The api_key from your yoyo config file was rejected by the API — check the key value.\n\
+             It was used because neither --api-key nor {env_var} is set; either one would take precedence."
+        ),
+        KeySource::Env(var) if var != env_var => {
+            let own = crate::providers::provider_api_key_vars(provider);
+            if !own.is_empty() && !own.contains(&var.as_str()) {
+                // The provider's own variables were all unset, so the generic
+                // fallback sent another key (CLAUDE.md's wrong-token 401).
+                format!(
+                    "{head}\n  {env_var} is not set, so the key from {var} was sent instead, and the API rejected it.\n\
+                     Set the right one with: export {env_var}=<your-key>\n{config_hint}"
+                )
+            } else {
+                format!(
+                    "{head}\n  {var} is set but the API rejected it — check the key value.\n\
+                     {var} is where this session's key came from; fix its value there, or pass --api-key <key>."
+                )
+            }
+        }
+        KeySource::Env(_) | KeySource::Missing => {
+            let status = if matches!(source, KeySource::Env(_)) {
+                format!("  {env_var} is set but the API rejected it — check the key value.")
+            } else {
+                format!("  {env_var} is not set.")
+            };
+            format!("{head}\n{status}\nSet it with: export {env_var}=<your-key>\n{config_hint}")
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "prompt_retry_auth_tests.rs"]
+mod prompt_retry_auth_tests;
+
 /// Diagnose a non-retriable API error and return a user-friendly message
 /// with actionable suggestions. Returns `None` for errors that don't match
 /// known patterns.
@@ -524,19 +592,16 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
         || lower.contains("authentication")
     {
         let env_var = crate::cli::provider_api_key_env(&provider).unwrap_or("ANTHROPIC_API_KEY");
-        let key_set = std::env::var(env_var).is_ok();
-        let config_hint = "Or add api_key to .yoyo.toml, or use --api-key <key>.";
-        let status = if key_set {
-            format!("  {env_var} is set but the API rejected it — check the key value.")
-        } else {
-            format!("  {env_var} is not set.")
-        };
-        return Some(format!(
-            "Authentication failed for provider '{provider}'.\n\
-             {status}\n\
-             Set it with: export {env_var}=<your-key>\n\
-             {config_hint}"
-        ));
+        // The source cli.rs recorded when it resolved the key (#1062); with none
+        // recorded, the old env-presence reading, so that path is unchanged.
+        let source = KEY_SOURCE.get().cloned().unwrap_or_else(|| {
+            if std::env::var(env_var).is_ok() {
+                KeySource::Env(env_var.to_string())
+            } else {
+                KeySource::Missing
+            }
+        });
+        return Some(auth_failure_message(&provider, env_var, &source));
     }
 
     // Billing / quota exhaustion — not retriable, needs user action

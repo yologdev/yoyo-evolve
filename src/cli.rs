@@ -1090,31 +1090,43 @@ fn parse_model_config(
     // Choose provider-specific env var name
     let provider_env_var = provider_api_key_env(&provider);
 
-    let api_key = match api_key_from_flag {
-        Some(key) if !key.is_empty() => key,
+    use crate::prompt_retry::KeySource;
+    let (api_key, key_source) = match api_key_from_flag {
+        Some(key) if !key.is_empty() => (key, KeySource::Argv),
         _ => {
             // Provider's own variables first, in yoagent's order (#1064)
             let from_provider_env =
                 crate::providers::find_provider_key(&provider, |v| std::env::var(v).ok());
-            match from_provider_env {
-                Some(key) => key,
+            // Same helper, same order, asked for the NAME it took the key from (#1062)
+            let provider_var = crate::providers::find_provider_key(&provider, |v| {
+                std::env::var(v)
+                    .ok()
+                    .filter(|k| !k.is_empty())
+                    .map(|_| v.to_string())
+            });
+            match from_provider_env.zip(provider_var) {
+                Some((key, var)) => (key, KeySource::Env(var)),
                 None => {
                     // Fallback chain: ANTHROPIC_API_KEY > API_KEY > config file
+                    let var = match std::env::var("ANTHROPIC_API_KEY") {
+                        Ok(_) => "ANTHROPIC_API_KEY",
+                        Err(_) => "API_KEY",
+                    };
                     match std::env::var("ANTHROPIC_API_KEY").or_else(|_| std::env::var("API_KEY")) {
-                        Ok(key) if !key.is_empty() => key,
+                        Ok(key) if !key.is_empty() => (key, KeySource::Env(var.to_string())),
                         _ => match file_config.get("api_key").cloned() {
-                            Some(key) if !key.is_empty() => key,
+                            Some(key) if !key.is_empty() => (key, KeySource::ConfigFile),
                             _ => {
                                 // Optional for local providers and for --print-system-prompt (never calls a model)
                                 if provider == "ollama"
                                     || provider == "custom"
                                     || args.iter().any(|a| a == "--print-system-prompt")
                                 {
-                                    "not-needed".to_string()
+                                    ("not-needed".to_string(), KeySource::Missing)
                                 } else if std::io::stdin().is_terminal() && prompt_arg.is_none() {
                                     // Interactive REPL with no API key: needs_setup() will
                                     // be checked in main() and the wizard run there
-                                    String::new()
+                                    (String::new(), KeySource::Missing)
                                 } else {
                                     // Piped/single-shot mode: terse error for scripts
                                     let env_hint = provider_env_var.unwrap_or("ANTHROPIC_API_KEY");
@@ -1131,6 +1143,11 @@ fn parse_model_config(
             }
         }
     };
+    // In-process parse_args tests would otherwise pin a source (first write
+    // wins) that the env-driven diagnose_api_error tests then read.
+    if !cfg!(test) {
+        crate::prompt_retry::set_key_source(key_source);
+    }
 
     let model = flag_value(args, &["--model"])
         .or_else(|| file_config.get("model").cloned())
