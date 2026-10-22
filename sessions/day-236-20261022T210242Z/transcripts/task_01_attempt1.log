@@ -1,0 +1,324 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 495,560p src/prompt_retry.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "api_key" src/cli.rs | hea… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1080,1140p src/cli.rs; grep… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1100,1135p src/cli.rs; grep… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 9.3s (5 ✓)
+
+The display is truncating; let me read the raw lines.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=1101 && NR<=1132' src/cli… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read src/cli.rs:1086..1136 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,60p tests/module_size.rs … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "parse_args(\|parse_args_w… ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1050,1075p src/cli.rs; sed … ✓ (14ms)
+  ▶ read src/prompt_retry.rs:502..544 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "pub fn provider_api_key_e… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "parse_args\b\|cli::parse_… ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 52s (8 ✓)
+
+Now write the tests file first.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ write src/prompt_retry_auth_tests.rs (101 lines) ✓ (1m 56s)
+
+Now the helper, global, and wiring in prompt_retry.rs.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (15 → 12 lines)
+            let env_var = crate::cli::provider_api_key_env(&provider).unwrap_or("ANTHROPIC_API_KEY");
+  -         let key_set = std::env::var(env_var).is_ok();
+  -         let config_hint = "Or add api_key to .yoyo.toml, or use --api-key <key>.";
+  -         let status = if key_set {
+  -             format!("  {env_var} is set but the API rejected it — check the key value.")
+  -         } else {
+  -             format!("  {env_var} is not set.")
+  -         };
+  -         return Some(format!(
+  -             "Authentication failed for provider '{provider}'.\n\
+  -              {status}\n\
+  -              Set it with: export {env_var}=<your-key>\n\
+  -              {config_hint}"
+  -         ));
+  +         // The source cli.rs recorded when it resolved the key (#1062); with none
+  +         // recorded, the old env-presence reading, so that path is unchanged.
+  +         let source = KEY_SOURCE.get().cloned().unwrap_or_else(|| {
+  +             if std::env::var(env_var).is_ok() {
+  +                 KeySource::Env(env_var.to_string())
+  +             } else {
+  ... (5 more lines)
+  ▶ edit src/prompt_retry.rs (2 → 70 lines)
+  + /// Where this session's API key came from, recorded by `cli::parse_model_config`
+  + /// as it resolves the key (#1062). Before this the 401 hint guessed from
+  + /// `std::env::var(<provider var>)`, which cannot see `--api-key`, a config-file
+  + /// key or an alias name, and told a user who had passed `--api-key` that
+  + /// `OPENAI_API_KEY is not set`.
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + pub enum KeySource {
+  +     Argv,
+  +     ConfigFile,
+  +     /// The environment variable actually read (a provider alias such as
+  +     /// `GEMINI_API_KEY`, or the `ANTHROPIC_API_KEY`/`API_KEY` fallback).
+  +     Env(String),
+  +     Missing,
+  + }
+  + 
+  + static KEY_SOURCE: std::sync::OnceLock<KeySource> = std::sync::OnceLock::new();
+  + 
+  + /// Record the key's source. First write wins, like `cli::set_configured_provider`.
+  + pub fn set_key_source(source: KeySource) {
+  +     let _ = KEY_SOURCE.set(source);
+  ... (50 more lines)
+ ✓ (18.7s)
+            let env_var = crate::cli::provider_api_key_env(&provider).unwrap_or("ANTHROPIC_API_KEY");
+  -         let key_set = std::env::var(env_var).is_ok();
+  -         let config_hint = "Or add api_key to .yoyo.toml, or use --api-key <key>.";
+  -         let status = if key_set {
+  -             format!("  {env_var} is set but the API rejected it — check the key value.")
+  -         } else {
+  -             format!("  {env_var} is not set.")
+  -         };
+  ... (13 more lines)
+ ✓ (36.9s)
+  + /// Where this session's API key came from, recorded by `cli::parse_model_config`
+  + /// as it resolves the key (#1062). Before this the 401 hint guessed from
+  + /// `std::env::var(<provider var>)`, which cannot see `--api-key`, a config-file
+  + /// key or an alias name, and told a user who had passed `--api-key` that
+  + /// `OPENAI_API_KEY is not set`.
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + pub enum KeySource {
+  +     Argv,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 49.9s (2 ✓)
+
+Now wire the source in cli.rs.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (26 → 35 lines)
+  -     let api_key = match api_key_from_flag {
+  -         Some(key) if !key.is_empty() => key,
+  +     use crate::prompt_retry::KeySource;
+  +     let (api_key, key_source) = match api_key_from_flag {
+  +         Some(key) if !key.is_empty() => (key, KeySource::Argv),
+            _ => {
+                // Provider's own variables first, in yoagent's order (#1064)
+                let from_provider_env =
+                    crate::providers::find_provider_key(&provider, |v| std::env::var(v).ok());
+  -             match from_provider_env {
+  -                 Some(key) => key,
+  +             // Same helper, same order, asked for the NAME it took the key from (#1062)
+  +             let provider_var = crate::providers::find_provider_key(&provider, |v| {
+  +                 std::env::var(v).ok().filter(|k| !k.is_empty()).map(|_| v.to_string())
+  +             });
+  +             match from_provider_env.zip(provider_var) {
+  +                 Some((key, var)) => (key, KeySource::Env(var)),
+                    None => {
+                        // Fallback chain: ANTHROPIC_API_KEY > API_KEY > config file
+  +                     let var = match std::env::var("ANTHROPIC_API_KEY") {
+  ... (23 more lines)
+  ▶ edit src/cli.rs (5 → 10 lines)
+                }
+            }
+        };
+  +     // In-process parse_args tests would otherwise pin a source (first write
+  +     // wins) that the env-driven diagnose_api_error tests then read.
+  +     if !cfg!(test) {
+  +         crate::prompt_retry::set_key_source(key_source);
+  +     }
+    
+        let model = flag_value(args, &["--model"])
+ ✓ (16.5s)
+  -     let api_key = match api_key_from_flag {
+  -         Some(key) if !key.is_empty() => key,
+  +     use crate::prompt_retry::KeySource;
+  +     let (api_key, key_source) = match api_key_from_flag {
+  +         Some(key) if !key.is_empty() => (key, KeySource::Argv),
+            _ => {
+                // Provider's own variables first, in yoagent's order (#1064)
+                let from_provider_env =
+  ... (13 more lines)
+ ✓ (32.8s)
+                }
+            }
+        };
+  +     // In-process parse_args tests would otherwise pin a source (first write
+  +     // wins) that the env-driven diagnose_api_error tests then read.
+  +     if !cfg!(test) {
+  +         crate::prompt_retry::set_key_source(key_source);
+  +     }
+    
+        let model = flag_value(args, &["--model"])
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read src/cli.rs:1118..1143 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short; git diff --sta… ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 44.8s (4 ✓)
+
+Parallel edits to the same file clobbered each other. Redoing serially.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (15 → 12 lines)
+            let env_var = crate::cli::provider_api_key_env(&provider).unwrap_or("ANTHROPIC_API_KEY");
+  -         let key_set = std::env::var(env_var).is_ok();
+  -         let config_hint = "Or add api_key to .yoyo.toml, or use --api-key <key>.";
+  -         let status = if key_set {
+  -             format!("  {env_var} is set but the API rejected it — check the key value.")
+  -         } else {
+  -             format!("  {env_var} is not set.")
+  -         };
+  -         return Some(format!(
+  -             "Authentication failed for provider '{provider}'.\n\
+  -              {status}\n\
+  -              Set it with: export {env_var}=<your-key>\n\
+  -              {config_hint}"
+  -         ));
+  +         // The source cli.rs recorded when it resolved the key (#1062); with none
+  +         // recorded, the old env-presence reading, so that path is unchanged.
+  +         let source = KEY_SOURCE.get().cloned().unwrap_or_else(|| {
+  +             if std::env::var(env_var).is_ok() {
+  +                 KeySource::Env(env_var.to_string())
+  +             } else {
+  ... (5 more lines)
+ ✓ (16.8s)
+            let env_var = crate::cli::provider_api_key_env(&provider).unwrap_or("ANTHROPIC_API_KEY");
+  -         let key_set = std::env::var(env_var).is_ok();
+  -         let config_hint = "Or add api_key to .yoyo.toml, or use --api-key <key>.";
+  -         let status = if key_set {
+  -             format!("  {env_var} is set but the API rejected it — check the key value.")
+  -         } else {
+  -             format!("  {env_var} is not set.")
+  -         };
+  ... (13 more lines)
+  ▶ edit src/cli.rs (26 → 35 lines)
+  -     let api_key = match api_key_from_flag {
+  -         Some(key) if !key.is_empty() => key,
+  +     use crate::prompt_retry::KeySource;
+  +     let (api_key, key_source) = match api_key_from_flag {
+  +         Some(key) if !key.is_empty() => (key, KeySource::Argv),
+            _ => {
+                // Provider's own variables first, in yoagent's order (#1064)
+                let from_provider_env =
+                    crate::providers::find_provider_key(&provider, |v| std::env::var(v).ok());
+  -             match from_provider_env {
+  -                 Some(key) => key,
+  +             // Same helper, same order, asked for the NAME it took the key from (#1062)
+  +             let provider_var = crate::providers::find_provider_key(&provider, |v| {
+  +                 std::env::var(v).ok().filter(|k| !k.is_empty()).map(|_| v.to_string())
+  +             });
+  +             match from_provider_env.zip(provider_var) {
+  +                 Some((key, var)) => (key, KeySource::Env(var)),
+                    None => {
+                        // Fallback chain: ANTHROPIC_API_KEY > API_KEY > config file
+  +                     let var = match std::env::var("ANTHROPIC_API_KEY") {
+  ... (23 more lines)
+ ✓ (2m 27s)
+  -     let api_key = match api_key_from_flag {
+  -         Some(key) if !key.is_empty() => key,
+  +     use crate::prompt_retry::KeySource;
+  +     let (api_key, key_source) = match api_key_from_flag {
+  +         Some(key) if !key.is_empty() => (key, KeySource::Argv),
+            _ => {
+                // Provider's own variables first, in yoagent's order (#1064)
+                let from_provider_env =
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo clippy --all-ta… ✓ (2m 28s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 > /tmp/t.log; echo… ✓ (1m 28s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "providers_key_tests\|comm… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/^mod auth_tests;$/mod pr… ✓ (9.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 7m 18s (6 ✓)
+
+Now the live check. Stub server answering 401:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && cat > stub401.py <<'EOF' (12 lines) ✓ (3.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/pro… (9 lines) ✓ (19.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 32.8s (2 ✓)
+
+Four of four sources now say where the key came from, and the own-env row is unchanged. Quick alias check (google + GEMINI_API_KEY):
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd $(mktemp -d); for B in /tmp/yoyo-before /home/runner/work/yoyo-evolve/yoyo-ev… ✓ (93ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Live verified. Now pay the module-size register warnings (the gate's own remedy) and check docs.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; pkill -f stub401.py; grep -n "not … ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "not set\|rejected it\|Au… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/cli.rs src/prompt_retry.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's|    … (3 lines) ✓ (420ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 19.2s (4 ✓)
+
+Add a short ARCHITECTURE.md note on the prompt_retry.rs entry (where history belongs):
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (7 lines) ✓ (3m 59s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Commit with the before/after in the body:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/msg… (41 lines) ✓ (49ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view … (18 lines) ✓ (1.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.6s (2 ✓)
+
+When a provider returns 401, yoyo's hint now says where the key actually came from. Before, it said "OPENAI_API_KEY is not set" to someone who had passed --api-key. Committed as 9eff971c (Part of #1062). fmt, clippy with -D warnings, build and the full cargo test all pass.
+
+The cause: the 401 branch decided "set" or "not set" by checking whether the provider's own environment variable existed. That check misses a key given with --api-key, a key from the config file, an alternate name like GEMINI_API_KEY, and the fallback to ANTHROPIC_API_KEY or API_KEY.
+
+What changed:
+• Recording the source: src/cli.rs now records where the key came from while it looks the key up. The variable name comes from the same lookup function the #1064 work added, so there is no second list of names.
+• The wording: a new helper, auth_failure_message, in src/prompt_retry.rs builds the hint from that recorded source. Its tests are in a new file, src/prompt_retry_auth_tests.rs, and compare full strings. When no key was found, or the key came from the provider's own variable, the text is exactly what it was before.
+
+Before and after, checked live against a local server that always answers 401, with a clean environment:
+
+| Key came from | Before | After |
+|---|---|---|
+| --api-key | OPENAI_API_KEY is not set. plus an export line | names --api-key as the rejected key; no export line |
+| ANTHROPIC_API_KEY only | OPENAI_API_KEY is not set. | says the Anthropic key was sent instead |
+| api_key in .yoyo.toml | OPENAI_API_KEY is not set. | names the config file |
+| google with GEMINI_API_KEY | GOOGLE_API_KEY is not set. | names GEMINI_API_KEY |
+| OPENAI_API_KEY | | unchanged |
+
+One gap in the tests: the code that records the source is switched off under cfg!(test). Otherwise the in-process tests of argument parsing would set the shared value first and break the older tests that read the environment. So no unit test covers the recording step; only the live run above checks it.
+
+Beyond the three planned files:
+• Size limits: tests/module_size.rs raises the recorded sizes of src/cli.rs (7685 → 7769; +17 are mine, the other +67 were already over) and src/prompt_retry.rs (2720 → 2785). Both were warnings rather than failures; raising the recorded size is the check's own suggested fix.
+• ARCHITECTURE.md: a short note on the prompt_retry.rs entry.
+• Docs: none of the pages in docs/src or the README quoted the old wording, so they needed no change.
+
+I commented on #1062 with the before/after table. The ticket stays open: --api-key still doesn't stop the first-run setup wizard (setup::needs_setup_from takes no command-line input, main.rs:1033), and that is what the issue's title is about.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/3 changed files were in top-10 predictions (33.3% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/3 (0.0%) — reactive was 33.3%
+     Predicted correctly: src/cli.rs
+     Surprises (not predicted): src/prompt_retry_auth_tests.rs, src/prompt_retry.rs

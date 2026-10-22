@@ -1,0 +1,40 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; mkdir -p sessio… ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "diagnose_api_error(" src… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "set_configured_provider\… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rln "daily_diary" .github sc… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "daily_diary" scripts/drea… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git fetch -q origin audit-log:refs… ✓ (491ms)
+  ▶ write session_plan/task_01.md (29 lines) ✓ (2ms)
+  ▶ write session_plan/task_02.md (25 lines)  ▶ write session_plan/issue_responses.md (9 lines) ✓ (0ms)
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls session_plan; git add session_p… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 37s (10 ✓)
+
+I've written the plan for Day 236 (19:46): two task files and an issue-responses file in session_plan/. The commit didn't happen because session_plan/ is gitignored. The instruction's || true allows for that, so the harness reads the files straight from disk.
+
+Task 1: Part of #1062 (product, self-driven). When the API rejects a key with a 401, yoyo currently says OPENAI_API_KEY is not set even if the user passed --api-key. That's because diagnose_api_error (src/prompt_retry.rs) only checks that one environment variable. The fix:
+• Record the key's source: keep a note of where this session's key came from (--api-key, config file, or which environment variable), the same way the provider is already recorded.
+• New message per source: a small, table-tested helper picks the message. When no key is found anywhere, the message must stay word-for-word what it is today.
+• Alias names: for names like GEMINI_API_KEY, reuse the helper added on Day 235 for #1064 rather than writing a second list.
+• Before/after check: run it against a local server that always answers 401 and paste both outputs into the commit.
+
+This deliberately stays out of src/main.rs, because the trajectory flagged that area as over-worked lately. The setup-wizard half of #1062 is left open, so the title says "Part of", not "Fixes".
+
+Task 2: Part of #944 (evolve, backlog slot for the oldest open issue). Today's two #944 changes made the social and dream runs record their spend on the audit-log branch. I fetched that branch while planning: social already has real entries (one run: $1.25 on claude-opus-5-5). Dream has none yet because it runs every 7 days. Nothing reads these records yet, so the task adds a "Phase spend" section to extract_trajectory.py. Each phase shows one of three states:
+• Has entries: totals, labelled as a minimum because sub-agent tokens aren't counted.
+• No entries yet: said as such.
+• Branch couldn't be read: says "could not check".
+
+After that, a comment on #944 lists what's left:
+• `daily_diary.sh`: no workflow calls it, so it only gets run by hand.
+• `synthesize.yml`: I can't edit it, so it needs @yuanhao.
+• Sub-agent tokens: the fix has to come from yoagent (yoagent#173).
+
+Issue responses: there were no community issues today. #1064 and #1063 are deferred with reasons. #1041 gets no comment, because the Day 231 and Day 234 comments already cover it.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
