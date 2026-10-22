@@ -37,6 +37,17 @@ pub const REFUSAL_STEM_MODE_ACTIVE: &str = " is active — ";
 pub const REFUSAL_STEM_SESSION_CAP: &str = " session cap reached (";
 /// `ConfirmTool` directory-restriction denial: "User denied <tool> on '<path>'".
 pub const REFUSAL_STEM_PATH_DENIED: &str = "User denied ";
+/// Bash-door refusals (#1068), matched as substrings like the three above. In order:
+/// hard deny (`hard_deny.rs`); user/`/cd` deny incl. #1010/#1011 (`tools.rs`,
+/// `safety/indirect_command.rs`); child confirm (`tools.rs`); pinned-cwd git
+/// redirection (`safety.rs`); the user declining a bash confirm (`tools.rs`).
+pub const BASH_REFUSAL_STEMS: &[&str] = &[
+    "Command blocked by safety policy: ",
+    "Command blocked by your permission rules: ",
+    "Command needs user confirmation that a sub-agent cannot obtain: ",
+    "git may not be redirected outside it.",
+    "Command was not confirmed by the user.",
+];
 
 /// True when an error message is one of yoyo's deliberate refusals rather than
 /// a tool failure. Substring match (not prefix) — wrappers may prepend context.
@@ -819,7 +830,7 @@ impl ToolFailureTracker {
 
     /// Get the current failure count for a (tool, target) pair (for testing).
     #[cfg(test)]
-    fn get(&self, tool_name: &str, target: &str) -> u32 {
+    pub(crate) fn get(&self, tool_name: &str, target: &str) -> u32 {
         let map = self.counts.lock().unwrap_or_else(|e| e.into_inner());
         map.get(&(tool_name.to_string(), target.to_string()))
             .copied()

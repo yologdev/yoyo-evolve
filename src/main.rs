@@ -42,6 +42,8 @@ mod agent_limits_tests;
 mod anthropic_preset_tests;
 mod auto_check_scope;
 mod banner;
+#[cfg(test)]
+mod bash_refusal_tests;
 mod cd_allow;
 mod cd_config_note;
 mod cd_deny;

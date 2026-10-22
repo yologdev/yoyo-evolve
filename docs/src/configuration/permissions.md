@@ -413,6 +413,8 @@ Beyond pattern matching, yoyo has a built-in safety analyzer that detects catego
 
 When a dangerous pattern is detected, yoyo shows a warning explaining **why** the command is flagged before asking for confirmation. A handful of truly catastrophic patterns (like `rm -rf /` or fork bombs) are hard-blocked and can never execute, even with `--yes`.
 
+When bash refuses a command (a hard block, your deny list, a sub-agent that would need your confirmation, a git redirection out of a pinned worktree, or you answering no), the model gets the refusal text exactly as written. yoyo does not add a "try a simpler version" recovery hint, and it does not re-run the whole prompt automatically, because running it again would hit the same refusal.
+
 Safe commands like `ls`, `cargo test`, `git status`, and `grep` pass through without triggering any warnings.
 
 ## Project-local config is not trusted to start processes or grant approval
