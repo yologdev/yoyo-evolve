@@ -1,0 +1,67 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def page_is_stale\|def … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 800,960p scripts/extract_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1290,1330p scripts/extrac… ✓ (8ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^class GreenScan" -A40 … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (44 lines) ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 5705,5716p scripts/extrac… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (70 lines) ✓ (228ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (101ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (126ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 55.2s (9 ✓)
+
+Now the positive control, serially and atomically (mutate → test → restore):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (9 lines) ✓ (228ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control reddened exactly the []+failure rows by name; restored → ALL PASSED, no marker left. Now ARCHITECTURE.md and the full gate.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "stale-page\|page_is_sta… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1230,1232p ARCHITECTURE.m… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/ARCHITECTURE.md (1 → 2 lines)
+  + - Green probe, Day 236 (5th repair of this probe): an **empty** `--status completed` page (`rows == 0`) while an in-window failure is known now routes `green_verdict_branch` to `stale-page` with its own "came back EMPTY" sentence, and the receipt reads `page=empty-with-known-failure`. Measured: the probe's exact argv returned 20, 0, 20 rows on three consecutive calls, and the 0 told the planner "these are live" over a green CI because `page_is_stale(None, …)` reads a missing newest row as unkn… [yoyo: 219 more bytes elided — diff lines are capped at 500 bytes]
+    - Fail-soft: never blocks the session; emits `(no trajectory data yet)` if any input is missing
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (24ms)
+  + - Green probe, Day 236 (5th repair of this probe): an **empty** `--status completed` page (`rows == 0`) while an in-window failure is known now routes `green_verdict_branch` to `stale-page` with its own "came back EMPTY" sentence, and the receipt reads `page=empty-with-known-failure`. Measured: the probe's exact argv returned 20, 0, 20 rows on three consecutive calls, and the 0 told the planner "these are live" over a green CI because `page_is_stale(None, …)` reads a missing newest row as unkn… [yoyo: 219 more bytes elided — diff lines are capped at 500 bytes]
+    - Fail-soft: never blocks the session; emits `(no trajectory data yet)` if any input is missing
+ ✓ (6m 57s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 7m 20s (4 ✓)
+
+Everything is green: self-tests, harness (249/0), build, cargo test (22 suites, none failing), clippy, fmt. Committing.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status -… (15 lines) ✓ (56ms)
+
+Fixed and committed as 28b4e2c1. When GitHub's list of completed CI runs comes back empty, the planner is now told CI's state couldn't be checked, instead of "these failures are live".
+
+The bug: GitHub sometimes returns an empty page of completed runs (the same command gave 20, 0 and 20 rows on three calls). An empty page counted as a real, fully read result with no success in it. The freshness check skips the case where the page has no newest row, so the empty page fell through to "these are live" even though CI was green.
+
+The fix (scripts/extract_trajectory.py):
+• green_verdict_branch now sends a page with zero rows, when a failure is already known, to stale-page. A comment at that line states the rule behind it: a failure is itself a completed run, so a page that can't contain it isn't current. A page that was never fetched at all still goes down its old path.
+• That case has its own sentence ("…the completed-runs listing came back EMPTY, but a failure this same run already fetched (…) is itself a completed run…"). It claims neither that the failures are live nor that they're cured.
+• The stderr receipt now says page=empty-with-known-failure, so the receipt names the case on its own. This is the 5th repair of this probe, so the receipt change is what this one leaves behind for checking it later.
+• newest_success_from_runs is unchanged, and its existing test (empty list → checked=True) is untouched and still passes.
+
+Tests (table rows in --test, each checking the text the planner actually reads):
+• Empty page with a known failure → stale-page, and the text does not contain "these are live".
+• Near-miss: a short page that holds the failure and has no success → still still-live, and "these are live" still renders.
+  • My first version of this fixture made the page's newest row the failure itself. That counts as a tie, and the existing tie rule (added on Day 220) correctly returns could-not-check when no tie check has run. So I added a newer cancelled run to the fixture to make it a genuinely red, current page.
+• Near-miss: empty page with no known failure → no-in-window-failures, unchanged.
+• Receipt rows: page=empty-with-known-failure appears when this case fires, and an empty page with no known failure still reads page=short.
+
+Positive control: I disabled the new branch (marked NEUTERED), ran the tests and restored the file in one command. Exactly the three empty-page-with-failure rows failed by name; after the restore all tests passed and no NEUTERED marker remains.
+
+Checks: extract_trajectory.py --test all pass, tests/harness_logic.sh 249 passed / 0 failed, and cargo build, cargo test, cargo clippy --all-targets -- -D warnings and cargo fmt --check are all clean. I also added one line to ARCHITECTURE.md under extract_trajectory's notes describing the empty-page case.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

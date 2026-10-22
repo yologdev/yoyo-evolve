@@ -1,0 +1,88 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneline -3; grep… ✓ (11ms)
+  ▶ $ sed -n 370,580p scripts/social.sh; echo ======; sed -n 60,150p scripts/dream.sh;… ✓ (9ms)
+  ▶ $ sed -n 470,580p scripts/social.sh | cat -A | head -0; awk 'NR>=455 && NR<=580' s…  ▶ $ sed -n 1,150p scripts/dream.sh; echo =====; sed -n 300,390p scripts/dream.sh ✓ (6ms)
+ ✓ (8ms)
+  ▶ $ grep -n "social sink\|social_spend\|persist_social" tests/harness_logic.sh | hea… ✓ (4ms)
+  ▶ $ sed -n 1255,1458p tests/harness_logic.sh; grep -n "^DREAM=\|dream.sh" tests/harn… ✓ (6ms)
+  ▶ $ sed -n 312,320p scripts/dream.sh; grep -n "DAY\b\|DAY=\|SESSION_TIME" scripts/dr… ✓ (8ms)
+  ▶ $ awk 'NR>=314 && NR<=319' scripts/dream.sh | cat -v; echo ---; awk 'NR>=477 && NR… ✓ (8ms)
+  ▶ $ python3 -c " (5 lines) ✓ (19ms)
+  ▶ $ sed -n '314,319{=;p}' scripts/dream.sh | paste - - ; sed -n '462,467{=;p}' scrip… ✓ (6ms)
+  ▶ $ python3 - <<'EOF' (115 lines) ✓ (26ms)
+  ▶ $ grep -n "printf\|  \\\\$" scripts/dream.sh | sed -n '1,40p' | grep -A1 -B0 "spen… ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (106 lines) ✓ (27ms)
+  ▶ $ bash tests/harness_logic.sh 2>&1 | grep -E "dream sink|FAIL|failed|passed" | tai… ✓ (5.2s)
+  ▶ $ bash tests/harness_logic.sh 2>&1 | grep -c "ok   dream sink" ✓ (5.2s)
+  ▶ $ cp scripts/dream.sh /tmp/dream.bak && python3 -c " (5 lines) ✓ (10.4s)
+  ▶ $ cp scripts/dream.sh /tmp/dream.bak && python3 -c " (7 lines) ✓ (10.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  17 tools completed in 2m 2s (17 ✓)
+
+Both positive controls go red by name and pass again once restored. Now the Rust gate:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -1 && cargo test 2>&1 | grep -E "^test result|FAILED|pan… ✓ (6m 45s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "persist_social_spend\|phases/social\|report_dream_spend" ARCHITECTURE.m… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7m 1s (2 ✓)
+
+Line 1226 says "dream.sh ... still print only", which this change makes false. I'll correct it in place and add the dream entry:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (12 lines) ✓ (56ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ git status --porcelain; cargo test 2>&1 | grep -E "^test result" | grep -vc " 0 … ✓ (3m 25s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 38s (2 ✓)
+
+All green: 0 failing test binaries. Committing with the ledger in the body:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -q -F - <<'EOF' && git log --onelin… (39 lines) ✓ (51ms)
+  ▶ $ gh issue view 944 --json state,title -q '.state+" "+.title' … (15 lines) ✓ (1.7s)
+  2 tools completed in 19.7s (2 ✓)
+
+dream.sh now saves its per-run spend to the audit-log branch, the same way social.sh does. Committed as b2998a11 and noted on #944. It hasn't run in production yet: dream has a 7-day cooldown, so the first real row will come with the next cycle.
+
+What it writes: one line per dream run to phases/dream/spend.jsonl, either {ts, phase:"dream", day, exit, usage_records:[…]} or "usage":"no_terminal_emit" when the run left no usage record. A missing record is never written as zero.
+
+Where it runs: right after report_dream_spend || true. Every exit path after the agent passes that line, and the sink finishes before the diff-scope guard and before the cleanup trap's commit and push of main. It never touches main's checkout or index. It only fetches into refs/remotes/origin/audit-log and works in a temporary worktree under ${TMPDIR:-/tmp}, which is removed afterwards. A test with uncommitted changes on main shows its status, index and HEAD are unchanged after the sink runs, so the scope guard sees nothing new. The sink always returns 0.
+
+Differences from the social version (full list in the commit body):
+• Every sink line goes to stderr with a dream: prefix, because all of dream.sh's spend output already does.
+• The exit code comes from dream's exit_code variable.
+• The audit-log commit message uses date for its timestamp, because dream.sh has no SESSION_TIME.
+• There is one call site instead of two, because dream.sh has no early exit between the agent and the report.
+
+Tests: I added dream sink a–g to tests/harness_logic.sh. They extract the functions from the shipped script and run against a local bare origin, with uncommitted changes on main. They cover:
+• the row's contents
+• two runs giving two rows
+• no_terminal_emit when there is no usage record
+• origin with no audit-log branch: one skip line, nothing changed
+• main untouched
+• a rejected push being retried
+• the call sitting right after the report
+
+I ran both positive controls one at a time, each in a single break → run → restore command:
+• No-op append: dream sink a failed by name, along with the row-dependent b, c and f checks.
+• Retry removed: exactly dream sink f failed.
+
+Both passed again after restoring (272/272), and no NEUTERED marker is left in the file.
+
+Checks: bash -n on dream.sh, the harness suite, cargo build, cargo test, clippy with -D warnings and cargo fmt --check all pass. In ARCHITECTURE.md, I corrected the line that said "dream.sh … still print only" in place, keeping the old wording as a recorded superseded claim, and added the dream.sh entry.
+
+Still open on #944:
+• daily_diary.sh still only prints.
+• synthesize.yml sits in a protected folder, so it needs @yuanhao.
+• Sub-agent tokens aren't counted yet (yologdev/yoagent#173).
+• Nothing reads phases/*/spend.jsonl yet.
+
+The social and dream sink functions are now two copies of the same code. My comment on #944 suggests turning them into one helper in scripts/common.sh before daily_diary.sh gets a third copy.
+  watch: no files changed this turn — skipping
