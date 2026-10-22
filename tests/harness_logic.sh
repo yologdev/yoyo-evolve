@@ -1354,6 +1354,94 @@ if require "dream: report_dream_spend extracted" "$DS_FN"; then
     check "dream spend e: first record kept"                   "$(has "$DE" "$U1")"                "yes"
 fi
 
+# ── social.sh durable spend sink (#944, Day 236) — functions extracted from the shipped script ──
+# The spend lines above go to the Actions log, which expires. persist_social_spend
+# appends one row per run to phases/social/spend.jsonl on the audit-log branch.
+# Driven against a local bare repo as `origin`, under the script's own
+# `set -euo pipefail`, so a bare non-zero inside the function would kill the case.
+SP_FN=$(awk '/^social_spend_row\(\) \{/,/^\}/' "$SOCIAL"; awk '/^persist_social_spend\(\) \{/,/^\}/' "$SOCIAL")
+SP_SINK_LINE=$(grep -m1 '^SOCIAL_SPEND_SINK=' "$SOCIAL")
+sp_case() { # $1 = runs (1|2)  $2 = usage recs ('' = none)  $3 = with-branch|no-branch  [$4 = reject-once]
+    ( set -euo pipefail
+      export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+      export GIT_CONFIG_NOSYSTEM=1
+      d=$(mktemp -d) && cd "$d"
+      export HOME="$d/home" && mkdir -p "$HOME"
+      git init -q --bare -b main origin.git
+      git init -q -b main seed && cd seed
+      echo a > tracked.txt && git add tracked.txt && git commit -qm init
+      git remote add origin "$d/origin.git" && git push -q origin main
+      if [ "$3" = with-branch ]; then
+          git checkout -q --orphan audit-log && git rm -rq --cached . && rm -f tracked.txt
+          mkdir -p sessions/day-1-x && echo '{}' > sessions/day-1-x/outcome.json
+          git add sessions && git commit -qm audit && git push -q origin audit-log
+      fi
+      if [ "${4:-}" = reject-once ]; then
+          # The first push is refused (as if a concurrent run moved the
+          # branch); the function's one fetch+rebase+push retry must land it.
+          printf '#!/bin/sh\n[ -f "%s/rejected" ] && exit 0\ntouch "%s/rejected"; exit 1\n' "$d" "$d" \
+              > "$d/origin.git/hooks/pre-receive"
+          chmod +x "$d/origin.git/hooks/pre-receive"
+      fi
+      cd "$d" && git clone -q origin.git work 2>/dev/null && cd work
+      # A dirty main: a staged edit and an untracked file, which must survive untouched.
+      echo b > tracked.txt && git add tracked.txt && echo u > untracked.txt
+      before="$(git status --porcelain)|$(git ls-files -s)|$(git rev-parse HEAD)"
+      origin_before=$(git --git-dir="$d/origin.git" for-each-ref --format='%(refname) %(objectname)')
+      eval "$SP_SINK_LINE"; eval "$SP_FN"
+      DAY=236; AGENT_EXIT=0; SESSION_TIME=09:09; SOCIAL_USAGE_RECS="$2"
+      i=0
+      while [ "$i" -lt "$1" ]; do
+          persist_social_spend 2>&1; echo "rc=$?"; i=$((i + 1))
+      done
+      after="$(git status --porcelain)|$(git ls-files -s)|$(git rev-parse HEAD)"
+      [ "$before" = "$after" ] && echo "main=same" || echo "main=CHANGED"
+      echo "worktrees=$(git worktree list | wc -l | tr -d ' ')"
+      origin_after=$(git --git-dir="$d/origin.git" for-each-ref --format='%(refname) %(objectname)')
+      [ "$origin_before" = "$origin_after" ] && echo "origin=same" || echo "origin=moved"
+      if git --git-dir="$d/origin.git" rev-parse -q --verify refs/heads/audit-log >/dev/null; then
+          rows=$(git --git-dir="$d/origin.git" show "audit-log:$SOCIAL_SPEND_SINK" 2>/dev/null || true)
+          echo "rows=$(printf '%s' "$rows" | grep -c . || true)"
+          echo "social_rows=$(printf '%s\n' "$rows" | grep -c '"phase":"social"' || true)"
+          printf '%s\n' "$rows" | sed 's/^/ROW /'
+          git --git-dir="$d/origin.git" cat-file -e audit-log:sessions/day-1-x/outcome.json && echo "sessions=kept"
+      fi
+      cd "$d/.." && rm -r -f "$d"
+    ) 2>&1
+}
+if require "social: spend sink functions extracted" "$SP_FN" && require "social: sink path extracted" "$SP_SINK_LINE"; then
+    # (a) one run -> exactly one row, phase social, the usage record inside it.
+    PA=$(sp_case 1 "$U1" with-branch)
+    check "social sink a: exactly one row on origin/audit-log"   "$(has "$PA" 'rows=1')"            "yes"
+    check "social sink a: the row is phase social"               "$(has "$PA" 'social_rows=1')"     "yes"
+    check "social sink a: usage record carried in the row"       "$(has "$PA" "\"usage_records\":[$U1]")" "yes"
+    check "social sink a: rc 0"                                  "$(has "$PA" 'rc=0')"              "yes"
+    check "social sink a: earlier audit-log content kept"        "$(has "$PA" 'sessions=kept')"     "yes"
+    check "social sink a: temp worktree removed"                 "$(has "$PA" 'worktrees=1')"       "yes"
+    # (b) two runs -> two rows, appended not overwritten.
+    PB=$(sp_case 2 "$U1" with-branch)
+    check "social sink b: two runs -> two rows"                  "$(has "$PB" 'rows=2')"            "yes"
+    # (c) no usage record -> no_terminal_emit, never a zero.
+    PC=$(sp_case 1 "" with-branch)
+    check "social sink c: no record -> no_terminal_emit"         "$(has "$PC" '"usage":"no_terminal_emit"')" "yes"
+    check "social sink c: absence not written as usage_records"  "$(has "$PC" 'usage_records')"     "no"
+    check "social sink c: still one row"                         "$(has "$PC" 'rows=1')"            "yes"
+    # (d) origin has no audit-log branch -> skip line, rc 0, origin unchanged.
+    PD=$(sp_case 1 "$U1" no-branch)
+    check "social sink d: skip line printed"                     "$(has "$PD" 'Spend sink: skipped')" "yes"
+    check "social sink d: rc 0"                                  "$(has "$PD" 'rc=0')"              "yes"
+    check "social sink d: origin refs unchanged"                 "$(has "$PD" 'origin=same')"       "yes"
+    check "social sink d: no branch created"                     "$(has "$PD" 'rows=')"             "no"
+    # (e) main's status, index and HEAD byte-identical before/after (dirty main).
+    check "social sink e: main untouched (one run)"              "$(has "$PA" 'main=same')"         "yes"
+    check "social sink e: main untouched (two runs)"             "$(has "$PB" 'main=same')"         "yes"
+    check "social sink e: main untouched (skip)"                 "$(has "$PD" 'main=same')"         "yes"
+    # (f) one rejected push -> the single retry lands exactly one row.
+    PF=$(sp_case 1 "$U1" with-branch reject-once)
+    check "social sink f: rejected push retried, one row"        "$(has "$PF" 'rows=1')"            "yes"
+    check "social sink f: no FAILED line after the retry"        "$(has "$PF" 'FAILED')"            "no"
+fi
+
 # ── social.sh binary selector (#944, Day 213) — block extracted from the shipped script ──
 SEL=$(sed -n '/^YOYO_BIN=""$/,/^fi$/p' scripts/social.sh)
 sel_case() { # $1 = older profile, $2 = newer profile

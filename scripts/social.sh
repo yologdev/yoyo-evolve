@@ -454,6 +454,94 @@ report_social_spend() {
     else
         echo "  Spend audit: WARNING — no ${AUDIT_FILE}; audit records were not written this run (cumulative size unknown)"
     fi
+    # Handed to persist_social_spend (below). Empty means NO record, which the
+    # durable row keeps as no_terminal_emit, never as a zero.
+    SOCIAL_USAGE_RECS="$usage_recs"
+}
+
+# ── #944: the durable sink. The lines above go to the Actions log, which
+# expires; this row goes to the audit-log branch, which does not, the way
+# evolve.sh's Step 7c2 persists its session evidence. One JSON line per run,
+# appended to phases/social/spend.jsonl (a sibling of sessions/, so
+# extract_trajectory.py's SESSION_DIR_RE `day-N-...` and its
+# sessions/*/outcome.json reader can never mistake it for a session dir).
+SOCIAL_SPEND_SINK="phases/social/spend.jsonl"
+SOCIAL_USAGE_RECS=""
+
+# $1 = usage records (newline-separated JSON, may be empty), $2 = day,
+# $3 = agent exit. Prints one JSON line. A missing record is
+# "usage":"no_terminal_emit" — the same distinction the echo above keeps.
+social_spend_row() {
+    local recs="$1" day="$2" code="$3" ts arr
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    case "$day" in '' | *[!0-9]*) day=null ;; esac
+    case "$code" in '' | *[!0-9]*) code=null ;; esac
+    arr=$(printf '%s\n' "$recs" | grep -a . | paste -sd, - || true)
+    if [ -n "$arr" ]; then
+        printf '{"ts":"%s","phase":"social","day":%s,"exit":%s,"usage_records":[%s]}\n' \
+            "$ts" "$day" "$code" "$arr"
+    else
+        printf '{"ts":"%s","phase":"social","day":%s,"exit":%s,"usage":"no_terminal_emit"}\n' \
+            "$ts" "$day" "$code"
+    fi
+}
+
+# Fail-soft: every failure prints one stderr line naming the step and returns
+# 0, so this never changes social.sh's exit status. It works in a detached
+# temp worktree and fetches into refs/remotes/origin/audit-log only, so main's
+# checkout, index and local branches are untouched, and the worktree is gone
+# before Step 9's `git add` + commit on main.
+persist_social_spend() {
+    local row wt rc
+    row=$(social_spend_row "${SOCIAL_USAGE_RECS:-}" "${DAY:-}" "${AGENT_EXIT:-}")
+    # `|| rc=$?`, not a bare call + `rc=$?`: social.sh runs under errexit,
+    # and a bare non-zero here would kill the whole script.
+    rc=0
+    git ls-remote --exit-code --heads origin audit-log >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -eq 2 ]; then
+        echo "  Spend sink: skipped — origin has no audit-log branch (this run's row is only in the log above)"
+        return 0
+    elif [ "$rc" -ne 0 ]; then
+        echo "  Spend sink: FAILED at step ls-remote (rc=$rc) — row not persisted" >&2
+        return 0
+    fi
+    if ! git fetch -q --depth 50 origin "+refs/heads/audit-log:refs/remotes/origin/audit-log" 2>/dev/null; then
+        echo "  Spend sink: FAILED at step fetch — row not persisted" >&2
+        return 0
+    fi
+    wt="${TMPDIR:-/tmp}/social-spend-wt-$$-${RANDOM}"
+    if ! git worktree add -q --detach "$wt" refs/remotes/origin/audit-log >/dev/null 2>&1; then
+        echo "  Spend sink: FAILED at step worktree-add — row not persisted" >&2
+        rm -rf "$wt" 2>/dev/null || true
+        git worktree prune 2>/dev/null || true
+        return 0
+    fi
+    local step=""
+    # --no-verify: audit-log is a data branch; the pre-push hook lints
+    # scripts/evolve.sh, which does not exist on it.
+    step=$(
+        cd "$wt" || { echo cd; exit 0; }
+        mkdir -p "$(dirname "$SOCIAL_SPEND_SINK")" || { echo mkdir; exit 0; }
+        printf '%s\n' "$row" >> "$SOCIAL_SPEND_SINK" || { echo append; exit 0; }
+        git add -- "$SOCIAL_SPEND_SINK" >/dev/null 2>&1 || { echo add; exit 0; }
+        git commit -q -m "audit: social spend, day ${DAY:-?} (${SESSION_TIME:-?})" >/dev/null 2>&1 || { echo commit; exit 0; }
+        if git push -q --no-verify origin HEAD:refs/heads/audit-log >/dev/null 2>&1; then
+            exit 0
+        fi
+        # One retry: a concurrent evolve/social push moved the branch.
+        git fetch -q --depth 50 origin "+refs/heads/audit-log:refs/remotes/origin/audit-log" >/dev/null 2>&1 || { echo retry-fetch; exit 0; }
+        git rebase -q refs/remotes/origin/audit-log >/dev/null 2>&1 || { git rebase --abort >/dev/null 2>&1; echo retry-rebase; exit 0; }
+        git push -q --no-verify origin HEAD:refs/heads/audit-log >/dev/null 2>&1 || { echo retry-push; exit 0; }
+    )
+    git worktree remove --force "$wt" >/dev/null 2>&1 || true
+    rm -rf "$wt" 2>/dev/null || true
+    git worktree prune 2>/dev/null || true
+    if [ -n "$step" ]; then
+        echo "  Spend sink: FAILED at step ${step} — row not persisted" >&2
+    else
+        echo "  Spend sink: appended this run's row to audit-log:${SOCIAL_SPEND_SINK}"
+    fi
+    return 0
 }
 
 echo "→ Running social session..."
@@ -478,10 +566,12 @@ fi
 if grep -q '"type":"error"' "$AGENT_LOG" 2>/dev/null; then
     echo "  API error detected. Exiting."
     report_social_spend
+    persist_social_spend
     rm -f "$AGENT_LOG"
     exit 1
 fi
 report_social_spend
+persist_social_spend
 rm -f "$AGENT_LOG"
 echo ""
 
